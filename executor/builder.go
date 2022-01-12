@@ -3071,7 +3071,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
-	// Do not collect the feedback when the table is the partition table. TODO: not true for dynamic?
+	// Do not collect the feedback when the table is the partition table.
 	if collect && tbl.Meta().Partition != nil {
 		collect = false
 	}
@@ -3651,6 +3651,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
+	if tblInfo.Meta().Partition != nil {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 	return e, nil
 }
 
@@ -3804,7 +3807,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			return nil, err
 		}
 		var kvRanges []kv.KeyRange
-		// TODO: mjonss: study this :)
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			// In this case we can use dynamic partition pruning.
 			locateKey := make([]types.Datum, e.Schema().Len())

@@ -216,31 +216,12 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			}
 			return nil
 		}
-		s := fmt.Sprintf("%v", resultSubset)
-		logutil.Logger(ctx).Info("resultSubset", zap.String("resultSubset", s))
-		logutil.Logger(ctx).Info("resultSubset", zap.ByteString("data", resultSubset.GetData()))
-		logutil.Logger(ctx).Info("resultSubset", zap.Binary("data", resultSubset.GetData()))
-		b := resultSubset.GetData()
-		i := make([]int8, len(b))
-		for j := range b {
-			i[j] = int8(b[j])
-		}
-		logutil.Logger(ctx).Info("resultSubset", zap.Int8s("data", i))
-		logutil.Logger(ctx).Info("resultSubset", zap.ByteString("startKey", resultSubset.GetStartKey()))
-		logutil.Logger(ctx).Info("resultSubset", zap.Binary("startKey", resultSubset.GetStartKey()))
-		b = resultSubset.GetStartKey()
-		i = make([]int8, len(b))
-		for j := range b {
-			i[j] = int8(b[j])
-		}
-		logutil.Logger(ctx).Info("resultSubset", zap.Int8s("startKey", i))
 		r.selectResp = new(tipb.SelectResponse)
 		err = r.selectResp.Unmarshal(resultSubset.GetData())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		respSize := int64(r.selectResp.Size())
-		logutil.Logger(ctx).Info("respSize", zap.Int64("size", respSize))
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {

@@ -3368,12 +3368,12 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table tx (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))`)
-	tk.MustExec(`insert into tx values (10)`)
+	tk.MustExec(`insert into tx values (1)`)
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 
 	tk.MustExec(`begin`)
-	tk.MustExec(`delete from tx where a in (10)`)
-	//tk.MustQuery(`select * from tx PARTITION(p0)`).Check(testkit.Rows())
+	tk.MustExec(`delete from tx where a in (1)`)
+	tk.MustQuery(`select * from tx PARTITION(p0)`).Check(testkit.Rows())
 	tk.MustQuery(`select * from tx`).Check(testkit.Rows())
 	tk.MustExec(`rollback`)
 }

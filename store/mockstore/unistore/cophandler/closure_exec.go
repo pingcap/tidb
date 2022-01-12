@@ -37,12 +37,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 const chunkMaxRows = 1024
@@ -845,19 +843,10 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 		return errors.Trace(err)
 	}
 	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
 		tblID := tablecodec.DecodeTableID(key)
-		logutil.BgLogger().Info("MJONSS: tableScanProcessCore", zap.Int64("tblID", tblID), zap.Int("columnIdx", len(e.columnInfos)-1))
 		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
-		/*
-			colIds := make([]int64, len(e.columnInfos))
-			for i := range e.columnInfos {
-				colIds = append(colIds, e.columnInfos[i].ColumnId)
-			}
-		*/
-		logutil.BgLogger().Info("MJONSS: tableScanProcessCore chk", zap.String("Chunk", e.scanCtx.chk.ToString(e.resultFieldType)),
-			//zap.Int64s("colIds", colIds),
-			zap.Int("colIds count", len(e.columnInfos)), zap.Int("result field types count", len(e.resultFieldType)))
 	}
 	incRow = true
 	return nil
@@ -934,7 +923,6 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	// Add ExtraPhysTblID if requested
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
 		tblID := tablecodec.DecodeTableID(key)
-		logutil.BgLogger().Info("MJONSS: indexScanProcessCore", zap.Int64("tblID", tblID))
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true

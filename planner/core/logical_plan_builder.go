@@ -3814,13 +3814,15 @@ func (ds *DataSource) addExtraPIDColumnWithInfo(info *extraPIDInfo) {
 	for _, col := range schema.Columns {
 		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
 			if pidCol != nil {
-				logutil.BgLogger().Warn("MJONSS: Duplicate Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
+				// TODO: remove when table partition dynamic prune mode is GA
+				logutil.BgLogger().Warn("Duplicate Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
 			}
 			pidCol = col
 		}
 	}
 	if pidCol == nil {
-		logutil.BgLogger().Warn("MJONSS: Missing Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
+		// TODO: remove check/log when table partition dynamic prune mode is GA
+		logutil.BgLogger().Warn("Missing Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
 		pidCol = &expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),

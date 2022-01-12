@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util"
@@ -473,4 +474,75 @@ func (test *testSerialSuite2) TestIndexMergeSplitTable(c *C) {
 	tk.MustExec("INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');")
 	tk.MustExec("SPLIT TABLE tab2 BY (5);")
 	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
+}
+
+func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) {
+	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))
+			partition by range (to_days(c_datetime)) (
+				partition p0 values less than (to_days('2020-02-01')),
+				partition p1 values less than (to_days('2020-04-01')),
+				partition p2 values less than (to_days('2020-06-01')),
+				partition p3 values less than maxvalue)`)
+	tk.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3)")
+	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+
+	tk1 := testkit.NewTestKit(c, test.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_partition_prune_mode = 'static'")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
+			on t1.c_datetime >= t2.c_datetime
+			where t1.c1 < 10 or t1.c2 < 10 for update`).Sort().Check(testkit.Rows("1", "1", "1", "2", "2", "3", "3"))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 0
+		tk1.MustExec("rollback")
+		ch <- 0
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk1.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
+			on t1.c_datetime >= t2.c_datetime
+			where t1.c1 < 10 or t1.c2 < 10 for update`).Sort().Check(testkit.Rows("1", "1", "1", "2", "2", "3", "3"))
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 0
+		tk1.MustExec("rollback")
+		ch <- 0
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 }

@@ -223,14 +223,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.snapshotRows = us.snapshotRows[:0]
 	physTblIDIdx := -1
 	fts := make([]*types.FieldType, len(us.columns))
-	//colNames := make([]string, len(us.columns))
-	//colIds := make([]int64, len(us.columns))
 	for i := range us.columns {
 		fts[i] = &us.columns[i].FieldType
-		//colNames = append(colNames, us.columns[i].Name.O)
-		//colIds = append(colIds, us.columns[i].ID)
 		if us.columns[i].ID == model.ExtraPhysTblID {
 			if physTblIDIdx >= 0 {
+				// TODO: remove when table partition dynamic mode is GA
 				logutil.Logger(ctx).Warn("More than one ExtraPhysTblID column!", zap.String("table", us.table.Meta().Name.O))
 			}
 			physTblIDIdx = i
@@ -241,10 +238,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
-		logutil.Logger(ctx).Info("MJONSS: getSnapshotRow", zap.String("Chunk", us.snapshotChunkBuffer.ToString(fts)),
-			//zap.Strings("colNames", colNames),
-			//zap.Int64s("colIds", colIds),
-			zap.Int("us colNames count", len(us.columns)))
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle

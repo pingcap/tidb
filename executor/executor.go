@@ -939,7 +939,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				if len(e.partitionedTable) > 0 {
 					// Replace the table ID with partition ID.
 					// The partition ID is returned as an extra column from the table reader.
-					// TODO: any easier way?
 					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
 						physicalID = row.GetInt64(offset)
 					}

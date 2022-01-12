@@ -479,7 +479,6 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	}
 
 	if len(p.partitionedTable) > 0 {
-		// TODO: What to do here? Should it be added to the tblID2Handle array instead?
 		// If the children include partitioned tables, there is an extra partition ID column.
 		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
