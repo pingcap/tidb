@@ -3739,7 +3739,9 @@ PARTITION BY RANGE (c) (
 	result.Check(testkit.Rows("local"))
 
 	// test local txn auto commit
-	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	tk.MustExec("insert into t1 (c) values (1)")          // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c = 1") // point get dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 3)
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
@@ -3775,10 +3777,16 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	tk.MustExec("begin")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
@@ -3815,13 +3823,16 @@ PARTITION BY RANGE (c) (
 	// Read dc-2 with Stale Read (in dc-1 scope)
 	timestamp := timeBeforeWriting.Format(time.RFC3339Nano)
 	// TODO: check the result of Stale Read when we figure out how to make the time precision more accurate.
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c = 101", timestamp))
 	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
 	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
 	tk.MustExec("select * from t1 where c > 100")
 	tk.MustExec("commit")
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
 	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
 	tk.MustExec("select * from t1 where c > 100")
 	tk.MustExec("commit")
 

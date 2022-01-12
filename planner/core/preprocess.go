@@ -1689,8 +1689,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.IsStaleness = true
 		}
 	case readTS == 0 && node == nil && readStaleness == 0:
-		// If both readTS and node is empty while the readStaleness is empty, it means we may be in a local txn,
-		// so setting p.ReadReplicaScope is necessary to verify the txn scope later.
+		// If both readTS and node is empty while the readStaleness is empty,
+		// setting p.ReadReplicaScope is necessary to verify the txn scope later
+		// because we may be in a local txn without using the Stale Read.
 		p.ReadReplicaScope = scope
 	}
 
