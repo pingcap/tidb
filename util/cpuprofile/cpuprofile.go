@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 )
@@ -183,6 +184,8 @@ func (p *parallelCPUProfiler) doProfiling() {
 	if p.consumersCount() == 0 {
 		return
 	}
+
+	metrics.CPUProfileCounter.Inc()
 
 	capacity := (p.lastDataSize/4096 + 1) * 4096
 	p.profileData = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
