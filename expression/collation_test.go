@@ -252,6 +252,11 @@ func newColString(chs, coll string) *Column {
 	return column
 }
 
+func newColJson() *Column {
+	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
+	return column
+}
+
 func newConstInt(coercibility Coercibility) *Constant {
 	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}, Value: types.NewDatum(1)}
 	constant.SetCoercibility(coercibility)
@@ -505,6 +510,22 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.ExportSet, ast.Elt, ast.MakeSet,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColJson(),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETJson},
+			types.ETString,
+			false,
+			// The charset and collation is inconsistent with MySQL which should be utf8mb4
+			// https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CollationBin},
 		},
 		{
 			[]string{

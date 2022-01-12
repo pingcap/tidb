@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -6988,4 +6989,27 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
 	// compare JSON/JSON, return JSON type
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
+}
+
+func TestCoercibilityWithColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a char(20), b blob(100), c text, d json, e timestamp, f set('a一','b二','c三','d四'), g text, h enum('a一','b二','c三','d四') default 'c三');`)
+	tk.MustExec(`insert into t values ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');`)
+
+	tk.MustQuery(`select coercibility(a) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(b) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(c) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(d) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(e) from t`).Check(testkit.Rows("5"))
+	tk.MustQuery(`select coercibility(f) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(g) from t`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select coercibility(h) from t`).Check(testkit.Rows("2"))
 }

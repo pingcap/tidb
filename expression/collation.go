@@ -175,7 +175,12 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	if c.RetType.Tp == mysql.TypeNull {
 		return CoercibilityIgnorable
 	}
-	if c.RetType.EvalType() != types.ETString {
+
+	switch c.RetType.EvalType() {
+	case types.ETJson:
+	case types.ETString:
+		return CoercibilityImplicit
+	default:
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit
