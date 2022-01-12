@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
 	"strconv"
 	"strings"
 
@@ -461,6 +462,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					e.names = cachedVal.OutPutNames
 					e.Plan = cachedVal.Plan
 					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+
+					if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
+						log.Info("[PC] get cached plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)))
+					}
 					return nil
 				}
 				break
