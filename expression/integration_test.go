@@ -6989,3 +6989,43 @@ func TestIssue30264(t *testing.T) {
 	// compare JSON/JSON, return JSON type
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
 }
+
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
+	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
+	require.NotNil(t, err)
+	tk.MustQuery("select * from t1").Check(nil)
+
+	// test vectorized build-in function
+	tk.MustExec("insert into t1 (a) values ('a'),('b');")
+	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	// test cast
+	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
+	require.Nil(t, err)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{nil},
+		{"a"},
+		{"b"},
+	})
+}

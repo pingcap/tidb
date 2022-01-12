@@ -705,7 +705,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 	}
-	var results []inspectionResult
+	results := make([]inspectionResult, 0, len(rows))
 	for _, row := range rows {
 		if row.Len() < 3 {
 			continue
