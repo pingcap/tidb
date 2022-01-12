@@ -51,6 +51,39 @@ type testPrepareSuite struct {
 type testPrepareSerialSuite struct {
 }
 
+
+func (s *testPrepareSerialSuite) TestPrepareCacheX(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st1 from 'select * from t'`)
+	tk.MustQuery(`execute st1`).Check(testkit.Rows())
+	tk.MustQuery(`execute st1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// st2 can use the plan of st1 directly since they have the same SQL
+	tk.MustExec(`prepare st2 from 'select * from t'`)
+	tk.MustQuery(`execute st2`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
