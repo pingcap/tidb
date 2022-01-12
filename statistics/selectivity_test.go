@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,102 +39,445 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
-const eps = 1e-9
+func TestCollationColumnEstimate(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 'aaa'")
+	require.Nil(t, h.LoadNeededHistograms())
+	var (
+		input  []string
+		output [][]string
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
 
-// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
-// If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
-func generateIntDatum(dimension, num int) ([]types.Datum, error) {
-	length := int(math.Pow(float64(num), float64(dimension)))
-	ret := make([]types.Datum, length)
-	if dimension == 1 {
-		for i := 0; i < num; i++ {
-			ret[i] = types.NewIntDatum(int64(i))
+func BenchmarkSelectivity(b *testing.B) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
+	defer clean()
+	testKit := testkit.NewTestKit(b, store)
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(b, err)
+	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
+	sql := "select * from t where " + exprs
+	sctx := testKit.Session().(sessionctx.Context)
+	stmts, err := session.Parse(sctx, sql)
+	require.NoErrorf(b, err, "error %v, for expr %s", err, exprs)
+	require.Len(b, stmts, 1)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	require.NoErrorf(b, err, "for %s", exprs)
+	p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
+	require.NoErrorf(b, err, "error %v, for building plan, expr %s", err, exprs)
+
+	file, err := os.Create("cpu.profile")
+	require.NoError(b, err)
+	defer func() {
+		err := file.Close()
+		require.NoError(b, err)
+	}()
+	err = pprof.StartCPUProfile(file)
+	require.NoError(b, err)
+
+	b.Run("Selectivity", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			require.NoError(b, err)
 		}
-	} else {
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
-		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < length; i++ {
-			data := make([]types.Datum, dimension)
-			j := i
-			for k := 0; k < dimension; k++ {
-				data[dimension-k-1].SetInt64(int64(j % num))
-				j = j / num
-			}
-			bytes, err := codec.EncodeKey(sc, nil, data...)
-			if err != nil {
-				return nil, err
-			}
-			ret[i].SetBytes(bytes)
-		}
-	}
-	return ret, nil
+		b.ReportAllocs()
+	})
+	pprof.StopCPUProfile()
 }
 
-// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
-	ndv := len(values)
-	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
-	for i := 0; i < ndv; i++ {
-		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
-	}
-	return histogram
-}
-
-func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
-	histColl := statistics.HistColl{
-		PhysicalID:     tbl.ID,
-		HavePhysicalID: true,
-		Count:          rowCount,
-		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
-	}
-	statsTbl := &statistics.Table{
-		HistColl: histColl,
-	}
-	return statsTbl
-}
-
-func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statistics.Table, error) {
+func TestOutOfRangeEstimation(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
-
-	is := dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	if err != nil {
-		return nil, err
+	testKit.MustExec("create table t(a int unsigned)")
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
-	tbl := tb.Meta()
+	testKit.MustExec("analyze table t with 2000 samples")
 
-	// mock the statistic table
-	statsTbl := mockStatsTable(tbl, 540)
+	h := dom.StatsHandle()
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+	sctx := mock.NewContext()
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, false)
+	require.NoError(t, err)
+	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
+	// so we use a range here.
+	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
+	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
 
-	// Set the value of columns' histogram.
-	colValues, err := generateIntDatum(1, 54)
-	if err != nil {
-		return nil, err
+	var input []struct {
+		Start int64
+		End   int64
 	}
-	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+	var output []struct {
+		Start int64
+		End   int64
+		Count float64
+	}
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	for i, ran := range input {
+		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = count
+		})
+		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+	}
+}
+
+func TestEstimationForUnknownValues(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("set @@tidb_analyze_version=1")
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	sctx := mock.NewContext()
+	colID := table.Meta().Columns[0].ID
+	count, err := statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(30, 30))
+	require.NoError(t, err)
+	require.Equal(t, 0.2, count)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, 30))
+	require.NoError(t, err)
+	require.Equal(t, 7.2, count)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, math.MaxInt64))
+	require.NoError(t, err)
+	require.Equal(t, 7.2, count)
+
+	idxID := table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(30, 30))
+	require.NoError(t, err)
+	require.Equal(t, 0.1, count)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(9, 30))
+	require.NoError(t, err)
+	require.Equal(t, 7.0, count)
+
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (null, null)")
+	testKit.MustExec("analyze table t")
+	table, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(1, 30))
+	require.NoError(t, err)
+	require.Equal(t, 0.0, count)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(2, 2))
+	require.NoError(t, err)
+	require.Equal(t, 0.0, count)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(2, 2))
+	require.NoError(t, err)
+	require.Equal(t, 0.0, count)
+}
+
+func TestEstimationUniqueKeyEqualConds(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, unique key(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7)")
+	testKit.MustExec("analyze table t with 4 cmsketch width, 1 cmsketch depth;")
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
+
+	sctx := mock.NewContext()
+	idxID := table.Meta().Indices[0].ID
+	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(7, 7))
+	require.NoError(t, err)
+	require.Equal(t, 1.0, count)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, 1.0, count)
+
+	colID := table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(7, 7))
+	require.NoError(t, err)
+	require.Equal(t, 1.0, count)
+
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, 1.0, count)
+}
+
+func TestPrimaryKeySelectivity(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	var input, output [][]string
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i, ts := range input {
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				testKit.MustExec(tt)
+			}
+			testdata.OnRecord(func() {
+				if j == len(ts)-1 {
+					output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
+			}
+		}
+	}
+}
+
+func TestStatsVer2(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists tint")
+	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tint with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdouble")
+	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdouble with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdecimal")
+	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdecimal with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tstring")
+	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
+	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdatetime")
+	testKit.MustExec("create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04')")
+	testKit.MustExec("analyze table tdatetime with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tprefix")
+	testKit.MustExec("create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)))")
+	testKit.MustExec("insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666')")
+	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
+
+	// test with clustered index
+	testKit.MustExec("drop table if exists ct1")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
+	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
+	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists ct2")
+	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
+	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
+
+	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
+	for _, r := range rows {
+		// ensure statsVer = 2
+		require.Equal(t, "2", fmt.Sprintf("%v", r[0]))
 	}
 
-	// Set the value of two indices' histograms.
-	idxValues, err := generateIntDatum(2, 3)
-	if err != nil {
-		return nil, err
+	var (
+		input  []string
+		output [][]string
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
-	tp := types.NewFieldType(mysql.TypeBlob)
-	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
-	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
-	return statsTbl, nil
+}
+
+func TestTopNOutOfHist(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists topn_before_hist")
+	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_before_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
+
+	var (
+		input  []string
+		output [][]string
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func TestColumnIndexNullEstimation(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
+	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t")
+	var (
+		input  []string
+		output [][]string
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i := 0; i < 5; i++ {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+	// Make sure column stats has been loaded.
+	testKit.MustExec(`explain select * from t where a is null`)
+	require.Nil(t, h.LoadNeededHistograms())
+	for i := 5; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func TestUniqCompEqualEst(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
+	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t")
+	var (
+		input  []string
+		output [][]string
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	for i := 0; i < 1; i++ {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
 }
 
 func TestSelectivity(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -230,7 +573,6 @@ func TestSelectivity(t *testing.T) {
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func TestDiscreteDistribution(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -262,7 +604,6 @@ func TestDiscreteDistribution(t *testing.T) {
 }
 
 func TestSelectCombinedLowBound(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -288,478 +629,8 @@ func TestSelectCombinedLowBound(t *testing.T) {
 	}
 }
 
-func getRange(start, end int64) []*ranger.Range {
-	ran := &ranger.Range{
-		LowVal:  []types.Datum{types.NewIntDatum(start)},
-		HighVal: []types.Datum{types.NewIntDatum(end)},
-	}
-	return []*ranger.Range{ran}
-}
-
-func TestOutOfRangeEstimation(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int unsigned)")
-	for i := 0; i < 3000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
-	}
-	testKit.MustExec("analyze table t with 2000 samples")
-
-	h := dom.StatsHandle()
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
-	sc := &stmtctx.StatementContext{}
-	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(900, 900), statsTbl.Count, false)
-	require.NoError(t, err)
-	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
-	// so we use a range here.
-	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
-	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
-
-	var input []struct {
-		Start int64
-		End   int64
-	}
-	var output []struct {
-		Start int64
-		End   int64
-		Count float64
-	}
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
-	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), increasedTblRowCount, false)
-		require.NoError(t, err)
-		testdata.OnRecord(func() {
-			output[i].Start = ran.Start
-			output[i].End = ran.End
-			output[i].Count = count
-		})
-		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
-		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
-	}
-}
-
-func TestEstimationForUnknownValues(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
-	testKit.MustExec("set @@tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-	for i := 0; i < 10; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustExec("analyze table t")
-	for i := 0; i < 10; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
-	}
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.Nil(t, h.Update(dom.InfoSchema()))
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
-
-	sc := &stmtctx.StatementContext{}
-	colID := table.Meta().Columns[0].ID
-	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
-	require.NoError(t, err)
-	require.Equal(t, 0.2, count)
-
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
-	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
-
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
-	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
-
-	idxID := table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
-	require.NoError(t, err)
-	require.Equal(t, 0.1, count)
-
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
-	require.NoError(t, err)
-	require.Equal(t, 7.0, count)
-
-	testKit.MustExec("truncate table t")
-	testKit.MustExec("insert into t values (null, null)")
-	testKit.MustExec("analyze table t")
-	table, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl = h.GetTableStats(table.Meta())
-
-	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
-	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
-
-	testKit.MustExec("drop table t")
-	testKit.MustExec("create table t(a int, b int, index idx(b))")
-	testKit.MustExec("insert into t values (1,1)")
-	testKit.MustExec("analyze table t")
-	table, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl = h.GetTableStats(table.Meta())
-
-	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
-	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
-
-	idxID = table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
-	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
-}
-
-func TestEstimationUniqueKeyEqualConds(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, c int, unique key(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7)")
-	testKit.MustExec("analyze table t with 4 cmsketch width, 1 cmsketch depth;")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
-
-	sc := &stmtctx.StatementContext{}
-	idxID := table.Meta().Indices[0].ID
-	count, err := statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(7, 7))
-	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
-
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
-
-	colID := table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(7, 7))
-	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
-
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(6, 6))
-	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
-}
-
-func TestPrimaryKeySelectivity(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	testKit.MustExec("create table t(a char(10) primary key, b int)")
-	var input, output [][]string
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i, ts := range input {
-		for j, tt := range ts {
-			if j != len(ts)-1 {
-				testKit.MustExec(tt)
-			}
-			testdata.OnRecord(func() {
-				if j == len(ts)-1 {
-					output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				}
-			})
-			if j == len(ts)-1 {
-				testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
-			}
-		}
-	}
-}
-
-func BenchmarkSelectivity(b *testing.B) {
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
-	defer clean()
-	testKit := testkit.NewTestKit(b, store)
-	statsTbl, err := prepareSelectivity(testKit, dom)
-	require.NoError(b, err)
-	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
-	sql := "select * from t where " + exprs
-	sctx := testKit.Session().(sessionctx.Context)
-	stmts, err := session.Parse(sctx, sql)
-	require.NoErrorf(b, err, "error %v, for expr %s", err, exprs)
-	require.Len(b, stmts, 1)
-	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-	require.NoErrorf(b, err, "for %s", exprs)
-	p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
-	require.NoErrorf(b, err, "error %v, for building plan, expr %s", err, exprs)
-
-	file, err := os.Create("cpu.profile")
-	require.NoError(b, err)
-	defer func() {
-		err := file.Close()
-		require.NoError(b, err)
-	}()
-	err = pprof.StartCPUProfile(file)
-	require.NoError(b, err)
-
-	b.Run("Selectivity", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
-			require.NoError(b, err)
-		}
-		b.ReportAllocs()
-	})
-	pprof.StopCPUProfile()
-}
-
-func TestStatsVer2(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version=2")
-
-	testKit.MustExec("drop table if exists tint")
-	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tint with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdouble")
-	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdouble with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdecimal")
-	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdecimal with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tstring")
-	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
-	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdatetime")
-	testKit.MustExec("create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04')")
-	testKit.MustExec("analyze table tdatetime with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tprefix")
-	testKit.MustExec("create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)))")
-	testKit.MustExec("insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666')")
-	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
-
-	// test with clustered index
-	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
-	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
-	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists ct2")
-	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
-	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
-
-	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
-	for _, r := range rows {
-		// ensure statsVer = 2
-		require.Equal(t, "2", fmt.Sprintf("%v", r[0]))
-	}
-
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestTopNOutOfHist(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version=2")
-
-	testKit.MustExec("drop table if exists topn_before_hist")
-	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
-	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
-	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_before_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
-	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_after_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
-	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
-
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestColumnIndexNullEstimation(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
-	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustExec("analyze table t")
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := 0; i < 5; i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-	// Make sure column stats has been loaded.
-	testKit.MustExec(`explain select * from t where a is null`)
-	require.Nil(t, h.LoadNeededHistograms())
-	for i := 5; i < len(input); i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestUniqCompEqualEst(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
-	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustExec("analyze table t")
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := 0; i < 1; i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestSelectivityGreedyAlgo(t *testing.T) {
-	t.Parallel()
-	nodes := make([]*statistics.StatsNode, 3)
-	nodes[0] = statistics.MockStatsNode(1, 3, 2)
-	nodes[1] = statistics.MockStatsNode(2, 5, 2)
-	nodes[2] = statistics.MockStatsNode(3, 9, 2)
-
-	// Sets should not overlap on mask, so only nodes[0] is chosen.
-	usedSets := statistics.GetUsableSetsByGreedy(nodes)
-	require.Equal(t, 1, len(usedSets))
-	require.Equal(t, int64(1), usedSets[0].ID)
-
-	nodes[0], nodes[1] = nodes[1], nodes[0]
-	// Sets chosen should be stable, so the returned node is still the one with ID 1.
-	usedSets = statistics.GetUsableSetsByGreedy(nodes)
-	require.Equal(t, 1, len(usedSets))
-	require.Equal(t, int64(1), usedSets[0].ID)
-}
-
-func TestCollationColumnEstimate(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
-	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table t")
-	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.Nil(t, h.LoadNeededHistograms())
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -830,7 +701,6 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -861,7 +731,6 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 }
 
 func TestRangeStepOverflow(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -881,7 +750,6 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -898,7 +766,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
-	sc := &stmtctx.StatementContext{}
+	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
 
 	var input []struct {
@@ -913,7 +781,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -922,4 +790,121 @@ func TestSmallRangeEstimation(t *testing.T) {
 		})
 		require.Truef(t, math.Abs(count-output[i].Count) < eps, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 	}
+}
+
+const eps = 1e-9
+
+// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
+// If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
+func generateIntDatum(dimension, num int) ([]types.Datum, error) {
+	length := int(math.Pow(float64(num), float64(dimension)))
+	ret := make([]types.Datum, length)
+	if dimension == 1 {
+		for i := 0; i < num; i++ {
+			ret[i] = types.NewIntDatum(int64(i))
+		}
+	} else {
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		// In this way, we can guarantee the datum is in order.
+		for i := 0; i < length; i++ {
+			data := make([]types.Datum, dimension)
+			j := i
+			for k := 0; k < dimension; k++ {
+				data[dimension-k-1].SetInt64(int64(j % num))
+				j = j / num
+			}
+			bytes, err := codec.EncodeKey(sc, nil, data...)
+			if err != nil {
+				return nil, err
+			}
+			ret[i].SetBytes(bytes)
+		}
+	}
+	return ret, nil
+}
+
+// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
+	ndv := len(values)
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
+	for i := 0; i < ndv; i++ {
+		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
+	}
+	return histogram
+}
+
+func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	histColl := statistics.HistColl{
+		PhysicalID:     tbl.ID,
+		HavePhysicalID: true,
+		Count:          rowCount,
+		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
+	statsTbl := &statistics.Table{
+		HistColl: histColl,
+	}
+	return statsTbl
+}
+
+func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statistics.Table, error) {
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
+
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	if err != nil {
+		return nil, err
+	}
+	tbl := tb.Meta()
+
+	// mock the statistic table
+	statsTbl := mockStatsTable(tbl, 540)
+
+	// Set the value of columns' histogram.
+	colValues, err := generateIntDatum(1, 54)
+	if err != nil {
+		return nil, err
+	}
+	for i := 1; i <= 5; i++ {
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+	}
+
+	// Set the value of two indices' histograms.
+	idxValues, err := generateIntDatum(2, 3)
+	if err != nil {
+		return nil, err
+	}
+	tp := types.NewFieldType(mysql.TypeBlob)
+	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
+	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
+	return statsTbl, nil
+}
+
+func getRange(start, end int64) []*ranger.Range {
+	ran := &ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(start)},
+		HighVal:   []types.Datum{types.NewIntDatum(end)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	return []*ranger.Range{ran}
+}
+
+func TestSelectivityGreedyAlgo(t *testing.T) {
+	nodes := make([]*statistics.StatsNode, 3)
+	nodes[0] = statistics.MockStatsNode(1, 3, 2)
+	nodes[1] = statistics.MockStatsNode(2, 5, 2)
+	nodes[2] = statistics.MockStatsNode(3, 9, 2)
+
+	// Sets should not overlap on mask, so only nodes[0] is chosen.
+	usedSets := statistics.GetUsableSetsByGreedy(nodes)
+	require.Equal(t, 1, len(usedSets))
+	require.Equal(t, int64(1), usedSets[0].ID)
+
+	nodes[0], nodes[1] = nodes[1], nodes[0]
+	// Sets chosen should be stable, so the returned node is still the one with ID 1.
+	usedSets = statistics.GetUsableSetsByGreedy(nodes)
+	require.Equal(t, 1, len(usedSets))
+	require.Equal(t, int64(1), usedSets[0].ID)
 }

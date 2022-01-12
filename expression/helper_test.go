@@ -33,8 +33,6 @@ import (
 )
 
 func TestGetTimeValue(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
@@ -42,8 +40,9 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue := v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
 	sessionVars := ctx.GetSessionVars()
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
 	require.NoError(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
@@ -62,13 +61,25 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	require.NoError(t, err)
+	require.Error(t, err, "Incorrect argument type to variable 'timestamp'")
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
+	// trigger the stmt context cache.
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
+	require.NoError(t, err)
+
+	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, v1, v2)
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
 	require.NoError(t, err)
@@ -117,8 +128,6 @@ func TestGetTimeValue(t *testing.T) {
 }
 
 func TestIsCurrentTimestampExpr(t *testing.T) {
-	t.Parallel()
-
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -144,8 +153,6 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 }
 
 func TestCurrentTimestampTimeZone(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 

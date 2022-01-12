@@ -8,13 +8,13 @@ import (
 
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pingcap/tidb/br/pkg/version"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestFilterTables(t *testing.T) {
-	t.Parallel()
-
 	tctx := tcontext.Background().WithLogger(appLogger)
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
@@ -29,8 +29,8 @@ func TestFilterTables(t *testing.T) {
 	require.NoError(t, err)
 
 	conf := &Config{
-		ServerInfo: ServerInfo{
-			ServerType: ServerTypeTiDB,
+		ServerInfo: version.ServerInfo{
+			ServerType: version.ServerTypeTiDB,
 		},
 		Tables:      dbTables,
 		TableFilter: tableFilter,
@@ -47,15 +47,13 @@ func TestFilterTables(t *testing.T) {
 }
 
 func TestFilterDatabaseWithNoTable(t *testing.T) {
-	t.Parallel()
-
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
 	dbTables["xxx"] = []*TableInfo{}
 	conf := &Config{
-		ServerInfo: ServerInfo{
-			ServerType: ServerTypeTiDB,
+		ServerInfo: version.ServerInfo{
+			ServerType: version.ServerTypeTiDB,
 		},
 		Tables:            dbTables,
 		TableFilter:       tf.NewSchemasFilter("yyy"),

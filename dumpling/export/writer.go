@@ -10,10 +10,11 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"go.uber.org/zap"
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -73,7 +74,7 @@ func (w *Writer) run(taskStream <-chan Task) error {
 	for {
 		select {
 		case <-w.tctx.Done():
-			w.tctx.L().Warn("context has been done, the writer will exit",
+			w.tctx.L().Info("context has been done, the writer will exit",
 				zap.Int64("writer ID", w.id))
 			return nil
 		case task, ok := <-taskStream:
@@ -98,6 +99,8 @@ func (w *Writer) handleTask(task Task) error {
 		return w.WriteTableMeta(t.DatabaseName, t.TableName, t.CreateTableSQL)
 	case *TaskViewMeta:
 		return w.WriteViewMeta(t.DatabaseName, t.ViewName, t.CreateTableSQL, t.CreateViewSQL)
+	case *TaskPolicyMeta:
+		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
 		err := w.WriteTableData(t.Meta, t.Data, t.ChunkIndex)
 		if err != nil {
@@ -111,6 +114,16 @@ func (w *Writer) handleTask(task Task) error {
 		w.tctx.L().Warn("unsupported writer task type", zap.String("type", fmt.Sprintf("%T", t)))
 		return nil
 	}
+}
+
+// WritePolicyMeta writes database meta to a file
+func (w *Writer) WritePolicyMeta(policy, createSQL string) error {
+	tctx, conf := w.tctx, w.conf
+	fileName, err := (&outputFileNamer{Policy: policy}).render(conf.OutputFileTemplate, outputFileTemplatePolicy)
+	if err != nil {
+		return err
+	}
+	return writeMetaToFile(tctx, "placement-policy", createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteDatabaseMeta writes database meta to a file
@@ -226,7 +239,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		}
 	}
 	if !somethingIsWritten {
-		tctx.L().Warn("no data written in table chunk",
+		tctx.L().Info("no data written in table chunk",
 			zap.String("database", meta.DatabaseName()),
 			zap.String("table", meta.TableName()),
 			zap.Int("chunkIdx", curChkIdx))
@@ -253,6 +266,7 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 type outputFileNamer struct {
 	ChunkIndex int
 	FileIndex  int
+	Policy     string
 	DB         string
 	Table      string
 	format     string

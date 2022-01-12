@@ -27,24 +27,12 @@ on:
       - 'util/codec/**'
       - 'parser/model/**'
 
-jobs:
-  unit-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: true
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 2
-      - name: Set up Go 1.16
-        uses: actions/setup-go@v2
-        with:
-          go-version: 1.16
-      - name: Unit test
-        run: make dumpling_unit_test WITH_RACE=1
-      - uses: codecov/codecov-action@v1
+# See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
 
+jobs:
   integration-test-mysql-5735:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -77,7 +65,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -114,7 +102,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -151,7 +139,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3

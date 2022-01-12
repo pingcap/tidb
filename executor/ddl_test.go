@@ -111,7 +111,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -125,7 +125,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -536,7 +536,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -564,7 +564,7 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -1205,7 +1205,7 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1244,7 +1244,7 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
 }
 
-func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1486,6 +1486,10 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1563,6 +1567,11 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+	tk.MustExec("drop database if exists rename4")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1577,14 +1586,14 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("insert rename2.t2 values ()")
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename4.t4 values ()")
-	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "5001"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "5001"))
 	// Rename a table to another table in the same database.
 	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
 	tk.MustExec("insert rename2.t1 values ()")
-	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("insert rename4.t3 values ()")
-	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename4")
 

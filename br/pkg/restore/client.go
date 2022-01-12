@@ -754,6 +754,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			gctx,
 			store.GetAddress(),
 			opt,
+			grpc.WithBlock(),
+			grpc.FailOnNonTempDialError(true),
 			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 			// we don't need to set keepalive timeout here, because the connection lives
 			// at most 5s. (shorter than minimal value for keepalive time!)
@@ -796,7 +798,7 @@ func (rc *Client) GoValidateChecksum(
 	// run the stat loader
 	go func() {
 		defer wg.Done()
-		rc.statLoader(ctx, loadStatCh)
+		rc.updateMetaAndLoadStats(ctx, loadStatCh)
 	}()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go func() {
@@ -808,6 +810,7 @@ func (rc *Client) GoValidateChecksum(
 			close(loadStatCh)
 			wg.Done()
 		}()
+
 		for {
 			select {
 			// if we use ectx here, maybe canceled will mask real error.
@@ -817,11 +820,11 @@ func (rc *Client) GoValidateChecksum(
 				if !ok {
 					return
 				}
+
 				workers.ApplyOnErrorGroup(eg, func() error {
 					start := time.Now()
 					defer func() {
 						elapsed := time.Since(start)
-						summary.CollectDuration("restore checksum", elapsed)
 						summary.CollectSuccessUnit("table checksum", 1, elapsed)
 					}()
 					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
@@ -842,7 +845,13 @@ func (rc *Client) GoValidateChecksum(
 	return outCh
 }
 
-func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient kv.Client, concurrency uint, loadStatCh chan<- *CreatedTable) error {
+func (rc *Client) execChecksum(
+	ctx context.Context,
+	tbl CreatedTable,
+	kvClient kv.Client,
+	concurrency uint,
+	loadStatCh chan<- *CreatedTable,
+) error {
 	logger := log.With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
@@ -891,13 +900,12 @@ func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient k
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	if table.Stats != nil {
-		loadStatCh <- &tbl
-	}
+
+	loadStatCh <- &tbl
 	return nil
 }
 
-func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
+func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -906,19 +914,33 @@ func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
 			if !ok {
 				return
 			}
-			table := tbl.OldTable
-			log.Info("start loads analyze after validate checksum",
-				zap.Int64("old id", tbl.OldTable.Info.ID),
-				zap.Int64("new id", tbl.Table.ID),
-			)
-			start := time.Now()
-			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-				log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+
+			// Not need to return err when failed because of update analysis-meta
+			restoreTS, err := rc.GetTS(ctx)
+			if err != nil {
+				log.Error("getTS failed", zap.Error(err))
+			} else {
+				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
+				if err != nil {
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+				}
 			}
-			log.Info("restore stat done",
-				zap.String("table", table.Info.Name.L),
-				zap.String("db", table.DB.Name.L),
-				zap.Duration("cost", time.Since(start)))
+
+			table := tbl.OldTable
+			if table.Stats != nil {
+				log.Info("start loads analyze after validate checksum",
+					zap.Int64("old id", tbl.OldTable.Info.ID),
+					zap.Int64("new id", tbl.Table.ID),
+				)
+				start := time.Now()
+				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
+					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+				}
+				log.Info("restore stat done",
+					zap.String("table", table.Info.Name.L),
+					zap.String("db", table.DB.Name.L),
+					zap.Duration("cost", time.Since(start)))
+			}
 		}
 	}
 }

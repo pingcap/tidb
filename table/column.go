@@ -23,10 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -171,32 +169,37 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
-	sc := ctx.GetSessionVars().StmtCtx
-
-	var strval strings.Builder
-	for j := 0; j < 6; j++ {
-		if len(str) > (i + j) {
-			if str[i+j] > unicode.MaxASCII {
-				fmt.Fprintf(&strval, "\\x%X", str[i+j])
-			} else {
-				strval.WriteRune(rune(str[i+j]))
-			}
+// convertToIncorrectStringErr converts ErrInvalidCharacterString to ErrTruncatedWrongValueForField.
+// The first argument is the invalid character in bytes.
+func convertToIncorrectStringErr(err error, colName string) error {
+	inErr, ok := errors.Cause(err).(*errors.Error)
+	if !ok {
+		return err
+	}
+	args := inErr.Args()
+	if len(args) != 2 {
+		return err
+	}
+	invalidStrHex, ok := args[1].(string)
+	if !ok {
+		return err
+	}
+	var res strings.Builder
+	for i := 0; i < len(invalidStrHex); i++ {
+		if i%2 == 0 {
+			res.WriteString("\\x")
 		}
+		res.WriteByte(invalidStrHex[i])
 	}
-	if len(str) > i+6 {
-		strval.WriteString(`...`)
-	}
-
-	// TODO: Add 'at row %d'
-	err := ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", strval.String(), col.Name)
-	logutil.BgLogger().Error("incorrect string value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	// Truncate to valid utf8 string.
-	truncateVal := types.NewStringDatum(str[:i])
-	err = sc.HandleTruncate(err)
-	return truncateVal, err
+	return ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", res.String(), colName)
 }
 
+// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
+// Currently only called from CastValue.
+// returns:
+//   value (possibly adjusted)
+//   boolean; true if break error/warning handling in CastValue and return what was returned from this
+//   error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
@@ -246,6 +249,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
 			sc.AppendWarning(innerErr)
 		}
+		return types.NewDatum(zeroV), true, nil
+	} else if tmIsInvalid && col.Tp == mysql.TypeTimestamp {
+		// Prevent from being stored! Invalid timestamp!
+		if mode.HasStrictMode() {
+			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		}
+		// no strict mode, truncate to 0000-00-00 00:00:00
+		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
@@ -305,6 +316,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
+	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
+		err = convertToIncorrectStringErr(err, col.Name.O)
+		logutil.BgLogger().Error("incorrect string value",
+			zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	}
 
 	err = sc.HandleTruncate(err)
@@ -317,59 +332,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
-	}
-
-	if col.Charset == charset.CharsetASCII {
-		if ctx.GetSessionVars().SkipASCIICheck {
-			return casted, nil
-		}
-
-		str := casted.GetString()
-		for i := 0; i < len(str); i++ {
-			if str[i] > unicode.MaxASCII {
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			}
-		}
-		if forceIgnoreTruncate {
-			err = nil
-		}
-		return casted, err
-	}
-
-	if ctx.GetSessionVars().SkipUTF8Check {
-		return casted, nil
-	}
-
-	if !mysql.IsUTF8Charset(col.Charset) {
-		return casted, nil
-	}
-	str := casted.GetString()
-	utf8Charset := col.Charset == mysql.UTF8Charset
-	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	fastCheck := (col.Charset == mysql.UTF8MB4Charset) && utf8.ValidString(str)
-	if !fastCheck {
-		// The following check is slow, if we fast check success, we can avoid this.
-		for i, w := 0, 0; i < len(str); i += w {
-			runeValue, width := utf8.DecodeRuneInString(str[i:])
-			if runeValue == utf8.RuneError {
-				if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-					w = width
-					continue
-				}
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			} else if width > 3 && doMB4CharCheck {
-				// Handle non-BMP characters.
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			}
-			w = width
-		}
-	}
-
-	if forceIgnoreTruncate {
-		err = nil
 	}
 	return casted, err
 }

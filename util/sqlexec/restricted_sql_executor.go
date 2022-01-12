@@ -45,7 +45,7 @@ type RestrictedSQLExecutor interface {
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
+	ParseWithParams(ctx context.Context, forceUTF8SQL bool, sql string, args ...interface{}) (ast.StmtNode, error)
 	// ExecRestrictedStmt run sql statement in ctx with some restriction.
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 }
@@ -139,11 +139,8 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	// NewChunk create a chunk.
-	NewChunk() *chunk.Chunk
-
-	// NewChunk create a chunk from the allocator.
-	NewChunkFromAllocator(chunk.Allocator) *chunk.Chunk
+	// NewChunk create a chunk, if allocator is nil, the default one is used.
+	NewChunk(chunk.Allocator) *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
@@ -167,7 +164,7 @@ type MultiQueryNoDelayResult interface {
 // DrainRecordSet fetches the rows in the RecordSet.
 func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

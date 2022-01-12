@@ -70,7 +70,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 		return nil, errors.Trace(err)
 	}
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -176,7 +176,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 			paramNames = append(paramNames, name)
 		}
 		buf.WriteString(")")
-		stmt, err := e.ParseWithParams(ctx, buf.String(), paramNames...)
+		stmt, err := e.ParseWithParams(ctx, true, buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}

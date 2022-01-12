@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRepeatableRead(t *testing.T) {
-	t.Parallel()
-
 	data := [][]interface{}{
-		{ServerTypeUnknown, consistencyTypeNone, true},
-		{ServerTypeMySQL, consistencyTypeFlush, true},
-		{ServerTypeMariaDB, consistencyTypeLock, true},
-		{ServerTypeTiDB, consistencyTypeNone, true},
-		{ServerTypeTiDB, consistencyTypeSnapshot, false},
-		{ServerTypeTiDB, consistencyTypeLock, true},
+		{version.ServerTypeUnknown, consistencyTypeNone, true},
+		{version.ServerTypeMySQL, consistencyTypeFlush, true},
+		{version.ServerTypeMariaDB, consistencyTypeLock, true},
+		{version.ServerTypeTiDB, consistencyTypeNone, true},
+		{version.ServerTypeTiDB, consistencyTypeSnapshot, false},
+		{version.ServerTypeTiDB, consistencyTypeLock, true},
 	}
-	dec := func(d []interface{}) (ServerType, string, bool) {
-		return ServerType(d[0].(int)), d[1].(string), d[2].(bool)
+	dec := func(d []interface{}) (version.ServerType, string, bool) {
+		return version.ServerType(d[0].(int)), d[1].(string), d[2].(bool)
 	}
 	for tag, datum := range data {
 		serverTp, consistency, expectRepeatableRead := dec(datum)

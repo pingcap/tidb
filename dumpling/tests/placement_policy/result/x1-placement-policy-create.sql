@@ -1,0 +1,2 @@
+/*!40101 SET NAMES binary*/;
+/*T![placement] CREATE PLACEMENT POLICY `x1` FOLLOWERS=4 */;

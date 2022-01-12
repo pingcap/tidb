@@ -179,6 +179,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
+	// cached table and temporary table are similar
 	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
@@ -313,13 +314,16 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
-	var kvReqs []*kv.Request
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
+		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			builder.SetIsolationLevel(kv.RC)
+		}
 		reqBuilder := builder.SetKeyRanges(kvRange)
 		kvReq, err := reqBuilder.
 			SetDAGRequest(e.dagPB).
@@ -352,6 +356,9 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		reqBuilder = builder.SetKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		reqBuilder.SetIsolationLevel(kv.RC)
 	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).

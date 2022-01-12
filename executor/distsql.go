@@ -197,12 +197,14 @@ type IndexReaderExecutor struct {
 }
 
 // Close clears all resources hold by current object.
-func (e *IndexReaderExecutor) Close() error {
+func (e *IndexReaderExecutor) Close() (err error) {
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
-	err := e.result.Close()
+	if e.result != nil {
+		err = e.result.Close()
+	}
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
@@ -279,6 +281,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.kvRanges = kvRanges
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// In a test case IndexReaderExecutor is mocked and e.table is nil.
+	// Avoid sending distsql request to TIKV.
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
@@ -286,6 +289,9 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
+	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		builder.SetIsolationLevel(kv.RC)
+	}
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -358,6 +364,7 @@ type IndexLookUpExecutor struct {
 
 	indexStreaming bool
 	tableStreaming bool
+	indexPaging    bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -373,6 +380,9 @@ type IndexLookUpExecutor struct {
 
 	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
 	extraPIDColumnIndex offsetOptional
+
+	// cancelFunc is called when close the executor
+	cancelFunc context.CancelFunc
 }
 
 type getHandleType int8
@@ -486,6 +496,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
+	ctx, cancel := context.WithCancel(ctx)
+	e.cancelFunc = cancel
 	workCh := make(chan *lookupTableTask, 1)
 	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
 		return err
@@ -547,11 +559,15 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
+		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			builder.SetIsolationLevel(kv.RC)
+		}
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetPaging(e.indexPaging).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -675,6 +691,10 @@ func (e *IndexLookUpExecutor) Close() error {
 		return nil
 	}
 
+	if e.cancelFunc != nil {
+		e.cancelFunc()
+		e.cancelFunc = nil
+	}
 	close(e.finished)
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
@@ -1118,6 +1138,13 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	chk := newFirstChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
+
+	// Prepare collator for compare.
+	collators := make([]collate.Collator, 0, len(w.idxColTps))
+	for _, tp := range w.idxColTps {
+		collators = append(collators, collate.GetCollator(tp.Collate))
+	}
+
 	for {
 		err := Next(ctx, tableReader, chk)
 		if err != nil {
@@ -1154,19 +1181,19 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
-			for i, val := range vals {
+			for i := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := idxVal.CompareDatum(sctx, &val)
+				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])
 				if err != nil {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+						handle, idxRow.GetDatum(i, tp), vals[i], err)
 				}
 				if cmpRes != 0 {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+						handle, idxRow.GetDatum(i, tp), vals[i], err)
 				}
 			}
 		}
@@ -1233,7 +1260,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
+		!w.idxLookup.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {

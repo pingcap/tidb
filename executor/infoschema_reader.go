@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -162,8 +161,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableRegionLabel:
-			err = e.setDataForRegionLabel(sctx)
+		case infoschema.TableAttributes:
+			err = e.setDataForAttributes(sctx)
 		case infoschema.TablePlacementRules:
 			err = e.setDataFromPlacementRules(ctx, sctx, dbs)
 		}
@@ -190,7 +189,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "select table_id, count from mysql.stats_meta")
+	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +214,7 @@ type tableHistID struct {
 
 func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +353,13 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 		if len(schema.Collate) > 0 {
 			collation = schema.Collate // Overwrite default
 		}
+		var policyName, directPlacement interface{}
+		if schema.PlacementPolicyRef != nil {
+			policyName = schema.PlacementPolicyRef.Name.O
+		}
+		if schema.DirectPlacementOpts != nil {
+			directPlacement = schema.DirectPlacementOpts.String()
+		}
 
 		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
 			continue
@@ -363,7 +369,9 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 			schema.Name.O,         // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
 			collation,             // DEFAULT_COLLATION_NAME
-			nil,
+			nil,                   // SQL_PATH
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			directPlacement,       // TIDB_DIRECT_PLACEMENT
 		)
 		rows = append(rows, record)
 	}
@@ -534,6 +542,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
+				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+					createOptions = "cached=on"
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
@@ -566,11 +576,10 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				}
 				if table.IsSequence() {
 					tableType = "SEQUENCE"
-					if rowCount == 0 {
-						rowCount = 1
-					}
+					// sequence is always 1 row regardless of stats.
+					rowCount = 1
 				}
-				if table.PKIsHandle || table.IsCommonHandle {
+				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
@@ -647,7 +656,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	return nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context, extractor *plannercore.ColumnsTableExtractor) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	batch := 1024
@@ -670,7 +679,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 				}
 			}
 
-			e.dataForColumnsInTable(ctx, sctx, schema, table, priv)
+			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -680,15 +689,69 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType) {
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
 	if err := tryFillViewColumnType(ctx, sctx, sctx.GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
+	var tableSchemaFilterEnable,
+		tableNameFilterEnable, columnsFilterEnable bool
+	if !extractor.SkipRequest {
+		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
+		tableNameFilterEnable = extractor.TableName.Count() > 0
+		columnsFilterEnable = extractor.ColumnName.Count() > 0
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.ColumnNamePatterns) > 0 {
+			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			for i, pattern := range extractor.ColumnNamePatterns {
+				columnsRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+	}
+ForColumnsTag:
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
+		if !extractor.SkipRequest {
+			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
+				continue
+			}
+			if tableNameFilterEnable && !extractor.TableName.Exist(tbl.Name.L) {
+				continue
+			}
+			if columnsFilterEnable && !extractor.ColumnName.Exist(col.Name.L) {
+				continue
+			}
+			for _, re := range tableSchemaRegexp {
+				if !re.MatchString(schema.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range tableNameRegexp {
+				if !re.MatchString(tbl.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range columnsRegexp {
+				if !re.MatchString(col.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+		}
+
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -1444,13 +1507,13 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for _, region := range regionsInfo.Regions {
-		tableList := tableInfos[region.ID]
+	for i := range regionsInfo.Regions {
+		tableList := tableInfos[regionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&region, nil)
+			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
 		}
-		for _, table := range tableList {
-			e.setNewTiKVRegionStatusCol(&region, &table)
+		for j := range tableList {
+			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
 		}
 	}
 	return nil
@@ -1499,8 +1562,8 @@ func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) er
 	if err != nil {
 		return err
 	}
-	for _, region := range regionsInfo.Regions {
-		e.setNewTiKVRegionPeersCols(&region)
+	for i := range regionsInfo.Regions {
+		e.setNewTiKVRegionPeersCols(&regionsInfo.Regions[i])
 	}
 	return nil
 }
@@ -1772,7 +1835,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	for e.curTable < len(e.initialTables) && count < 1024 {
 		table := e.initialTables[e.curTable]
 		tableID := table.ID
-		err := e.helper.GetPDRegionStats(tableID, &e.stats)
+		err := e.helper.GetPDRegionStats(tableID, &e.stats, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1796,10 +1859,11 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 }
 
 func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
-	var rows [][]types.Datum
 	var err error
 	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.GetSysVars() {
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, v := range sysVars {
 		var value string
 		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
@@ -2504,6 +2568,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 type hugeMemTableRetriever struct {
 	dummyCloser
+	extractor   *plannercore.ColumnsTableExtractor
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
 	retrieved   bool
@@ -2532,7 +2597,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var err error
 	switch e.table.Name.O {
 	case infoschema.TableColumns:
-		err = e.setDataForColumns(ctx, sctx)
+		err = e.setDataForColumns(ctx, sctx, e.extractor)
 	}
 	if err != nil {
 		return nil, err
@@ -2606,58 +2671,77 @@ type tiflashInstanceInfo struct {
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	store := sctx.GetStore()
-	if etcd, ok := store.(kv.EtcdBackend); ok {
-		var addrs []string
-		var err error
-		if addrs, err = etcd.EtcdAddrs(); err != nil {
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
+	if err != nil {
+		return err
+	}
+
+	for _, info := range storeInfo {
+		if info.ServerType != kv.TiFlash.Name() {
+			continue
+		}
+		info.ResolveLoopBackAddr()
+		if len(tiflashInstances) > 0 && !tiflashInstances.Exist(info.Address) {
+			continue
+		}
+		hostAndStatusPort := strings.Split(info.StatusAddr, ":")
+		if len(hostAndStatusPort) != 2 {
+			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
+		}
+		// fetch tiflash config
+		configURL := fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), info.StatusAddr)
+		resp, err := util.InternalHTTPClient().Get(configURL)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("request %s failed: %s", configURL, resp.Status)
+		}
+		// parse http_port or https_port from the fetched config
+		var nestedConfig map[string]interface{}
+		if err = json.NewDecoder(resp.Body).Decode(&nestedConfig); err != nil {
 			return err
 		}
-		if addrs != nil {
-			domainFromCtx := domain.GetDomain(sctx)
-			if domainFromCtx != nil {
-				cli := domainFromCtx.GetEtcdClient()
-				prefix := "/tiflash/cluster/http_port/"
-				kv := clientv3.NewKV(cli)
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
-				cancel()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				for _, ev := range resp.Kvs {
-					id := string(ev.Key)[len(prefix):]
-					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
-						continue
-					}
-					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
-					req, err := http.NewRequest(http.MethodGet, url, nil)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					resp, err := util.InternalHTTPClient().Do(req)
-					if err != nil {
-						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						continue
-					}
-					resp.Body.Close()
-					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
-						id:  id,
-						url: url,
-					})
-					e.instanceCount += 1
-				}
-				e.initialized = true
-				return nil
+		if engineStoreConfig, ok := nestedConfig["engine-store"]; ok {
+			foundPort := false
+			var port interface{}
+			portProtocol := ""
+			if httpPort, ok := engineStoreConfig.(map[string]interface{})["http_port"]; ok {
+				foundPort = true
+				port = httpPort
+				portProtocol = "http"
+			} else if httpsPort, ok := engineStoreConfig.(map[string]interface{})["https_port"]; ok {
+				foundPort = true
+				port = httpsPort
+				portProtocol = "https"
 			}
+			if !foundPort {
+				return errors.Errorf("engine-store.http_port/https_port not found in server %s", info.Address)
+			}
+			switch portValue := port.(type) {
+			case float64:
+				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+					id:  info.Address,
+					url: fmt.Sprintf("%s://%s:%d", portProtocol, hostAndStatusPort[0], int(portValue)),
+				})
+				e.instanceCount += 1
+			default:
+				return errors.Errorf("engine-store.http_port value(%p) unexpected in server %s", port, info.Address)
+			}
+		} else {
+			return errors.Errorf("engine-store config not found in server %s", info.Address)
 		}
-		return errors.Errorf("Etcd addrs not found")
+		if err = resp.Body.Close(); err != nil {
+			return err
+		}
 	}
-	return errors.Errorf("%T not an etcd backend", store)
+	e.initialized = true
+	return nil
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string
+	var columnNames []string // nolint: prealloc
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue
@@ -2698,7 +2782,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		return nil, errors.Trace(err)
 	}
 	records := strings.Split(string(body), "\n")
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(records))
 	for _, record := range records {
 		if len(record) == 0 {
 			continue
@@ -2747,11 +2831,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
 	rules, err := infosync.GetAllLabelRules(context.TODO())
-	failpoint.Inject("mockOutputOfRegionLabel", func() {
+	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
 		}
@@ -2770,8 +2853,10 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 	})
 
 	if err != nil {
-		return errors.Wrap(err, "get region label failed")
+		return errors.Wrap(err, "get the label rules failed")
 	}
+
+	rows := make([][]types.Datum, 0, len(rules))
 	for _, rule := range rules {
 		skip := true
 		dbName, tableName, err := checkRule(rule)
@@ -2811,11 +2896,11 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	var rows [][]types.Datum
-
+	placementPolicies := is.AllPlacementPolicies()
+	rows := make([][]types.Datum, 0, len(placementPolicies))
 	// Get global PLACEMENT POLICIES
 	// Currently no privileges needed for seeing global PLACEMENT POLICIES!
-	for _, policy := range is.AllPlacementPolicies() {
+	for _, policy := range placementPolicies {
 		// Currently we skip converting syntactic sugar. We might revisit this decision still in the future
 		// I.e.: if PrimaryRegion or Regions are set,
 		// also convert them to LeaderConstraints and FollowerConstraints

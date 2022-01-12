@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,12 +33,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -62,6 +66,12 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 		}
 	}
 	m[id] = item
+}
+
+func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
+	for id, item := range deltaMap {
+		m.update(id, item.Delta, item.Count, &item.ColSize)
+	}
 }
 
 type errorRateDelta struct {
@@ -125,15 +135,26 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
-	for id, item := range s.mapper {
-		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
+// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
+type colStatsUsageMap map[model.TableColumnID]time.Time
+
+func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+	for id, t := range other {
+		if mt, ok := m[id]; !ok || mt.Before(t) {
+			m[id] = t
+		}
 	}
+}
+
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap, colMap colStatsUsageMap) {
+	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
-	h.feedback.Merge(s.feedback)
+	feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
+	colMap.merge(s.colMap)
+	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
@@ -143,6 +164,7 @@ type SessionStatsCollector struct {
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
+	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
@@ -198,6 +220,13 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
+// UpdateColStatsUsage updates the last time when the column stats are used(needed).
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+	s.Lock()
+	defer s.Unlock()
+	s.colMap.merge(colMap)
+}
+
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
@@ -207,6 +236,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 		rateMap:  make(errorRateDeltaMap),
 		next:     h.listHead.next,
 		feedback: statistics.NewQueryFeedbackMap(),
+		colMap:   make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -252,7 +282,8 @@ func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInf
 }
 
 func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id, item := range destMap {
+	for id := range destMap {
+		item := destMap[id]
 		m.updateByKey(id, &item)
 	}
 }
@@ -374,13 +405,16 @@ const (
 // sweepList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
+	deltaMap := make(tableDeltaMap)
+	errorRateMap := make(errorRateDeltaMap)
+	feedback := statistics.NewQueryFeedbackMap()
+	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
-	errorRateMap := make(errorRateDeltaMap)
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into handle and error rate map.
-		h.merge(curr, errorRateMap)
+		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
+		merge(curr, deltaMap, errorRateMap, feedback, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -392,37 +426,37 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
+	h.globalMap.Lock()
+	h.globalMap.data.merge(deltaMap)
+	h.globalMap.Unlock()
 	h.mu.Lock()
 	h.mu.rateMap.merge(errorRateMap)
 	h.mu.Unlock()
-	h.siftFeedbacks()
-}
-
-// siftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
-// feedback accuracy and its overhead.
-func (h *Handle) siftFeedbacks() {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	for k, qs := range h.feedback.Feedbacks {
-		fbs := make([]statistics.Feedback, 0, len(qs)*2)
-		for _, q := range qs {
-			fbs = append(fbs, q.Feedback...)
-		}
-		if len(fbs) == 0 {
-			delete(h.feedback.Feedbacks, k)
-			continue
-		}
-		h.feedback.Feedbacks[k] = h.feedback.Feedbacks[k][:1]
-		h.feedback.Feedbacks[k][0].Feedback, _ = statistics.NonOverlappedFeedbacks(sc, fbs)
-	}
-	h.feedback.Size = len(h.feedback.Feedbacks)
+	h.feedback.Lock()
+	h.feedback.data.Merge(feedback)
+	h.feedback.data.SiftFeedbacks()
+	h.feedback.Unlock()
+	h.colMap.Lock()
+	h.colMap.data.merge(colMap)
+	h.colMap.Unlock()
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
+	h.globalMap.Lock()
+	deltaMap := h.globalMap.data
+	h.globalMap.data = make(tableDeltaMap)
+	h.globalMap.Unlock()
+	defer func() {
+		h.globalMap.Lock()
+		deltaMap.merge(h.globalMap.data)
+		h.globalMap.data = deltaMap
+		h.globalMap.Unlock()
+	}()
 	currentTime := time.Now()
-	for id, item := range h.globalMap {
+	for id, item := range deltaMap {
 		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
@@ -431,17 +465,17 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			return errors.Trace(err)
 		}
 		if updated {
-			h.globalMap.update(id, -item.Delta, -item.Count, nil)
+			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			return errors.Trace(err)
 		}
 		if updated {
-			delete(h.globalMap, id)
+			delete(deltaMap, id)
 		} else {
-			m := h.globalMap[id]
+			m := deltaMap[id]
 			m.ColSize = nil
-			h.globalMap[id] = m
+			deltaMap[id] = m
 		}
 	}
 	return nil
@@ -521,8 +555,12 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
 func (h *Handle) DumpStatsFeedbackToKV() error {
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 	var err error
-	for _, fbs := range h.feedback.Feedbacks {
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
@@ -547,7 +585,6 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			}
 		}
 	}
-	h.feedback = statistics.NewQueryFeedbackMap()
 	return errors.Trace(err)
 }
 
@@ -580,8 +617,12 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 OUTER:
-	for _, fbs := range h.feedback.Feedbacks {
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
@@ -700,7 +741,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
-				req := rc.NewChunk()
+				req := rc.NewChunk(nil)
 				iter := chunk.NewIterator4Chunk(req)
 				err := rc.Next(context.TODO(), req)
 				if err != nil {
@@ -832,6 +873,62 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	return errors.Trace(err)
 }
 
+// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
+	h.sweepList()
+	h.colMap.Lock()
+	colMap := h.colMap.data
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
+	defer func() {
+		h.colMap.Lock()
+		h.colMap.data.merge(colMap)
+		h.colMap.Unlock()
+	}()
+	type pair struct {
+		tblColID   model.TableColumnID
+		lastUsedAt string
+	}
+	pairs := make([]pair, 0, len(colMap))
+	for id, t := range colMap {
+		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
+			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+		}
+		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+	})
+	// Use batch insert to reduce cost.
+	for i := 0; i < len(pairs); i += 10 {
+		end := i + 10
+		if end > len(pairs) {
+			end = len(pairs)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+		for j := i; j < end; j++ {
+			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
+		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
+			return errors.Trace(err)
+		}
+		for j := i; j < end; j++ {
+			delete(colMap, pairs[j].tblColID)
+		}
+	}
+	return nil
+}
+
 const (
 	// StatsOwnerKey is the stats owner path that is saved to etcd.
 	StatsOwnerKey = "/tidb/stats/owner"
@@ -942,6 +1039,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
@@ -1164,8 +1264,9 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		}
 		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
@@ -1255,7 +1356,18 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		return nil
 	}
 
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	timeZone := sctx.GetSessionVars().StmtCtx.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sctx.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)
@@ -1263,10 +1375,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err
@@ -1343,7 +1455,20 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	if !ok {
 		return nil
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+	timeZone := sc.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sc.TimeZone = time.UTC
+
 	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
@@ -1358,7 +1483,6 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
 			continue
 		}
-
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
@@ -1366,20 +1490,21 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		}
 		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
 		// prefer index stats over column stats
 		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sctx, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
 			err = convertRangeType(rang, col.Tp, time.UTC)
 			if err == nil {
-				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeCount, err = t.GetRowCountByColumnRanges(sctx, col.ID, []*ranger.Range{rang})
 				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
 			}
 		} else {

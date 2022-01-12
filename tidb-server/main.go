@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -60,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -128,7 +128,7 @@ var (
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
-	socket           = flag.String(nmSocket, "/tmp/tidb.sock", "The socket file to use for connection.")
+	socket           = flag.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
 	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
@@ -181,15 +181,19 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	err := cpuprofile.StartCPUProfiler()
+	terror.MustNil(err)
+
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
+		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -207,17 +211,13 @@ func main() {
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
+		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
-}
-
-func exit() {
-	syncLog()
-	os.Exit(0)
 }
 
 func syncLog() {
@@ -259,7 +259,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				exit()
+				os.Exit(1)
 			}
 			cpu = append(cpu, c)
 		}
@@ -267,16 +267,10 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		exit()
+		os.Exit(1)
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-}
-
-func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
-	d := parseDuration(c.Performance.MemProfileInterval)
-	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {
@@ -589,6 +583,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)

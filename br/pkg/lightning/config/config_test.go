@@ -156,6 +156,33 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
+func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
+	tmpDir := c.MkDir()
+	// use slashPath in url to be compatible with windows
+	slashPath := filepath.ToSlash(tmpDir)
+
+	cfg := config.NewConfig()
+	cases := []string{
+		tmpDir,
+		".",
+		"file://" + slashPath,
+		"local://" + slashPath,
+		"s3://bucket_name",
+		"s3://bucket_name/path/to/dir",
+		"gcs://bucketname/path/to/dir",
+		"gs://bucketname/path/to/dir",
+		"noop:///",
+	}
+
+	for _, testCase := range cases {
+		cfg.Mydumper.SourceDir = testCase
+
+		err := cfg.CheckAndAdjustFilePath()
+		c.Assert(err, IsNil)
+	}
+
+}
+
 func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
@@ -323,6 +350,13 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
 		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
 	}
+	// test different tls config name
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.Security.CAPath = "/path/to/ca.pem"
+	cfg.Security.TLSConfigName = "tidb-tls"
+	c.Assert(cfg.Adjust(context.Background()), IsNil)
+	c.Assert(cfg.TiDB.Security.TLSConfigName, Equals, cfg.TiDB.TLS)
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {
@@ -507,6 +541,20 @@ func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
 	c.Assert(string(result), Equals, `"13m20s"`)
 }
 
+func (s *configTestSuite) TestDuplicateResolutionAlgorithm(c *C) {
+	var dra config.DuplicateResolutionAlgorithm
+	dra.FromStringValue("record")
+	c.Assert(dra, Equals, config.DupeResAlgRecord)
+	dra.FromStringValue("none")
+	c.Assert(dra, Equals, config.DupeResAlgNone)
+	dra.FromStringValue("remove")
+	c.Assert(dra, Equals, config.DupeResAlgRemove)
+
+	c.Assert(config.DupeResAlgRecord.String(), Equals, "record")
+	c.Assert(config.DupeResAlgNone.String(), Equals, "none")
+	c.Assert(config.DupeResAlgRemove.String(), Equals, "remove")
+}
+
 func (s *configTestSuite) TestLoadConfig(c *C) {
 	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
@@ -567,6 +615,13 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
+
+	cfg, err = config.LoadGlobalConfig([]string{}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.Config.File, Matches, ".*lightning.log.*")
+	cfg, err = config.LoadGlobalConfig([]string{"--log-file", "-"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.Config.File, Equals, "-")
 }
 
 func (s *configTestSuite) TestDefaultImporterBackendValue(c *C) {
@@ -839,4 +894,24 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(res, DeepEquals, []byte(value))
 	}
+}
+
+func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
+	cases := map[string]config.Charset{
+		"binary":  config.Binary,
+		"BINARY":  config.Binary,
+		"GBK":     config.GBK,
+		"gbk":     config.GBK,
+		"Gbk":     config.GBK,
+		"gB18030": config.GB18030,
+		"GB18030": config.GB18030,
+	}
+	for k, v := range cases {
+		charset, err := config.ParseCharset(k)
+		c.Assert(err, IsNil)
+		c.Assert(charset, Equals, v)
+	}
+
+	_, err := config.ParseCharset("Unknown")
+	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
 }

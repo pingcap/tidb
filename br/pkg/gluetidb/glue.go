@@ -108,6 +108,11 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return errors.Trace(err)
 }
 
+func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	_, err := gs.se.ExecuteInternal(ctx, sql, args...)
+	return errors.Trace(err)
+}
+
 // CreateDatabase implements glue.Session.
 func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
@@ -120,7 +125,7 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore, true)
+	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
 }
 
 // CreateTable implements glue.Session.
@@ -138,7 +143,7 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
 }
 
 // Close implements glue.Session.

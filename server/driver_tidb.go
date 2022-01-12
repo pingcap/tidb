@@ -164,7 +164,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
 				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
@@ -298,12 +298,8 @@ type tidbResultSet struct {
 	preparedStmt *core.CachedPrepareStmt
 }
 
-func (trs *tidbResultSet) NewChunkFromAllocator(alloc chunk.Allocator) *chunk.Chunk {
-	return trs.recordSet.NewChunkFromAllocator(alloc)
-}
-
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	return trs.recordSet.NewChunk(alloc)
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {

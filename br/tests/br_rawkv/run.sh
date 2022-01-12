@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 
 # restart service without tiflash
 source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
@@ -51,7 +51,7 @@ test_full_rawkv() {
 
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
-    run_br --pd $PD_ADDR backup raw -s "local://$TEST_DIR/rawkv-full" 
+    run_br --pd $PD_ADDR backup raw -s "local://$TEST_DIR/rawkv-full" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -61,7 +61,7 @@ test_full_rawkv() {
         fail_and_exit
     fi
 
-    run_br --pd $PD_ADDR restore raw -s "local://$TEST_DIR/rawkv-full"
+    run_br --pd $PD_ADDR restore raw -s "local://$TEST_DIR/rawkv-full" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"
@@ -90,7 +90,7 @@ checksum_partial=$(checksum 311111 311122)
 
 # backup rawkv
 echo "backup start..."
-run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4
+run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
 # delete data in range[start-key, end-key)
 clean 31 3130303030303030
@@ -104,7 +104,7 @@ fi
 
 # restore rawkv
 echo "restore start..."
-run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex
+run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
 checksum_new=$(checksum 31 3130303030303030)
 
@@ -126,7 +126,7 @@ if [ "$checksum_new" != "$checksum_empty" ];then
 fi
 
 echo "partial restore start..."
-run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4
+run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 bin/rawkv --pd $PD_ADDR \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \

@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -21,11 +19,12 @@ import (
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb-tools/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 const (
@@ -46,6 +45,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
+	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
 	flagWhere                    = "where"
@@ -123,7 +123,7 @@ type Config struct {
 	TableFilter        filter.Filter `json:"-"`
 	Where              string
 	FileType           string
-	ServerInfo         ServerInfo
+	ServerInfo         version.ServerInfo
 	Logger             *zap.Logger        `json:"-"`
 	OutputFileTemplate *template.Template `json:"-"`
 	Rows               uint64
@@ -134,42 +134,51 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
+
+	CollationCompatible string
+}
+
+// ServerInfoUnknown is the unknown database type to dumpling
+var ServerInfoUnknown = version.ServerInfo{
+	ServerType:    version.ServerTypeUnknown,
+	ServerVersion: nil,
 }
 
 // DefaultConfig returns the default export Config for dumpling
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
-		Databases:          nil,
-		Host:               "127.0.0.1",
-		User:               "root",
-		Port:               3306,
-		Password:           "",
-		Threads:            4,
-		Logger:             nil,
-		StatusAddr:         ":8281",
-		FileSize:           UnspecifiedSize,
-		StatementSize:      DefaultStatementSize,
-		OutputDirPath:      ".",
-		ServerInfo:         ServerInfoUnknown,
-		SortByPk:           true,
-		Tables:             nil,
-		Snapshot:           "",
-		Consistency:        consistencyTypeAuto,
-		NoViews:            true,
-		Rows:               UnspecifiedSize,
-		Where:              "",
-		FileType:           "",
-		NoHeader:           false,
-		NoSchemas:          false,
-		NoData:             false,
-		CsvNullValue:       "\\N",
-		SQL:                "",
-		TableFilter:        allFilter,
-		DumpEmptyDatabase:  true,
-		SessionParams:      make(map[string]interface{}),
-		OutputFileTemplate: DefaultOutputFileTemplate,
-		PosAfterConnect:    false,
+		Databases:           nil,
+		Host:                "127.0.0.1",
+		User:                "root",
+		Port:                3306,
+		Password:            "",
+		Threads:             4,
+		Logger:              nil,
+		StatusAddr:          ":8281",
+		FileSize:            UnspecifiedSize,
+		StatementSize:       DefaultStatementSize,
+		OutputDirPath:       ".",
+		ServerInfo:          ServerInfoUnknown,
+		SortByPk:            true,
+		Tables:              nil,
+		Snapshot:            "",
+		Consistency:         consistencyTypeAuto,
+		NoViews:             true,
+		Rows:                UnspecifiedSize,
+		Where:               "",
+		FileType:            "",
+		NoHeader:            false,
+		NoSchemas:           false,
+		NoData:              false,
+		CsvNullValue:        "\\N",
+		SQL:                 "",
+		TableFilter:         allFilter,
+		DumpEmptyDatabase:   true,
+		SessionParams:       make(map[string]interface{}),
+		OutputFileTemplate:  DefaultOutputFileTemplate,
+		PosAfterConnect:     false,
+		CollationCompatible: LooseCollationCompatible,
 	}
 }
 
@@ -221,6 +230,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
+	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
@@ -314,6 +324,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.NoViews, err = flags.GetBool(flagNoViews)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.SortByPk, err = flags.GetBool(flagSortByPk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -531,21 +545,9 @@ func (conf *Config) createExternalStorage(ctx context.Context) (storage.External
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	httpClient := http.DefaultClient
-	httpClient.Timeout = 30 * time.Second
-	maxIdleConnsPerHost := http.DefaultMaxIdleConnsPerHost
-	if conf.Threads > maxIdleConnsPerHost {
-		maxIdleConnsPerHost = conf.Threads
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
-	httpClient.Transport = transport
 
-	return storage.New(ctx, b, &storage.ExternalStorageOptions{
-		HTTPClient:      httpClient,
-		SkipCheckPath:   true,
-		SendCredentials: false,
-	})
+	// TODO: support setting httpClient with certification later
+	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
 }
 
 const (
@@ -562,6 +564,9 @@ const (
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
 
+	LooseCollationCompatible  = "loose"
+	StrictCollationCompatible = "strict"
+
 	dumplingServiceSafePointPrefix = "dumpling"
 )
 
@@ -570,96 +575,6 @@ var (
 	gcSafePointVersion  = semver.New("4.0.0")
 	tableSampleVersion  = semver.New("5.0.0-nightly")
 )
-
-// ServerInfo is the combination of ServerType and ServerInfo
-type ServerInfo struct {
-	HasTiKV       bool
-	ServerType    ServerType
-	ServerVersion *semver.Version
-}
-
-// ServerInfoUnknown is the unknown database type to dumpling
-var ServerInfoUnknown = ServerInfo{
-	ServerType:    ServerTypeUnknown,
-	ServerVersion: nil,
-}
-
-var (
-	versionRegex     = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-)
-
-// ParseServerInfo parses exported server type and version info from version string
-func ParseServerInfo(tctx *tcontext.Context, src string) ServerInfo {
-	tctx.L().Debug("parse server info", zap.String("server info string", src))
-	lowerCase := strings.ToLower(src)
-	serverInfo := ServerInfo{}
-	switch {
-	case strings.Contains(lowerCase, "tidb"):
-		serverInfo.ServerType = ServerTypeTiDB
-	case strings.Contains(lowerCase, "mariadb"):
-		serverInfo.ServerType = ServerTypeMariaDB
-	case versionRegex.MatchString(lowerCase):
-		serverInfo.ServerType = ServerTypeMySQL
-	default:
-		serverInfo.ServerType = ServerTypeUnknown
-	}
-
-	tctx.L().Info("detect server type",
-		zap.String("type", serverInfo.ServerType.String()))
-
-	var versionStr string
-	if serverInfo.ServerType == ServerTypeTiDB {
-		versionStr = tidbVersionRegex.FindString(src)[1:]
-		versionStr = strings.TrimPrefix(versionStr, "v")
-	} else {
-		versionStr = versionRegex.FindString(src)
-	}
-
-	var err error
-	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
-	if err != nil {
-		tctx.L().Warn("fail to parse version",
-			zap.String("version", versionStr))
-		return serverInfo
-	}
-
-	tctx.L().Info("detect server version",
-		zap.String("version", serverInfo.ServerVersion.String()))
-	return serverInfo
-}
-
-// ServerType represents the type of database to export
-type ServerType int8
-
-// String implements Stringer.String
-func (s ServerType) String() string {
-	if s >= ServerTypeAll {
-		return ""
-	}
-	return serverTypeString[s]
-}
-
-const (
-	// ServerTypeUnknown represents unknown server type
-	ServerTypeUnknown = iota
-	// ServerTypeMySQL represents MySQL server type
-	ServerTypeMySQL
-	// ServerTypeMariaDB represents MariaDB server type
-	ServerTypeMariaDB
-	// ServerTypeTiDB represents TiDB server type
-	ServerTypeTiDB
-
-	// ServerTypeAll represents All server types
-	ServerTypeAll
-)
-
-var serverTypeString = []string{
-	ServerTypeUnknown: "Unknown",
-	ServerTypeMySQL:   "MySQL",
-	ServerTypeMariaDB: "MariaDB",
-	ServerTypeTiDB:    "TiDB",
-}
 
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 	for _, f := range fns {
@@ -734,11 +649,11 @@ func adjustFileFormat(conf *Config) error {
 	return nil
 }
 
-func matchMysqlBugversion(info ServerInfo) bool {
+func matchMysqlBugversion(info version.ServerInfo) bool {
 	// if 8.0.3 <= mysql8 version < 8.0.23
 	// FLUSH TABLES WITH READ LOCK could block other sessions from executing SHOW TABLE STATUS.
 	// see more in https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-23.html
-	if info.ServerType != ServerTypeMySQL {
+	if info.ServerType != version.ServerTypeMySQL {
 		return false
 	}
 	currentVersion := info.ServerVersion

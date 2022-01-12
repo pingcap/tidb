@@ -980,6 +980,11 @@ func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
 }
 
+// IsTableKey is used to check whether the key is a table key.
+func IsTableKey(k []byte) bool {
+	return len(k) == 9 && k[0] == 't'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
@@ -1154,7 +1159,8 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	tailLen := 0
 	// Version info.
 	idxVal = append(idxVal, IndexVersionFlag)
@@ -1211,7 +1217,8 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 
 // genIndexValueVersion0 create index value for both local and global index.
 func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	newEncode := false
 	tailLen := 0
 	if !h.IsInt() && distinct {
@@ -1293,21 +1300,23 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 	if notStringType {
 		return
 	}
-	originalKind := v.Kind()
-	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
-	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
-		rs := bytes.Runes(v.GetBytes())
+	colValue := v.GetBytes()
+	if tblCol.Charset == charset.CharsetBin || tblCol.Charset == charset.CharsetASCII {
+		// Count character length by bytes if charset is binary or ascii.
+		if len(colValue) > idxCol.Length {
+			// truncate value and limit its length
+			if v.Kind() == types.KindBytes {
+				v.SetBytes(colValue[:idxCol.Length])
+			} else {
+				v.SetString(v.GetString()[:idxCol.Length], tblCol.Collate)
+			}
+		}
+	} else if utf8.RuneCount(colValue) > idxCol.Length {
+		// Count character length by characters for other rune-based charsets, they are all internally encoded as UTF-8.
+		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
 		v.SetString(truncateStr, tblCol.Collate)
-		if v.Kind() == types.KindBytes {
-			v.SetBytes(v.GetBytes())
-		}
-	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
-		v.SetBytes(v.GetBytes()[:idxCol.Length])
-		if originalKind == types.KindString {
-			v.SetString(v.GetString(), tblCol.Collate)
-		}
 	}
 }
 
