@@ -71,7 +71,7 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 		prepareStmt, err := GetPreparedStmt(execStmt, vars)
 		if err != nil {
-			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Uint64("connID", vars.ConnectionID), zap.Error(err))
 			return false
 		}
 		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
