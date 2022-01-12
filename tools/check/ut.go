@@ -268,10 +268,10 @@ func cmdRun(args ...string) bool {
 	wg.Wait()
 	for _, work := range works {
 		if work.Fail {
-			os.Exit(1)
-			break
+			return false
 		}
 	}
+	return true
 }
 
 func main() {
