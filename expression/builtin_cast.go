@@ -1828,11 +1828,21 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
-func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation, enumOrSetRealTypeIsStr bool) Expression {
+	if expr.GetType().EvalType() != types.ETString {
+		return expr
+	}
 	if expr.GetType().Collate == ec.Collation {
 		return expr
 	}
 	tp := expr.GetType().Clone()
+	if expr.GetType().Hybrid() {
+		if enumOrSetRealTypeIsStr {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		} else {
+			return expr
+		}
+	}
 	tp.Charset, tp.Collate = ec.Charset, ec.Collation
 	newExpr := BuildCastFunction(ctx, expr, tp)
 	return newExpr

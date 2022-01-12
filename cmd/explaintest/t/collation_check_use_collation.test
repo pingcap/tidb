@@ -29,6 +29,7 @@ select * from t where a in (a);
 drop table if exists t;
 create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("B", "b");
+insert into t values ("B", "c");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 select * from t where 'B' collate utf8mb4_bin in (a);
 select * from t where 'B' collate utf8mb4_bin in (a, b);
@@ -37,6 +38,14 @@ select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
 select * from t where 1 in (a);
 select * from t where 2 in (a);
 select * from t where 1 in (a, 0);
+select * from t where a between 1 and 2;
+select * from t where a between 1 and "a";
+select * from t where a between "a" and "b";
+select * from t where 2 between a and "c";
+select * from t where 2 between a and 3;
+select * from t where "b" between a and a;
+select * from t where "b" collate utf8mb4_bin between a and a;
+select * from t where "b" between a and 3;
 
 # set part
 drop table if exists t;
@@ -46,6 +55,7 @@ select * from t where a in (a);
 drop table if exists t;
 create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("B", "b");
+insert into t values ("B", "c");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 select * from t where 'B' collate utf8mb4_bin in (a);
 select * from t where 'B' collate utf8mb4_bin in (a, b);
@@ -54,6 +64,14 @@ select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
 select * from t where 1 in (a);
 select * from t where 2 in (a);
 select * from t where 1 in (a, 0);
+select * from t where a between 1 and 2;
+select * from t where a between 1 and "a";
+select * from t where a between "a" and "b";
+select * from t where 2 between a and "c";
+select * from t where 2 between a and 3;
+select * from t where "b" between a and a;
+select * from t where "b" collate utf8mb4_bin between a and a;
+select * from t where "b" between a and 3;
 
 # check build range
 drop table if exists tbl_2;
