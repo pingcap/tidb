@@ -1176,12 +1176,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
-			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
 			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset
-			if chs != "" && collInfo.CharsetName != chs {
+			if chs != "" && !charset.ValidCharsetAndCollation(chs, collInfo.CharsetName) {
 				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
 				break
 			}
