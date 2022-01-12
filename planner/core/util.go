@@ -298,6 +298,15 @@ func extractStringFromStringSet(set set.StringSet) string {
 	return strings.Join(l, ",")
 }
 
+// extractStringFromStringSlice helps extract string info from []string.
+func extractStringFromStringSlice(ss []string) string {
+	if len(ss) < 1 {
+		return ""
+	}
+	sort.Strings(ss)
+	return strings.Join(ss, ",")
+}
+
 // extractStringFromUint64Slice helps extract string info from uint64 slice.
 func extractStringFromUint64Slice(slice []uint64) string {
 	if len(slice) < 1 {

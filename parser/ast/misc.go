@@ -3439,13 +3439,19 @@ type TextString struct {
 }
 
 // TransformTextStrings converts a slice of TextString to strings.
-func TransformTextStrings(ts []*TextString, chs string) []string {
-	enc := charset.FindEncodingTakeUTF8AsNoop(chs)
+// This is only used by enum/set strings.
+func TransformTextStrings(ts []*TextString, _ string) []string {
+	// The UTF-8 encoding rather than other encoding is used
+	// because parser is not possible to determine the "real"
+	// charset that a binary literal string should be converted to.
+	enc := charset.EncodingUTF8Impl
 	ret := make([]string, 0, len(ts))
 	for _, t := range ts {
 		if !t.IsBinaryLiteral {
 			ret = append(ret, t.Value)
 		} else {
+			// Validate the binary literal string.
+			// See https://github.com/pingcap/tidb/issues/30740.
 			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
 			ret = append(ret, charset.HackString(r))
 		}

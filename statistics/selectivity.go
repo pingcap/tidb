@@ -354,6 +354,24 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				if ok {
 					continue
 				}
+				// where {"0" / 0 / "false" / false / null} or A or B ... the '0' constant item should be ignored.
+				if c, ok := cond.(*expression.Constant); ok {
+					if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{cond}) {
+						if c.Value.IsNull() {
+							// constant is null
+							continue
+						}
+						if isTrue, err := c.Value.ToBool(sc); err == nil {
+							if isTrue == 0 {
+								// constant == 0
+								continue
+							}
+							// constant == 1
+							selectivity = 1.0
+							break
+						}
+					}
+				}
 
 				var cnfItems []expression.Expression
 				if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
@@ -365,7 +383,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
 				if err != nil {
 					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-					selectivity = selectionFactor
+					curSelectivity = selectionFactor
 				}
 
 				selectivity = selectivity + curSelectivity - selectivity*curSelectivity

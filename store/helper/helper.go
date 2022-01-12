@@ -1123,8 +1123,8 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
-	endKey, _ = url.QueryUnescape(endKey)
-	_, decodedEndKey, _ := codec.DecodeBytes([]byte(endKey), []byte{})
+	e, _ := hex.DecodeString(endKey)
+	_, decodedEndKey, _ := codec.DecodeBytes(e, []byte{})
 	tableID := tablecodec.DecodeTableID(decodedEndKey)
 	tableID -= 1
 	return tableID
