@@ -2125,7 +2125,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 	testCases := []testCase{
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{StoreID: 1}, Status: &pdtypes.StoreStatus{RegionCount: 200}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: pdtypes.RegionsInfo{
 				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
@@ -2136,9 +2136,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{StoreID: 1}, Status: &pdtypes.StoreStatus{RegionCount: 2000}},
-				{Store: &pdtypes.MetaStore{StoreID: 2}, Status: &pdtypes.StoreStatus{RegionCount: 3100}},
-				{Store: &pdtypes.MetaStore{StoreID: 3}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 2000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3100}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: pdtypes.RegionsInfo{
 				Regions: append(append(append([]pdtypes.RegionInfo(nil),
@@ -2156,9 +2156,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{StoreID: 1}, Status: &pdtypes.StoreStatus{RegionCount: 1200}},
-				{Store: &pdtypes.MetaStore{StoreID: 2}, Status: &pdtypes.StoreStatus{RegionCount: 3000}},
-				{Store: &pdtypes.MetaStore{StoreID: 3}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 1200}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
@@ -2166,9 +2166,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{StoreID: 1}, Status: &pdtypes.StoreStatus{RegionCount: 0}},
-				{Store: &pdtypes.MetaStore{StoreID: 2}, Status: &pdtypes.StoreStatus{RegionCount: 2800}},
-				{Store: &pdtypes.MetaStore{StoreID: 3}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 0}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 2800}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,

@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/tikv/pd/server/api"
 )
 
 const (
@@ -183,7 +182,7 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	return nil
 }
 
-func isTiFlash(store *api.MetaStore) bool {
+func isTiFlash(store *pdtypes.MetaStore) bool {
 	for _, label := range store.Labels {
 		if label.Key == "engine" && label.Value == "tiflash" {
 			return true
@@ -219,7 +218,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.StoreID] = store
+		stores[store.Store.GetId()] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -315,11 +314,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }
