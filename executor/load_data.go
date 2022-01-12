@@ -475,7 +475,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 			return nil, curData, false
 		}
 	}
-	endIdx := -1
+	var endIdx int
 	if ignore {
 		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
 	} else {
