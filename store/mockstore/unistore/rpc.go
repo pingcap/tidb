@@ -319,6 +319,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			if err != nil {
 				return nil, err
 			}
+			rsp := resp.Resp.(*coprocessor.Response)
+			if rsp.RegionError != nil {
+				fmt.Printf("RegionError %s\n", rsp.RegionError.String())
+				break
+			}
 			rspData, err := resp.Resp.(*coprocessor.Response).Marshal()
 			c.testGenConfig.AddRequest(req.Type, reqData, rspData)
 			dag := &tipb.DAGRequest{}
