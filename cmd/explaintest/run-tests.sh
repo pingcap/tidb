@@ -259,5 +259,4 @@ if [ ! -z "$race" ]; then
     cat $explain_test_log
     exit 1
 fi
-
 echo "explaintest end"
