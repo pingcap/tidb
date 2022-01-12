@@ -797,6 +797,13 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableStmtSummary              = true
+	DefTiDBStmtSummaryInternalQuery       = false
+	DefTiDBStmtSummaryRefreshInterval     = 1800
+	DefTiDBStmtSummaryHistorySize         = 24
+	DefTiDBStmtSummaryMaxStmtCount        = 3000
+	DefTiDBStmtSummaryMaxSQLLength        = 4096
+	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
@@ -824,7 +831,6 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
