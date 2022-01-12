@@ -1475,6 +1475,11 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 }
 
 func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
+	if colName.Name.L == model.ExtraHandleName.L && !tbl.PKIsHandle {
+		colInfo := model.NewExtraHandleColInfo()
+		colInfo.Offset = len(tbl.Columns) - 1
+		return colInfo
+	}
 	for _, col := range tbl.Columns {
 		if col.Name.L == colName.Name.L {
 			return col
