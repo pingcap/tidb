@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/log"
 	"net"
 	"runtime/pprof"
 	"runtime/trace"
@@ -759,6 +760,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	var txn uint64
+	if s.sessionVars.TxnCtx != nil {
+		txn = s.sessionVars.TxnCtx.StartTS
+	}
+	log.Info("[PC] commit txn", zap.Uint64("txn", txn))
 
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)

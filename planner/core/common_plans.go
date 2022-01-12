@@ -470,7 +470,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 
 					if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
-						log.Info("[PC] get cached plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)), zap.Uint64("txn", txnTS))
+						log.Info("[PC] get cached plan", zap.Uint64("txn", txnTS), zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)))
 					}
 					return nil
 				}
@@ -487,7 +487,7 @@ REBUILD:
 	}
 
 	if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
-		log.Info("[PC] new plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(p)), zap.Uint64("txn", txnTS))
+		log.Info("[PC] new plan", zap.Uint64("txn", txnTS), zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(p)))
 	}
 
 	err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)

@@ -16,6 +16,8 @@ package txn
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -33,6 +35,10 @@ func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 		return nil
 	}
 	return &memBuffer{MemDB: m}
+}
+
+func (m *memBuffer) Info() string {
+	return fmt.Sprintf("type:%v, pointer:%p", reflect.TypeOf(m), m)
 }
 
 func (m *memBuffer) Size() int {

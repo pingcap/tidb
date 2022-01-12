@@ -172,6 +172,8 @@ type MemBuffer interface {
 
 	// Size returns sum of keys and values length.
 	Size() int
+
+	Info() string
 }
 
 // LockCtx contains information for LockKeys method.

@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"runtime/trace"
 
 	"github.com/pingcap/tidb/expression"
@@ -87,6 +89,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	defer mb.RUnlock()
 
 	us.memBuf = mb
+
+	var txnTS uint64
+	if us.ctx.GetSessionVars().TxnCtx != nil {
+		txnTS = us.ctx.GetSessionVars().TxnCtx.StartTS
+	}
+	log.Info("[PC] union scan", zap.Uint64("txn", txnTS), zap.String("memBuf", mb.Info()))
+
 	us.memBufSnap = mb.SnapshotGetter()
 
 	// 1. select without virtual columns
