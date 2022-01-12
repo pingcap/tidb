@@ -538,6 +538,18 @@ REBUILD:
 	return err
 }
 
+func formatIndexValueParams(args []*driver.ParamMarkerExpr) string {
+	vals := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == nil {
+			vals = append(vals, "nil")
+		} else {
+			vals = append(vals, fmt.Sprintf("%v", arg.Datum.GetValue()))
+		}
+	}
+	return "[" + strings.Join(vals, ", ") + "]"
+}
+
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
@@ -623,13 +635,16 @@ func (e *Execute) rebuildRange(p Plan) error {
 		log.Info("[PC] adjust PointGet", zap.Uint64("txn", txnTS),
 			zap.String("acConds", fmt.Sprintf("%v", x.AccessConditions)),
 			zap.Bool("x.HandleParam!=nil", x.HandleParam != nil),
-			zap.Int("len(x.IndexValueParams)", len(x.IndexValueParams)),
+			zap.String("x.IndexValueParams", formatIndexValueParams(x.IndexValueParams)),
 			zap.Bool("x.IndexInfo!=nil", x.IndexInfo != nil))
 
 		if x.AccessConditions != nil {
 			if x.IndexInfo != nil {
 				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
 				if err != nil {
+					log.Info("[PC] PointGet Range Err",
+						zap.String("x.IndexValues", fmt.Sprintf("%v", x.IndexValues)),
+						zap.Error(err))
 					return err
 				}
 				for i := range x.IndexValues {
