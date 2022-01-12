@@ -16,12 +16,14 @@ package ddl
 
 import (
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -355,6 +357,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 		return errWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
 	}
 	if c.otherErr != nil {
+		if terror.ErrorEqual(c.otherErr, errWrongKeyColumnFunctionalIndex) && genType == typeColumn {
+			return nil
+		}
 		return c.otherErr
 	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
