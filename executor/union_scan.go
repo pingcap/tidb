@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -219,11 +221,30 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	var err error
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
+	physTblIDIdx := -1
+	fts := make([]*types.FieldType, len(us.columns))
+	//colNames := make([]string, len(us.columns))
+	//colIds := make([]int64, len(us.columns))
+	for i := range us.columns {
+		fts[i] = &us.columns[i].FieldType
+		//colNames = append(colNames, us.columns[i].Name.O)
+		//colIds = append(colIds, us.columns[i].ID)
+		if us.columns[i].ID == model.ExtraPhysTblID {
+			if physTblIDIdx >= 0 {
+				logutil.Logger(ctx).Warn("More than one ExtraPhysTblID column!", zap.String("table", us.table.Meta().Name.O))
+			}
+			physTblIDIdx = i
+		}
+	}
 	for len(us.snapshotRows) == 0 {
 		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
+		logutil.Logger(ctx).Info("MJONSS: getSnapshotRow", zap.String("Chunk", us.snapshotChunkBuffer.ToString(fts)),
+			//zap.Strings("colNames", colNames),
+			//zap.Int64s("colIds", colIds),
+			zap.Int("us colNames count", len(us.columns)))
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
@@ -231,7 +252,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			var checkKey kv.Key
+			if physTblIDIdx >= 0 {
+				tblID := row.GetInt64(physTblIDIdx)
+				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
+			} else {
+				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			}
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.

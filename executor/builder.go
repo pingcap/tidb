@@ -3071,7 +3071,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
-	// Do not collect the feedback when the table is the partition table.
+	// Do not collect the feedback when the table is the partition table. TODO: not true for dynamic?
 	if collect && tbl.Meta().Partition != nil {
 		collect = false
 	}
@@ -3096,7 +3096,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
 	for idx, col := range schema.Columns {
-		if col.ID == model.ExtraPidColID {
+		// TODO: Handle partitioned global index, i.e. both ExtraPidColID and ExtraPhysTblID is used.
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
 			return newOffset(idx)
 		}
 	}
@@ -3169,6 +3170,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
+	// TODO: Should this be done before checking dirty / ongoing transactions for avoiding adding PID columns?
 	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
@@ -3802,6 +3804,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			return nil, err
 		}
 		var kvRanges []kv.KeyRange
+		// TODO: mjonss: study this :)
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			// In this case we can use dynamic partition pruning.
 			locateKey := make([]types.Datum, e.Schema().Len())

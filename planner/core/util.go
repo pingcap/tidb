@@ -331,6 +331,7 @@ func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bo
 	}
 	// Currently, we add UnionScan on every partition even though only one partition's data is changed.
 	// This is limited by current implementation of Partition Prune. It'll be updated once we modify that part.
+	// TODO: Use named partitions at least, preferably pruned if possible here?
 	for _, partition := range pi.Definitions {
 		if ctx.HasDirtyContent(partition.ID) {
 			return true

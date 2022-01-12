@@ -55,8 +55,10 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 const (
@@ -3182,7 +3184,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPidColID && col.ID != model.ExtraPhysTblID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3784,24 +3786,59 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // addExtraPIDColumn add an extra PID column for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+func (ds *DataSource) addExtraPIDColumn() {
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		ID:       model.ExtraPhysTblID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
+		ColName:     model.ExtraPhysTblIdName,
+		OrigColName: model.ExtraPhysTblIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
+}
+
+// addExtraPIDColumnWithInfo add an extra PID column for partition table.
+// 'select ... for update' on a partition table need to know the partition ID
+func (ds *DataSource) addExtraPIDColumnWithInfo(info *extraPIDInfo) {
+	var pidCol *expression.Column
+	schema := ds.Schema()
+	for _, col := range schema.Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			if pidCol != nil {
+				logutil.BgLogger().Warn("MJONSS: Duplicate Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
+			}
+			pidCol = col
+		}
+	}
+	if pidCol == nil {
+		logutil.BgLogger().Warn("MJONSS: Missing Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
+		pidCol = &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraPidColID,
+			OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		}
+
+		ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+		schema := ds.Schema()
+		schema.Append(pidCol)
+		ds.names = append(ds.names, &types.FieldName{
+			DBName:      ds.DBName,
+			TblName:     ds.TableInfo().Name,
+			ColName:     model.ExtraPartitionIdName,
+			OrigColName: model.ExtraPartitionIdName,
+		})
+		ds.TblCols = append(ds.TblCols, pidCol)
+	}
 
 	info.Columns = append(info.Columns, pidCol)
 	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
@@ -4182,6 +4219,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
+	}
+	if tableInfo.GetPartitionInfo() != nil {
+		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			// Use the new partition implementation, add partition id as handle/hidden column.
+			// dirty => must check transaction buffer, which uses Physical table id, so we need it per record from the partitioned table
+			// IsPessimistic => SelectLock needs the Physical table id for locking each row.
+			if dirty || b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+				ds.addExtraPIDColumn()
+			}
+		}
 	}
 	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
 	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {

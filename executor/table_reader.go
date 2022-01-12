@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -244,9 +245,13 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	// When 'select ... for update' work on a partitioned table, the table reader should
 	// add the partition ID as an extra column. The SelectLockExec need this information
 	// to construct the lock key.
-	physicalID := getPhysicalTableID(e.table)
 	if e.extraPIDColumnIndex.valid() {
-		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
+		physicalID := getPhysicalTableID(e.table)
+		if physicalID != e.table.Meta().ID {
+			// table partition in static prune mode (one TableReaderExecutor per partition)
+			logutil.BgLogger().Info("MJONSS: TableReaderExecutor.Next()", zap.Int64("physicalID", physicalID))
+			fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
+		}
 	}
 
 	return nil

@@ -1258,7 +1258,7 @@ func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
 		if raw.tableInfo.GetPartitionInfo() == nil {
 			return nil
 		}
-		raw.addExtraPIDColumn(info)
+		raw.addExtraPIDColumnWithInfo(info)
 		return nil
 	default:
 		var err error

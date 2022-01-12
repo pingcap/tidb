@@ -133,6 +133,7 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
 // handles in slice must be kv.PartitionHandle.
+// TODO: What is this?
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
 	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
 	return builder

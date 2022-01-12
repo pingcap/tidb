@@ -293,6 +293,21 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	for _, col := range p.Schema().Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			parentUsedCols = append(parentUsedCols, col)
+			cols := p.Schema().Columns
+			if col != cols[len(cols)-1] {
+				panic("MJONSS: Assumptions of ExtraPidColID always last is wrong!!!")
+			}
+		}
+	}
+	// ExtraPidColID should always be last?
+	/*
+		if cols[len(cols)-1].ID == model.ExtraPidColID {
+			parentUsedCols = append(parentUsedCols, col)
+		}
+	*/
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols, opt)
@@ -474,6 +489,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	}
 
 	if len(p.partitionedTable) > 0 {
+		// TODO: What to do here? Should it be added to the tblID2Handle array instead?
 		// If the children include partitioned tables, there is an extra partition ID column.
 		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
