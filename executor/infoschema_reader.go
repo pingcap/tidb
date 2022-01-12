@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -693,13 +694,33 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
 	if !extractor.SkipRequest {
 		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
 		tableNameFilterEnable = extractor.TableName.Count() > 0
 		columnsFilterEnable = extractor.ColumnName.Count() > 0
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.ColumnNamePatterns) > 0 {
+			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			for i, pattern := range extractor.ColumnNamePatterns {
+				columnsRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
 	}
+ForColumnsTag:
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -713,6 +734,21 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 			if columnsFilterEnable && !extractor.ColumnName.Exist(col.Name.L) {
 				continue
+			}
+			for _, re := range tableSchemaRegexp {
+				if !re.MatchString(schema.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range tableNameRegexp {
+				if !re.MatchString(tbl.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range columnsRegexp {
+				if !re.MatchString(col.Name.L) {
+					continue ForColumnsTag
+				}
 			}
 		}
 

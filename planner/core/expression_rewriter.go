@@ -1743,9 +1743,14 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll)
-	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll)
-	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll)
+	// Handle enum or set. We need to know their real type to decide whether to cast them.
+	lt := expression.GetAccurateCmpType(expr, lexp)
+	rt := expression.GetAccurateCmpType(expr, rexp)
+	enumOrSetRealTypeIsStr := lt != types.ETInt && rt != types.ETInt
+
+	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll, enumOrSetRealTypeIsStr)
+	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll, enumOrSetRealTypeIsStr)
+	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
 	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
