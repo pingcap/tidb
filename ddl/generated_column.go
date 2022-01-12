@@ -294,6 +294,11 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		if !isFuncGA {
 			c.hasNotGAFunc4ExprIdx = true
 		}
+	case *driver.ValueExpr:
+		if node.Datum.Kind() == types.KindNull {
+			c.otherErr = errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
+			return inNode, true
+		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
 		// Subquery & `values(x)` & variable is not allowed
 		c.hasIllegalFunc = true
@@ -354,9 +359,6 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
 		return ErrUnsupportedExpressionIndex
-	}
-	if expr.(*driver.ValueExpr).Datum.Kind() == types.KindNull {
-		return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
 	}
 	return nil
 }
