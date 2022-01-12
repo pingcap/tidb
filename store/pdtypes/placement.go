@@ -33,7 +33,6 @@ type Rule struct {
 	IsolationLevel   string            `json:"isolation_level,omitempty"`   // used to isolate replicas explicitly and forcibly
 	Version          uint64            `json:"version,omitempty"`           // only set at runtime, add 1 each time rules updated, begin from 0.
 	CreateTimestamp  uint64            `json:"create_timestamp,omitempty"`  // only set at runtime, recorded rule create timestamp
-	group            *RuleGroup        // only set at runtime, no need to {,un}marshal or persist.
 }
 
 // PeerRoleType is the expected peer type of the placement rule.
