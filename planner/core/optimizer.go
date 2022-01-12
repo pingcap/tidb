@@ -62,8 +62,10 @@ const (
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
+	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagPushDownTopN
+	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
@@ -80,8 +82,10 @@ var optRuleList = []logicalOptRule{
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
+	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
+	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
@@ -101,21 +105,21 @@ func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOpt
 }
 
 func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
 }
 
 func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
@@ -264,6 +268,8 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -446,8 +452,18 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPl
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	opt := defaultPhysicalOptimizeOption()
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PhysicalOptimizeTraceInfo)}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			stmtCtx.PhysicalOptimizeTrace = tracer
+		}()
+	}
+
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter)
+	t, _, err := logic.findBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}

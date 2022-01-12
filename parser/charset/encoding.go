@@ -13,6 +13,8 @@
 
 package charset
 
+import "bytes"
+
 // Make sure all of them implement Encoding interface.
 var (
 	_ Encoding = &encodingUTF8{}
@@ -68,12 +70,16 @@ type Encoding interface {
 	Tp() EncodingTp
 	// Peek returns the next char.
 	Peek(src []byte) []byte
+	// MbLen returns multiple byte length, if the next character is single byte, return 0.
+	MbLen(string) int
 	// IsValid checks whether the utf-8 bytes can be convert to valid string in current encoding.
 	IsValid(src []byte) bool
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
-	Transform(dest, src []byte, op Op) ([]byte, error)
+	// **the caller should initialize the dest if it wants to avoid memory alloc every time, or else it will always make a new one**
+	// **the returned array may be the alias of `src`, edit the returned array on your own risk**
+	Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.
@@ -106,11 +112,13 @@ const (
 )
 
 const (
-	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
 	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeNoErr   = OpDecode | opSkipError
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 

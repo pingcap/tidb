@@ -538,6 +538,41 @@ func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	return newExpr
 }
 
+// ContainOuterNot checks if there is an outer `not`.
+func ContainOuterNot(expr Expression) bool {
+	return containOuterNot(expr, false)
+}
+
+// containOuterNot checks if there is an outer `not`.
+// Input `not` means whether there is `not` outside `expr`
+//
+// eg.
+//    not(0+(t.a == 1 and t.b == 2)) returns true
+//    not(t.a) and not(t.b) returns false
+func containOuterNot(expr Expression, not bool) bool {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return containOuterNot(f.GetArgs()[0], true)
+		case ast.IsTruthWithNull, ast.IsNull:
+			return containOuterNot(f.GetArgs()[0], not)
+		default:
+			if not {
+				return true
+			}
+			hasNot := false
+			for _, expr := range f.GetArgs() {
+				hasNot = hasNot || containOuterNot(expr, not)
+				if hasNot {
+					return hasNot
+				}
+			}
+			return hasNot
+		}
+	}
+	return false
+}
+
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
@@ -1145,7 +1180,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParamsInternal(ctx, stmt, inValues...)
+	stmtNode, err := exec.ParseWithParams(ctx, true, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}
