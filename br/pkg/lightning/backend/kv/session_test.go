@@ -17,20 +17,12 @@ package kv
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-type kvSuite struct{}
-
-var _ = Suite(&kvSuite{})
-
-func TestKV(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *kvSuite) TestSession(c *C) {
+func TestSession(t *testing.T) {
 	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890})
 	_, err := session.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

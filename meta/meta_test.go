@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,22 +171,18 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		ids, err := m.GenGlobalIDs(3)
 		require.NoError(t, err)
 		anyMatch(t, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		ids, err := m.GenGlobalIDs(4)
 		require.NoError(t, err)
 		anyMatch(t, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
-	}()
+	})
 	wg.Wait()
 
 	n, err = m.GetSchemaVersion()
