@@ -593,6 +593,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
 	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")

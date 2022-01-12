@@ -774,7 +774,7 @@ func (s *testDBSuite6) TestEnableDirectPlacement(c *C) {
 		tk.MustExec("drop placement policy if exists p1")
 	}()
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
-	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) placement policy p1 (
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100) placement policy p1,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
