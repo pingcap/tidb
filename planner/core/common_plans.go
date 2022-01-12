@@ -381,6 +381,14 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	return err
 }
 
+func formatParameters(args []ast.ParamMarkerExpr) string {
+	vals := make([]string, 0, len(args))
+	for _, arg := range args {
+		vals = append(vals, fmt.Sprintf("%v", arg.GetValue()))
+	}
+	return "[" + strings.Join(vals, ", ") + "]"
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -469,9 +477,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					e.Plan = cachedVal.Plan
 					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 
-					if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
-						log.Info("[PC] get cached plan", zap.Uint64("txn", txnTS), zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)))
-					}
+					log.Info("[PC] get cached plan", zap.Uint64("txn", txnTS),
+						zap.String("sql", preparedStmt.PreparedStmtText),
+						zap.String("plan", ToString(e.Plan)),
+						zap.String("args", formatParameters(prepared.Params)))
 					return nil
 				}
 				break
@@ -486,9 +495,10 @@ REBUILD:
 		return err
 	}
 
-	if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
-		log.Info("[PC] new plan", zap.Uint64("txn", txnTS), zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(p)))
-	}
+	log.Info("[PC] new plan", zap.Uint64("txn", txnTS),
+		zap.String("sql", preparedStmt.PreparedStmtText),
+		zap.String("plan", ToString(p)),
+		zap.String("args", formatParameters(prepared.Params)))
 
 	err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
 	if err != nil {
