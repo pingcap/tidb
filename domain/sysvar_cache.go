@@ -202,34 +202,20 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
-	case variable.TiDBTopSQLPrecisionSeconds:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.PrecisionSeconds.Store(val)
-	case variable.TiDBTopSQLMaxStatementCount:
+	case variable.TiDBTopSQLMaxTimeSeriesCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
 		topsqlstate.GlobalState.MaxStatementCount.Store(val)
-	case variable.TiDBTopSQLMaxCollect:
+	case variable.TiDBTopSQLMaxMetaCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
 		topsqlstate.GlobalState.MaxCollect.Store(val)
-	case variable.TiDBTopSQLReportIntervalSeconds:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.ReportIntervalSeconds.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:

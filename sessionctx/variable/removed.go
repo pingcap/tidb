@@ -22,9 +22,13 @@ package variable
 // careful not to return dummy data.
 
 var removedSysVars = map[string]string{
-	TiDBEnableAlterPlacement:       "alter placement is now always enabled",
-	TiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
-	TiDBSlowLogMasking:             "use tidb_redact_log instead",
+	TiDBEnableAlterPlacement:        "alter placement is now always enabled",
+	TiDBEnableGlobalTemporaryTable:  "temporary table support is now always enabled",
+	TiDBSlowLogMasking:              "use tidb_redact_log instead",
+	TiDBTopSQLPrecisionSeconds:      "not support change it now",
+	TiDBTopSQLReportIntervalSeconds: "not support change it now",
+	TiDBTopSQLMaxStatementCount:     "use tidb_top_sql_max_time_series_count instead",
+	TiDBTopSQLMaxCollect:            "use tidb_top_sql_max_meta_count instead",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed
