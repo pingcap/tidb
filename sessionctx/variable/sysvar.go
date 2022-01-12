@@ -853,10 +853,6 @@ var defaultSysVars = []*SysVar{
 		s.EnablePointGetCache = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableAlterPlacement = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeSession, Name: TiDBForcePriority, skipInit: true, Value: mysql.Priority2Str[DefTiDBForcePriority], SetSession: func(s *SessionVars, val string) error {
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 		return nil
@@ -1353,14 +1349,14 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		SetSession: func(s *SessionVars, val string) error {
-			s.StatsLoadSyncWait = tidbOptInt64(val, DefTiDBStatsLoadSyncWait)
+			s.StatsLoadSyncWait = TidbOptInt64(val, DefTiDBStatsLoadSyncWait)
 			return nil
 		},
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return strconv.FormatInt(StatsLoadSyncWait.Load(), 10), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
-			StatsLoadSyncWait.Store(tidbOptInt64(val, DefTiDBStatsLoadSyncWait))
+			StatsLoadSyncWait.Store(TidbOptInt64(val, DefTiDBStatsLoadSyncWait))
 			return nil
 		},
 	},
@@ -1592,7 +1588,7 @@ const (
 	// InnodbAdaptiveHashIndex is the name for 'innodb_adaptive_hash_index' system variable.
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
-	InnodbFtEnableStopword = "innodb_ft_enable_stopword"
+	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
 	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
 	InnodbSupportXA = "innodb_support_xa"
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.

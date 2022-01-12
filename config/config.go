@@ -735,7 +735,6 @@ var defaultConf = Config{
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
-		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,

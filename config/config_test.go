@@ -308,7 +308,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
-	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)

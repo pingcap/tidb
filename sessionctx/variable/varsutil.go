@@ -465,7 +465,7 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
-	var str []string
+	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}
