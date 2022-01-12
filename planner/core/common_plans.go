@@ -442,7 +442,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 				planValid := true
 				for tblInfo, isDirty := range cachedVal.TblInfo2UnionScan {
-					if !isDirty && tableHasDirtyContent(sctx, tblInfo) {
+					if isDirty != tableHasDirtyContent(sctx, tblInfo) {
 						planValid = false
 						// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 						// rebuilding the filters in UnionScan is pretty trivial.
