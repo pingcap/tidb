@@ -398,6 +398,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}
 	}
+
+	var txnTS uint64
+	if e.SCtx().GetSessionVars().TxnCtx != nil {
+		txnTS = e.SCtx().GetSessionVars().TxnCtx.StartTS
+	}
+
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -435,8 +441,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					continue
 				}
 				planValid := true
-				for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-					if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+				for tblInfo, isDirty := range cachedVal.TblInfo2UnionScan {
+					if !isDirty && tableHasDirtyContent(sctx, tblInfo) {
 						planValid = false
 						// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 						// rebuilding the filters in UnionScan is pretty trivial.
@@ -464,7 +470,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 
 					if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
-						log.Info("[PC] get cached plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)))
+						log.Info("[PC] get cached plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(e.Plan)), zap.Uint64("txn", txnTS))
 					}
 					return nil
 				}
@@ -479,6 +485,11 @@ REBUILD:
 	if err != nil {
 		return err
 	}
+
+	if strings.Contains(preparedStmt.PreparedStmtText, "trans_no") {
+		log.Info("[PC] new plan", zap.String("sql", preparedStmt.PreparedStmtText), zap.String("plan", ToString(p)), zap.Uint64("txn", txnTS))
+	}
+
 	err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
 	if err != nil {
 		return err
