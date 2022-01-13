@@ -2080,6 +2080,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
+		c.Assert(err, IsNil)
 		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 

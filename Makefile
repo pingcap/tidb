@@ -60,7 +60,7 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS) 
 
 vet:
 	@echo "vet"
