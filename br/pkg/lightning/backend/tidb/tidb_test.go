@@ -214,7 +214,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 }
 
 // TODO: temporarily disable this test before we fix strict mode
-//nolint:unused
+//nolint
 func testStrictMode(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
