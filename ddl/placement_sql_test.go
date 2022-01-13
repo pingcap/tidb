@@ -250,6 +250,7 @@ PARTITION BY RANGE (c) (
 
 func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 	defer func() {
@@ -329,6 +330,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 
 func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
 	tk.MustExec("use TestAlterDB")
@@ -657,6 +659,53 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000),\n" +
 		" PARTITION `p3` VALUES LESS THAN (100000))"))
+
+	// create tableWithInfo in ignore mode
+	tk.MustExec("drop table if exists t2")
+	tbl, err := s.getClonedTable("test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(tbl.PlacementPolicyRef, NotNil)
+	tbl.Name = model.NewCIStr("t2")
+	err = s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test"), tbl, ddl.OnExistError)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='aaa'"))
+
+	// createTableWithInfo in ignore mode (policy not exists)
+	tk.MustExec("drop table if exists t2")
+	tbl, err = s.getClonedTable("test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(tbl.PlacementPolicyRef, NotNil)
+	tbl.Name = model.NewCIStr("t2")
+	tbl.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	err = s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test"), tbl, ddl.OnExistError)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='aaa'"))
+
+	// createSchemaWithInfo in ignore mode
+	tk.MustExec("drop database if exists db2")
+	db1, ok := s.getClonedDatabase("db1")
+	c.Assert(ok, IsTrue)
+	c.Assert(db1.PlacementPolicyRef, NotNil)
+	db1.Name = model.NewCIStr("db2")
+	err = s.dom.DDL().CreateSchemaWithInfo(tk.Se, db1, ddl.OnExistError)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+
+	// createSchemaWithInfo in ignore mode (policy not exists)
+	tk.MustExec("drop database if exists db2")
+	db1, ok = s.getClonedDatabase("db1")
+	c.Assert(ok, IsTrue)
+	c.Assert(db1.PlacementPolicyRef, NotNil)
+	db1.Name = model.NewCIStr("db2")
+	db1.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	err = s.dom.DDL().CreateSchemaWithInfo(tk.Se, db1, ddl.OnExistError)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+
 }
 
 func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
@@ -668,6 +717,7 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	}()
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists tp")
 
@@ -756,4 +806,38 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3\" */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
+}
+
+func (s *testDBSuite6) TestEnableDirectPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop database if exists db1")
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec("drop placement policy if exists p1")
+	defer func() {
+		tk.MustExec("drop database if exists db1")
+		tk.MustExec("drop table if exists tp")
+		tk.MustExec("drop placement policy if exists p1")
+	}()
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p1,
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	tk.MustExec("create database db1 placement policy p1")
+
+	errorSQLs := []string{
+		"create database db2 followers=1",
+		"alter database db1 followers=1",
+		"create table t(a int) followers=1",
+		"alter table tp followers=1",
+		"alter table tp partition p0 followers=1",
+		"alter table tp add partition(partition p2 values less than(10000) followers=1)",
+	}
+
+	for _, sql := range errorSQLs {
+		err := tk.ExecToErr(sql)
+		c.Assert(err.Error(), Equals, "Direct placement is disabled")
+	}
 }
