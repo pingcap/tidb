@@ -49,6 +49,7 @@ PACKAGE_LIST  := go list ./...
 PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGES_TIDB_TESTS ?= $$($(PACKAGE_LIST_TIDB_TESTS))
+PACKAGES_TIDB_TESTS_WITHOUT_BR ?= $$($(PACKAGE_LIST_TIDB_TESTS) | grep -v "br")
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 PACKAGE_DIRECTORIES_TIDB_TESTS := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||'
 PACKAGE_DIRECTORIES_TIDB_TESTS_WITHOUT_BR := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||' | grep -v "br"

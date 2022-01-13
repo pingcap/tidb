@@ -60,11 +60,11 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS) 
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 
 vet:
 	@echo "vet"
-	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES_TIDB_TESTS_WITHOUT_BR) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
