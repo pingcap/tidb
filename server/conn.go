@@ -1200,10 +1200,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
 
-	log.Info("[PC] connection status",
-		zap.Bool("inTxn", (cc.ctx.Status()&mysql.ServerStatusInTrans) > 0),
-		zap.Int("status", int(cc.ctx.Status())),
-		zap.String("data", string(data)))
+	statusBegin := cc.ctx.Status()
+	defer func() {
+		statusEnd := cc.ctx.Status()
+		log.Info("[PC] conn status",
+			zap.String("status", fmt.Sprintf("%v->%v", statusBegin, statusEnd)),
+			zap.String("inTxn", fmt.Sprintf("%v->%v", (statusBegin&mysql.ServerStatusInTrans) > 0, (statusEnd&mysql.ServerStatusInTrans) > 0)),
+			zap.String("data", string(data)))
+	}()
 
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
