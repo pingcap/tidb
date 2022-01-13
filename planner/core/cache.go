@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -125,7 +126,10 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, preparedStmtText string, schemaVer
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) (kvcache.Key, error) {
+	if preparedStmtText == "" {
+		return nil, errors.New("empty prepared statement text")
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -143,7 +147,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText st
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
 	}
-	return key
+	return key, nil
 }
 
 // FieldSlice is the slice of the types.FieldType

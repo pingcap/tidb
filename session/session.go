@@ -313,7 +313,7 @@ func (s *session) cleanRetryInfo() {
 			preparedStmtText = preparedObj.PreparedStmtText
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, preparedStmtText, preparedAst.SchemaVersion)
+				cacheKey, _ = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, preparedStmtText, preparedAst.SchemaVersion)
 			}
 		}
 	}
