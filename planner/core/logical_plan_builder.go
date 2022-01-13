@@ -3175,7 +3175,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 				}}
 			colName.SetType(col.GetType())
 			field := &ast.SelectField{Expr: colName}
-			field.SetText(name.ColName.O)
+			field.SetText(nil, name.ColName.O)
 			resultList = append(resultList, field)
 		}
 	}
@@ -4321,6 +4321,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &StatementsSummaryExtractor{}
 		case infoschema.TableTiKVRegionPeers:
 			p.Extractor = &TikvRegionPeersExtractor{}
+		case infoschema.TableColumns:
+			p.Extractor = &ColumnsTableExtractor{}
 		}
 	}
 	return p, nil

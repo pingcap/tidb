@@ -1168,7 +1168,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 }
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
-	var gs []string
+	var gs []string // nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
