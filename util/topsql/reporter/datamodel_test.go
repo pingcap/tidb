@@ -471,7 +471,7 @@ func Test_encodeKey(t *testing.T) {
 	assert.Equal(t, "SP", key)
 }
 
-func Test_removeInValidPlanRecord(t *testing.T) {
+func TestRemoveInValidPlanRecord(t *testing.T) {
 	c1 := newCollecting()
 	rs := []struct {
 		sql  string
