@@ -834,3 +834,19 @@ func TestIndexMergeSwitcher(t *testing.T) {
 	require.Equal(t, DefTiDBEnableIndexMerge, true)
 	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
 }
+
+func TestNetBufferLength(t *testing.T) {
+	netBufferLength := GetSysVar(NetBufferLength)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1024") // converts it to min value
+	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1048576") // converts it to max value
+	val, err = netBufferLength.Validate(vars, "1048575", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1048575") // unchanged
+}
