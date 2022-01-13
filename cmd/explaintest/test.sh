@@ -16,7 +16,6 @@
 echo -e "mysql_test start\n"
 
 # `set -eu` prevent referencing an var before setting it, so we set the env vars here
-TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 
 COLLATION_DISABLE=$COLLATION_DISABLE
@@ -65,10 +64,8 @@ if [[ -z $TIDB_SERVER_PATH || ! -e $TIDB_SERVER_PATH ]]; then
 fi
 
 echo "start tidb-server, log file: $mysql_test_log"
-if [[ $TIDB_TEST_STORE_NAME = tikv ]]; then
-    "$TIDB_SERVER_PATH" -config "$TIDB_CONFIG" -P 4001 -status 9081 -store tikv -path "$TIKV_PATH" > "$mysql_test_log" 2>&1 &
-    SERVER_PID=$!
-fi
+"$TIDB_SERVER_PATH" -config "$TIDB_CONFIG" -P 4001 -status 9081 -store tikv -path "$TIKV_PATH" > "$mysql_test_log" 2>&1 &
+SERVER_PID=$!
 echo "tidb-server(PID: $SERVER_PID) started"
 trap 'echo "tidb-server(PID: $SERVER_PID) stopped"; kill -9 "$SERVER_PID" || true' EXIT
 
