@@ -1688,6 +1688,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
+	if se.sessionVars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare runStmt", zap.Uint64("connID", se.sessionVars.ConnectionID), zap.Bool("rs != nil", rs != nil))
+	}
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
@@ -1695,7 +1698,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			se:        se,
 		}, err
 	}
-
+	if se.sessionVars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare runStmt", zap.Uint64("connID", se.sessionVars.ConnectionID))
+	}
 	err = finishStmt(ctx, se, err, s)
 	if se.hasQuerySpecial() {
 		// The special query will be handled later in handleQuerySpecial,
@@ -1732,6 +1737,7 @@ type execStmtResult struct {
 
 func (rs *execStmtResult) Close() error {
 	se := rs.se
+	logutil.BgLogger().Warn("check prepare execStmtResult", zap.Uint64("connID", rs.se.sessionVars.ConnectionID))
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
@@ -1953,9 +1959,15 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
+	if s.sessionVars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare ExecutePreparedStmt getPreparedPointer success", zap.Uint64("connID", s.sessionVars.ConnectionID), zap.Uint32("stmtID", stmtID))
+	}
 	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	if s.sessionVars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare ExecutePreparedStmt valid cachedPrepareStmt", zap.Uint64("connID", s.sessionVars.ConnectionID), zap.Uint32("stmtID", stmtID))
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
@@ -1964,6 +1976,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
+
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	if preparedStmt.ForUpdateRead {

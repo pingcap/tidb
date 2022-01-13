@@ -17,6 +17,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/kv"
@@ -166,6 +168,9 @@ func (ts *TiDBStatement) Close() error {
 			//}
 			//ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
 			//	ts.ctx.GetSessionVars(), preparedObj.PreparedStmtText, preparedObj.PreparedAst.SchemaVersion))
+		}
+		if ts.ctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Warn("check prepare TiDBStatement.Close", zap.Uint64("connID", ts.ctx.GetSessionVars().ConnectionID))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
