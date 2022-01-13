@@ -83,6 +83,7 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
+<<<<<<< HEAD
 	statusURL, err := url.Parse(tempurl.Alloc())
 	if err != nil {
 		return errors.Trace(err)
@@ -102,11 +103,15 @@ func (mock *Cluster) Start() error {
 	}
 	_ = addrPort
 
+=======
+	server.RunInGoTest = true
+>>>>>>> aabd4e04d... test: public RunInGoTest for mock store (#31578)
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
-	cfg.Port = uint(addrPort)
+	// let tidb random select a port
+	cfg.Port = 0
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = uint(statusPort)
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)

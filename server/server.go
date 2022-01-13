@@ -70,10 +70,11 @@ import (
 )
 
 var (
-	serverPID   int
-	osUser      string
-	osVersion   string
-	runInGoTest bool
+	serverPID int
+	osUser    string
+	osVersion string
+	// RunInGoTest represents whether we are run code in test.
+	RunInGoTest bool
 )
 
 func init() {
@@ -235,7 +236,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -245,7 +246,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
-		if runInGoTest && s.cfg.Port == 0 {
+		if RunInGoTest && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
 	}
