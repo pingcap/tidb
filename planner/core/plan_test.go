@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -35,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testPlanNormalize{})
+var _ = SerialSuites(&testPlanNormalize{})
 
 type testPlanNormalize struct {
 	store kv.Storage
@@ -286,6 +287,14 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	   s_dist_10  char(24) DEFAULT NULL,
 	  PRIMARY KEY ( s_w_id , s_i_id )
 	);`)
+
+	err := failpoint.Enable("github.com/pingcap/tidb/planner/mockRandomPlanID", "return(true)")
+	c.Assert(err, IsNil)
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/planner/mockRandomPlanID")
+		c.Assert(err, IsNil)
+	}()
+
 	normalizedDigestCases := []struct {
 		sql1   string
 		sql2   string
@@ -404,7 +413,6 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 }
 
 func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bool) {
-	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql1)
 	info := tk.Se.ShowProcess()
 	c.Assert(info, NotNil)
@@ -412,7 +420,6 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	c.Assert(ok, IsTrue)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
-	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql2)
 	info = tk.Se.ShowProcess()
 	c.Assert(info, NotNil)
