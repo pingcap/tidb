@@ -281,7 +281,7 @@ if [ $record -eq 1 ]; then
         $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=true
     else
         echo "record result for case: \"$record_case\""
-        $explain_test -port "$port" -status "$status" --record $record_case --log-level=error --collation-disable=true
+        $explain_test -port "$port" -status "$status" --collation-disable=true --record $record_case --log-level=error
     fi
 elif [ $create -eq 1 ]; then
     if [ "$create_case" = 'all' ]; then
@@ -289,7 +289,7 @@ elif [ $create -eq 1 ]; then
         $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=true
     else
         echo "create result for case: \"$create_case\""
-        $explain_test -port "$port" -status "$status" --create $create_case --log-level=error --collation-disable=true
+        $explain_test -port "$port" -status "$status" --collation-disable=true --create $create_case --log-level=error
     fi
 else
     if [ -z "$tests" ]; then
@@ -297,7 +297,7 @@ else
     else
         echo "run explain test cases: $tests"
     fi
-    $explain_test -port "$port" -status "$status" --log-level=error $tests --collation-disable=true
+    $explain_test -port "$port" -status "$status" --collation-disable=true --log-level=error $tests
 fi
 
 echo "explaintest end"
