@@ -156,7 +156,7 @@ func (c *RowContainer) SpillToDisk() {
 
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
 		if val.(bool) {
-			panic("out of disk quota when spill")
+			panic("out of disk quota when spilling")
 		}
 	})
 
@@ -527,7 +527,7 @@ func (c *SortedRowContainer) Sort() {
 
 	failpoint.Inject("sortOOM", func(val failpoint.Value) {
 		if val.(bool) {
-			panic("out of memory quota when sort")
+			panic("out of memory quota when sorting")
 		}
 
 	})
@@ -537,7 +537,7 @@ func (c *SortedRowContainer) Sort() {
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
 	defer func() {
-		// may panic when call c.Sort()
+		// may panic when calling c.Sort()
 		r := recover()
 		if r == nil {
 			return
