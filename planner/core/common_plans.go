@@ -387,7 +387,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.PreparedStmtText, prepared.SchemaVersion)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -485,7 +485,7 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.PreparedStmtText, prepared.SchemaVersion)
+			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
@@ -622,7 +622,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		if x.HandleParam != nil {
 			var iv int64
-			iv, err = sctx.GetSessionVars().PreparedParams[x.HandleParam.Order].ToInt64(sc)
+			iv, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
 				return err
 			}
@@ -631,7 +631,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexValueParams {
 			if param != nil {
-				x.IndexValues[i] = sctx.GetSessionVars().PreparedParams[param.Order]
+				x.IndexValues[i] = param.Datum
 			}
 		}
 		return nil
@@ -669,7 +669,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		for i, param := range x.HandleParams {
 			if param != nil {
 				var iv int64
-				iv, err = sctx.GetSessionVars().PreparedParams[param.Order].ToInt64(sc)
+				iv, err = param.Datum.ToInt64(sc)
 				if err != nil {
 					return err
 				}
@@ -682,7 +682,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = sctx.GetSessionVars().PreparedParams[param.Order]
+					x.IndexValues[i][j] = param.Datum
 				}
 			}
 		}
