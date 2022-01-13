@@ -1191,6 +1191,21 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 }
 
+func formatCmd(cmd byte) string {
+	switch cmd {
+	case mysql.ComStmtClose:
+		return "stmt-close"
+	case mysql.ComStmtExecute:
+		return "stmt-exec"
+	case mysql.ComStmtPrepare:
+		return "stmt-prep"
+	case mysql.ComQuery:
+		return "query"
+	default:
+		return fmt.Sprintf("unknown-%v", cmd)
+	}
+}
+
 // dispatch handles client request based on command which is the first byte of the data.
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
@@ -1200,10 +1215,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
 
+	var cmd byte
 	statusBegin := cc.ctx.Status()
 	defer func() {
 		statusEnd := cc.ctx.Status()
 		log.Info("[PC] conn status",
+			zap.String("cmd", formatCmd(cmd)),
 			zap.String("status", fmt.Sprintf("%v->%v", statusBegin, statusEnd)),
 			zap.String("inTxn", fmt.Sprintf("%v->%v", (statusBegin&mysql.ServerStatusInTrans) > 0, (statusEnd&mysql.ServerStatusInTrans) > 0)),
 			zap.String("data", string(data)))
@@ -1229,7 +1246,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.mu.Unlock()
 
 	cc.lastPacket = data
-	cmd := data[0]
+	cmd = data[0]
 	data = data[1:]
 	if variable.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
