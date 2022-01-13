@@ -1109,7 +1109,9 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
 				do.bindHandle.DropInvalidBindRecord()
-				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+				// Get Global
+				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
+				if err == nil && variable.TiDBOptOn(optVal) {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
