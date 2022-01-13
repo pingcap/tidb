@@ -195,7 +195,7 @@ func TestGetCPUProfile(t *testing.T) {
 					labelCnt++
 				}
 			}
-			require.True(t, labelCnt > 1)
+			require.True(t, labelCnt > 0)
 		}()
 	}
 	wg.Wait()

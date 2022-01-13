@@ -949,6 +949,8 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	sortedKVDirInfo, err := os.Stat(storageSizeDir)
 
 	switch {
+	case os.IsNotExist(err):
+		return nil
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
 			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
