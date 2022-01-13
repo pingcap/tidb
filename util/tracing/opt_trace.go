@@ -192,11 +192,15 @@ type PhysicalOptimizeTracer struct {
 	State map[string]map[string]*PhysicalOptimizeTraceInfo `json:"-"`
 }
 
+// FlattenPhysicalPlanTrace indicates the flatten physical plan trace
 type FlattenPhysicalPlanTrace struct {
+	// PhysicalPlanCandidatesTrace indicates PhysicalPlanTrace list
 	PhysicalPlanCandidatesTrace []*PhysicalPlanTrace `json:"candidates"`
+	// LogicalMapping indicates the (physical type, id) mapping (logical type, id)
 	LogicalMapping              map[string]string    `json:"mapping"`
 }
 
+// BuildFlattenPhysicalPlanTrace builds FlattenPhysicalPlanTrace
 func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 	if tracer == nil || len(tracer.State) < 1 {
 		return
