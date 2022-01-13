@@ -314,87 +314,6 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 	tk.MustExec("drop placement policy x")
 }
 
-func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop placement policy if exists x")
-	tk.MustExec("drop placement policy if exists y")
-	tk.MustExec("drop table if exists t, t_range_p")
-
-	tk.MustExec("create placement policy `y` followers=2;")
-	tk.MustExec("alter database test placement policy='y'")
-	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
-		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`y` */",
-	))
-
-	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("1"))
-	tk.MustGetErrCode("create table t(a int) PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
-
-	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
-	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
-
-	// Test for `Create`
-	// Test `CREATE DATABASE`: Skip the check, and create database with default placement option.
-	tk.MustExec("create database db_skip_validation PLACEMENT POLICY=\"x\"")
-	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
-		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
-	))
-	// Test `CREATE TABLE`: Skip the check, and inherit from the database placement policy when create table
-	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
-	// Test `CREATE PARTITION`: Skip the check, and inherit from the table placement policy when create partition
-	tk.MustExec("create table t_range_p(id int) placement policy y partition by range(id) (" +
-		"PARTITION p0 VALUES LESS THAN (100)," +
-		"PARTITION p1 VALUES LESS THAN (1000) placement policy x)",
-	)
-	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000))",
-	))
-
-	// Test for `ALTER`
-	// Test `ALTER DATABASE`: Skip the check, keep the original opts.
-	tk.MustExec("alter database db_skip_validation PLACEMENT POLICY=\"x\"")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
-		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
-	))
-	// Test `ALTER TABLE`: Skip the check, keep the original opts.
-	tk.MustExec("alter table t PLACEMENT POLICY=\"x\"")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
-	// Test `ALTER PARTITION`: Skip the check, keep the original opts.
-	tk.MustExec("alter table t_range_p PARTITION p1 placement policy y;")
-	tk.MustExec("alter table t_range_p PARTITION p0 placement policy x;")
-	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */)",
-	))
-	tk.MustExec("alter table t_range_p PARTITION p1 placement policy x;")
-	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */)",
-	))
-
-	tk.MustExec("SET PLACEMENT_CHECKS = 1;")
-	tk.MustExec("drop table if exists t, t_range_p")
-	tk.MustExec("alter database test placement policy='default'")
-	tk.MustExec("drop database db_skip_validation;")
-	tk.MustExec("drop placement policy if exists y;")
-}
-
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists TestResetPlacementDB;")
@@ -702,6 +621,124 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy if exists y")
 }
 
+func (s *testDBSuite6) getClonedTable(dbName string, tableName string) (*model.TableInfo, error) {
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return nil, err
+	}
+
+	tblMeta := tbl.Meta()
+	tblMeta = tblMeta.Clone()
+	policyRef := *tblMeta.PlacementPolicyRef
+	tblMeta.PlacementPolicyRef = &policyRef
+	return tblMeta, nil
+}
+
+func (s *testDBSuite6) getClonedDatabase(dbName string) (*model.DBInfo, bool) {
+	db, ok := s.dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+	if !ok {
+		return nil, ok
+	}
+
+	db = db.Clone()
+	policyRef := *db.PlacementPolicyRef
+	db.PlacementPolicyRef = &policyRef
+	return db, true
+}
+
+func (s *testDBSuite6) TestCreateTableWithInfoPlacement(c *C) {
+	clearAllBundles(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p1 followers=1")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create table t1(a int) placement policy p1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create database test2")
+	defer tk.MustExec("drop database if exists test2")
+
+	tbl, err := s.getClonedTable("test", "t1")
+	c.Assert(err, IsNil)
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl.PlacementPolicyRef.ID, Equals, policy.ID)
+
+	tk.MustExec("alter table t1 placement policy='default'")
+	tk.MustExec("drop placement policy p1")
+	tk.MustExec("create placement policy p1 followers=2")
+	c.Assert(s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test2"), tbl, ddl.OnExistError), IsNil)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table test2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
+	tk.MustQuery("show placement where target='TABLE test2.t1'").Check(testkit.Rows("TABLE test2.t1 FOLLOWERS=2 PENDING"))
+
+	// The ref id for new table should be the new policy id
+	tbl2, err := s.getClonedTable("test2", "t1")
+	c.Assert(err, IsNil)
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl2.PlacementPolicyRef.ID, Equals, policy2.ID)
+	c.Assert(policy2.ID != policy.ID, IsTrue)
+
+	// Test policy not exists
+	tbl2.Name = model.NewCIStr("t3")
+	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	err = s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test2"), tbl2, ddl.OnExistError)
+	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'pxx'")
+}
+
+func (s *testDBSuite6) TestCreateSchemaWithInfoPlacement(c *C) {
+	clearAllBundles(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("drop database if exists test3")
+	tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p1 followers=1")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create database test2 placement policy p1")
+	defer tk.MustExec("drop database if exists test2")
+	defer tk.MustExec("drop database if exists test3")
+
+	db, ok := s.getClonedDatabase("test2")
+	c.Assert(ok, IsTrue)
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef.ID, Equals, policy.ID)
+
+	db2 := db.Clone()
+	db2.Name = model.NewCIStr("test3")
+	tk.MustExec("alter database test2 placement policy='default'")
+	tk.MustExec("drop placement policy p1")
+	tk.MustExec("create placement policy p1 followers=2")
+	c.Assert(s.dom.DDL().CreateSchemaWithInfo(tk.Se, db2, ddl.OnExistError), IsNil)
+	tk.MustQuery("show create database test2").Check(testkit.Rows("test2 CREATE DATABASE `test2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk.MustQuery("show create database test3").Check(testkit.Rows("test3 CREATE DATABASE `test3` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
+	tk.MustQuery("show placement where target='DATABASE test3'").Check(testkit.Rows("DATABASE test3 FOLLOWERS=2 SCHEDULED"))
+
+	// The ref id for new table should be the new policy id
+	db2, ok = s.getClonedDatabase("test3")
+	c.Assert(ok, IsTrue)
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db2.PlacementPolicyRef.ID, Equals, policy2.ID)
+	c.Assert(policy2.ID != policy.ID, IsTrue)
+
+	// Test policy not exists
+	db2.Name = model.NewCIStr("test4")
+	db2.PlacementPolicyRef.Name = model.NewCIStr("p2")
+	err := s.dom.DDL().CreateSchemaWithInfo(tk.Se, db2, ddl.OnExistError)
+	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'p2'")
+}
+
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -813,7 +850,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
 	po := testGetPolicyByName(c, tk.Se, "x", true)
 	c.Assert(po, NotNil)
-	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL"))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int) placement policy \"x\"")
