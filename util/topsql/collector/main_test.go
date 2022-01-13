@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 
 func TestPProfCPUProfile(t *testing.T) {
 	// short the interval to speed up the test.
-	interval := time.Millisecond * 200
+	interval := time.Millisecond * 400
 	defCollectTickerInterval = interval
 	cpuprofile.DefProfileDuration = interval
 
@@ -65,9 +65,14 @@ func TestPProfCPUProfile(t *testing.T) {
 
 	// Test after re-enable.
 	topsqlstate.EnableTopSQL()
-	t1 := time.Now()
-	data = <-mc.dataCh
-	require.True(t, time.Since(t1) < interval*4)
+	for i := 0; i < 10; i++ {
+		t1 := time.Now()
+		data = <-mc.dataCh
+		require.True(t, time.Since(t1) < interval*4)
+		if len(data) > 0 {
+			break
+		}
+	}
 	require.True(t, len(data) > 0)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
 }
