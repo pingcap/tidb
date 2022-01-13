@@ -952,10 +952,13 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var tablePath *util.AccessPath
+	var primaryIdxPath *util.AccessPath
 	for _, path := range paths {
+		if path.StoreType == kv.TiFlash {
+			continue
+		}
 		if path.IsTablePath() {
-			tablePath = path
+			primaryIdxPath = path
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
@@ -963,7 +966,7 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 		}
 	}
 	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
-		return tablePath
+		return primaryIdxPath
 	}
 	return nil
 }
@@ -3264,7 +3267,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
-		columnName.SetText(column.Name.O)
+		columnName.SetText(nil, column.Name.O)
 
 		idx, err := expression.FindFieldName(mockPlan.OutputNames(), columnName)
 		if err != nil {

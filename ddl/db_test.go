@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -6385,10 +6386,9 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	var err1 error
 	var err2 error
-	wg.Add(2)
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
@@ -6411,15 +6411,13 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		_, err1 = se1.Execute(context.Background(), sql1)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		_, err2 = se2.Execute(context.Background(), sql2)
-	}()
+	})
 
 	wg.Wait()
 	f(c, err1, err2)
