@@ -949,6 +949,35 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					if err != nil {
 						return err
 					}
+
+					// Debug print.
+					if physicalID == 0 || (handle.IsInt() && handle.IntValue() == 0) || (handle.Len() == 0) {
+						txn, _ := e.ctx.Txn(false)
+						sql := e.ctx.GetSessionVars().StmtCtx.OriginalSQL
+						tblIDs := make([]int64, 0, len(e.tblID2Handle))
+						for tmpTblID := range e.tblID2Handle {
+							tblIDs = append(tblIDs, tmpTblID)
+						}
+						partTblLen := len(e.partitionedTable)
+						tblid2ColIdxMapKeys := make([]int64, 0, len(e.tblID2PIDColumnIndex))
+						tblid2ColIdxMapVals := make([]int, 0, len(e.tblID2PIDColumnIndex))
+						for key, val := range e.tblID2PIDColumnIndex {
+							tblid2ColIdxMapKeys = append(tblid2ColIdxMapKeys, key)
+							tblid2ColIdxMapVals = append(tblid2ColIdxMapVals, val)
+						}
+						logutil.Logger(ctx).Error("[for debug] the physicalID or handle value is unexpected",
+							zap.Uint64("ts", txn.StartTS()),
+							zap.Int64("id", id),
+							zap.Int64("physicalID", physicalID),
+							zap.Stringer("handle", handle),
+							zap.String("sql", sql),
+							zap.Int64s("tblIDs", tblIDs),
+							zap.Int("partTblLen", partTblLen),
+							zap.Int64s("tblID2PIDColIdxMapKeys", tblid2ColIdxMapKeys),
+							zap.Ints("tblid2ColIdxMapVals", tblid2ColIdxMapVals))
+						panic("unexpected lock key, check the tidb log with for debug")
+					}
+
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, handle))
 				}
 			}
