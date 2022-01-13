@@ -206,6 +206,8 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestPlacementFollowers(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	defer tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop placement policy if exists x")
 
@@ -459,6 +461,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
 
 	// Direct placement option: special constraints may be incompatible with common constraint.
@@ -619,6 +622,124 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
 	tk.MustExec("drop placement policy if exists y")
+}
+
+func (s *testDBSuite6) getClonedTable(dbName string, tableName string) (*model.TableInfo, error) {
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return nil, err
+	}
+
+	tblMeta := tbl.Meta()
+	tblMeta = tblMeta.Clone()
+	policyRef := *tblMeta.PlacementPolicyRef
+	tblMeta.PlacementPolicyRef = &policyRef
+	return tblMeta, nil
+}
+
+func (s *testDBSuite6) getClonedDatabase(dbName string) (*model.DBInfo, bool) {
+	db, ok := s.dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+	if !ok {
+		return nil, ok
+	}
+
+	db = db.Clone()
+	policyRef := *db.PlacementPolicyRef
+	db.PlacementPolicyRef = &policyRef
+	return db, true
+}
+
+func (s *testDBSuite6) TestCreateTableWithInfoPlacement(c *C) {
+	clearAllBundles(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p1 followers=1")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create table t1(a int) placement policy p1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create database test2")
+	defer tk.MustExec("drop database if exists test2")
+
+	tbl, err := s.getClonedTable("test", "t1")
+	c.Assert(err, IsNil)
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl.PlacementPolicyRef.ID, Equals, policy.ID)
+
+	tk.MustExec("alter table t1 placement policy='default'")
+	tk.MustExec("drop placement policy p1")
+	tk.MustExec("create placement policy p1 followers=2")
+	c.Assert(s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test2"), tbl, ddl.OnExistError), IsNil)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table test2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
+	tk.MustQuery("show placement where target='TABLE test2.t1'").Check(testkit.Rows("TABLE test2.t1 FOLLOWERS=2 PENDING"))
+
+	// The ref id for new table should be the new policy id
+	tbl2, err := s.getClonedTable("test2", "t1")
+	c.Assert(err, IsNil)
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl2.PlacementPolicyRef.ID, Equals, policy2.ID)
+	c.Assert(policy2.ID != policy.ID, IsTrue)
+
+	// Test policy not exists
+	tbl2.Name = model.NewCIStr("t3")
+	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	err = s.dom.DDL().CreateTableWithInfo(tk.Se, model.NewCIStr("test2"), tbl2, ddl.OnExistError)
+	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'pxx'")
+}
+
+func (s *testDBSuite6) TestCreateSchemaWithInfoPlacement(c *C) {
+	clearAllBundles(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("drop database if exists test3")
+	tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p1 followers=1")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create database test2 placement policy p1")
+	defer tk.MustExec("drop database if exists test2")
+	defer tk.MustExec("drop database if exists test3")
+
+	db, ok := s.getClonedDatabase("test2")
+	c.Assert(ok, IsTrue)
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef.ID, Equals, policy.ID)
+
+	db2 := db.Clone()
+	db2.Name = model.NewCIStr("test3")
+	tk.MustExec("alter database test2 placement policy='default'")
+	tk.MustExec("drop placement policy p1")
+	tk.MustExec("create placement policy p1 followers=2")
+	c.Assert(s.dom.DDL().CreateSchemaWithInfo(tk.Se, db2, ddl.OnExistError), IsNil)
+	tk.MustQuery("show create database test2").Check(testkit.Rows("test2 CREATE DATABASE `test2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk.MustQuery("show create database test3").Check(testkit.Rows("test3 CREATE DATABASE `test3` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
+	tk.MustQuery("show placement where target='DATABASE test3'").Check(testkit.Rows("DATABASE test3 FOLLOWERS=2 SCHEDULED"))
+
+	// The ref id for new table should be the new policy id
+	db2, ok = s.getClonedDatabase("test3")
+	c.Assert(ok, IsTrue)
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db2.PlacementPolicyRef.ID, Equals, policy2.ID)
+	c.Assert(policy2.ID != policy.ID, IsTrue)
+
+	// Test policy not exists
+	db2.Name = model.NewCIStr("test4")
+	db2.PlacementPolicyRef.Name = model.NewCIStr("p2")
+	err := s.dom.DDL().CreateSchemaWithInfo(tk.Se, db2, ddl.OnExistError)
+	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'p2'")
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
@@ -802,6 +923,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	defer func() {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("drop placement policy if exists x")
@@ -928,6 +1050,8 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t, t0")
 	tk.MustExec("drop placement policy if exists x")
 
@@ -1001,6 +1125,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
@@ -1072,6 +1197,7 @@ func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
 	tk.MustExec("drop database if exists db2")
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t (id int) primary_region='r0' regions='r0'")
 	defer tk.MustExec("drop table if exists t")
@@ -1119,6 +1245,7 @@ func (s *testDBSuite6) TestDropTableGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1156,6 +1283,7 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -1255,6 +1383,7 @@ func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1305,6 +1434,7 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p0")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1421,6 +1551,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -1495,6 +1626,8 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -1578,6 +1711,7 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1627,6 +1761,8 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -1703,6 +1839,7 @@ func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1753,6 +1890,7 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, tp")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1916,6 +2054,7 @@ func (s *testDBSuite6) TestPDFail(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1, t2, tp")
 
