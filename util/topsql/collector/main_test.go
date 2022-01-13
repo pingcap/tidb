@@ -67,7 +67,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	topsqlstate.EnableTopSQL()
 	t1 := time.Now()
 	data = <-mc.dataCh
-	require.True(t, time.Since(t1) < interval*2)
+	require.True(t, time.Since(t1) < interval*4)
 	require.True(t, len(data) > 0)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
 }
