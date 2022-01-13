@@ -179,7 +179,8 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 
 #### (adder *exprPrefixAdder) addExprPrefix4DNFCond
 
-add the prefix expression for DNF condition
+- function declaration
+
 
 ```go
 // add the prefix expression for DNF condition, e.g. `WHERE a = 1 OR a = 10`, ......
@@ -187,40 +188,14 @@ add the prefix expression for DNF condition
 // @param[in] condition    the original condtion of the datasoure. e.g. `WHERE a = 1 OR a = 10`.
 //                          condtion is `a = 1 OR a = 10`
 // @return 	 -          the new condition after adding expression prefix. It's still a LogicOr expression.
-func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
-
-	var err error
-	dnfItems := expression.FlattenDNFConditions(condition)
-	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
-
-	for _, item := range dnfItems {
-		if sf, ok := item.(*expression.ScalarFunction); ok {
-			var accesses []expression.Expression
-			if sf.FuncName.L == ast.LogicAnd {
-				cnfItems := expression.FlattenCNFConditions(sf)
-				accesses, err = adder.addExprPrefix4CNFCond(cnfItems)
-				if err != nil {
-					return []expression.Expression{condition}, err
-				}
-				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
-			} else if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
-				// only add prefix expression for EQ or IN function
-				accesses, err = adder.addExprPrefix4CNFCond([]expression.Expression{sf})
-				if err != nil {
-					return []expression.Expression{condition}, err
-				}
-				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
-			} else {
-				newAccessItems = append(newAccessItems, item)
-			}
-		} else {
-			newAccessItems = append(newAccessItems, item)
-		}
-	}
-
-	return []expression.Expression{expression.ComposeDNFCondition(adder.sctx, newAccessItems...)}, nil
-}
+func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) 
 ```
+
+- Function Process
+  - Extract evrey binary expression from `condition` to a expression.Expression slice `dnfItems`.
+  - Make a new expression.Expression slice `newAccessItems` to store new condtions  after processing tidb_shard prefix.
+  - Traverse every `item` in slice `dnfItems`, if it's a `LogicAnd` expression, extracts every binary expression from it to a slice `cnfItems` and calls function `addExprPrefix4CNFCond(cnfItems)`  to add tidb_shard prefix if need; if it's a `ast.EQ` or a `ast.In` expression, calls function `addExprPrefix4CNFCond([]Expression{item})` to add tidb_shard prefix if need.
+  - Make a new `LogicOR` condition by `newAccessItems`, return it.
 
 
 
@@ -247,6 +222,8 @@ func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expressio
 
 The core function that adds `tidb_shard(x) = xxx`  to the accessCond.
 
+- function declaration
+
 ```go
 // AddExpr4EqAndInCondition add the `tidb_shard(x) = xxx` prefix
 // Add tidb_shard() for EQ and IN function. e.g. input condition is `WHERE a = 1`,
@@ -258,69 +235,21 @@ The core function that adds `tidb_shard(x) = xxx`  to the accessCond.
 // @param[in] lengths     the length for every column of shard index
 // @retval - the new condition after adding tidb_shard() prefix
 func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
-	cols []*expression.Column) ([]expression.Expression, error) {
-
-	accesses := make([]expression.Expression, len(cols))
-	columnValues := make([]*valueInfo, len(cols))
-	offsets := make([]int, len(conditions))
-	addGcCond := true
-
-	// the array accesses stores conditions of every column in the index in the definition order
-	// e.g. the original condition is `WHERE b = 100 AND a = 200 AND c = 300`, the definition of
-	// index is (tidb_shard(a), a, b), then accesses is "[a = 200, b = 100]"
-	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
-		offsets[i] = offset
-		if offset == -1 {
-			continue
-		}
-		if accesses[offset] == nil {
-			accesses[offset] = cond
-			continue
-		}
-		// if the same field appear twice or more, don't add tidb_shard()
-		// e.g. `WHERE a > 100 and a < 200`
-		addGcCond = false
-	}
-
-	for i, cond := range accesses {
-		if cond == nil {
-			continue
-		}
-		if !allEqOrIn(cond) {
-			addGcCond = false
-			break
-		}
-		columnValues[i] = extractValueInfo(cond)
-	}
-
-	if !addGcCond || !NeedAddGcColumn4ShardIndex(cols, accesses, columnValues) {
-		return conditions, nil
-	}
-
-	// remove the accesses from newConditions
-	newConditions := make([]expression.Expression, 0, len(conditions))
-	newConditions = append(newConditions, conditions...)
-	newConditions = removeAccessConditions(newConditions, accesses)
-
-	// add Gc condtion for accesses and return new condition to newAccesses
-	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)
-	if err != nil {
-		return conditions, err
-	}
-
-	// merge newAccesses and original condition execept accesses
-	newConditions = append(newConditions, newAccesses...)
-
-	return newConditions, nil
-}
+	cols []*expression.Column) ([]expression.Expression, error) 
 ```
+
+- Function Process
+  - Traverse every `cond` in  slice `conditions`, place the `cond` to a new slice `accesses` according to the index definition field order.
+  - Traverse every  `cond` in slice `accesses`, if the `cond` is not a `ast.EQ` or `ast.In` expression,  do nothing and return, otherwise extract the column value from `cond` and store it to slice `columnValues`.
+  - Call the function `NeedAddGcColumn4ShardIndex` to judge if necessary to add `tidb_shard` prefix for `conditions`, if not, do nothing and return; otherwise call function `AddGcColumnCond` to add  `tidb_shard` prefix for `conditions`. 
 
 
 
 ##### NeedAddGcColumn4ShardIndex
 
 Check whether to add `tidb_shard(x) = xxx` to the access condition.
+
+- function declaration
 
 ```go
 // NeedAddGcColumn4ShardIndex check whether to add `tidb_shard(x) = xxx`
@@ -336,34 +265,13 @@ Check whether to add `tidb_shard(x) = xxx` to the access condition.
 func NeedAddGcColumn4ShardIndex(
 	cols []*expression.Column,
 	accessCond []expression.Expression,
-	columnValues []*valueInfo) bool {
-
-	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
-	// check cols and columnValues in the sub call function
-	if len(accessCond) < 2 {
-		return false
-	}
-
-	if !IsValidShardIndex(cols) {
-		return false
-	}
-
-	// accessCond[0] shoudle be nil, because it has no access condition for
-	// the prefix tidb_shard() of the shard index
-	if cond := accessCond[1]; cond != nil {
-		if f, ok := cond.(*expression.ScalarFunction); ok {
-			switch f.FuncName.L {
-			case ast.EQ:
-				return NeedAddColumn4EqCond(cols, accessCond, columnValues)
-			case ast.In:
-				return NeedAddColumn4InCond(cols, accessCond, f)
-			}
-		}
-	}
-
-	return false
-}
+	columnValues []*valueInfo) bool 
 ```
+
+- Function Process
+  - The columns of shard index shoude be more than 2, like `(tidb_shard(a),a,...)`.
+  - The first column of index must be a generated column and the expression must be `tidb_shard` built-in function.
+  - The argument of  `tidb_shard` must be a column other than expression or else, and it must be the second column of the index.
 
 
 
@@ -409,6 +317,8 @@ func AddGcColumnCond(sctx sessionctx.Context,
 
 Add the `tidb_shard(x) = xxx` prefix for equal access condition.
 
+- function declaration
+
 ```go
 // AddGcColumn4EqCond add the `tidb_shard(x) = xxx` prefix for equal condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
@@ -418,43 +328,20 @@ Add the `tidb_shard(x) = xxx` prefix for equal access condition.
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
-	columnValues []*valueInfo) ([]expression.Expression, error) {
-
-	expr := cols[0].VirtualExpr.Clone()
-	record := make([]types.Datum, len(columnValues)-1)
-
-	for i := 1; i < len(columnValues); i++ {
-		cv := columnValues[i]
-		if cv == nil {
-			break
-		}
-		record[i-1] = *cv.value
-	}
-
-	mutRow := chunk.MutRowFromDatums(record)
-	evaluated, err := expr.Eval(mutRow.ToRow())
-	if err != nil {
-		return accessesCond, err
-	}
-	vi := &valueInfo{false, &evaluated}
-	con := &expression.Constant{Value: evaluated, RetType: cols[0].RetType}
-	// make a tidb_shard() function, e.g. `tidb_shard(a) = 8`
-	cond, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], con)
-	if err != nil {
-		return accessesCond, err
-	}
-
-	accessesCond[0] = cond
-	columnValues[0] = vi
-	return accessesCond, nil
-}
+	columnValues []*valueInfo) ([]expression.Expression, error) 
 ```
+
+- Function Process
+  - Traverse every `ColumnValue` in slice `columnValues`, calculate the value of `tidb_shard` by `ColumnValue` and store it to the variable`evaluated`.
+  - Make a new expression `tidb_shard(columnName) = evaluated` and store it to `accessesCond[0]`
 
 
 
 ##### AddGcColumn4InCond
 
  Add the `tidb_shard(x) = xxx` for `IN` condition.
+
+- function declaration
 
 ```go
 // AddGcColumn4InCond add the `tidb_shard(x) = xxx` for `IN` condition
@@ -463,67 +350,12 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 //            error                     if error gernerated, return error
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
-	accessesCond []expression.Expression) ([]expression.Expression, error) {
-
-	var errRes error
-	var newAccessCond []expression.Expression
-	record := make([]types.Datum, 1)
-
-	expr := cols[0].VirtualExpr.Clone()
-	andType := types.NewFieldType(mysql.TypeTiny)
-
-	sf := accessesCond[1].(*expression.ScalarFunction)
-	c, _ := sf.GetArgs()[0].(*expression.Column)
-	var AndOrExpr expression.Expression
-	for i, arg := range sf.GetArgs()[1:] {
-		// get every const value and calculate tidb_shar(val)
-		con, _ := arg.(*expression.Constant)
-		conVal, err := con.Eval(chunk.Row{})
-		if err != nil {
-			return accessesCond, err
-		}
-
-		record[0] = conVal
-		mutRow := chunk.MutRowFromDatums(record)
-		exprVal, err := expr.Eval(mutRow.ToRow())
-		if err != nil {
-			return accessesCond, err
-		}
-
-		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg1 is like `a = 100`
-		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
-		tmpArg1, err1 := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
-		if err1 != nil {
-			return accessesCond, err1
-		}
-		tmpArg2, err2 := expression.NewFunction(sctx, ast.EQ, c.RetType, c.Clone(), arg)
-		if err2 != nil {
-			return accessesCond, err2
-		}
-
-		// make a LogicAnd, e.g. `tidb_shard(a) = 8 AND a = 100`
-		andExpr, err3 := expression.NewFunction(sctx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
-		if err3 != nil {
-			return accessesCond, err3
-		}
-
-		if i == 0 {
-			AndOrExpr = andExpr
-		} else {
-			// if the LogicAnd more than one, make a LogicOr,
-			// e.g. `(tidb_shard(a) = 8 AND a = 100) OR (tidb_shard(a) = 161 AND a = 200)`
-			AndOrExpr, errRes = expression.NewFunction(sctx, ast.LogicOr, andType, AndOrExpr, andExpr)
-			if errRes != nil {
-				return accessesCond, errRes
-			}
-		}
-	}
-
-	newAccessCond = append(newAccessCond, AndOrExpr)
-
-	return newAccessCond, nil
-}
+	accessesCond []expression.Expression) ([]expression.Expression, error)
 ```
+
+- Function Process
+
+Traverse every `argument` from `In` expression, calculate the `value` of `tidb_shard` with `argument` and make a new expression `tidb_shard(columnName) = value`, then make a `LogicAnd` like `tidb_shard(a) = 8 AND a = 100`. When process the second or above argument , add the `LogicAnd` to the `LogicOR` expression, like `tidb_shard(a) = 8 AND a = 100 OR tidb_shard(a) = 8 AND a = 100`.
 
 
 
