@@ -544,7 +544,7 @@ func formatIndexValueParams(args []*driver.ParamMarkerExpr) string {
 		if arg == nil {
 			vals = append(vals, "nil")
 		} else {
-			vals = append(vals, fmt.Sprintf("%v", arg.Datum.GetValue()))
+			vals = append(vals, fmt.Sprintf("%p:%v", arg, arg.Datum.GetValue()))
 		}
 	}
 	return "[" + strings.Join(vals, ", ") + "]"
@@ -636,7 +636,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 			zap.String("acConds", fmt.Sprintf("%v", x.AccessConditions)),
 			zap.Bool("x.HandleParam!=nil", x.HandleParam != nil),
 			zap.String("x.IndexValueParams", formatIndexValueParams(x.IndexValueParams)),
-			zap.Bool("x.IndexInfo!=nil", x.IndexInfo != nil))
+			zap.Bool("x.IndexInfo!=nil", x.IndexInfo != nil),
+			zap.String("sctx.GetSessionVars().PreparedParams", fmt.Sprintf("%v", sctx.GetSessionVars().PreparedParams)))
 
 		if x.AccessConditions != nil {
 			if x.IndexInfo != nil {
@@ -687,7 +688,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexValueParams {
 			if param != nil {
-				x.IndexValues[i] = param.Datum
+				x.IndexValues[i] = sctx.GetSessionVars().PreparedParams[param.Order]
+				//x.IndexValues[i] = param.Datum
 			}
 		}
 		return nil
