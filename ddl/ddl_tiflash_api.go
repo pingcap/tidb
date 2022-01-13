@@ -245,14 +245,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
-	// Sync pd rules.
-	handlePd := pollTiFlashContext.HandlePdCounter%PullTiFlashPdTick == 0
-	if handlePd {
-		if err := HandlePlacementRuleRoutine(ctx, d, tableList); err != nil {
-			logutil.BgLogger().Error("handle placement rule routine error", zap.Error(err))
-		}
-	}
-
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
@@ -384,7 +376,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 	}
 
 	start := time.Now()
-	// Cover getDropOrTruncateTableTiflash
 	originLen := len(tableList)
 	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
 	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {

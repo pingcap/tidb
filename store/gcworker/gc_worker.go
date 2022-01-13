@@ -1921,7 +1921,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		ruleID := fmt.Sprintf("table-%v-r", id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
 			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
-			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
+			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc", zap.Error(err), zap.String("ruleID", ruleID))
 		}
 	}
 	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
