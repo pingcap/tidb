@@ -414,7 +414,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			vars.StmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.OptimizeTracer.LogicalTracer = tracer
 		}()
 	}
 	var err error
@@ -458,7 +458,8 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPl
 		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PhysicalOptimizeTraceInfo)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			stmtCtx.PhysicalOptimizeTrace = tracer
+			tracer.BuildFlattenPhysicalPlanTrace()
+			stmtCtx.OptimizeTracer.PhysicalTracer = tracer
 		}()
 	}
 

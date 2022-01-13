@@ -16,6 +16,14 @@ package tracing
 
 import "fmt"
 
+// OptimizeTracer indicates the tracer in optimize phase
+type OptimizeTracer struct {
+	// LogicalTracer indicates the tracer in Logical Optimize
+	LogicalTracer *LogicalOptimizeTracer `json:"logical"`
+	// PhysicalTracer indicates the tracer in Physical Optimize
+	PhysicalTracer *PhysicalOptimizeTracer `json:"physical"`
+}
+
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
 	ID       int
@@ -179,8 +187,39 @@ func (t *PhysicalPlanTrace) SetCost(cost float64) {
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
+	*FlattenPhysicalPlanTrace
 	// (logical plan) -> property -> physical plan candidates
-	State map[string]map[string]*PhysicalOptimizeTraceInfo
+	State map[string]map[string]*PhysicalOptimizeTraceInfo `json:"-"`
+}
+
+type FlattenPhysicalPlanTrace struct {
+	PhysicalPlanCandidatesTrace []*PhysicalPlanTrace `json:"candidates"`
+	LogicalMapping              map[string]string    `json:"mapping"`
+}
+
+func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
+	if tracer == nil || len(tracer.State) < 1 {
+		return
+	}
+	var pTracer *FlattenPhysicalPlanTrace
+	if tracer.FlattenPhysicalPlanTrace == nil {
+		tracer.FlattenPhysicalPlanTrace = &FlattenPhysicalPlanTrace{
+			PhysicalPlanCandidatesTrace: make([]*PhysicalPlanTrace, 0),
+			LogicalMapping:              make(map[string]string),
+		}
+	}
+	pTracer = tracer.FlattenPhysicalPlanTrace
+	for logicalKey, v := range tracer.State {
+		for _, tasksInfo := range v {
+			for _, candidate := range tasksInfo.Candidates {
+				pTracer.LogicalMapping[CodecPlanName(candidate.TP, candidate.ID)] = logicalKey
+				pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, candidate)
+			}
+			pTracer.LogicalMapping[CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)] = logicalKey
+			pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, tasksInfo.BestTask)
+		}
+	}
+	tracer.FlattenPhysicalPlanTrace = pTracer
 }
 
 // CodecPlanName returns tp_id of plan.
