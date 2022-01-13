@@ -315,7 +315,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		key, err := plannercore.NewPSTMTPlanCacheKey(vars, preparedObj.PreparedStmtText, prepared.SchemaVersion, )
+		key, err := plannercore.NewPSTMTPlanCacheKey(vars, preparedObj.PreparedStmtText, prepared.SchemaVersion)
 		if err != nil {
 			return err
 		}
