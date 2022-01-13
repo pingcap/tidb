@@ -15,8 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"sync/atomic"
 	"time"
@@ -201,42 +199,15 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedStmtText     string
-	PreparedAst          *ast.Prepared
-	VisitInfos           []visitInfo
-	ColumnInfos          interface{}
-	Executor             interface{}
-	NormalizedSQL        string
-	NormalizedPlan       string
-	SQLDigest            *parser.Digest
-	PlanDigest           *parser.Digest
-	ForUpdateRead        bool
-	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC     string
-	NormalizedSQL4PCHash string
-}
-
-// GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if vars.ConnectionID != 0 {
-		logutil.BgLogger().Warn("check prepare GetPreparedStmt", zap.Uint64("connID", vars.ConnectionID), zap.Bool(`prepareStmtName == ""`, stmt.Name == ""), zap.Uint32("stmt.ExecID", execID))
-	}
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj, nil
-	}
-	if vars.ConnectionID != 0 {
-		logutil.BgLogger().Warn("check prepare GetPreparedStmt", zap.Uint64("connID", vars.ConnectionID), zap.Uint32("Got Error cause execID does not exist", execID))
-	}
-	return nil, ErrStmtNotFound
+	PreparedStmtText    string
+	PreparedAst         *ast.Prepared
+	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 }
