@@ -1817,6 +1817,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
+	log.L().Info("new_collation_enabled", zap.Bool("enabled", enabled))
 
 	return nil
 }
@@ -1914,8 +1915,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return errors.Trace(err)
 				}
 				if err := rc.clusterResource(ctx, source); err != nil {
-					rc.taskMgr.CleanupTask(ctx)
-					return errors.Trace(err)
+					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
+						log.L().Warn("cleanup task failed", zap.Error(err1))
+						return err
+					}
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return errors.Trace(err)
@@ -1929,7 +1932,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 	if !rc.checkTemplate.Success() {
 		if !taskExist && rc.taskMgr != nil {
-			rc.taskMgr.CleanupTask(ctx)
+			err := rc.taskMgr.CleanupTask(ctx)
+			if err != nil {
+				log.L().Warn("cleanup task failed", zap.Error(err))
+			}
 		}
 		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}

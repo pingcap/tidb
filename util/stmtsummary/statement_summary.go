@@ -71,7 +71,12 @@ type stmtSummaryByDigestMap struct {
 	beginTimeForCurInterval int64
 
 	// sysVars encapsulates system variables needed to control statement summary.
-	sysVars *systemVars
+	optEnabled             bool
+	optEnableInternalQuery bool
+	optMaxStmtCount        uint
+	optRefreshInterval     int64
+	optHistorySize         int
+	optMaxSQLLength        int
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -240,15 +245,25 @@ type StmtExecInfo struct {
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
-	sysVars := newSysVars()
 
 	ssbde := newStmtSummaryByDigestEvicted()
 
-	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
+	// This initializes the stmtSummaryByDigestMap with "compiled defaults"
+	// (which are regrettably duplicated from sessionctx/variable/tidb_vars.go).
+	// Unfortunately we need to do this to avoid circular dependencies, but the correct
+	// values will be applied on startup as soon as domain.LoadSysVarCacheLoop() is called,
+	// which in turn calls func domain.checkEnableServerGlobalVar(name, sVal string) for each sysvar.
+	// Currently this is early enough in the startup sequence.
+	maxStmtCount := uint(3000)
 	newSsMap := &stmtSummaryByDigestMap{
-		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		sysVars:    sysVars,
-		other:      ssbde,
+		summaryMap:             kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		optMaxStmtCount:        maxStmtCount,
+		optEnabled:             true,
+		optEnableInternalQuery: false,
+		optRefreshInterval:     1800,
+		optHistorySize:         24,
+		optMaxSQLLength:        4096,
+		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
@@ -401,14 +416,10 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 	return stmts
 }
 
-// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeEnable, value, inSession); err != nil {
-		return err
-	}
-
-	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(typeEnable) == 0 {
+// SetEnabled enables or disables statement summary
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(value bool) error {
+	ssMap.optEnabled = value
+	if !value {
 		ssMap.Clear()
 	}
 	return nil
@@ -416,17 +427,13 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) er
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	return ssMap.sysVars.getVariable(typeEnable) > 0
+	return ssMap.optEnabled
 }
 
-// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeEnableInternalQuery, value, inSession); err != nil {
-		return err
-	}
-
-	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(typeEnableInternalQuery) == 0 {
+// SetEnabledInternalQuery enables or disables internal statement summary
+func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
+	ssMap.optEnableInternalQuery = value
+	if !value {
 		ssMap.clearInternal()
 	}
 	return nil
@@ -434,52 +441,53 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSes
 
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
-	return ssMap.sysVars.getVariable(typeEnableInternalQuery) > 0
+	return ssMap.optEnableInternalQuery
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
-func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeRefreshInterval, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value int64) error {
+	ssMap.optRefreshInterval = value
+	return nil
 }
 
 // refreshInterval gets the refresh interval for summaries.
 func (ssMap *stmtSummaryByDigestMap) refreshInterval() int64 {
-	return ssMap.sysVars.getVariable(typeRefreshInterval)
+	return ssMap.optRefreshInterval
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeHistorySize, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value int) error {
+	ssMap.optHistorySize = value
+	return nil
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	return int(ssMap.sysVars.getVariable(typeHistorySize))
+	return ssMap.optHistorySize
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeMaxStmtCount, value, inSession); err != nil {
-		return err
-	}
-	capacity := ssMap.sysVars.getVariable(typeMaxStmtCount)
+func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
+	ssMap.optMaxStmtCount = value
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	return ssMap.summaryMap.SetCapacity(uint(capacity))
+	return ssMap.summaryMap.SetCapacity(value)
 }
 
+// Used by tests
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
-	return int(ssMap.sysVars.getVariable(typeMaxStmtCount))
+	return int(ssMap.optMaxStmtCount)
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeMaxSQLLength, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value int) error {
+	ssMap.optMaxSQLLength = value
+	return nil
 }
 
 func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
-	return int(ssMap.sysVars.getVariable(typeMaxSQLLength))
+	return ssMap.optMaxSQLLength
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
