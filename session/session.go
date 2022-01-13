@@ -1625,34 +1625,44 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	return rows, rs.Fields(), err
 }
 
-func (s *session) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, err := s.sysSessionPool().Get()
+func (s *session) getInternalSession() (*session, func(), error) {
+	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	defer s.sysSessionPool().Put(se)
+	se := tmp.(*session)
+	return se, func() {
+		s.sysSessionPool().Put(tmp)
+	}, nil
+}
 
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return fn(ctx, exec)
+func (s *session) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, clean, err := s.getInternalSession()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer clean()
+
+	return fn(ctx, se)
 }
 
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt)
+		return se.ExecRestrictedStmt(ctx, stmt)
 	})
 }
 
 func (s *session) ExecRestrictedSQLWithSnapshot(ctx context.Context, snapshot uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		return se.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	})
 }
 
