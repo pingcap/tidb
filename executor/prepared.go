@@ -236,6 +236,19 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 	}
+
+	if preparedObj.PreparedStmtText == "" {
+		panic("???")
+	}
+
+	// .execStmt.Ctx.GetSessionVars().TxnCtx.StartTS
+	var txnTS uint64
+	if e.ctx.GetSessionVars().TxnCtx != nil {
+		txnTS = e.ctx.GetSessionVars().TxnCtx.StartTS
+	}
+
+	log.Info("[PC] prepared stmt text", zap.Uint64("txn", txnTS), zap.String("query", preparedObj.PreparedStmtText))
+
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 

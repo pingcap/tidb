@@ -126,6 +126,12 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, preparedStmtText string, schemaVer
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
 func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) kvcache.Key {
+	if preparedStmtText == "" {
+		panic("???")
+	}
+	if sessionVars.CurrentDB == "" {
+		panic("???")
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
