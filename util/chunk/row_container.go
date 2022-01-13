@@ -141,17 +141,11 @@ func (c *RowContainer) SpillToDisk() {
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
 
 	defer func() {
-		r := recover()
-		if r == nil {
-			return
+		if r := recover(); r != nil {
+			err := fmt.Errorf("%v", r)
+			c.m.records.spillError = err
+			logutil.BgLogger().Error("SpillToDisk panicked", zap.String("stack", getStack()), zap.Error(err))
 		}
-
-		err := fmt.Errorf("%v", r)
-		c.m.records.spillError = err
-		buf := make([]byte, 4096)
-		stackSize := runtime.Stack(buf, false)
-		buf = buf[:stackSize]
-		logutil.BgLogger().Error("rowContainer panicked", zap.String("stack", string(buf)), zap.Error(err))
 	}()
 
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
@@ -444,15 +438,12 @@ var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
 	*RowContainer
-	ptrM struct {
+	mu struct {
 		sync.RWMutex
 		// rowPtrs store the chunk index and row index for each row.
 		// rowPtrs != nil indicates the pointer is initialized and sorted.
 		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
 		rowPtrs []RowPtr
-	}
-	errInSortingM struct {
-		sync.RWMutex
 		// errInSorting store the error in sorting
 		errInSorting error
 	}
@@ -475,10 +466,10 @@ func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsD
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
-	c.ptrM.Lock()
-	defer c.ptrM.Unlock()
-	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
-	c.ptrM.rowPtrs = nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.GetMemTracker().Consume(int64(-8 * cap(c.mu.rowPtrs)))
+	c.mu.rowPtrs = nil
 	return c.RowContainer.Close()
 }
 
@@ -500,19 +491,19 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
-	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
-	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
+	rowI := c.m.records.inMemory.GetRow(c.mu.rowPtrs[i])
+	rowJ := c.m.records.inMemory.GetRow(c.mu.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
 }
 
 // Sort inits pointers and sorts the records.
 func (c *SortedRowContainer) Sort() {
-	c.ptrM.Lock()
-	defer c.ptrM.Unlock()
-	if c.ptrM.rowPtrs != nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mu.rowPtrs != nil {
 		return
 	}
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.mu.rowPtrs = make([]RowPtr, 0, c.NumRow())
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -520,10 +511,10 @@ func (c *SortedRowContainer) Sort() {
 			panic(err)
 		}
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			c.mu.rowPtrs = append(c.mu.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
+	sort.Slice(c.mu.rowPtrs, c.keyColumnsLess)
 
 	failpoint.Inject("sortOOM", func(val failpoint.Value) {
 		if val.(bool) {
@@ -535,44 +526,37 @@ func (c *SortedRowContainer) Sort() {
 	c.GetMemTracker().Consume(int64(8 * c.numRow))
 }
 
+func getStack() string {
+	buf := make([]byte, 4096)
+	stackSize := runtime.Stack(buf, false)
+	buf = buf[:stackSize]
+	return string(buf)
+}
+
 func (c *SortedRowContainer) sortAndSpillToDisk() {
 	defer func() {
 		// may panic when calling c.Sort()
-		r := recover()
-		if r == nil {
-			return
+		if r := recover(); r != nil {
+			err := fmt.Errorf("%v", r)
+			logutil.BgLogger().Error("Sort panicked", zap.String("stack", getStack()), zap.Error(err))
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.mu.errInSorting = err
 		}
-
-		err := fmt.Errorf("%v", r)
-		buf := make([]byte, 4096)
-		stackSize := runtime.Stack(buf, false)
-		buf = buf[:stackSize]
-		logutil.BgLogger().Error("sort panicked", zap.String("stack", string(buf)), zap.Error(err))
-
-		c.errInSortingM.Lock()
-		defer c.errInSortingM.Unlock()
-		c.errInSortingM.errInSorting = err
 	}()
 
 	c.Sort()
 	c.RowContainer.SpillToDisk()
 }
 
-func (c *SortedRowContainer) getErrInSorting() error {
-	c.errInSortingM.RLock()
-	defer c.errInSortingM.RUnlock()
-	return c.errInSortingM.errInSorting
-}
-
 // Add appends a chunk into the SortedRowContainer.
 func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
-	if err := c.getErrInSorting(); err != nil {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.mu.errInSorting; err != nil {
 		return err
 	}
-
-	c.ptrM.RLock()
-	defer c.ptrM.RUnlock()
-	if c.ptrM.rowPtrs != nil {
+	if c.mu.rowPtrs != nil {
 		return ErrCannotAddBecauseSorted
 	}
 	return c.RowContainer.Add(chk)
@@ -580,13 +564,12 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 
 // GetSortedRow returns the row the idx pointed to.
 func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
-	if err := c.getErrInSorting(); err != nil {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.mu.errInSorting; err != nil {
 		return Row{}, err
 	}
-
-	c.ptrM.RLock()
-	defer c.ptrM.RUnlock()
-	ptr := c.ptrM.rowPtrs[idx]
+	ptr := c.mu.rowPtrs[idx]
 	return c.RowContainer.GetRow(ptr)
 }
 

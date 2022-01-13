@@ -337,7 +337,7 @@ func TestPanicWhenSortAndSpill(t *testing.T) {
 		require.Nil(t, rc.Add(chk))
 		rc.actionSpill.WaitForTest()
 		_, err = rc.GetSortedRow(0)
-		require.NotNil(t, err)
+		require.Errorf(t, err, "out of memory quota when sorting")
 		require.False(t, rc.AlreadySpilledSafeForTest())
 
 		require.NotNil(t, rc.Add(chk))
@@ -365,8 +365,8 @@ func TestPanicWhenSortAndSpill(t *testing.T) {
 		require.True(t, rc.AlreadySpilledSafeForTest())
 
 		_, err = rc.GetRow(RowPtr{})
-		require.NotNil(t, err)
-		require.NotNil(t, rc.Add(chk))
+		require.Errorf(t, err, "out of disk quota when spilling")
+		require.Errorf(t, rc.Add(chk), "out of disk quota when spilling")
 	})
 
 }
