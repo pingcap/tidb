@@ -292,6 +292,10 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 // If balanceWithContinuity is true, the second balance strategy is enable.
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	isMPP := mppStoreLastFailTime != nil
+	if len(originalTasks) == 0 {
+		log.Warn("Task balancer got an empty task set.")
+		return originalTasks
+	}
 	// for mpp, we still need to detect the store availability
 	if len(originalTasks) <= 1 && !isMPP {
 		return originalTasks
@@ -525,7 +529,6 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
-
 		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
