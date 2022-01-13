@@ -18,11 +18,9 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
-
-var _ = Suite(&GlobalConfigTestSuite{})
 
 type GlobalConfigTestSuite struct {
 	rpc     *RPCClient
@@ -30,55 +28,68 @@ type GlobalConfigTestSuite struct {
 	client  pd.Client
 }
 
-func Test(t *testing.T) {
-	TestingT(t)
+func SetUpSuite() *GlobalConfigTestSuite {
+	s := &GlobalConfigTestSuite{}
+	s.rpc, s.client, s.cluster, _ = New("")
+	return s
 }
 
-func (s *GlobalConfigTestSuite) SetUpSuite(c *C) {
-	var err error
-	s.rpc, s.client, s.cluster, err = New("")
-	c.Assert(err, IsNil)
-}
+func TestLoad(t *testing.T) {
+	s := SetUpSuite()
 
-func (s *GlobalConfigTestSuite) TestLoad(c *C) {
 	s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "LoadOkGlobalConfig", Value: "ok"}})
-
 	res, err := s.client.LoadGlobalConfig(context.Background(), []string{"LoadOkGlobalConfig", "LoadErrGlobalConfig"})
-	c.Assert(err, IsNil)
+	require.Equal(t, err, nil)
 	for _, j := range res {
 		switch j.Name {
 		case "/global/config/LoadOkGlobalConfig":
-			c.Assert(j.Value, Equals, "ok")
+			require.Equal(t, j.Value, "ok")
+
 		case "/global/config/LoadErrGlobalConfig":
-			c.Assert(j.Value, Equals, "")
-			c.Assert(j.Error.Error(), Equals, "not found")
+			require.Equal(t, j.Value, "")
+			require.EqualError(t, j.Error, "not found")
 		default:
-			c.Assert(err, NotNil)
+			require.Equal(t, true, false)
 		}
 	}
+	s.TearDownSuite()
 }
 
-func (s *GlobalConfigTestSuite) TestStore(c *C) {
+func TestStore(t *testing.T) {
+	s := SetUpSuite()
+
 	res, err := s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"})
-	c.Assert(err, IsNil)
-	c.Assert(res[0].Error.Error(), Equals, "not found")
+	require.Equal(t, err, nil)
+	require.EqualError(t, res[0].Error, "not found")
+
 	err = s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
-	c.Assert(err, IsNil)
+	require.Equal(t, err, nil)
+
 	res, err = s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"})
-	c.Assert(err, IsNil)
-	c.Assert(res[0].Error, IsNil)
+	require.Equal(t, err, nil)
+	require.Equal(t, res[0].Error, nil)
+
+	s.TearDownSuite()
 }
 
-func (s *GlobalConfigTestSuite) TestWatch(c *C) {
+func TestWatch(t *testing.T) {
+	s := SetUpSuite()
+	err := s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
+	require.Equal(t, err, nil)
+
 	ch, err := s.client.WatchGlobalConfig(context.Background())
-	c.Assert(err, IsNil)
+	require.Equal(t, err, nil)
+
 	for i := 0; i < 10; i++ {
 		res := <-ch
-		c.Assert(res[0].Value, Not(Equals), "")
+		require.NotEqual(t, res[0].Value, "")
 	}
+	close(ch)
+
+	s.TearDownSuite()
 }
 
-func (s *GlobalConfigTestSuite) TearDownSuite(c *C) {
+func (s *GlobalConfigTestSuite) TearDownSuite() {
 	s.client.Close()
 	s.rpc.Close()
 	s.cluster.Close()
