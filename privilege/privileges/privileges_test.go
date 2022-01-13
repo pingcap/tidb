@@ -2621,6 +2621,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	defer func() {
 		require.True(t, tk.Session().Auth(&auth.UserIdentity{
@@ -2932,7 +2933,9 @@ func TestIssue28675(t *testing.T) {
 	tk.MustExec("grant select on test.v to test_user")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
 	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("1"))
 	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
+	tk.MustQuery("select privileges from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("select,update"))
 	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
 	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
 }
