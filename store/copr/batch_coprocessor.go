@@ -293,7 +293,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	isMPP := mppStoreLastFailTime != nil
 	if len(originalTasks) == 0 {
-		log.Warn("Task balancer got an empty task set.")
+		log.Info("Batch cop task balancer got an empty task set.")
 		return originalTasks
 	}
 	// for mpp, we still need to detect the store availability
