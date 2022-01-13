@@ -214,13 +214,26 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 		}
 	}
 	pTracer = tracer.FlattenPhysicalPlanTrace
-	for logicalKey, v := range tracer.State {
+	bestKeys := map[string]struct{}{}
+	for _, v := range tracer.State {
 		for _, tasksInfo := range v {
 			bestKey := CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)
+			bestKeys[bestKey] = struct{}{}
+		}
+	}
+	for logicalKey, v := range tracer.State {
+		for _, tasksInfo := range v {
 			for _, candidate := range tasksInfo.Candidates {
 				key := CodecPlanName(candidate.TP, candidate.ID)
-				if key == bestKey {
+				if _, ok := bestKeys[key]; ok {
 					candidate.Selected = true
+				}
+				for i, child := range candidate.Children {
+					key = CodecPlanName(child.TP, child.ID)
+					if _, ok := bestKeys[key]; ok {
+						child.Selected = true
+						candidate.Children[i] = child
+					}
 				}
 				pTracer.LogicalMapping[key] = logicalKey
 				pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, candidate)
