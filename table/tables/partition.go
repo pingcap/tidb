@@ -353,7 +353,7 @@ func (p *listPartitionLocationHelper) Intersect(location ListPartitionLocation) 
 		return true
 	}
 	currPgs := p.location
-	var remainPgs []ListPartitionGroup
+	remainPgs := make([]ListPartitionGroup, 0, len(location))
 	for _, pg := range location {
 		idx := currPgs.findByPartitionIdx(pg.PartIdx)
 		if idx < 0 {

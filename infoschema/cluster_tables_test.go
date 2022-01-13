@@ -413,8 +413,8 @@ func SubTestIssue26379(s *clusterTablesSuite) func(*testing.T) {
 		tk := s.newTestKitWithRoot(t)
 
 		// Clear all statements.
-		tk.MustExec("set session tidb_enable_stmt_summary = 0")
-		tk.MustExec("set session tidb_enable_stmt_summary = ''")
+		tk.MustExec("set global tidb_enable_stmt_summary = 0")
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
 		tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=10")
 
 		tk.MustExec("drop table if exists t")

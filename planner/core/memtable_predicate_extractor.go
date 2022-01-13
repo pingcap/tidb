@@ -78,7 +78,7 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	}
 	// All expressions in IN must be a constant
 	// SELECT * FROM t1 WHERE c IN ('1', '2')
-	var results []types.Datum
+	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
 		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
@@ -236,6 +236,7 @@ func (helper extractHelper) extractLikePatternCol(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
+	toLower bool,
 ) (
 	remained []expression.Expression,
 	patterns []string,
@@ -266,6 +267,9 @@ func (helper extractHelper) extractLikePatternCol(
 			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
 		} else {
 			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
+		}
+		if canBuildPattern && toLower {
+			pattern = "(?i)" + pattern
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
@@ -678,7 +682,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message")
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false)
 	e.Patterns = patterns
 	return remained
 }
@@ -1481,6 +1485,12 @@ type ColumnsTableExtractor struct {
 	TableName set.StringSet
 	// ColumnName represents all column name we should filter in memtable.
 	ColumnName set.StringSet
+
+	TableSchemaPatterns []string
+
+	TableNamePatterns []string
+
+	ColumnNamePatterns []string
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1493,9 +1503,19 @@ func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
 	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
 	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
+	if e.SkipRequest {
+		return
+	}
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true)
+	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true)
+
 	e.ColumnName = columnName
 	e.TableName = tableName
 	e.TableSchema = tableSchema
+	e.TableSchemaPatterns = tableSchemaPatterns
+	e.TableNamePatterns = tableNamePatterns
+	e.ColumnNamePatterns = columnNamePatterns
 	return remained
 }
 
@@ -1512,6 +1532,15 @@ func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	if len(e.ColumnName) > 0 {
 		r.WriteString(fmt.Sprintf("column_name:[%s], ", extractStringFromStringSet(e.ColumnName)))
+	}
+	if len(e.TableSchemaPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns)))
+	}
+	if len(e.TableNamePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns)))
+	}
+	if len(e.ColumnNamePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns)))
 	}
 	// remove the last ", " in the message info
 	s := r.String()
