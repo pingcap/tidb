@@ -917,7 +917,7 @@ func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
 	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
 }
 
-func (s configTestSuite) TestCheckAndAdjustForLocalBackend(c *C) {
+func (s *configTestSuite) TestCheckAndAdjustForLocalBackend(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
