@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -166,6 +168,9 @@ func (ts *TiDBStatement) Close() error {
 			}
 			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
 				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+		}
+		if ts.ctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Warn("check prepare TiDBStatement.Close", zap.Uint64("connID", ts.ctx.GetSessionVars().ConnectionID))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}

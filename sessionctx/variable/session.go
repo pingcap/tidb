@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"math/rand"
 	"net"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -1530,6 +1532,9 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 		}
 		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
 	}
+	if s.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare AdPreparedStmt", zap.Uint64("connID", s.ConnectionID), zap.Uint32("stmtID", stmtID))
+	}
 	s.PreparedStmts[stmtID] = stmt
 	return nil
 }
@@ -1538,7 +1543,13 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
 	_, exists := s.PreparedStmts[stmtID]
 	if !exists {
+		if s.ConnectionID != 0 {
+			logutil.BgLogger().Warn("check prepare RemovePreparedStmt stmtID does not exist", zap.Uint64("connID", s.ConnectionID), zap.Uint32("stmtID", stmtID))
+		}
 		return
+	}
+	if s.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare RemovePreparedStmt", zap.Uint64("connID", s.ConnectionID), zap.Uint32("stmtID", stmtID))
 	}
 	delete(s.PreparedStmts, stmtID)
 	afterMinus := atomic.AddInt64(&PreparedStmtCount, -1)

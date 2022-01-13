@@ -51,6 +51,9 @@ import (
 func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plannercore.CachedPrepareStmt, error) {
 	var ok bool
 	execID := stmt.ExecID
+	if vars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare GetPreparedStmt", zap.Uint64("connID", vars.ConnectionID), zap.Bool(`prepareStmtName == ""`, stmt.Name == ""), zap.Uint32("stmt.ExecID", execID))
+	}
 	if stmt.Name != "" {
 		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
 			return nil, plannercore.ErrStmtNotFound
@@ -62,6 +65,9 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*planne
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
 		return preparedObj, nil
+	}
+	if vars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare GetPreparedStmt", zap.Uint64("connID", vars.ConnectionID), zap.Uint32("Got Error cause execID does not exist", execID))
 	}
 	return nil, plannercore.ErrStmtNotFound
 }
