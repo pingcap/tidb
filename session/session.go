@@ -1737,7 +1737,9 @@ type execStmtResult struct {
 
 func (rs *execStmtResult) Close() error {
 	se := rs.se
-	logutil.BgLogger().Warn("check prepare execStmtResult", zap.Uint64("connID", rs.se.sessionVars.ConnectionID))
+	if rs.se.sessionVars.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare execStmtResult", zap.Uint64("connID", rs.se.sessionVars.ConnectionID))
+	}
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}

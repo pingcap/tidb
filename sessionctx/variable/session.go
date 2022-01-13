@@ -1532,7 +1532,9 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 		}
 		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
 	}
-	logutil.BgLogger().Warn("check prepare AdPreparedStmt", zap.Uint64("connID", s.ConnectionID), zap.Uint32("stmtID", stmtID))
+	if s.ConnectionID != 0 {
+		logutil.BgLogger().Warn("check prepare AdPreparedStmt", zap.Uint64("connID", s.ConnectionID), zap.Uint32("stmtID", stmtID))
+	}
 	s.PreparedStmts[stmtID] = stmt
 	return nil
 }
