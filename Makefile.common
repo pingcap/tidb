@@ -46,7 +46,7 @@ LINUX     := "Linux"
 MAC       := "Darwin"
 
 PACKAGE_LIST  := go list ./...
-PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
+PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGES_TIDB_TESTS ?= $$($(PACKAGE_LIST_TIDB_TESTS))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
