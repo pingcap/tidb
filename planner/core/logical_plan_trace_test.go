@@ -72,7 +72,7 @@ func (s *testPlanSuite) TestLogicalOptimizeWithTraceEnabled(c *C) {
 		c.Assert(err, IsNil)
 		_, ok := p.(*LogicalProjection)
 		c.Assert(ok, IsTrue)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.LogicalTracer
 		c.Assert(otrace, NotNil)
 		c.Assert(len(otrace.Steps), Equals, tc.steps)
 	}
@@ -469,7 +469,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		}
 		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.LogicalTracer
 		c.Assert(otrace, NotNil)
 		assert := false
 		for _, step := range otrace.Steps {
