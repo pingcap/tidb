@@ -2612,6 +2612,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	defer func() {
 		require.True(t, tk.Session().Auth(&auth.UserIdentity{
