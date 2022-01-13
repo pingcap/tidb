@@ -58,6 +58,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -1198,6 +1199,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		// reset killed for each request
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
+
+	log.Info("[PC] connection status",
+		zap.Bool("inTxn", (cc.ctx.Status()&mysql.ServerStatusInTrans) > 0),
+		zap.Int("status", int(cc.ctx.Status())),
+		zap.String("data", string(data)))
+
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
 		connIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
