@@ -178,6 +178,7 @@ type PhysicalPlanTrace struct {
 	Cost     float64              `json:"cost"`
 	Info     string               `json:"info"`
 	Children []*PhysicalPlanTrace `json:"children"`
+	Selected bool                 `json:"selected"`
 }
 
 // SetCost sets cost for PhysicalPlanTrace
@@ -215,8 +216,13 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 	pTracer = tracer.FlattenPhysicalPlanTrace
 	for logicalKey, v := range tracer.State {
 		for _, tasksInfo := range v {
+			bestKey := CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)
 			for _, candidate := range tasksInfo.Candidates {
-				pTracer.LogicalMapping[CodecPlanName(candidate.TP, candidate.ID)] = logicalKey
+				key := CodecPlanName(candidate.TP, candidate.ID)
+				if key == bestKey {
+					candidate.Selected = true
+				}
+				pTracer.LogicalMapping[key] = logicalKey
 				pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, candidate)
 			}
 		}
