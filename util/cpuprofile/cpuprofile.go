@@ -135,15 +135,12 @@ func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
 		return
 	}
 	p.Lock()
-	isFirst := len(p.cs) == 0
 	p.cs[ch] = struct{}{}
 	p.Unlock()
 
-	if isFirst {
-		select {
-		case p.notifyRegister <- struct{}{}:
-		default:
-		}
+	select {
+	case p.notifyRegister <- struct{}{}:
+	default:
 	}
 }
 
@@ -168,6 +165,10 @@ func (p *parallelCPUProfiler) profilingLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-p.notifyRegister:
+			// If already in profiling, don't do anything.
+			if p.profileData != nil {
+				continue
+			}
 		case <-checkTicker.C:
 		}
 		p.doProfiling()
