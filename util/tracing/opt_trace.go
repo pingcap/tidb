@@ -197,7 +197,7 @@ type FlattenPhysicalPlanTrace struct {
 	// PhysicalPlanCandidatesTrace indicates PhysicalPlanTrace list
 	PhysicalPlanCandidatesTrace []*PhysicalPlanTrace `json:"candidates"`
 	// LogicalMapping indicates the (physical type, id) mapping (logical type, id)
-	LogicalMapping              map[string]string    `json:"mapping"`
+	LogicalMapping map[string]string `json:"mapping"`
 }
 
 // BuildFlattenPhysicalPlanTrace builds FlattenPhysicalPlanTrace
