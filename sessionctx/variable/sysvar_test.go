@@ -855,7 +855,7 @@ func TestNetBufferLength(t *testing.T) {
 	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, val, "1048576") // converts it to max value
-	val, err = netBufferLength.Validate(vars, "1048575", ScopeGlobal)
+	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, val, "1048575") // unchanged
+	require.Equal(t, val, "524288") // unchanged
 }
