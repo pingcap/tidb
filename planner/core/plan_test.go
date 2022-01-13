@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testPlanNormalize{})
+var _ = SerialSuites(&testPlanNormalize{})
 
 type testPlanNormalize struct {
 	store kv.Storage
