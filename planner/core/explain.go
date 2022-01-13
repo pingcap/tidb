@@ -431,7 +431,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return ""
+	return "index:" + p.indexPlan.TP()
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
