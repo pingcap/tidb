@@ -215,8 +215,6 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 				pTracer.LogicalMapping[CodecPlanName(candidate.TP, candidate.ID)] = logicalKey
 				pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, candidate)
 			}
-			pTracer.LogicalMapping[CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)] = logicalKey
-			pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, tasksInfo.BestTask)
 		}
 	}
 	tracer.FlattenPhysicalPlanTrace = pTracer
