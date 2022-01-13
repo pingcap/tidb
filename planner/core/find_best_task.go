@@ -282,6 +282,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		if candidateInfo != nil {
 			candidateInfo.SetCost(curTask.cost())
+			candidateInfo.Info = curTask.plan().ExplainInfo()
 		}
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
@@ -337,14 +338,14 @@ func (op *physicalOptimizeOp) setBest(lp LogicalPlan, pp PhysicalPlan, prop stri
 	if traceInfo == nil {
 		return
 	}
-	traceInfo.BestTask = &tracing.PhysicalPlanTrace{ID: pp.ID(), TP: pp.TP(), Info: pp.ExplainInfo(), Cost: pp.Cost()}
+	traceInfo.BestTask = &tracing.PhysicalPlanTrace{ID: pp.ID(), TP: pp.TP(), Cost: pp.Cost(), Info: pp.ExplainInfo()}
 }
 
 func (op *physicalOptimizeOp) appendCandidate(logicalPlan LogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PhysicalPlanTrace {
 	if op == nil || op.tracer == nil {
 		return nil
 	}
-	PhysicalPlanTrace := &tracing.PhysicalPlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID(), Info: physicalPlan.ExplainInfo()}
+	PhysicalPlanTrace := &tracing.PhysicalPlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID()}
 	name := tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())
 	traceInfo := op.tracer.State[name][prop]
 	if traceInfo == nil {
