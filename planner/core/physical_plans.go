@@ -1277,6 +1277,9 @@ type PhysicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+
+	// on which store the window function executes.
+	storeTp          kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

@@ -2385,26 +2385,6 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 }
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty, ctx sessionctx.Context) (res task) {
-	if len(prop.SortItems) != 0 {
-		if prop.IsPartialSort == false {
-			t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return &mppTask{}
-		}
-		// need add partial sort for window function.
-		//tmp := t.copy()
-		sortReqProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, SortItems: prop.SortItems, ExpectedCnt: math.MaxFloat64}
-		sort := PhysicalSort{
-			ByItems: make([]*util.ByItems, 0, len(prop.SortItems)),
-			IsPartialSort: true,
-		}.Init(ctx, t.plan().statsInfo(), t.plan().SelectBlockOffset(), sortReqProp)
-		for _, col := range prop.SortItems {
-			sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-		}
-		res = sort.attach2Task(t)
-	} else {
-		res = t.copy()
-	}
-
 	if !t.needEnforce(prop) {
 		return t
 	}

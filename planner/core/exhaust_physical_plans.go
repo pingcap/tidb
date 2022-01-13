@@ -2293,16 +2293,77 @@ func disableAggPushDownToCop(p LogicalPlan) {
 	}
 }
 
-func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	//p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-	//	"MPP mode may be blocked because operator `Window` is not supported now.")
-	//if prop.IsFlashProp() {
-	//	return nil, true, nil
+func (p *LogicalWindow) tryToGetMppWindow(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil
+	}
+
+	if !prop.IsSortItemAllForPartition() {
+		return nil
+	}
+	if prop.MPPPartitionTp == property.BroadcastType {
+		return nil
+	}
+
+	//groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
+	//for _, item := range p.PartitionBy {
+	//	if col, ok := item.(*expression.Column); ok {
+	//		groupByCols = append(groupByCols, &property.MPPPartitionColumn{
+	//			Col:       col,
+	//			CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+	//		})
+	//	}
 	//}
+	//
+	//// trying to match the required parititions.
+	//if prop.MPPPartitionTp == property.HashType {
+	//	if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
+	//		partitionCols = choosePartitionKeys(partitionCols, matches)
+	//	} else {
+	//		// do not satisfy the property of its parent, so return empty
+	//		return nil
+	//	}
+	//}
+
 	var byItems []property.SortItem
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, IsPartialSort: true, CanAddEnforcer: true}
+	childProperty := &property.PhysicalProperty{
+		ExpectedCnt: math.MaxFloat64,
+		CanAddEnforcer: true,
+		SortItems: byItems,
+		TaskTp: property.MppTaskType,
+		SortItemsForPartition: byItems,
+		MPPPartitionTp: property.HashType,
+	}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDescs: p.WindowFuncDescs,
+		PartitionBy:     p.PartitionBy,
+		OrderBy:         p.OrderBy,
+		Frame:           p.Frame,
+		storeTp: 		 kv.TiFlash,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
+	window.SetSchema(p.Schema())
+
+	return nil
+}
+
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	windows := make([]PhysicalPlan, 0, 2)
+
+	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
+	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+		mppWindows := p.tryToGetMppWindow(prop)
+		windows = append(windows, mppWindows...)
+	}
+
+	var byItems []property.SortItem
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil, true, nil
 	}
@@ -2313,7 +2374,9 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		Frame:           p.Frame,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
 	window.SetSchema(p.Schema())
-	return []PhysicalPlan{window}, true, nil
+
+	windows = append(windows, window)
+	return windows, true, nil
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.

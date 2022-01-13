@@ -119,10 +119,6 @@ type PhysicalProperty struct {
 	// SortItems contains the required sort attributes.
 	SortItems []SortItem
 
-	// whether these sort only need to sort the data of one partition.
-	// it is true only if it is used to sort the sharded data of the window function executed by tiflash.
-	IsPartialSort bool
-
 	// TaskTp means the type of task that an operator requires.
 	//
 	// It needs to be specified because two different tasks can't be compared
@@ -149,6 +145,11 @@ type PhysicalProperty struct {
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
+
+	// SortItemsForPartition means these sort only need to sort the data of one partition, instead of global.
+	// It is added only if it is used to sort the sharded data of the window function.
+	// Non-MPP tasks do not care about it.
+	SortItemsForPartition []SortItem
 
 	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
 	// Non-MPP tasks do not care about it.
@@ -228,6 +229,19 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 	}
 	for i := range p.SortItems {
 		if !p.SortItems[i].Col.Equal(nil, prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+			return false
+		}
+	}
+	return true
+}
+
+// IsSortItemAllForPartition check whether SortItems is same as SortItemsForPartition
+func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
+	if len(p.SortItemsForPartition) != len(p.SortItems) {
+		return false
+	}
+	for i := range p.SortItemsForPartition {
+		if !p.SortItemsForPartition[i].Col.Equal(nil, p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}
