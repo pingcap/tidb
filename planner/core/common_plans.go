@@ -679,7 +679,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		if x.HandleParam != nil {
 			var iv int64
-			iv, err = x.HandleParam.Datum.ToInt64(sc)
+			iv, err = sctx.GetSessionVars().PreparedParams[x.HandleParam.Order].ToInt64(sc)
 			if err != nil {
 				return err
 			}
@@ -727,7 +727,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		for i, param := range x.HandleParams {
 			if param != nil {
 				var iv int64
-				iv, err = param.Datum.ToInt64(sc)
+				iv, err = sctx.GetSessionVars().PreparedParams[param.Order].ToInt64(sc)
 				if err != nil {
 					return err
 				}
@@ -740,7 +740,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = param.Datum
+					x.IndexValues[i][j] = sctx.GetSessionVars().PreparedParams[param.Order]
+					//x.IndexValues[i][j] = param.Datum
 				}
 			}
 		}
