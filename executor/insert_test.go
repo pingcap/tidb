@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"math"
 	"strconv"
 	"strings"
@@ -1923,4 +1924,18 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
+}
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store, clean := testkit2.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0"))
+	tk.MustExec("DROP TABLE t1;")
 }

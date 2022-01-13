@@ -441,6 +441,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
 	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
+	// it's a tricky way to mute the error message from `insert into select statement` and insert the default value just like mysql did.
+	// eg: insert into select sleep(null), the insert result should be 0 with warnings even with the strict sql mode.
+	originSQLMode := e.ctx.GetSessionVars().StrictSQLMode
+	e.ctx.GetSessionVars().StrictSQLMode = false
+	defer func() {
+		e.ctx.GetSessionVars().StrictSQLMode = originSQLMode
+	}()
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
