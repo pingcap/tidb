@@ -90,8 +90,9 @@ type InsertValues struct {
 	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
-	isLoadData bool
-	txnInUse   sync.Mutex
+	isLoadData   bool
+	loadDataInfo *LoadDataInfo
+	txnInUse     sync.Mutex
 }
 
 type defaultVal struct {
@@ -1111,7 +1112,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			if !e.isLoadData {
+				e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			} else {
+				e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			}
+
 			err = addRecord(ctx, rows[i])
 			if err != nil {
 				return err
@@ -1142,10 +1148,18 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if err != nil {
 		return err
 	}
-	vars.StmtCtx.AddAffectedRows(1)
-	if e.lastInsertID != 0 {
-		vars.SetLastInsertID(e.lastInsertID)
+	if !e.isLoadData {
+		vars.StmtCtx.AddAffectedRows(1)
+		if e.lastInsertID != 0 {
+			vars.SetLastInsertID(e.lastInsertID)
+		}
+	} else {
+		e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		if e.lastInsertID != 0 && e.lastInsertID > e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID {
+			e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		}
 	}
+
 	return nil
 }
 
