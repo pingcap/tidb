@@ -229,6 +229,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
+		PreparedStmtText:    prepared.Stmt.Text(),
 		PreparedAst:         prepared,
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
