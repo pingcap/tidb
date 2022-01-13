@@ -270,6 +270,9 @@ StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
           └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY), offset:0, count:1
             └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
               └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+select min(d collate utf8mb4_bin) from tt;
+min(d collate utf8mb4_bin)
+{"B": "B"}
 desc format='brief' select max(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(collation_agg_func.tt.d)->Column#6
@@ -292,5 +295,8 @@ StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
           └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY):desc, offset:0, count:1
             └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
               └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+select max(d collate utf8mb4_bin) from tt;
+max(d collate utf8mb4_bin)
+{"c": "c"}
 drop database collation_agg_func;
 use test

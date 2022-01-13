@@ -258,6 +258,8 @@ min(d)
 {"A": "A"}
 desc format='brief' select min(d collate utf8mb4_bin) from tt;
 Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+select min(d collate utf8mb4_bin) from tt;
+Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
 desc format='brief' select max(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(collation_agg_func.tt.d)->Column#6
@@ -270,6 +272,8 @@ select max(d) from tt;
 max(d)
 {"c": "c"}
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
+Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+select max(d collate utf8mb4_bin) from tt;
 Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
 drop database collation_agg_func;
 use test
