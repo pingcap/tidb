@@ -57,8 +57,6 @@ rm -rf "$mysql_test_log"
 extract_stats
 build_explain_test
 
-./build.sh
-
 if [[ -z $TIDB_SERVER_PATH || ! -e $TIDB_SERVER_PATH ]]; then
     echo -e "no tidb-server was found, build from source code"
     # This is likely to be failed, depending on whether tidb parser is well set up
@@ -68,7 +66,7 @@ fi
 
 echo "start tidb-server, log file: $mysql_test_log"
 if [[ $TIDB_TEST_STORE_NAME = tikv ]]; then
-    "$TIDB_SERVER_PATH" -config "$TIDB_CONFIG" -port 4001 -status-port 9081 -store tikv -path "$TIKV_PATH" > "$mysql_test_log" 2>&1 &
+    "$TIDB_SERVER_PATH" -config "$TIDB_CONFIG" -P 4001 -status 9081 -store tikv -path "$TIKV_PATH" > "$mysql_test_log" 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"
@@ -78,7 +76,11 @@ sleep 5
 
 echo "run all mysql test cases"
 
-$explain_test -port 4001 -status 9081 --log-level=error --collation-disable=true
+if [[ $COLLATION_DISABLE -eq 1 ]];then
+    $explain_test -port 4001 -status 9081 --log-level=error --collation-disable=true
+else
+    $explain_test -port 4001 -status 9081 --log-level=error
+fi
 
 race=$(grep 'DATA RACE' "$mysql_test_log" || true)
 if [[ -n $race ]]; then
