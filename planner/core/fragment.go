@@ -252,7 +252,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
-		if f.singleton {
+		if f.singleton && len(childrenTasks) > 0 {
 			if len(childrenTasks) > 0 {
 				childrenTasks = childrenTasks[0:1]
 			}
