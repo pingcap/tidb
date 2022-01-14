@@ -462,7 +462,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
-	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, sql)
+	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, true, sql)
 	if err != nil {
 		return err
 	}
@@ -483,7 +483,7 @@ func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBI
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore, true)
+	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
 }
 
 // CreateTable implements glue.Session
@@ -498,7 +498,7 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 		table.Partition = &newPartition
 	}
 
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
 }
 
 // Close implements glue.Session

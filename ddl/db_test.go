@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -126,8 +127,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
@@ -6387,10 +6386,9 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	var err1 error
 	var err2 error
-	wg.Add(2)
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
@@ -6413,15 +6411,13 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		_, err1 = se1.Execute(context.Background(), sql1)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		_, err2 = se2.Execute(context.Background(), sql2)
-	}()
+	})
 
 	wg.Wait()
 	f(c, err1, err2)
@@ -7640,4 +7636,42 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"  `d` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testDBSuite2) TestCreateTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tables_1")
+	tk.MustExec("drop table if exists tables_2")
+	tk.MustExec("drop table if exists tables_3")
+
+	d := s.dom.DDL()
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+	})
+
+	// correct name
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(err, IsNil)
+
+	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
+	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
+	c.Assert(job[1], Equals, "test")
+	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
+	c.Assert(job[3], Equals, "create tables")
+	c.Assert(job[4], Equals, "public")
+	// FIXME: we must change column type to give multiple id
+	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
 }

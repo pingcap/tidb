@@ -191,6 +191,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		}
 	})
 	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
 	return nil
 }
 
@@ -306,7 +307,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
@@ -427,6 +429,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
 	if e.isStaleness {
 		return nil
 	}

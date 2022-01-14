@@ -209,7 +209,9 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
-	action := fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
+	action := func() string {
+		return fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
+	}
 	reason := func() string {
 		buffer := bytes.NewBufferString("join cost during reorder: [")
 		var joins []string
@@ -225,7 +227,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
@@ -269,7 +271,7 @@ func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) []*tracing.LogicalPla
 	if len(roots) < 1 {
 		return nil
 	}
-	var rr []*tracing.LogicalPlanTrace
+	rr := make([]*tracing.LogicalPlanTrace, 0, len(roots))
 	for _, root := range roots {
 		simplify(root)
 		rr = append(rr, root)
@@ -323,16 +325,16 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 		return
 	}
 	if len(t.initial) > 0 {
-		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace()))
 		return
 	}
-	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace()))
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
-	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))
+	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace()))
 	t.cost[joinMapKey] = cost
 }

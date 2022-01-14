@@ -530,17 +530,14 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
-	c.Assert(err, IsNil)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
-	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
+	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
 

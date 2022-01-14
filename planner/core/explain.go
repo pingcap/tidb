@@ -431,7 +431,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return "index:" + p.indexPlan.TP()
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
@@ -456,17 +456,22 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	var str strings.Builder
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
-		var str strings.Builder
 		str.WriteString("limit embedded(offset:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
 		str.WriteString(", count:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
-		return str.String()
 	}
-	return ""
+	if p.Paging {
+		if p.PushedLimit != nil {
+			str.WriteString(", ")
+		}
+		str.WriteString("paging:true")
+	}
+	return str.String()
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
