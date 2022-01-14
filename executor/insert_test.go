@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	testkit2 "github.com/pingcap/tidb/testkit"
 	"math"
 	"strconv"
 	"strings"
