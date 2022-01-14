@@ -331,6 +331,7 @@ func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer e.manager.removeOneJob(tbl)
 
 	return e.checksumDB(ctx, tableInfo)
 }
