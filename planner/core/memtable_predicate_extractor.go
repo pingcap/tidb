@@ -1549,3 +1549,112 @@ func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	return s
 }
+
+// TablesTableExtractor is used to extract some predicates of Tables table.
+type TablesTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	TableCatalog           set.StringSet
+	TableSchema            set.StringSet
+	TableName              set.StringSet
+	Engine                 set.StringSet
+	TableCollation         set.StringSet
+	CreateOptions          set.StringSet
+	TableCatalogPatterns   []string
+	TableSchemaPatterns    []string
+	TableNamePatterns      []string
+	EnginePatterns         []string
+	TableCollationPatterns []string
+	CreateOptionsPatterns  []string
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TablesTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, tableCatalogSkipRequest, tableCatalog := e.extractCol(schema, names, predicates, "table_catalog", true)
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, predicates, "table_name", true)
+	remained, engineSkipRequest, engine := e.extractCol(schema, names, predicates, "engine", true)
+	remained, tableCollationSkipRequest, tableCollation := e.extractCol(schema, names, predicates, "table_collation", true)
+	remained, createOptionsSkipRequest, createOptions := e.extractCol(schema, names, predicates, "create_options", true)
+	e.SkipRequest = tableCatalogSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest || engineSkipRequest || tableCollationSkipRequest || createOptionsSkipRequest
+	if e.SkipRequest {
+		return
+	}
+	remained, tableCatalogPatterns := e.extractLikePatternCol(schema, names, remained, "table_catalog", true)
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true)
+	remained, enginePatterns := e.extractLikePatternCol(schema, names, remained, "engine", true)
+	remained, tableCollationPatterns := e.extractLikePatternCol(schema, names, remained, "table_collation", true)
+	remained, createOptionsPatterns := e.extractLikePatternCol(schema, names, remained, "create_options", true)
+
+	e.TableCatalog = tableCatalog
+	e.TableSchema = tableSchema
+	e.TableName = tableName
+	e.Engine = engine
+	e.TableCollation = tableCollation
+	e.CreateOptions = createOptions
+	e.TableCatalogPatterns = tableCatalogPatterns
+	e.TableSchemaPatterns = tableSchemaPatterns
+	e.TableNamePatterns = tableNamePatterns
+	e.EnginePatterns = enginePatterns
+	e.TableCollationPatterns = tableCollationPatterns
+	e.CreateOptionsPatterns = createOptionsPatterns
+	return remained
+}
+
+func (e *TablesTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TableCatalog) > 0 {
+		r.WriteString(fmt.Sprintf("table_catalog:[%s], ", extractStringFromStringSet(e.TableCatalog)))
+	}
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema:[%s], ", extractStringFromStringSet(e.TableSchema)))
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table_name:[%s], ", extractStringFromStringSet(e.TableName)))
+	}
+	if len(e.Engine) > 0 {
+		r.WriteString(fmt.Sprintf("engine:[%s], ", extractStringFromStringSet(e.Engine)))
+	}
+	if len(e.TableCollation) > 0 {
+		r.WriteString(fmt.Sprintf("table_collation:[%s], ", extractStringFromStringSet(e.TableCollation)))
+	}
+	if len(e.CreateOptions) > 0 {
+		r.WriteString(fmt.Sprintf("create_options:[%s], ", extractStringFromStringSet(e.CreateOptions)))
+	}
+
+	if len(e.TableCatalogPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_catalog_patterns:[%s], ", extractStringFromStringSlice(e.TableCatalogPatterns)))
+	}
+	if len(e.TableSchemaPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema_patterns:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns)))
+	}
+	if len(e.TableNamePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_name_patterns:[%s], ", extractStringFromStringSlice(e.TableNamePatterns)))
+	}
+	if len(e.EnginePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("engine_patterns:[%s], ", extractStringFromStringSlice(e.EnginePatterns)))
+	}
+	if len(e.TableCollationPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_collation_patterns:[%s], ", extractStringFromStringSlice(e.TableCollationPatterns)))
+	}
+	if len(e.CreateOptionsPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("create_options_patterns:[%s], ", extractStringFromStringSlice(e.CreateOptionsPatterns)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}

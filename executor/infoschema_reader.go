@@ -79,6 +79,7 @@ type memtableRetriever struct {
 	rows        [][]types.Datum
 	rowIdx      int
 	retrieved   bool
+	extractor   plannercore.MemTablePredicateExtractor
 	initialized bool
 }
 
@@ -520,16 +521,39 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return err
 	}
-
+	extractor, ok := e.extractor.(*plannercore.TablesTableExtractor)
+	if !ok {
+		return errors.New("illegal extractor type")
+	}
 	checker := privilege.GetPrivilegeManager(sctx)
-
+	var tableCatalogFilterEnable, tableSchemaFilterEnable, tableNameFilterEnable, engineFilterEnable, tableCollationFilterEnable, createOptionsFilterEnable bool
+	if !extractor.SkipRequest {
+		tableCatalogFilterEnable = extractor.TableCatalog.Count() > 0
+		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
+		tableNameFilterEnable = extractor.TableName.Count() > 0
+		engineFilterEnable = extractor.Engine.Count() > 0
+		tableCollationFilterEnable = extractor.TableCollation.Count() > 0
+		createOptionsFilterEnable = extractor.CreateOptions.Count() > 0
+	}
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
+			}
+			if !extractor.SkipRequest {
+				if tableCatalogFilterEnable && !extractor.TableCatalog.Exist(infoschema.CatalogVal) {
+					continue
+				}
+				if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.O) {
+					continue
+				}
+				if tableNameFilterEnable && !extractor.TableName.Exist(table.Name.O) {
+					continue
+				}
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
@@ -544,6 +568,17 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					createOptions = "partitioned"
 				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
 					createOptions = "cached=on"
+				}
+				if !extractor.SkipRequest {
+					if engineFilterEnable && !extractor.Engine.Exist("InnoDB") {
+						continue
+					}
+					if tableCollationFilterEnable && !extractor.TableCollation.Exist(collation) {
+						continue
+					}
+					if createOptionsFilterEnable && !extractor.CreateOptions.Exist(createOptions) {
+						continue
+					}
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)

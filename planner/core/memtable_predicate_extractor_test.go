@@ -1652,6 +1652,89 @@ func TestColumns(t *testing.T) {
 	}
 }
 
+func TestTables(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                    string
+		TableCatalog           set.StringSet
+		TableSchema            set.StringSet
+		TableName              set.StringSet
+		Engine                 set.StringSet
+		TableCollation         set.StringSet
+		CreateOptions          set.StringSet
+		TableCatalogPatterns   []string
+		TableSchemaPatterns    []string
+		TableNamePatterns      []string
+		EnginePatterns         []string
+		TableCollationPatterns []string
+		CreateOptionsPatterns  []string
+		skipRequest            bool
+	}{
+		{
+			sql:       `select * from information_schema.tables where table_name like 'abc%' and table_name like "%def";`,
+			TableName: set.NewStringSet("(?i)abc.*", "(?i).*def"),
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.TablesTableExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.TableCatalog.Count(), columnsTableExtractor.TableCatalog.Count())
+		if ca.TableCatalog.Count() > 0 && columnsTableExtractor.TableCatalog.Count() > 0 {
+			require.EqualValues(t, ca.TableCatalog, columnsTableExtractor.TableCatalog, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.TableSchema.Count(), columnsTableExtractor.TableSchema.Count())
+		if ca.TableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
+			require.EqualValues(t, ca.TableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.TableName.Count(), columnsTableExtractor.TableName.Count())
+		if ca.TableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
+			require.EqualValues(t, ca.TableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.Engine.Count(), columnsTableExtractor.Engine.Count())
+		if ca.Engine.Count() > 0 && columnsTableExtractor.Engine.Count() > 0 {
+			require.EqualValues(t, ca.Engine, columnsTableExtractor.Engine, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.TableCollation.Count(), columnsTableExtractor.TableCollation.Count())
+		if ca.TableCollation.Count() > 0 && columnsTableExtractor.TableCollation.Count() > 0 {
+			require.EqualValues(t, ca.TableCollation, columnsTableExtractor.TableCollation, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.CreateOptions.Count(), columnsTableExtractor.CreateOptions.Count())
+		if ca.CreateOptions.Count() > 0 && columnsTableExtractor.CreateOptions.Count() > 0 {
+			require.EqualValues(t, ca.CreateOptions, columnsTableExtractor.CreateOptions, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.TableCatalogPatterns), len(columnsTableExtractor.TableCatalogPatterns))
+		if len(ca.TableCatalogPatterns) > 0 && len(columnsTableExtractor.TableCatalogPatterns) > 0 {
+			require.EqualValues(t, ca.TableCatalogPatterns, columnsTableExtractor.TableCatalogPatterns, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.TableSchemaPatterns), len(columnsTableExtractor.TableSchemaPatterns))
+		if len(ca.TableSchemaPatterns) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
+			require.EqualValues(t, ca.TableSchemaPatterns, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.TableSchemaPatterns), len(columnsTableExtractor.TableSchemaPatterns))
+		if len(ca.TableSchemaPatterns) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
+			require.EqualValues(t, ca.TableSchemaPatterns, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		}
+	}
+}
+
 func TestPredicateQuery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

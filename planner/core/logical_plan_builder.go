@@ -4343,6 +4343,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TikvRegionPeersExtractor{}
 		case infoschema.TableColumns:
 			p.Extractor = &ColumnsTableExtractor{}
+		case infoschema.TableTables:
+			p.Extractor = &TablesTableExtractor{}
 		}
 	}
 	return p, nil
