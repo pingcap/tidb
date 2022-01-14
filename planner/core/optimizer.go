@@ -409,6 +409,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
+		if vars.StmtCtx.OptimizeTracer == nil {
+			vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+		}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
@@ -455,6 +458,9 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPl
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
+		if stmtCtx.OptimizeTracer == nil {
+			stmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+		}
 		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PhysicalOptimizeTraceInfo)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
