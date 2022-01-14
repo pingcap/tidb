@@ -253,9 +253,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
-			if len(childrenTasks) > 0 {
-				childrenTasks = childrenTasks[0:1]
-			}
+			childrenTasks = childrenTasks[0:1]
 		}
 		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
 	}
