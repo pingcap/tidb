@@ -62,10 +62,10 @@ func (s *testColumnChangeSuiteToVerify) TestFailBeforeDecodeArgs() {
 			stateCnt++
 		} else if job.SchemaState == model.StateWriteReorganization {
 			if first {
-				require.Nil(s.T(), failpoint.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`))
+				require.NoError(s.T(), failpoint.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`))
 				first = false
 			} else {
-				require.Nil(s.T(), failpoint.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs"))
+				require.NoError(s.T(), failpoint.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs"))
 			}
 		}
 	}
@@ -73,6 +73,6 @@ func (s *testColumnChangeSuiteToVerify) TestFailBeforeDecodeArgs() {
 	defaultValue := int64(3)
 	job := testCreateColumn(s.T(), ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	// Make sure the schema state only appears once.
-	require.Equal(s.T(), stateCnt, 1)
+	require.Equal(s.T(), 1, stateCnt)
 	testCheckJobDone(s.T(), d, job, true)
 }
