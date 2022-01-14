@@ -190,6 +190,12 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	// the region hasn't get ready.
+	if regionInfo == nil {
+		return false, nil
+	}
+
+	// check whether the region is healthy.
 	if len(regionInfo.PendingPeers) > 0 || len(regionInfo.DownPeers) > 0 {
 		for _, peer := range regionInfo.PendingPeers {
 			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
@@ -198,7 +204,7 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
 		}
 	}
-	return regionInfo != nil && len(regionInfo.PendingPeers) == 0, nil
+	return len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
