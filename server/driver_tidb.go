@@ -20,7 +20,6 @@ import (
 	"go.uber.org/zap"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -154,20 +153,21 @@ func (ts *TiDBStatement) Reset() {
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	// TODO close at tidb level
+	// TODO: introduce a new variable to control whether ignore close-stmt
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
-		err := ts.ctx.DropPreparedStmt(ts.id)
-		if err != nil {
-			return err
-		}
+		//err := ts.ctx.DropPreparedStmt(ts.id)
+		//if err != nil {
+		//	return err
+		//}
 	} else {
 		if core.PreparedPlanCacheEnabled() {
-			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
-			if !ok {
-				return errors.Errorf("invalid CachedPrepareStmt type")
-			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+			//preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+			//preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			//if !ok {
+			//	return errors.Errorf("invalid CachedPrepareStmt type")
+			//}
+			//ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+			//	ts.ctx.GetSessionVars(), preparedObj.PreparedStmtText, preparedObj.PreparedAst.SchemaVersion))
 		}
 		if ts.ctx.GetSessionVars().ConnectionID != 0 {
 			logutil.BgLogger().Warn("check prepare TiDBStatement.Close", zap.Uint64("connID", ts.ctx.GetSessionVars().ConnectionID))

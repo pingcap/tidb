@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -68,7 +69,7 @@ func PreparedPlanCacheEnabled() bool {
 type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
-	pstmtID              uint32
+	preparedStmtText     string
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -90,7 +91,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = append(key.hash, hack.Slice(key.preparedStmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -110,12 +111,12 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
+func SetPstmtIDSchemaVersion(key kvcache.Key, preparedStmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
 	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
 	if !isPsStmtKey {
 		return
 	}
-	psStmtKey.pstmtID = pstmtID
+	psStmtKey.preparedStmtText = preparedStmtText
 	psStmtKey.schemaVersion = schemaVersion
 	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
 	for k, v := range isolationReadEngines {
@@ -125,7 +126,10 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) (kvcache.Key, error) {
+	if preparedStmtText == "" {
+		return nil, errors.New("empty prepared statement text")
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -133,7 +137,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	key := &pstmtPlanCacheKey{
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
+		preparedStmtText:     preparedStmtText,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -143,7 +147,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
 	}
-	return key
+	return key, nil
 }
 
 // FieldSlice is the slice of the types.FieldType
@@ -199,6 +203,7 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
+	PreparedStmtText    string
 	PreparedAst         *ast.Prepared
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
