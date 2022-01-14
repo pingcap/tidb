@@ -119,7 +119,7 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, nil, time.Second, false, 0);
+		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, nil, time.Second, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
