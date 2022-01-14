@@ -264,10 +264,6 @@ func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *mode
 	}
 
 	if directPlacementOpts != nil {
-		if !ctx.GetSessionVars().EnableDirectPlacement {
-			return nil, nil, errors.New("Direct placement is disabled")
-		}
-
 		// check the direct placement option compatibility.
 		if err := checkPolicyValidation(directPlacementOpts); err != nil {
 			return nil, nil, errors.Trace(err)

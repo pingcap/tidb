@@ -807,37 +807,3 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3\" */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 }
-
-func (s *testDBSuite6) TestEnableDirectPlacement(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop database if exists db1")
-	tk.MustExec("drop table if exists tp")
-	tk.MustExec("drop placement policy if exists p1")
-	defer func() {
-		tk.MustExec("drop database if exists db1")
-		tk.MustExec("drop table if exists tp")
-		tk.MustExec("drop placement policy if exists p1")
-	}()
-	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
-	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) placement policy p1,
-        PARTITION p1 VALUES LESS THAN (1000)
-	)`)
-	tk.MustExec("create database db1 placement policy p1")
-
-	errorSQLs := []string{
-		"create database db2 followers=1",
-		"alter database db1 followers=1",
-		"create table t(a int) followers=1",
-		"alter table tp followers=1",
-		"alter table tp partition p0 followers=1",
-		"alter table tp add partition(partition p2 values less than(10000) followers=1)",
-	}
-
-	for _, sql := range errorSQLs {
-		err := tk.ExecToErr(sql)
-		c.Assert(err.Error(), Equals, "Direct placement is disabled")
-	}
-}

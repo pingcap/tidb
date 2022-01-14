@@ -420,9 +420,6 @@ const (
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
 
-	// TiDBEnableDirectPlacement is used to control whether the direct placement should be enabled
-	TiDBEnableDirectPlacement = "tidb_enable_direct_placement"
-
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
