@@ -54,6 +54,8 @@ var (
 		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
 	// ErrLockExpire is the error when the lock is expired.
 	ErrLockExpire = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
+	// ErrAssertionFailed is the error when an assertion fails.
+	ErrAssertionFailed = dbterror.ClassTiKV.NewStd(mysql.ErrAssertionFailed)
 )
 
 // IsTxnRetryableError checks if the error could safely retry the transaction.

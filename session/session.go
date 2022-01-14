@@ -22,7 +22,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	stderrs "errors"
 	"fmt"
 	"runtime/pprof"
 	"runtime/trace"
@@ -44,9 +46,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -559,7 +564,62 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	err = s.handleAssertionFailure(err)
+	return err
+}
+
+// handleAssertionFailure extracts the possible underlying assertionFailed error,
+// gets the corresponding MVCC history and logs it.
+// If it's not an assertion failure, returns the original error.
+func (s *session) handleAssertionFailure(err error) error {
+	var assertionFailure *tikverr.ErrAssertionFailed
+	if stderrs.As(err, &assertionFailure) {
+		key := assertionFailure.Key
+		newErr := kv.ErrAssertionFailed.GenWithStackByArgs(
+			hex.EncodeToString(key), assertionFailure.String(), assertionFailure.StartTs,
+			assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
+		)
+
+		var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+		// if it's a record key or an index key, decode it
+		if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok && infoSchema != nil {
+			if tablecodec.IsRecordKey(key) {
+				tableID := tablecodec.DecodeTableID(key)
+				if table, ok := infoSchema.TableByID(tableID); ok {
+					decodeFunc = consistency.DecodeRowMvccData(table.Meta())
+				}
+			}
+			if tablecodec.IsIndexKey(key) {
+				tableID := tablecodec.DecodeTableID(key)
+				if table, ok := infoSchema.TableByID(tableID); ok {
+					tableInfo := table.Meta()
+					_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+					if e != nil {
+						return err
+					}
+					var indexInfo *model.IndexInfo
+					for _, idx := range tableInfo.Indices {
+						if idx.ID == indexID {
+							indexInfo = idx
+							break
+						}
+					}
+					if indexInfo == nil {
+						return err
+					}
+					decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
+				}
+			}
+		}
+		if store, ok := s.store.(helper.Storage); ok {
+			content := consistency.GetMvccByKey(store, key, decodeFunc)
+			logutil.BgLogger().Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+		}
+
+		return newErr
+	}
+	return err
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {

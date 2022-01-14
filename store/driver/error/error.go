@@ -15,7 +15,6 @@
 package error
 
 import (
-	"encoding/hex"
 	stderrs "errors"
 
 	"github.com/pingcap/errors"
@@ -56,8 +55,6 @@ var (
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 	// ErrUnknown is the unknow error.
 	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
-	// ErrAssertionFailed is the error when an assertion fails.
-	ErrAssertionFailed = dbterror.ClassTiKV.NewStd(errno.ErrAssertionFailed)
 )
 
 // Registers error returned from TiKV.
@@ -167,14 +164,6 @@ func ToTiDBErr(err error) error {
 
 	if tikverr.IsErrorUndetermined(err) {
 		return terror.ErrResultUndetermined
-	}
-
-	var assertionFailed *tikverr.ErrAssertionFailed
-	if stderrs.As(err, &assertionFailed) {
-		e := assertionFailed.AssertionFailed
-		return ErrAssertionFailed.GenWithStackByArgs(
-			hex.EncodeToString(e.Key), e.Assertion.String(), e.StartTs, e.ExistingStartTs, e.ExistingCommitTs,
-		)
 	}
 
 	return errors.Trace(err)
