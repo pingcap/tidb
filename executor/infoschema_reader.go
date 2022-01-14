@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -464,7 +465,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
 				"",                    // COMMENT
-				"",                    // INDEX_COMMENT
+				index.Comment,         // INDEX_COMMENT
 				visible,               // IS_VISIBLE
 				expression,            // Expression
 			)
@@ -693,13 +694,33 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
 	if !extractor.SkipRequest {
 		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
 		tableNameFilterEnable = extractor.TableName.Count() > 0
 		columnsFilterEnable = extractor.ColumnName.Count() > 0
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.ColumnNamePatterns) > 0 {
+			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			for i, pattern := range extractor.ColumnNamePatterns {
+				columnsRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
 	}
+ForColumnsTag:
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -713,6 +734,21 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 			if columnsFilterEnable && !extractor.ColumnName.Exist(col.Name.L) {
 				continue
+			}
+			for _, re := range tableSchemaRegexp {
+				if !re.MatchString(schema.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range tableNameRegexp {
+				if !re.MatchString(tbl.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range columnsRegexp {
+				if !re.MatchString(col.Name.L) {
+					continue ForColumnsTag
+				}
 			}
 		}
 
@@ -1823,10 +1859,11 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 }
 
 func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
-	var rows [][]types.Datum
 	var err error
 	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.GetSysVars() {
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, v := range sysVars {
 		var value string
 		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
@@ -2704,7 +2741,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string
+	var columnNames []string // nolint: prealloc
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue
@@ -2745,7 +2782,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		return nil, errors.Trace(err)
 	}
 	records := strings.Split(string(body), "\n")
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(records))
 	for _, record := range records {
 		if len(record) == 0 {
 			continue
@@ -2796,7 +2833,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 
 func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
@@ -2819,6 +2855,8 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "get the label rules failed")
 	}
+
+	rows := make([][]types.Datum, 0, len(rules))
 	for _, rule := range rules {
 		skip := true
 		dbName, tableName, err := checkRule(rule)
@@ -2858,11 +2896,11 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	var rows [][]types.Datum
-
+	placementPolicies := is.AllPlacementPolicies()
+	rows := make([][]types.Datum, 0, len(placementPolicies))
 	// Get global PLACEMENT POLICIES
 	// Currently no privileges needed for seeing global PLACEMENT POLICIES!
-	for _, policy := range is.AllPlacementPolicies() {
+	for _, policy := range placementPolicies {
 		// Currently we skip converting syntactic sugar. We might revisit this decision still in the future
 		// I.e.: if PrimaryRegion or Regions are set,
 		// also convert them to LeaderConstraints and FollowerConstraints
