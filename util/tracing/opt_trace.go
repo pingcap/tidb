@@ -217,6 +217,9 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 	bestKeys := map[string]struct{}{}
 	for _, v := range tracer.State {
 		for _, tasksInfo := range v {
+			if tasksInfo.BestTask == nil {
+				continue
+			}
 			bestKey := CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)
 			bestKeys[bestKey] = struct{}{}
 		}

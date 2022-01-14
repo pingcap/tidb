@@ -342,7 +342,7 @@ func (op *physicalOptimizeOp) setBest(lp LogicalPlan, pp PhysicalPlan, prop stri
 }
 
 func (op *physicalOptimizeOp) appendCandidate(logicalPlan LogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PhysicalPlanTrace {
-	if op == nil || op.tracer == nil {
+	if op == nil || op.tracer == nil || physicalPlan == nil {
 		return nil
 	}
 	PhysicalPlanTrace := &tracing.PhysicalPlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID()}
