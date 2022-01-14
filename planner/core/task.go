@@ -209,6 +209,11 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
 	p.cost = tasks[0].cost()
+	if sel, ok := tasks[0].plan().(*PhysicalSelection); ok {
+		rt, _ := tasks[0].(*rootTask)
+		rt.p = sel.children[0]
+		return p.attach2Task(tasks...)
+	}
 	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.children...)
