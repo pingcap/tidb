@@ -363,9 +363,8 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.curBatchCnt = 0
 }
 
-// getValidData returns prevData and curData that starts from starting symbol.
-// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
-// If curData size less than startingLen, curData is returned directly.
+// getValidData returns curData that starts from starting symbol.
+// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
 func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
 	if idx == -1 {
@@ -375,9 +374,9 @@ func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 	return curData[idx:], true
 }
 
-// IndexOfTerminator return index of terminator, if not, return -1.
+// indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) IndexOfTerminator(bs []byte, inQuoter bool) int {
+func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -415,6 +414,7 @@ func (e *LoadDataInfo) IndexOfTerminator(bs []byte, inQuoter bool) int {
 		}
 	}
 	atFieldStart := true
+	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
 		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
@@ -423,7 +423,7 @@ loop:
 			continue
 		}
 		restLen := len(bs) - i - 1
-		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
+		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
 			// look ahead to see if it is end of line or field.
 			switch cmpTerm(restLen, bs[i+1:]) {
 			case lineTermType:
@@ -479,7 +479,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.IndexOfTerminator(curData[startLen:], false)
+		endIdx = e.indexOfTerminator(curData[startLen:])
 	}
 
 	if endIdx == -1 {
