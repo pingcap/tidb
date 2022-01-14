@@ -446,7 +446,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			if err != nil {
 				return errors.Trace(err)
 			}
-			metaWriter.Send(jobBytes, metautil.AppendDDL)
+			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			count++
 		}
 	}
@@ -965,7 +968,6 @@ backupLoop:
 				zap.Int("retry time", retry))
 			return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
-		defer bcli.CloseSend()
 
 		for {
 			resp, err := bcli.Recv()
@@ -973,6 +975,7 @@ backupLoop:
 				if errors.Cause(err) == io.EOF { // nolint:errorlint
 					logutil.CL(ctx).Info("backup streaming finish",
 						zap.Int("retry-time", retry))
+					_ = bcli.CloseSend()
 					break backupLoop
 				}
 				if isRetryableError(err) {
@@ -980,11 +983,14 @@ backupLoop:
 					// current tikv is unavailable
 					client, errReset = resetFn()
 					if errReset != nil {
+						_ = bcli.CloseSend()
 						return errors.Annotatef(errReset, "failed to reset recv connection on store:%d "+
 							"please check the tikv status", storeID)
 					}
+					_ = bcli.CloseSend()
 					break
 				}
+				_ = bcli.CloseSend()
 				return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to connect to store: %d with retry times:%d", storeID, retry)
 			}
 
@@ -995,6 +1001,7 @@ backupLoop:
 				zap.Int("api-version", int(resp.ApiVersion)))
 			err = respFn(resp)
 			if err != nil {
+				_ = bcli.CloseSend()
 				return errors.Trace(err)
 			}
 		}

@@ -108,7 +108,6 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
-var _ = SerialSuites(&testSuiteWithCliBaseCharsetNoNewCollation{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -209,8 +208,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 	se.Close()
 	d.SetStatsUpdating(true)
@@ -331,6 +328,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -595,6 +593,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
 	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
@@ -3441,32 +3440,6 @@ type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
 }
 
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetNewCollationEnabledForTest(false)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
-type testSuiteWithCliBaseCharsetNoNewCollation struct {
-	testSuiteWithCliBase
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5753,7 +5726,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5776,6 +5749,8 @@ func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5841,6 +5816,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5866,6 +5843,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -6659,16 +6638,14 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`)
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			tk1 := testkit.NewTestKitWithInit(c, s.store)
 			for i := 0; i < 5; i++ {
 				tk1.MustExec("select * from t")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -9549,6 +9526,7 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -9809,4 +9787,103 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(fields, HasLen, test.fields)
 	}
+}
+
+func (s *testSerialSuite) TestIndexJoin31494(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int(11) default null, b int(11) default null, key(b));")
+	insertStr := "insert into t1 values(1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
+	insertStr = "insert into t2 values(1, 1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
+	// This bug will be reproduced in 10 times.
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
+}
+
+// Details at https://github.com/pingcap/tidb/issues/31038
+func (s *testSerialSuite) TestFix31038(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = false
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t123")
+	tk.MustExec("create table t123 (id int);")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
+	tk.MustQuery("select * from t123;")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
+}
+
+func (s *testSerialSuite) TestFix31537(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE trade (
+  t_id bigint(16) NOT NULL AUTO_INCREMENT,
+  t_dts datetime NOT NULL,
+  t_st_id char(4) NOT NULL,
+  t_tt_id char(3) NOT NULL,
+  t_is_cash tinyint(1) NOT NULL,
+  t_s_symb char(15) NOT NULL,
+  t_qty mediumint(7) NOT NULL,
+  t_bid_price decimal(8,2) NOT NULL,
+  t_ca_id bigint(12) NOT NULL,
+  t_exec_name varchar(49) NOT NULL,
+  t_trade_price decimal(8,2) DEFAULT NULL,
+  t_chrg decimal(10,2) NOT NULL,
+  t_comm decimal(10,2) NOT NULL,
+  t_tax decimal(10,2) NOT NULL,
+  t_lifo tinyint(1) NOT NULL,
+  PRIMARY KEY (t_id) /*T![clustered_index] CLUSTERED */,
+  KEY i_t_ca_id_dts (t_ca_id,t_dts),
+  KEY i_t_s_symb_dts (t_s_symb,t_dts),
+  CONSTRAINT fk_trade_st FOREIGN KEY (t_st_id) REFERENCES status_type (st_id),
+  CONSTRAINT fk_trade_tt FOREIGN KEY (t_tt_id) REFERENCES trade_type (tt_id),
+  CONSTRAINT fk_trade_s FOREIGN KEY (t_s_symb) REFERENCES security (s_symb),
+  CONSTRAINT fk_trade_ca FOREIGN KEY (t_ca_id) REFERENCES customer_account (ca_id)
+) ;`)
+	tk.MustExec(`CREATE TABLE trade_history (
+  th_t_id bigint(16) NOT NULL,
+  th_dts datetime NOT NULL,
+  th_st_id char(4) NOT NULL,
+  PRIMARY KEY (th_t_id,th_st_id) /*T![clustered_index] NONCLUSTERED */,
+  KEY i_th_t_id_dts (th_t_id,th_dts),
+  CONSTRAINT fk_trade_history_t FOREIGN KEY (th_t_id) REFERENCES trade (t_id),
+  CONSTRAINT fk_trade_history_st FOREIGN KEY (th_st_id) REFERENCES status_type (st_id)
+);
+`)
+	tk.MustExec(`CREATE TABLE status_type (
+  st_id char(4) NOT NULL,
+  st_name char(10) NOT NULL,
+  PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
+);`)
+	tk.MustQuery(`trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;`)
 }
