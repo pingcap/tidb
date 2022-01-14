@@ -172,8 +172,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 

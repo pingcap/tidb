@@ -185,12 +185,20 @@ SplitRegions:
 	return nil
 }
 
-func (rs *RegionSplitter) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := rs.client.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return regionInfo != nil, nil
+	if len(regionInfo.PendingPeers) > 0 || len(regionInfo.DownPeers) > 0 {
+		for _, peer := range regionInfo.PendingPeers {
+			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+		}
+		for _, peer := range regionInfo.DownPeers {
+			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+		}
+	}
+	return regionInfo != nil && len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
@@ -218,7 +226,7 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
 	interval := SplitCheckInterval
 	for i := 0; i < SplitCheckMaxRetryTimes; i++ {
-		ok, err := rs.hasRegion(ctx, regionID)
+		ok, err := rs.hasHealthyRegion(ctx, regionID)
 		if err != nil {
 			log.Warn("wait for split failed", zap.Error(err))
 			return
