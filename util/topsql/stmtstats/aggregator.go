@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/atomic"
 )
 
@@ -55,7 +56,9 @@ func (m *aggregator) run() {
 		case <-m.ctx.Done():
 			return
 		case <-tick.C:
-			m.aggregate()
+			if state.TopSQLEnabled() {
+				m.aggregate()
+			}
 		}
 	}
 }
