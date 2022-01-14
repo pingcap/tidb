@@ -226,8 +226,7 @@ func TestPaginateScanRegion(t *testing.T) {
 	regionMap := make(map[uint64]*restore.RegionInfo)
 	var regions []*restore.RegionInfo
 	var batch []*restore.RegionInfo
-	var err error
-	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
 	require.Regexp(t, ".*scan region return empty result.*", err.Error())
 
