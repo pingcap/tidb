@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -914,4 +915,28 @@ func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
 
 	_, err := config.ParseCharset("Unknown")
 	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
+}
+
+func (s *configTestSuite) TestCheckAndAdjustForLocalBackend(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = ""
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir must not be empty!")
+
+	// non exists dir is legal
+	cfg.TikvImporter.SortedKVDir = "./not-exists"
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
+
+	base := c.MkDir()
+	// create empty file
+	file := filepath.Join(base, "file")
+	c.Assert(os.WriteFile(file, []byte(""), 0644), IsNil)
+	cfg.TikvImporter.SortedKVDir = file
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir (.*) is not a directory")
+
+	// legal dir
+	cfg.TikvImporter.SortedKVDir = base
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
 }
