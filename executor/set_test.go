@@ -1437,23 +1437,11 @@ func (s *testSuite5) TestRemovedSysVars(c *C) {
 	tk.MustExec(`SET tidb_slow_log_masking = 1`)
 	tk.MustExec(`SET GLOBAL tidb_enable_global_temporary_table = 1`)
 	tk.MustExec(`SET GLOBAL tidb_slow_log_masking = 1`)
-	tk.MustExec(`SET GLOBAL tidb_top_sql_precision_seconds = 200`)
-	c.Assert(topsqlstate.GlobalState.PrecisionSeconds.Load() != 200, IsTrue)
-	tk.MustExec(`SET GLOBAL tidb_top_sql_report_interval_seconds = 1000`)
-	c.Assert(topsqlstate.GlobalState.ReportIntervalSeconds.Load() != 1000, IsTrue)
-	tk.MustExec(`SET GLOBAL tidb_top_sql_max_statement_count = 50000`)
-	c.Assert(topsqlstate.GlobalState.MaxStatementCount.Load() != 50000, IsTrue)
-	tk.MustExec(`SET GLOBAL tidb_top_sql_max_collect = 50000`)
-	c.Assert(topsqlstate.GlobalState.MaxCollect.Load() != 50000, IsTrue)
 
 	// In SELECT context it returns a specifc error
 	// (to avoid presenting dummy data)
 	tk.MustGetErrCode("SELECT @@tidb_slow_log_masking", errno.ErrVariableNoLongerSupported)
 	tk.MustGetErrCode("SELECT @@tidb_enable_global_temporary_table", errno.ErrVariableNoLongerSupported)
-	tk.MustGetErrCode("SELECT @@global.tidb_top_sql_precision_seconds", errno.ErrVariableNoLongerSupported)
-	tk.MustGetErrCode("SELECT @@global.tidb_top_sql_report_interval_seconds", errno.ErrVariableNoLongerSupported)
-	tk.MustGetErrCode("SELECT @@global.tidb_top_sql_max_statement_count", errno.ErrVariableNoLongerSupported)
-	tk.MustGetErrCode("SELECT @@global.tidb_top_sql_max_collect", errno.ErrVariableNoLongerSupported)
 }
 
 func (s *testSuite5) TestSetClusterConfig(c *C) {
@@ -1561,7 +1549,7 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	_, err := tk.Exec("set @@global.tidb_top_sql_max_time_series_count='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_time_series_count'")
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count='-1';")
-	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count='5001';")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_max_time_series_count value: '5001'"))
 	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("5000"))
@@ -1587,7 +1575,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustQuery("select @@global.tidb_top_sql_max_meta_count;").Check(testkit.Rows("5000"))
 	c.Assert(topsqlstate.GlobalState.MaxCollect.Load(), Equals, int64(5000))
 
-	// Test for hide top sql variable except 'tidb_enable_top_sql' in show variable.
-	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF"))
-	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF"))
+	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
+	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 }

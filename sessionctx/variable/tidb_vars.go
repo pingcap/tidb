@@ -582,27 +582,11 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
-
-	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
-
 	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
 	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
 
-	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
-
 	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
 	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
-
-	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
