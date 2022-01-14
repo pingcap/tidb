@@ -520,7 +520,6 @@ func (c *SortedRowContainer) Sort() {
 		if val.(bool) {
 			panic("out of memory quota when sorting")
 		}
-
 	})
 
 	c.GetMemTracker().Consume(int64(8 * c.numRow))
