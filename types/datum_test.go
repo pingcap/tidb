@@ -31,7 +31,6 @@ import (
 )
 
 func TestDatum(t *testing.T) {
-	t.Parallel()
 	values := []interface{}{
 		int64(1),
 		uint64(1),
@@ -62,7 +61,6 @@ func testDatumToBool(t *testing.T, in interface{}, res int) {
 }
 
 func TestToBool(t *testing.T) {
-	t.Parallel()
 	testDatumToBool(t, 0, 0)
 	testDatumToBool(t, int64(0), 0)
 	testDatumToBool(t, uint64(0), 0)
@@ -123,7 +121,6 @@ func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 }
 
 func TestToInt64(t *testing.T) {
-	t.Parallel()
 	testDatumToInt64(t, "0", int64(0))
 	testDatumToInt64(t, 0, int64(0))
 	testDatumToInt64(t, int64(0), int64(0))
@@ -153,7 +150,6 @@ func TestToInt64(t *testing.T) {
 }
 
 func TestConvertToFloat(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		d      Datum
 		tp     byte
@@ -206,7 +202,6 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 }
 
 func TestToJSON(t *testing.T) {
-	t.Parallel()
 	ft := NewFieldType(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
@@ -221,6 +216,7 @@ func TestToJSON(t *testing.T) {
 		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
+		{NewBinaryLiteralDatum([]byte{0x81}), ``, false},
 
 		// can not parse JSON from this string, so error occurs.
 		{NewStringDatum("hello, 世界"), "", false},
@@ -246,7 +242,6 @@ func TestToJSON(t *testing.T) {
 }
 
 func TestIsNull(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		data   interface{}
 		isnull bool
@@ -269,7 +264,6 @@ func testIsNull(t *testing.T, data interface{}, isnull bool) {
 }
 
 func TestToBytes(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -290,7 +284,6 @@ func TestToBytes(t *testing.T) {
 }
 
 func TestComputePlusAndMinus(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
@@ -319,7 +312,6 @@ func TestComputePlusAndMinus(t *testing.T) {
 }
 
 func TestCloneDatum(t *testing.T) {
-	t.Parallel()
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -366,7 +358,6 @@ func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 }
 
 func TestEstimatedMemUsage(t *testing.T) {
-	t.Parallel()
 	b := []byte{'a', 'b', 'c', 'd'}
 	enum := Enum{Name: "a", Value: 1}
 	datumArray := []Datum{
@@ -386,7 +377,6 @@ func TestEstimatedMemUsage(t *testing.T) {
 }
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	sc.OverflowAsWarning = true
@@ -501,7 +491,6 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 }
 
 func TestStringToMysqlBit(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte

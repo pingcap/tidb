@@ -38,8 +38,6 @@ import (
 )
 
 func TestBasic(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -109,7 +107,7 @@ func TestBasic(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom.Store(), nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store(), nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := store.Begin()
@@ -212,8 +210,6 @@ func TestBasic(t *testing.T) {
 }
 
 func TestMockInfoSchema(t *testing.T) {
-	t.Parallel()
-
 	tblID := int64(1234)
 	tblName := model.NewCIStr("tbl_m")
 	tableInfo := &model.TableInfo{
@@ -250,8 +246,6 @@ func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction
 
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func TestInfoTables(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -259,7 +253,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -317,8 +311,6 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 func TestGetBundle(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -326,7 +318,7 @@ func TestGetBundle(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -394,8 +386,6 @@ func TestGetBundle(t *testing.T) {
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {

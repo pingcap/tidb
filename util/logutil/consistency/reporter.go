@@ -186,7 +186,8 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index_name", r.Idx.Name.O),
 			zap.Int("index_cnt", idxCnt),
-			zap.Int("table_cnt", tblCnt))
+			zap.Int("table_cnt", tblCnt),
+			zap.Stack("stack"))
 	} else {
 		const maxFullHandleCnt = 50
 		displayFullHdCnt := len(fullHd)
@@ -206,6 +207,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		for i := range missRowIdx {
 			fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.IndexEncode(&missRowIdx[i]), r.decodeIndexMvccData)))
 		}
+		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
 	}
 	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, idxCnt, tblCnt)
@@ -219,6 +221,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 			zap.String("index", r.Idx.Name.O),
 			zap.String("col", colName),
 			zap.Error(err),
+			zap.Stack("stack"),
 		)
 	} else {
 		fs := []zap.Field{
@@ -232,6 +235,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		fs = append(fs, zap.String("row_mvcc", getMvccByKey(r.Sctx, r.HandleEncode(handle), r.decodeRowMvccData)))
 		fs = append(fs, zap.String("index_mvcc", getMvccByKey(r.Sctx, r.IndexEncode(idxRow), r.decodeIndexMvccData)))
 		fs = append(fs, zap.Error(err))
+		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistentWithColInfo.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, colName, fmt.Sprint(handle), fmt.Sprint(idxDat), fmt.Sprint(tblDat), err)
@@ -256,6 +260,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		logutil.Logger(ctx).Error("admin check found data inconsistency",
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index", r.Idx.Name.O),
+			zap.Stack("stack"),
 		)
 	} else {
 		fs := []zap.Field{
@@ -269,6 +274,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		if idxRow != nil {
 			fs = append(fs, zap.String("index_mvcc", getMvccByKey(r.Sctx, r.IndexEncode(idxRow), r.decodeIndexMvccData)))
 		}
+		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))

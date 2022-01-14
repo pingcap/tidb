@@ -16,8 +16,6 @@ import (
 )
 
 func TestBackoffWithSuccess(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
@@ -37,8 +35,6 @@ func TestBackoffWithSuccess(t *testing.T) {
 }
 
 func TestBackoffWithFatalError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
@@ -66,8 +62,6 @@ func TestBackoffWithFatalError(t *testing.T) {
 }
 
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	canceledError := status.Error(codes.Canceled, "context canceled")
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
@@ -80,8 +74,6 @@ func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 }
 
 func TestBackoffWithRetryableError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
@@ -104,8 +96,6 @@ func TestBackoffWithRetryableError(t *testing.T) {
 }
 
 func TestPdBackoffWithRetryableError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewPDReqBackoffer()
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
@@ -131,5 +121,41 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		gRPCError,
 		gRPCError,
 		gRPCError,
+	}, multierr.Errors(err))
+}
+
+func TestNewImportSSTBackofferWithSucess(t *testing.T) {
+	var counter int
+	backoffer := utils.NewImportSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 15 {
+			return nil
+		} else {
+			return berrors.ErrKVDownloadFailed
+		}
+	}, backoffer)
+	require.Equal(t, 16, counter)
+	require.Nil(t, err)
+}
+
+func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
+	var counter int
+	backoffer := utils.NewDownloadSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 3 {
+			return context.Canceled
+		} else {
+			return berrors.ErrKVIngestFailed
+		}
+
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.Equal(t, []error{
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		context.Canceled,
 	}, multierr.Errors(err))
 }

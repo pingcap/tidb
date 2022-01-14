@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -249,7 +250,7 @@ func checkRowInsertionConsistency(
 
 	for columnID, decodedDatum := range decodedData {
 		inputDatum := rowToInsert[columnIDToInfo[columnID].Offset]
-		cmp, err := decodedDatum.CompareDatum(sessVars.StmtCtx, &inputDatum)
+		cmp, err := decodedDatum.Compare(sessVars.StmtCtx, &inputDatum, collate.GetCollator(decodedDatum.Collation()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -318,7 +319,7 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := decodedMutationDatum.CompareDatum(sc, &expectedDatum)
+		comparison, err := decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
 		if err != nil {
 			return errors.Trace(err)
 		}

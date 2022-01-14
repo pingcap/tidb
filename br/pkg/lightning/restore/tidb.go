@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 
-	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 )
 
@@ -62,24 +60,6 @@ var defaultImportVariablesTiDB = map[string]string{
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
-}
-
-// getSQLErrCode returns error code if err is a mysql error
-func getSQLErrCode(err error) (terror.ErrCode, bool) {
-	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
-	if !ok {
-		return -1, false
-	}
-
-	return terror.ErrCode(mysqlErr.Number), true
-}
-
-func isUnknownSystemVariableErr(err error) bool {
-	code, ok := getSQLErrCode(err)
-	if !ok {
-		return strings.Contains(err.Error(), "Unknown system variable")
-	}
-	return code == mysql.ErrUnknownSystemVariable
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
@@ -111,6 +91,8 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
 	}
 
 	if dsn.Vars != nil {
@@ -120,7 +102,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	for k, v := range vars {
-		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
@@ -369,7 +351,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -379,9 +361,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id

@@ -78,7 +78,7 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	}
 	// All expressions in IN must be a constant
 	// SELECT * FROM t1 WHERE c IN ('1', '2')
-	var results []types.Datum
+	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
 		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
@@ -1414,4 +1414,109 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return ""
 	}
 	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+}
+
+// TikvRegionPeersExtractor is used to extract some predicates of cluster table.
+type TikvRegionPeersExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	// RegionIDs/StoreIDs represents all region/store ids we should filter in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tikv_region_peers WHERE region_id=1
+	// 2. SELECT * FROM tikv_region_peers WHERE table_id in (11, 22)
+	RegionIDs []uint64
+	StoreIDs  []uint64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `region_id/store_id` columns.
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
+
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	return remained
+}
+
+func (e *TikvRegionPeersExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.RegionIDs) > 0 {
+		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+	}
+	if len(e.StoreIDs) > 0 {
+		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ColumnsTableExtractor is used to extract some predicates of columns table.
+type ColumnsTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	TableSchema set.StringSet
+
+	TableName set.StringSet
+	// ColumnName represents all column name we should filter in memtable.
+	ColumnName set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
+	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
+	e.ColumnName = columnName
+	e.TableName = tableName
+	e.TableSchema = tableSchema
+	return remained
+}
+
+func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema:[%s], ", extractStringFromStringSet(e.TableSchema)))
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table_name:[%s], ", extractStringFromStringSet(e.TableName)))
+	}
+	if len(e.ColumnName) > 0 {
+		r.WriteString(fmt.Sprintf("column_name:[%s], ", extractStringFromStringSet(e.ColumnName)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
