@@ -179,6 +179,7 @@ type PhysicalPlanTrace struct {
 	Info     string               `json:"info"`
 	Children []*PhysicalPlanTrace `json:"children"`
 	Selected bool                 `json:"selected"`
+	Property string               `json:"property"`
 }
 
 // SetCost sets cost for PhysicalPlanTrace
