@@ -291,6 +291,10 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+	if len(originalTasks) == 0 {
+		log.Info("Batch cop task balancer got an empty task set.")
+		return originalTasks
+	}
 	isMPP := mppStoreLastFailTime != nil
 	// for mpp, we still need to detect the store availability
 	if len(originalTasks) <= 1 && !isMPP {
@@ -525,7 +529,6 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
-
 		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)

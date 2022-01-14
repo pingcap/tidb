@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strings"
 	"sync"
@@ -316,6 +317,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+	})
+
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 
@@ -443,7 +448,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
+	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession, nil

@@ -325,18 +325,20 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	fmt.Fprint(ctx.In, keyWord)
 }
 
-func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func()) {
+func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() error) error {
 	if !ctx.Flags.HasTiDBSpecialCommentFlag() {
-		fn()
-		return
+		return fn()
 	}
 	ctx.WritePlain("/*T!")
 	if len(featureID) != 0 {
 		ctx.WritePlainf("[%s]", featureID)
 	}
 	ctx.WritePlain(" ")
-	fn()
+	if err := fn(); err != nil {
+		return err
+	}
 	ctx.WritePlain(" */")
+	return nil
 }
 
 // WriteString writes the string into writer
