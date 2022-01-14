@@ -261,6 +261,10 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // ValidateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// TODO: this is a temporary solution for issue: https://github.com/pingcap/tidb/issues/31538, an elegant solution is needed.
+	if value == "" && sv.IsNoop {
+		return value, nil
+	}
 	// Some sysvars in TiDB have a special behavior where the empty string means
 	// "use the config file value". This needs to be cleaned up once the behavior
 	// for instance variables is determined.
@@ -497,7 +501,7 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 		TiDBEnableTelemetry, TiDBEnablePointGetCache:

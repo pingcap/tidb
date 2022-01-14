@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/zap"
 )
 
@@ -36,8 +36,11 @@ var nowFunc = time.Now
 
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
-	tracecpu.Collector
+	collector.Collector
 	stmtstats.Collector
+
+	// Start uses to start the reporter.
+	Start()
 
 	// RegisterSQL registers a normalizedSQL with SQLDigest.
 	//
@@ -65,7 +68,8 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	collectCPUTimeChan      chan []tracecpu.SQLCPUTimeRecord
+	sqlCPUCollector         *collector.SQLCPUCollector
+	collectCPUTimeChan      chan []collector.SQLCPUTimeRecord
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
 	reportCollectedDataChan chan collectedData
 
@@ -87,7 +91,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		DefaultDataSinkRegisterer: NewDefaultDataSinkRegisterer(ctx),
 		ctx:                       ctx,
 		cancel:                    cancel,
-		collectCPUTimeChan:        make(chan []tracecpu.SQLCPUTimeRecord, collectChanBufferSize),
+		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
 		reportCollectedDataChan:   make(chan collectedData, 1),
 		collecting:                newCollecting(),
@@ -96,16 +100,22 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
 		decodePlan:                decodePlan,
 	}
+	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
+	return tsr
+}
+
+// Start implements the TopSQLReporter interface.
+func (tsr *RemoteTopSQLReporter) Start() {
+	tsr.sqlCPUCollector.Start()
 	go tsr.collectWorker()
 	go tsr.reportWorker()
-	return tsr
 }
 
 // Collect implements tracecpu.Collector.
 //
 // WARN: It will drop the DataRecords if the processing is not in time.
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) Collect(data []tracecpu.SQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 	if len(data) == 0 {
 		return
 	}
@@ -150,6 +160,7 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan 
 // Close implements TopSQLReporter.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
+	tsr.sqlCPUCollector.Stop()
 	tsr.onReporterClosing()
 }
 
@@ -158,16 +169,18 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
 	currentReportInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
-	collectTicker := time.NewTicker(time.Second)
-	defer collectTicker.Stop()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	defer reportTicker.Stop()
 	for {
 		select {
 		case <-tsr.ctx.Done():
 			return
-		case <-collectTicker.C:
-			tsr.takeDataFromCollectChanBuffer()
+		case data := <-tsr.collectCPUTimeChan:
+			timestamp := uint64(nowFunc().Unix())
+			tsr.processCPUTimeData(timestamp, data)
+		case data := <-tsr.collectStmtStatsChan:
+			timestamp := uint64(nowFunc().Unix())
+			tsr.stmtStatsBuffer[timestamp] = data
 		case <-reportTicker.C:
 			tsr.processStmtStatsData()
 			tsr.takeDataAndSendToReportChan()
@@ -225,20 +238,6 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
 }
 
-func (tsr *RemoteTopSQLReporter) takeDataFromCollectChanBuffer() {
-	timestamp := uint64(nowFunc().Unix())
-	for {
-		select {
-		case data := <-tsr.collectCPUTimeChan:
-			tsr.processCPUTimeData(timestamp, data)
-		case data := <-tsr.collectStmtStatsChan:
-			tsr.stmtStatsBuffer[timestamp] = data
-		default:
-			return
-		}
-	}
-}
-
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
 	// Send to report channel. When channel is full, data will be dropped.
@@ -266,8 +265,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			// that `data` contains. So we wait for a little while to ensure that writes
 			// are finished.
 			time.Sleep(time.Millisecond * 100)
-			// Get top N records from records.
-			rs := data.collected.compactToTopNAndOthers(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
+			rs := data.collected.getReportRecords()
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -41,11 +40,12 @@ import (
 const dbName = "test"
 
 var (
-	logLevel   string
-	port       uint
-	statusPort uint
-	record     bool
-	create     bool
+	logLevel         string
+	port             uint
+	statusPort       uint
+	record           bool
+	create           bool
+	collationDisable bool
 )
 
 func init() {
@@ -54,18 +54,7 @@ func init() {
 	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
-
-	c := &charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-	}
-	charset.AddCharset(c)
-	for _, coll := range charset.GetCollations() {
-		if strings.EqualFold(coll.CharsetName, c.Name) {
-			charset.AddCollation(coll)
-		}
-	}
+	flag.BoolVar(&collationDisable, "collation-disable", false, "run collation related-test with new-collation disabled")
 }
 
 var mdb *sql.DB
@@ -578,7 +567,15 @@ func (t *tester) testFileName() string {
 
 func (t *tester) resultFileName() string {
 	// test and result must be in current ./r, the same as MySQL
-	return fmt.Sprintf("./r/%s.result", t.name)
+	name := t.name
+	if strings.HasPrefix(name, "collation") {
+		if collationDisable {
+			name = name + "_disabled"
+		} else {
+			name = name + "_enabled"
+		}
+	}
+	return fmt.Sprintf("./r/%s.result", name)
 }
 
 func (t *tester) checkLastResult() error {
@@ -619,6 +616,9 @@ func loadAllTests() ([]string, error) {
 		// the test file must have a suffix .test
 		name := f.Name()
 		if strings.HasSuffix(name, ".test") {
+			if collationDisable && !strings.HasPrefix(name, "collation") {
+				continue
+			}
 			name = strings.TrimSuffix(name, ".test")
 
 			if create && !strings.HasSuffix(name, "_stats") {

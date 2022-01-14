@@ -239,13 +239,6 @@ resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
-[stmt-summary]
-enable=false
-enable-internal-query=true
-max-stmt-count=1000
-max-sql-length=1024
-refresh-interval=100
-history-size=100
 [experimental]
 allow-expression-index = true
 [isolation-read]
@@ -294,12 +287,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-	require.False(t, conf.StmtSummary.Enable)
-	require.True(t, conf.StmtSummary.EnableInternalQuery)
-	require.Equal(t, uint(1000), conf.StmtSummary.MaxStmtCount)
-	require.Equal(t, uint(1024), conf.StmtSummary.MaxSQLLength)
-	require.Equal(t, 100, conf.StmtSummary.RefreshInterval)
-	require.Equal(t, 100, conf.StmtSummary.HistorySize)
 	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
@@ -321,7 +308,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
-	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)

@@ -127,9 +127,9 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	// ExecuteStmt executes a parsed statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
-	// Parse is deprecated, use ParseWithParams() or ParseWithParamsInternal() instead.
+	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ExecuteInternal is a helper around ParseWithParamsInternal() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
@@ -624,7 +624,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 const cacheTableWriteLease = 5 * time.Second
 
 func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
@@ -854,6 +854,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		}
 		return err
 	}
+	s.updateStatsDeltaToCollector()
+	return nil
+}
+
+func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for _, item := range mapper {
@@ -862,7 +867,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
@@ -1174,7 +1178,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
-	stmt, err := s.ParseWithParamsInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	stmt, err := s.ParseWithParams(ctx, true, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
 	}
@@ -1196,7 +1200,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
-	stmt, err := s.ParseWithParamsInternal(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
+	stmt, err := s.ParseWithParams(ctx, true, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
@@ -1271,7 +1275,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	stmt, err := s.ParseWithParamsInternal(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	stmt, err := s.ParseWithParams(context.TODO(), true, `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	if err != nil {
 		return err
 	}
@@ -1403,7 +1407,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
+	stmtNode, err := s.ParseWithParams(ctx, true, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1481,7 +1485,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (s *session) ParseWithParams(ctx context.Context, forceUTF8SQL bool, sql string, args ...interface{}) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlexec.EscapeSQL(sql, args...)
@@ -1494,15 +1498,13 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 
 	var stmts []ast.StmtNode
 	var warns []error
-	var parseStartTime time.Time
-	if internal {
+	parseStartTime := time.Now()
+	if internal || forceUTF8SQL {
 		// Do no respect the settings from clients, if it is for internal usage.
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
@@ -1522,7 +1524,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
-	if s.isInternal() {
+	if internal {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
@@ -1539,16 +1541,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		}
 	}
 	return stmts[0], nil
-}
-
-// ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
-func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	origin := s.sessionVars.InRestrictedSQL
-	s.sessionVars.InRestrictedSQL = true
-	defer func() {
-		s.sessionVars.InRestrictedSQL = origin
-	}()
-	return s.ParseWithParams(ctx, sql, args...)
 }
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
@@ -2612,9 +2604,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if newCollationEnabled {
 		collate.EnableNewCollations()
 	}
-	if cfg.Experimental.EnableNewCharset {
-		collate.EnableNewCharset()
-	}
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
 	if err != nil {
@@ -2973,6 +2962,8 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	s.updateStatsDeltaToCollector()
 
 	return s.NewTxn(ctx)
 }

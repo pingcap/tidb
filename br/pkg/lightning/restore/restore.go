@@ -471,6 +471,7 @@ outside:
 	}
 
 	task.End(zap.ErrorLevel, err)
+	rc.errorMgr.LogErrorDetails()
 	rc.errorSummaries.emitLog()
 
 	return errors.Trace(err)
@@ -1337,6 +1338,9 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 }
 
 func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
+	// output error summary
+	defer rc.outpuErrorSummary()
+
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
@@ -1640,6 +1644,12 @@ func (tr *TableRestore) restoreTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
+func (rc *Controller) outpuErrorSummary() {
+	if rc.errorMgr.HasError() {
+		fmt.Println(rc.errorMgr.Output())
+	}
+}
+
 // do full compaction for the whole data.
 func (rc *Controller) fullCompact(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Compact {
@@ -1807,6 +1817,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
+	log.L().Info("new_collation_enabled", zap.Bool("enabled", enabled))
 
 	return nil
 }
@@ -1904,8 +1915,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return errors.Trace(err)
 				}
 				if err := rc.clusterResource(ctx, source); err != nil {
-					rc.taskMgr.CleanupTask(ctx)
-					return errors.Trace(err)
+					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
+						log.L().Warn("cleanup task failed", zap.Error(err1))
+						return err
+					}
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return errors.Trace(err)
@@ -1915,11 +1928,14 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
-		fmt.Print(rc.checkTemplate.Output())
+		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {
 		if !taskExist && rc.taskMgr != nil {
-			rc.taskMgr.CleanupTask(ctx)
+			err := rc.taskMgr.CleanupTask(ctx)
+			if err != nil {
+				log.L().Warn("cleanup task failed", zap.Error(err))
+			}
 		}
 		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}

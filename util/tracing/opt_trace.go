@@ -14,6 +14,8 @@
 
 package tracing
 
+import "fmt"
+
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
 	ID       int
@@ -146,4 +148,42 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 		}
 	}
 	return ret
+}
+
+// PhysicalOptimizeTraceInfo indicates for the PhysicalOptimize trace information
+// The essence of the physical optimization stage is a Dynamic Programming(DP).
+// So, PhysicalOptimizeTraceInfo is to record the transfer and status information in the DP.
+// Each (logicalPlan, property), the so-called state in DP, has its own PhysicalOptimizeTraceInfo.
+// The Candidates are possible transfer paths.
+// Because DP is performed on the plan tree,
+// we need to record the state of each candidate's child node, namely Children.
+type PhysicalOptimizeTraceInfo struct {
+	Property   string               `json:"property"`
+	BestTask   *PhysicalPlanTrace   `json:"best"`
+	Candidates []*PhysicalPlanTrace `json:"candidates"`
+}
+
+// PhysicalPlanTrace records each generated physical plan during findBestTask
+type PhysicalPlanTrace struct {
+	ID       int                  `json:"id"`
+	TP       string               `json:"type"`
+	Cost     float64              `json:"cost"`
+	Info     string               `json:"info"`
+	Children []*PhysicalPlanTrace `json:"children"`
+}
+
+// SetCost sets cost for PhysicalPlanTrace
+func (t *PhysicalPlanTrace) SetCost(cost float64) {
+	t.Cost = cost
+}
+
+// PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
+type PhysicalOptimizeTracer struct {
+	// (logical plan) -> property -> physical plan candidates
+	State map[string]map[string]*PhysicalOptimizeTraceInfo
+}
+
+// CodecPlanName returns tp_id of plan.
+func CodecPlanName(tp string, id int) string {
+	return fmt.Sprintf("%v_%v", tp, id)
 }
