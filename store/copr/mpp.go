@@ -457,6 +457,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
+<<<<<<< HEAD
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
@@ -468,6 +469,21 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		respChan:   make(chan *mppResponse, 4096),
 		startTs:    dispatchReqs[0].StartTs,
 		vars:       vars,
+=======
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
+	vars := variables.(*tikv.Variables)
+	ctxChild, cancelFunc := context.WithCancel(ctx)
+	iter := &mppIterator{
+		store:                      c.store,
+		tasks:                      dispatchReqs,
+		finishCh:                   make(chan struct{}),
+		cancelFunc:                 cancelFunc,
+		respChan:                   make(chan *mppResponse, 4096),
+		startTs:                    startTs,
+		vars:                       vars,
+		needTriggerFallback:        needTriggerFallback,
+		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+>>>>>>> f1f923026... mpp: Fix the crash or error when mpp generate empty task list. (#31658)
 	}
 	go iter.run(ctxChild)
 	return iter

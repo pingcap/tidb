@@ -102,8 +102,22 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 //    meta data(like the rpc context) in batchCopTask is related to it
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
+<<<<<<< HEAD
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
+=======
+//    otherwise, these region will be balance between TiFlash stores.
+// Currently, there are two balance strategies.
+// The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
+//
+// The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
+// If balanceWithContinuity is true, the second balance strategy is enable.
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+	if len(originalTasks) == 0 {
+		log.Info("Batch cop task balancer got an empty task set.")
+		return originalTasks
+	}
+>>>>>>> f1f923026... mpp: Fix the crash or error when mpp generate empty task list. (#31658)
 	isMPP := mppStoreLastFailTime != nil
 	// for mpp, we still need to detect the store availability
 	if len(originalTasks) <= 1 && !isMPP {
@@ -317,7 +331,6 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
-
 		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
