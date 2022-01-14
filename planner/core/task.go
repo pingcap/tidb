@@ -1018,7 +1018,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
-	needExtraProj := false
 	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
@@ -1039,7 +1038,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		if len(ts.Columns) > prevColumnLen {
 			// Add an projection to make sure not to output extract columns.
-			needExtraProj = true
+			t.needExtraProj = true
+			// Keep originSchema if exists so that we don't overlap it.
+			if t.originSchema == nil {
+				t.originSchema = prevSchema
+			}
 		}
 	}
 	t.cst /= copIterWorkers
@@ -1106,7 +1109,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			aggPushedDown = true
 		}
 
-		if needExtraProj && !aggPushedDown {
+		if t.needExtraProj && !aggPushedDown {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(prevSchema)
 			proj.SetChildren(p)
