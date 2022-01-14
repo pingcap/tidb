@@ -5205,7 +5205,6 @@ func (s *testIntegrationSuite) TestIssue20510(c *C) {
 	))
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue31202(c *C) {
 	store, dom := s.store, s.dom
 	tk := testkit.NewTestKit(c, store)
@@ -5226,7 +5225,8 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 		"TableReader 10000.00 root  data:TableFullScan",
 		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t31202")
-=======
+}
+
 // TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
 // Close https://github.com/pingcap/tidb/issues/31096
 func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
@@ -5263,5 +5263,4 @@ func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
 		"[└─Selection_6 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))]\n" +
 		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustExec("drop table if exists t1")
->>>>>>> 375b71b50... stats: resolve the constant selectivity when handling DNF exprs (#31242)
 }
