@@ -195,15 +195,15 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 		return false, nil
 	}
 
-	// check whether the region is healthy.
-	if len(regionInfo.PendingPeers) > 0 || len(regionInfo.DownPeers) > 0 {
-		for _, peer := range regionInfo.PendingPeers {
-			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
-		}
-		for _, peer := range regionInfo.DownPeers {
-			log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
-		}
+	// check whether the region is healthy and report.
+	for _, peer := range regionInfo.PendingPeers {
+		log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
 	}
+	for _, peer := range regionInfo.DownPeers {
+		log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+	}
+	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
+	// (or once there is a peer down, we may get stuck at waiting region get ready.)
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
