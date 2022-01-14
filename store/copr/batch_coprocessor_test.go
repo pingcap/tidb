@@ -124,7 +124,7 @@ func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	}
 
 	{
-		emptyTaskSet := make([]*batchCopTask, 0, 0)
+		emptyTaskSet := make([]*batchCopTask, 0)
 		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, nil, time.Second, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
