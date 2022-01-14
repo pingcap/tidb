@@ -197,7 +197,7 @@
           "  └─Sort_29 6400.00 root  test.t.b",
           "    └─Selection_28 6400.00 root  gt(Column#4, 1)",
           "      └─HashAgg_19 8000.00 root  group by:test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
-          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#11, cast(test.t.a, decimal(32,0) BINARY)->Column#12, test.t.b, test.t.b",
+          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#11, cast(test.t.a, decimal(10,0) BINARY)->Column#12, test.t.b, test.t.b",
           "          └─TableReader_21 10000.00 root  data:TableFullScan_22",
           "            └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -636,7 +636,7 @@
         "Plan": [
           "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg_9 8000.00 root  group by:test.t.c, funcs:avg(Column#10)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#11)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(32,0) BINARY)->Column#11, test.t.c, test.t.c",
+          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#11, test.t.c, test.t.c",
           "    └─TableReader_11 10000.00 root  data:TableFullScan_12",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],

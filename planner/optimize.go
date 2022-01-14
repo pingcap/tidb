@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strings"
 	"sync"
@@ -78,15 +79,6 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 	}
 	return nil
-}
-
-// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string) {
-	bindRecord, _, match := matchSQLBinding(sctx, stmtNode)
-	if match {
-		bindSQL = bindRecord.Bindings[0].BindSQL
-	}
-	return bindSQL
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
@@ -325,6 +317,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+	})
+
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 
@@ -391,7 +387,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
+// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
+func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -446,12 +443,12 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
+	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession, nil
@@ -700,6 +697,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error 
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
-	plannercore.GetBindSQL4PlanCache = GetBindSQL4PlanCache
 	plannercore.IsReadOnly = IsReadOnly
 }

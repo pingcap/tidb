@@ -65,6 +65,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	DefStatsLoadConcurrencyLimit = 1
+	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
+	DefMaxOfStatsLoadConcurrencyLimit = 128
+	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
+	DefStatsLoadQueueSizeLimit = 1
+	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
+	DefMaxOfStatsLoadQueueSizeLimit = 100000
 )
 
 // Valid config maps
@@ -135,11 +143,10 @@ type Config struct {
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock     bool        `toml:"enable-table-lock" json:"enable-table-lock"`
-	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
-	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
+	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	TopSQL              TopSQL `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -483,11 +490,13 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval  string `toml:"-" json:"-"`
-	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                int    `toml:"gogc" json:"gogc"`
-	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	MemProfileInterval   string `toml:"-" json:"-"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -577,22 +586,6 @@ func DefaultPessimisticTxn() PessimisticTxn {
 type Plugin struct {
 	Dir  string `toml:"dir" json:"dir"`
 	Load string `toml:"load" json:"load"`
-}
-
-// StmtSummary is the config for statement summary.
-type StmtSummary struct {
-	// Enable statement summary or not.
-	Enable bool `toml:"enable" json:"enable"`
-	// Enable summary internal query.
-	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
-	// The maximum number of statements kept in memory.
-	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
-	// The maximum length of displayed normalized SQL and sample SQL.
-	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
-	// The refresh interval of statement summary.
-	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
-	// The maximum history size of statement summary.
-	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
 // TopSQL is the config for TopSQL.
@@ -702,10 +695,12 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease: "0s",
-		GOGC:                100,
-		EnforceMPP:          false,
-		PlanReplayerGCLease: "10m",
+		IndexUsageSyncLease:  "0s",
+		GOGC:                 100,
+		EnforceMPP:           false,
+		PlanReplayerGCLease:  "10m",
+		StatsLoadConcurrency: 5,
+		StatsLoadQueueSize:   1000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -735,20 +730,11 @@ var defaultConf = Config{
 		Load: "",
 	},
 	PessimisticTxn: DefaultPessimisticTxn(),
-	StmtSummary: StmtSummary{
-		Enable:              true,
-		EnableInternalQuery: false,
-		MaxStmtCount:        3000,
-		MaxSQLLength:        4096,
-		RefreshInterval:     1800,
-		HistorySize:         24,
-	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
-		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -967,16 +953,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
-	if c.StmtSummary.MaxStmtCount <= 0 {
-		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
-	}
-	if c.StmtSummary.HistorySize < 0 {
-		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
-	}
-	if c.StmtSummary.RefreshInterval <= 0 {
-		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
-	}
-
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
@@ -999,6 +975,14 @@ func (c *Config) Valid() error {
 	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
+	}
+
+	// check stats load config
+	if c.Performance.StatsLoadConcurrency < DefStatsLoadConcurrencyLimit || c.Performance.StatsLoadConcurrency > DefMaxOfStatsLoadConcurrencyLimit {
+		return fmt.Errorf("stats-load-concurrency should be [%d, %d]", DefStatsLoadConcurrencyLimit, DefMaxOfStatsLoadConcurrencyLimit)
+	}
+	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
+		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
 	// test log level
