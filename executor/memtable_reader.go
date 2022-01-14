@@ -1019,8 +1019,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	}
 
 	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
-	var index int
-	regionMap := make(map[int64]int)
+	regionMap := make(map[int64]*helper.RegionInfo)
 	storeMap := make(map[int64]struct{})
 
 	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
