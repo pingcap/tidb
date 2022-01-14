@@ -1039,11 +1039,10 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			return nil, err
 		}
 		for _, regionInfo := range storeRegionsInfo.Regions {
-			// regionMap is used to remove dup regions and record the index of region in regionsInfoByStoreID.
+			// regionMap is used to remove dup regions and record the region in regionsInfoByStoreID.
 			if _, ok := regionMap[regionInfo.ID]; !ok {
 				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
-				regionMap[regionInfo.ID] = index
-				index += 1
+				regionMap[regionInfo.ID] = &regionInfo
 			}
 		}
 	}
@@ -1053,7 +1052,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	}
 
 	for _, regionID := range e.extractor.RegionIDs {
-		idx, ok := regionMap[int64(regionID)]
+		regionInfoByStoreID, ok := regionMap[int64(regionID)]
 		if !ok {
 			// if there is storeIDs, target region_id is fetched by storeIDs,
 			// otherwise we need to fetch it from PD.
@@ -1065,7 +1064,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 				regionsInfo = append(regionsInfo, *regionInfo)
 			}
 		} else {
-			regionsInfo = append(regionsInfo, regionsInfoByStoreID[idx])
+			regionsInfo = append(regionsInfo, *regionInfoByStoreID)
 		}
 	}
 
