@@ -340,7 +340,7 @@ func TestPanicWhenSortAndSpill(t *testing.T) {
 		require.Errorf(t, err, "out of memory quota when sorting")
 		require.False(t, rc.AlreadySpilledSafeForTest())
 
-		require.NotNil(t, rc.Add(chk))
+		require.Errorf(t, rc.Add(chk),"out of memory quota when sorting")
 	})
 
 	t.Run("panicWhenSpillToDisk", func(t *testing.T) {
