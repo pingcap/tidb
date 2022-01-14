@@ -206,6 +206,8 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestPlacementFollowers(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	defer tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop placement policy if exists x")
 
@@ -459,6 +461,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
 
 	// Direct placement option: special constraints may be incompatible with common constraint.
@@ -920,6 +923,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	defer func() {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("drop placement policy if exists x")
@@ -1046,6 +1050,8 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t, t0")
 	tk.MustExec("drop placement policy if exists x")
 
@@ -1119,6 +1125,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
@@ -1190,6 +1197,7 @@ func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
 	tk.MustExec("drop database if exists db2")
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t (id int) primary_region='r0' regions='r0'")
 	defer tk.MustExec("drop table if exists t")
@@ -1237,6 +1245,7 @@ func (s *testDBSuite6) TestDropTableGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1274,6 +1283,7 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -1373,6 +1383,7 @@ func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1423,6 +1434,7 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p0")
 	tk.MustExec("drop placement policy if exists p1")
@@ -1539,6 +1551,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -1613,6 +1626,8 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -1696,6 +1711,7 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1745,6 +1761,8 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -1821,6 +1839,7 @@ func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
@@ -1871,6 +1890,7 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, tp")
 	tk.MustExec("drop placement policy if exists p1")
@@ -2034,6 +2054,7 @@ func (s *testDBSuite6) TestPDFail(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1, t2, tp")
 
@@ -2160,11 +2181,11 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("recover table tp1")
 	tk.MustQuery("show create table tp1").Check(testkit.Rows("tp1 CREATE TABLE `tp1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp1")
 
 	// test flashback
@@ -2180,11 +2201,11 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("flashback table tp2")
 	tk.MustQuery("show create table tp2").Check(testkit.Rows("tp2 CREATE TABLE `tp2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp2")
 
 	// test recover after police drop
@@ -2196,10 +2217,10 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("flashback table tp2 to tp3")
 	tk.MustQuery("show create table tp3").Check(testkit.Rows("tp3 CREATE TABLE `tp3` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp3")
 }
