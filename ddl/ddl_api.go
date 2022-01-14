@@ -4976,7 +4976,6 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{available, physicalID},
 	}
-	// Will return when job is finished.
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
