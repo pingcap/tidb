@@ -141,7 +141,7 @@ gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	@export TZ='Asia/Shanghai'; \
 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) \
 	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
-	$(PACKAGES_TIDB_TESTS) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	$(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
