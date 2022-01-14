@@ -28,6 +28,8 @@ import (
 func (s *testSuite5) TestShowPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, t2, t3, t4, db2.t2")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
@@ -117,6 +119,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists t1,t2,t3, db2.t1, db2.t3")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
@@ -184,6 +187,8 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 func (s *testSuite5) TestShowPlacementForDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -214,6 +219,7 @@ func (s *testSuite5) TestShowPlacementForDB(c *C) {
 func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
@@ -298,6 +304,8 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists db2.t1")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop user if exists user1")
@@ -364,6 +372,7 @@ func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
