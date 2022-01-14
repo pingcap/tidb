@@ -104,6 +104,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
+	if err != nil {
+		logutil.BgLogger().Error("Check TiDBEnableHistoricalStats Failed.")
+	}
 	panicCnt := 0
 
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
@@ -178,6 +182,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			finishJobWithLogFn(ctx, results.Job, true)
 		} else {
 			finishJobWithLogFn(ctx, results.Job, false)
+			// Dump stats to historical storage.
+			if historicalStatsEnabled {
+				is := domain.GetDomain(e.ctx).InfoSchema()
+				if tbl, existed := is.TableByID(results.TableID.TableID); existed {
+					tblInfo := tbl.Meta()
+					if dbInfo, existed := is.SchemaByTable(tblInfo); existed {
+						if _, err := statsHandle.SaveHistoryStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+							logutil.BgLogger().Error("Save historical stats failed.", zap.String("db", dbInfo.Name.O),
+								zap.String("table", tblInfo.Name.O))
+						}
+					}
+				}
+			}
 		}
 	}
 	for _, task := range e.tasks {
@@ -209,6 +226,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+				// Dump stats to historical storage.
+				if historicalStatsEnabled {
+					is := domain.GetDomain(e.ctx).InfoSchema()
+					if tbl, existed := is.TableByID(globalStatsID.tableID); existed {
+						tblInfo := tbl.Meta()
+						if dbInfo, existed := is.SchemaByTable(tblInfo); existed {
+							if _, err := statsHandle.SaveHistoryStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+								logutil.BgLogger().Error("Save historical stats failed.", zap.String("db", dbInfo.Name.O),
+									zap.String("table", tblInfo.Name.O))
+							}
+						}
+					}
 				}
 			}
 		}

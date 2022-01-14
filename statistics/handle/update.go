@@ -1038,22 +1038,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
-	var dbAnalyzed string
-	var tblAnalyzed *model.TableInfo
-	hasAnalyzed := false
-	defer func() {
-		historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
-		if err != nil {
-			logutil.BgLogger().Error("Check TiDBEnableHistoricalStats Failed.")
-		}
-		if historicalStatsEnabled && hasAnalyzed {
-			if _, err := h.SaveHistoryStatsToStorage(dbAnalyzed, tblAnalyzed); err != nil {
-				logutil.BgLogger().Error("Save historical stats failed.", zap.String("db", dbAnalyzed),
-					zap.String("table", tblAnalyzed.Name.O))
-			}
-		}
-	}()
-
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
@@ -1072,7 +1056,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
-					dbAnalyzed, tblAnalyzed, hasAnalyzed = db, tblInfo, analyzed
 					return true
 				}
 				continue
@@ -1080,7 +1063,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if pruneMode == variable.Dynamic {
 				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
 				if analyzed {
-					dbAnalyzed, tblAnalyzed, hasAnalyzed = db, tblInfo, analyzed
 					return true
 				}
 				continue
@@ -1090,7 +1072,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
-					dbAnalyzed, tblAnalyzed, hasAnalyzed = db, tblInfo, analyzed
 					return true
 				}
 			}

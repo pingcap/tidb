@@ -3134,11 +3134,10 @@ func (s *testStatsSuite) TestSaveHistoryStatsToStorage(c *C) {
 
 	tableInfo, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(c, err)
-	ts, err := s.do.StatsHandle().SaveHistoryStatsToStorage("t", tableInfo.Meta())
+	version, err := s.do.StatsHandle().SaveHistoryStatsToStorage("t", tableInfo.Meta())
 	require.NoError(c, err)
 
-	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where create_time = '%s'",
-		oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.999999"))).Rows()
+	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(c, num, 1)
 }

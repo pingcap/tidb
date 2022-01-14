@@ -2584,3 +2584,33 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 		}(val)
 	}
 }
+
+func TestSaveHistoryStatsAfterAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.GreaterOrEqual(t, num, 1)
+}
