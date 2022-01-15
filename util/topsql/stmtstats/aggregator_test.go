@@ -84,10 +84,13 @@ func Test_aggregator_run_close(t *testing.T) {
 }
 
 func Test_aggregator_disable_aggregate(t *testing.T) {
+	var mu sync.Mutex
 	total := StatementStatsMap{}
 	a := newAggregator()
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		mu.Lock()
 		total.Merge(data)
+		mu.Unlock()
 	}))
 
 	wg := sync.WaitGroup{}
@@ -106,10 +109,14 @@ func Test_aggregator_disable_aggregate(t *testing.T) {
 	state.DisableTopSQL()
 	a.register(stats)
 	time.Sleep(1500 * time.Millisecond)
+	mu.Lock()
 	assert.Empty(t, total)
+	mu.Unlock()
 	state.EnableTopSQL()
 	time.Sleep(1500 * time.Millisecond)
+	mu.Lock()
 	assert.Len(t, total, 1)
+	mu.Unlock()
 	state.DisableTopSQL()
 
 	a.close()
