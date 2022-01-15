@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,12 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type periodGener struct {
@@ -216,7 +217,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.SubDate: {
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -226,7 +227,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -236,7 +237,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -288,7 +289,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.AddDate: {
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -298,7 +299,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -308,7 +309,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -318,7 +319,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -571,12 +572,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinTimeCases)
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
@@ -587,7 +588,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinTimeCases)
 }
 
-func (s *testEvaluatorSuite) TestVecMonth(c *C) {
+func TestVecMonth(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
@@ -598,11 +599,11 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	input.AppendTime(0, types.ZeroDate)
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
-	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
+	require.True(t, ctx.GetSessionVars().StrictSQLMode)
+	require.NoError(t, f.vecEvalInt(input, result))
+	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
-	c.Assert(f.vecEvalInt(input, result), IsNil)
+	require.NoError(t, f.vecEvalInt(input, result))
 }

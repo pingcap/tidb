@@ -81,8 +81,8 @@ CTE_1	2.00	root		Recursive CTE
 explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 id	estRows	task	access object	operator info
 HashJoin_37	16002.00	root		CARTESIAN inner join
-├─CTEFullScan_38(Build)	2.00	root	CTE:cte1	data:CTE_0
-└─CTEFullScan_39(Probe)	8001.00	root	CTE:cte2	data:CTE_1
+├─CTEFullScan_40(Build)	2.00	root	CTE:cte1	data:CTE_0
+└─CTEFullScan_41(Probe)	8001.00	root	CTE:cte2	data:CTE_1
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_21(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_22	1.00	root		rows:1

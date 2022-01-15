@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,28 +19,15 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testEvaluatorSuite{})
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-type dataGen4Expr2PbTest struct {
-}
-
-func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *expression.Column {
+func genColumn(tp byte, id int64) *expression.Column {
 	return &expression.Column{
 		RetType: types.NewFieldType(tp),
 		ID:      id,
@@ -47,23 +35,9 @@ func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *expression.Column {
 	}
 }
 
-type testEvaluatorSuite struct {
-	*parser.Parser
-	ctx sessionctx.Context
-}
-
-func (s *testEvaluatorSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	s.ctx = mock.NewContext()
-}
-
-func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-}
-
-func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
-	sc := new(stmtctx.StatementContext)
+func TestAggFunc2Pb(t *testing.T) {
+	ctx := mock.NewContext()
 	client := new(mock.Client)
-	dg := new(dataGen4Expr2PbTest)
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
 	funcTypes := []*types.FieldType{
@@ -77,28 +51,24 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 
 	jsons := []string{
-		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
-		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
-		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
-		"null",
-		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
-		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
-		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""},"has_distinct":%v}`,
+		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
+		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
+		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
+		`{"tp":3007,"val":"AAAAAAAABAA=","children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":15,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":"utf8mb4"},"has_distinct":%v}`,
+		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
+		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
+		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":"binary"},"has_distinct":%v}`,
 	}
 	for i, funcName := range funcNames {
 		for _, hasDistinct := range []bool{true, false} {
-			args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-			aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, hasDistinct)
-			c.Assert(err, IsNil)
+			args := []expression.Expression{genColumn(mysql.TypeDouble, 1)}
+			aggFunc, err := NewAggFuncDesc(ctx, funcName, args, hasDistinct)
+			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
-			pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
+			pbExpr := AggFuncToPBExpr(ctx, client, aggFunc)
 			js, err := json.Marshal(pbExpr)
-			c.Assert(err, IsNil)
-			if funcName != ast.AggFuncGroupConcat {
-				c.Assert(string(js), Equals, fmt.Sprintf(jsons[i], hasDistinct))
-			} else {
-				c.Assert(string(js), Equals, "null")
-			}
+			require.NoError(t, err)
+			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))
 		}
 	}
 }

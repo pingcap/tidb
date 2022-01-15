@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,10 +22,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -251,10 +252,10 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "";`).Check(testkit.Rows(` `))
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
 
 }
 
@@ -267,7 +268,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustTableDual(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -275,7 +276,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -286,10 +287,10 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t tmp where a = "";`).Check(testkit.Rows(` `))
 	tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
 
 	// Test both wildcard and column name exist in select field list
 	tk.MustExec(`set @@sql_mode="";`)
@@ -302,9 +303,10 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustPointGet(`select tmp.* from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
 	tk.MustPointGet(`select tmp.a, tmp.b from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
 	tk.MustPointGet(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb aa bb`))
-	tk.MustTableDual(`select tmp.* from t tmp where a = "aab";`).Check(testkit.Rows())
-	tk.MustTableDual(`select tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
-	tk.MustTableDual(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustPointGet(`select tmp.* from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustPointGet(`select tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.HasPlan(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";`, "Point_Get")
+	tk.MustQuery(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
 
 	// Test using table alias in where clause
 	tk.MustPointGet(`select * from t tmp where tmp.a = "aa";`).Check(testkit.Rows(`aa bb`))
@@ -375,7 +377,7 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustTableDual(`select * from t where a = "aab";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -383,7 +385,7 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 	// // Test VARCHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -394,10 +396,10 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(`     `))
-	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
 
 }
 
@@ -539,9 +541,9 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int1 primary key)")
 	tk.MustExec("insert into t values(1)")
-	tk.MustQuery("desc select * from t where pk = 1.1").Check(testkit.Rows("TableDual_2 0.00 root  rows:0"))
+	tk.MustQuery("desc select * from t where pk = 1.1").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
 	tk.MustQuery("select * from t where pk = 1.1").Check(testkit.Rows())
-	tk.MustQuery("desc select * from t where pk = '1.1'").Check(testkit.Rows("TableDual_2 0.00 root  rows:0"))
+	tk.MustQuery("desc select * from t where pk = '1.1'").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
 	tk.MustQuery("select * from t where pk = '1.1'").Check(testkit.Rows())
 	tk.MustQuery("desc select * from t where pk = 1").Check(testkit.Rows("Point_Get_1 1.00 root table:t handle:1"))
 	tk.MustQuery("select * from t where pk = 1").Check(testkit.Rows("1"))
@@ -576,6 +578,15 @@ func (s *testPointGetSuite) TestPointGetByRowID(c *C) {
 	tk.MustQuery("explain format = 'brief' select * from t where t._tidb_rowid = 1").Check(testkit.Rows(
 		"Point_Get 1.00 root table:t handle:1"))
 	tk.MustQuery("select * from t where t._tidb_rowid = 1").Check(testkit.Rows("aaa 12"))
+}
+
+func (s *testSerialSuite1) TestPointGetBinaryLiteralString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(255) charset gbk primary key /*T![clustered_index] clustered */, b int);")
+	tk.MustExec("insert into t values ('你好', 1);")
+	tk.MustPointGet("select * from t where a = 0xC4E3BAC3;").Check(testkit.Rows("你好 1"))
 }
 
 func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {

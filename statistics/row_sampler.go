@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,7 +30,22 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// RowSampleCollector collects the samples from the source and organize the samples by row.
+// RowSampleCollector implements the needed interface for a row-based sample collector.
+type RowSampleCollector interface {
+	MergeCollector(collector RowSampleCollector)
+	sampleRow(row []types.Datum, rng *rand.Rand)
+	Base() *baseCollector
+}
+
+type baseCollector struct {
+	Samples    WeightedRowSampleHeap
+	NullCount  []int64
+	FMSketches []*FMSketch
+	TotalSizes []int64
+	Count      int64
+}
+
+// ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
 // It will maintain the following things:
 //   Row samples.
 //   FM sketches(To calculate the NDV).
@@ -37,24 +53,20 @@ import (
 //   The data sizes.
 //   The number of rows.
 // It uses weighted reservoir sampling(A-Res) to do the sampling.
-type RowSampleCollector struct {
-	Samples       WeightedRowSampleHeap
-	NullCount     []int64
-	FMSketches    []*FMSketch
-	TotalSizes    []int64
-	Count         int64
+type ReservoirRowSampleCollector struct {
+	*baseCollector
 	MaxSampleSize int
 }
 
-// RowSampleItem is the item for the RowSampleCollector. The weight is needed for the sampling algorithm.
-type RowSampleItem struct {
+// ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
+type ReservoirRowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
 	Handle  kv.Handle
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
-type WeightedRowSampleHeap []*RowSampleItem
+type WeightedRowSampleHeap []*ReservoirRowSampleItem
 
 // Len implements the Heap interface.
 func (h WeightedRowSampleHeap) Len() int {
@@ -73,7 +85,7 @@ func (h WeightedRowSampleHeap) Less(i, j int) bool {
 
 // Push implements the Heap interface.
 func (h *WeightedRowSampleHeap) Push(i interface{}) {
-	*h = append(*h, i.(*RowSampleItem))
+	*h = append(*h, i.(*ReservoirRowSampleItem))
 }
 
 // Pop implements the Heap interface.
@@ -85,7 +97,7 @@ func (h *WeightedRowSampleHeap) Pop() interface{} {
 	return item
 }
 
-// RowSampleBuilder is used to construct the RowSampleCollector to get the samples.
+// RowSampleBuilder is used to construct the ReservoirRowSampleCollector to get the samples.
 type RowSampleBuilder struct {
 	Sc              *stmtctx.StatementContext
 	RecordSet       sqlexec.RecordSet
@@ -93,26 +105,46 @@ type RowSampleBuilder struct {
 	Collators       []collate.Collator
 	ColGroups       [][]int64
 	MaxSampleSize   int
+	SampleRate      float64
 	MaxFMSketchSize int
 	Rng             *rand.Rand
+}
+
+// NewRowSampleCollector creates a collector from the given inputs.
+func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) RowSampleCollector {
+	if maxSampleSize > 0 {
+		return NewReservoirRowSampleCollector(maxSampleSize, totalLen)
+	}
+	if sampleRate > 0 {
+		return NewBernoulliRowSampleCollector(sampleRate, totalLen)
+	}
+	return nil
+}
+
+// NewReservoirRowSampleCollector creates the new collector by the given inputs.
+func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirRowSampleCollector {
+	base := &baseCollector{
+		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
+		NullCount:  make([]int64, totalLen),
+		FMSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes: make([]int64, totalLen),
+	}
+	return &ReservoirRowSampleCollector{
+		baseCollector: base,
+		MaxSampleSize: maxSampleSize,
+	}
 }
 
 // Collect first builds the collector. Then maintain the null count, FM sketch and the data size for each column and
 // column group.
 // Then use the weighted reservoir sampling to collect the samples.
-func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
-	collector := &RowSampleCollector{
-		Samples:       make(WeightedRowSampleHeap, 0, s.MaxSampleSize),
-		NullCount:     make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
-		FMSketches:    make([]*FMSketch, 0, len(s.ColsFieldType)+len(s.ColGroups)),
-		TotalSizes:    make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
-		MaxSampleSize: s.MaxSampleSize,
-	}
+func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
+	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
 	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
-		collector.FMSketches = append(collector.FMSketches, NewFMSketch(s.MaxFMSketchSize))
+		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
 	ctx := context.TODO()
-	chk := s.RecordSet.NewChunk()
+	chk := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(chk)
 	for {
 		err := s.RecordSet.Next(ctx, chk)
@@ -122,7 +154,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		if chk.NumRows() == 0 {
 			return collector, nil
 		}
-		collector.Count += int64(chk.NumRows())
+		collector.Base().Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
 			newCols := make([]types.Datum, len(datums))
@@ -149,25 +181,20 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					datums[i].SetBytes(encodedKey)
 				}
 			}
-			err := collector.collectColumns(s.Sc, datums, sizes)
+			err := collector.Base().collectColumns(s.Sc, datums, sizes)
 			if err != nil {
 				return nil, err
 			}
-			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
+			err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
 			if err != nil {
 				return nil, err
 			}
-			weight := s.Rng.Int63()
-			item := &RowSampleItem{
-				Columns: newCols,
-				Weight:  weight,
-			}
-			collector.sampleZippedRow(item)
+			collector.sampleRow(newCols, s.Rng)
 		}
 	}
 }
 
-func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
+func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
@@ -183,7 +210,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
+func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
@@ -207,22 +234,8 @@ func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, c
 	return nil
 }
 
-func (s *RowSampleCollector) sampleZippedRow(sample *RowSampleItem) {
-	if len(s.Samples) < s.MaxSampleSize {
-		s.Samples = append(s.Samples, sample)
-		if len(s.Samples) == s.MaxSampleSize {
-			heap.Init(&s.Samples)
-		}
-		return
-	}
-	if s.Samples[0].Weight < sample.Weight {
-		s.Samples[0] = sample
-		heap.Fix(&s.Samples, 0)
-	}
-}
-
-// ToProto converts the collector to proto struct.
-func (s *RowSampleCollector) ToProto() *tipb.RowSampleCollector {
+// ToProto converts the collector to pb struct.
+func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
@@ -237,8 +250,7 @@ func (s *RowSampleCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-// FromProto constructs the collector from the proto struct.
-func (s *RowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -254,28 +266,67 @@ func (s *RowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 			copy(b, col)
 			data = append(data, types.NewBytesDatum(b))
 		}
-		// The samples collected from regions are also organized by binary heap. So we can just copy the slice.
-		// No need to maintain the heap again.
-		s.Samples = append(s.Samples, &RowSampleItem{
+		// Directly copy the weight.
+		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
 			Columns: data,
 			Weight:  pbSample.Weight,
 		})
 	}
 }
 
+// Base implements the RowSampleCollector interface.
+func (s *ReservoirRowSampleCollector) Base() *baseCollector {
+	return s.baseCollector
+}
+
+func (s *ReservoirRowSampleCollector) sampleZippedRow(sample *ReservoirRowSampleItem) {
+	if len(s.Samples) < s.MaxSampleSize {
+		s.Samples = append(s.Samples, sample)
+		if len(s.Samples) == s.MaxSampleSize {
+			heap.Init(&s.Samples)
+		}
+		return
+	}
+	if s.Samples[0].Weight < sample.Weight {
+		s.Samples[0] = sample
+		heap.Fix(&s.Samples, 0)
+	}
+}
+
+func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
+	weight := rng.Int63()
+	if len(s.Samples) < s.MaxSampleSize {
+		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
+			Columns: row,
+			Weight:  weight,
+		})
+		if len(s.Samples) == s.MaxSampleSize {
+			heap.Init(&s.Samples)
+		}
+		return
+	}
+	if s.Samples[0].Weight < weight {
+		s.Samples[0] = &ReservoirRowSampleItem{
+			Columns: row,
+			Weight:  weight,
+		}
+		heap.Fix(&s.Samples, 0)
+	}
+}
+
 // MergeCollector merges the collectors to a final one.
-func (s *RowSampleCollector) MergeCollector(subCollector *RowSampleCollector) {
-	s.Count += subCollector.Count
-	for i := range subCollector.FMSketches {
-		s.FMSketches[i].MergeFMSketch(subCollector.FMSketches[i])
+func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
+	s.Count += subCollector.Base().Count
+	for i, fms := range subCollector.Base().FMSketches {
+		s.FMSketches[i].MergeFMSketch(fms)
 	}
-	for i := range subCollector.NullCount {
-		s.NullCount[i] += subCollector.NullCount[i]
+	for i, nullCount := range subCollector.Base().NullCount {
+		s.NullCount[i] += nullCount
 	}
-	for i := range subCollector.TotalSizes {
-		s.TotalSizes[i] += subCollector.TotalSizes[i]
+	for i, totSize := range subCollector.Base().TotalSizes {
+		s.TotalSizes[i] += totSize
 	}
-	for _, sample := range subCollector.Samples {
+	for _, sample := range subCollector.Base().Samples {
 		s.sampleZippedRow(sample)
 	}
 }
@@ -302,4 +353,61 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 		rows = append(rows, pbRow)
 	}
 	return rows
+}
+
+// BernoulliRowSampleCollector collects the samples from the source and organize the sample by row.
+// It will maintain the following things:
+//   Row samples.
+//   FM sketches(To calculate the NDV).
+//   Null counts.
+//   The data sizes.
+//   The number of rows.
+// It uses the bernoulli sampling to collect the data.
+type BernoulliRowSampleCollector struct {
+	*baseCollector
+	SampleRate float64
+}
+
+// NewBernoulliRowSampleCollector creates the new collector by the given inputs.
+func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *BernoulliRowSampleCollector {
+	base := &baseCollector{
+		Samples:    make(WeightedRowSampleHeap, 0, 8),
+		NullCount:  make([]int64, totalLen),
+		FMSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes: make([]int64, totalLen),
+	}
+	return &BernoulliRowSampleCollector{
+		baseCollector: base,
+		SampleRate:    sampleRate,
+	}
+}
+
+func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
+	if rng.Float64() > s.SampleRate {
+		return
+	}
+	s.baseCollector.Samples = append(s.baseCollector.Samples, &ReservoirRowSampleItem{
+		Columns: row,
+		Weight:  0,
+	})
+}
+
+// MergeCollector merges the collectors to a final one.
+func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
+	s.Count += subCollector.Base().Count
+	for i := range subCollector.Base().FMSketches {
+		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
+	}
+	for i := range subCollector.Base().NullCount {
+		s.NullCount[i] += subCollector.Base().NullCount[i]
+	}
+	for i := range subCollector.Base().TotalSizes {
+		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
+	}
+	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+}
+
+// Base implements the interface RowSampleCollector.
+func (s *BernoulliRowSampleCollector) Base() *baseCollector {
+	return s.baseCollector
 }

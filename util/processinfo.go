@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -147,7 +148,7 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string
+	var l []string // nolint: prealloc
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {

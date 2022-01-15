@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"bytes"
 	"compress/zlib"
 	"crypto/aes"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -29,8 +30,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -527,7 +528,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, err
+		return "", isNull, err
 	}
 
 	if len(pass) == 0 {
@@ -624,7 +625,7 @@ func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	sum := md5.Sum([]byte(arg))
+	sum := md5.Sum([]byte(arg)) // #nosec G401
 	hexStr := fmt.Sprintf("%x", sum)
 	return hexStr, false, nil
 }
@@ -666,7 +667,7 @@ func (b *builtinSHA1Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	hasher := sha1.New()
+	hasher := sha1.New() // #nosec G401
 	_, err = hasher.Write([]byte(str))
 	if err != nil {
 		return "", true, err
@@ -723,6 +724,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
@@ -766,6 +768,7 @@ func inflate(compressStr []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	/* #nosec G110 */
 	if _, err = io.Copy(&out, r); err != nil {
 		return nil, err
 	}

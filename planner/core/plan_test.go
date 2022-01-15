@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,13 +18,17 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	kit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -31,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testPlanNormalize{})
+var _ = SerialSuites(&testPlanNormalize{})
 
 type testPlanNormalize struct {
 	store kv.Storage
@@ -282,6 +287,14 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	   s_dist_10  char(24) DEFAULT NULL,
 	  PRIMARY KEY ( s_w_id , s_i_id )
 	);`)
+
+	err := failpoint.Enable("github.com/pingcap/tidb/planner/mockRandomPlanID", "return(true)")
+	c.Assert(err, IsNil)
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/planner/mockRandomPlanID")
+		c.Assert(err, IsNil)
+	}()
+
 	normalizedDigestCases := []struct {
 		sql1   string
 		sql2   string
@@ -400,7 +413,6 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 }
 
 func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bool) {
-	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql1)
 	info := tk.Se.ShowProcess()
 	c.Assert(info, NotNil)
@@ -408,7 +420,6 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	c.Assert(ok, IsTrue)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
-	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql2)
 	info = tk.Se.ShowProcess()
 	c.Assert(info, NotNil)
@@ -587,5 +598,115 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		core.EncodePlan(p)
+	}
+}
+
+// Close issue 25729
+func (s *testPlanNormalize) TestIssue25729(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	// Case1
+	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
+			"Projection 0.10 root  test.tt.a, test.tt.b",
+			"└─IndexLookUp 0.10 root  ",
+			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
+	}
+
+	tk.MustExec("insert into tt values(4, 3);")
+	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
+
+	// Case2
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `a` varchar(10) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  KEY `expression_index` ((concat(`a`, `b`)))," +
+		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
+		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
+		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
+		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
+		");")
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader 0.10 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+
+		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
+			"Projection 33.33 root  test.t1.b",
+			"└─IndexReader 33.33 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
+	}
+	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
+	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
+}
+
+func TestCopPaging(t *testing.T) {
+	store, clean := kit.CreateMockStore(t)
+	defer clean()
+
+	tk := kit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set session tidb_enable_paging = 1")
+	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
+	defer tk.MustExec("drop table t")
+	for i := 0; i < 1024; i++ {
+		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
+	}
+	tk.MustExec("analyze table t")
+
+	// limit 960 should go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:960",
+			"└─IndexLookUp 4.00 root  paging:true",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// selection between limit and indexlookup, limit 960 should also go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(kit.Rows(
+			"Limit 3.20 root  offset:0, count:960",
+			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
+			"  └─IndexLookUp 3.20 root  paging:true",
+			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
+			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+	}
+
+	// limit 961 exceeds the threshold, it should not go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:961",
+			"└─IndexLookUp 4.00 root  ",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// selection between limit and indexlookup, limit 961 should not go paging too
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(kit.Rows(
+			"Limit 3.20 root  offset:0, count:961",
+			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
+			"  └─IndexLookUp 3.20 root  ",
+			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
+			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 }

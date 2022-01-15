@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,11 +25,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -440,20 +441,24 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
 	}
 	var output []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
-		Plan                  []string
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
+		Plan                         []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
+		testKit.Se.GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
 		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
 		plan := testKit.MustQuery(tt.SQL)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
+			output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
 			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
@@ -861,6 +866,7 @@ func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
+	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
 	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)

@@ -1,0 +1,18 @@
+# PD Configuration.
+[schedule]
+# Disbale Region Merge
+max-merge-region-size = 0
+max-merge-region-keys = 0
+merge-schedule-limit = 0
+
+max-snapshot-count = 10
+max-pending-peer-count = 32
+max-store-down-time = "30m"
+leader-schedule-limit = 4
+region-schedule-limit = 4
+replica-schedule-limit = 8
+tolerant-size-ratio = 5.0
+
+[replication]
+# The number of replicas for each region.
+max-replicas = 3

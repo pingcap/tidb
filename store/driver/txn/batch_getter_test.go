@@ -8,49 +8,46 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 package txn
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testBatchGetterSuite{})
-
-type testBatchGetterSuite struct {
-}
-
-func (s *testBatchGetterSuite) TestBufferBatchGetter(c *C) {
+func TestBufferBatchGetter(t *testing.T) {
 	snap := newMockStore()
 	ka := []byte("a")
 	kb := []byte("b")
 	kc := []byte("c")
 	kd := []byte("d")
-	snap.Set(ka, ka)
-	snap.Set(kb, kb)
-	snap.Set(kc, kc)
-	snap.Set(kd, kd)
+	require.NoError(t, snap.Set(ka, ka))
+	require.NoError(t, snap.Set(kb, kb))
+	require.NoError(t, snap.Set(kc, kc))
+	require.NoError(t, snap.Set(kd, kd))
 
 	// middle value is the same as snap
 	middle := newMockStore()
-	middle.Set(ka, []byte("a1"))
-	middle.Set(kc, []byte("c1"))
+	require.NoError(t, middle.Set(ka, []byte("a1")))
+	require.NoError(t, middle.Set(kc, []byte("c1")))
 
 	buffer := newMockStore()
-	buffer.Set(ka, []byte("a2"))
-	buffer.Delete(kb)
+	require.NoError(t, buffer.Set(ka, []byte("a2")))
+	require.NoError(t, buffer.Delete(kb))
 
 	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 3)
-	c.Assert(string(result[string(ka)]), Equals, "a2")
-	c.Assert(string(result[string(kc)]), Equals, "c1")
-	c.Assert(string(result[string(kd)]), Equals, "d")
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+	require.Equal(t, "a2", string(result[string(ka)]))
+	require.Equal(t, "c1", string(result[string(kc)]))
+	require.Equal(t, "d", string(result[string(kd)]))
 }
 
 type mockBatchGetterStore struct {
@@ -68,7 +65,7 @@ func newMockStore() *mockBatchGetterStore {
 func (s *mockBatchGetterStore) Len() int {
 	return len(s.index)
 }
-func (s *mockBatchGetterStore) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
 			return s.value[i], nil
@@ -106,6 +103,5 @@ func (s *mockBatchGetterStore) Set(k kv.Key, v []byte) error {
 }
 
 func (s *mockBatchGetterStore) Delete(k kv.Key) error {
-	s.Set(k, []byte{})
-	return nil
+	return s.Set(k, []byte{})
 }

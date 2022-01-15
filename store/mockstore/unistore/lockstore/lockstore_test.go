@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,39 +22,27 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testSuite struct{}
-
-func (ts testSuite) SetUpSuite(c *C) {}
-
-func (ts testSuite) TearDownSuite(c *C) {}
-
-var _ = Suite(testSuite{})
-
-func (ts testSuite) TestMemStore(c *C) {
+func TestMemStore(t *testing.T) {
 	prefix := "ls"
 	n := 30000
 	ls := NewMemStore(1 << 10)
 	val := ls.Get([]byte("a"), nil)
-	c.Assert(val, HasLen, 0)
+	require.Len(t, val, 0)
 	insertMemStore(ls, prefix, "", n)
 	numBlocks := len(ls.getArena().blocks)
-	checkMemStore(c, ls, prefix, "", n)
-	deleteMemStore(c, ls, prefix, n)
-	c.Assert(len(ls.getArena().blocks), Equals, numBlocks)
+	checkMemStore(t, ls, prefix, "", n)
+	deleteMemStore(t, ls, prefix, n)
+	require.Len(t, ls.getArena().blocks, numBlocks)
 	time.Sleep(reuseSafeDuration)
 	insertMemStore(ls, prefix, "", n)
 	// Because the height is random, we insert again, the block number may be different.
 	diff := len(ls.getArena().blocks) - numBlocks
-	c.Assert(diff < numBlocks/100, IsTrue)
-	c.Assert(ls.Get(numToKey(n), nil), HasLen, 0)
-	c.Assert(ls.Get([]byte("abc"), nil), HasLen, 0)
+	require.True(t, diff < numBlocks/100)
+	require.Len(t, ls.Get(numToKey(n), nil), 0)
+	require.Len(t, ls.Get([]byte("abc"), nil), 0)
 }
 
 const keyFormat = "%s%020d"
@@ -70,86 +59,86 @@ func insertMemStore(ls *MemStore, prefix, valPrefix string, n int) *MemStore {
 	return ls
 }
 
-func checkMemStore(c *C, ls *MemStore, prefix, valPrefix string, n int) {
+func checkMemStore(t *testing.T, ls *MemStore, prefix, valPrefix string, n int) {
 	perms := rand.Perm(n)
 	for _, v := range perms {
 		key := []byte(fmt.Sprintf(keyFormat, prefix, v))
 		val := ls.Get(key, nil)
-		c.Assert(bytes.Equal(val[:len(valPrefix)], []byte(valPrefix)), IsTrue)
-		c.Assert(bytes.Equal(key, val[len(valPrefix):]), IsTrue)
+		require.True(t, bytes.Equal(val[:len(valPrefix)], []byte(valPrefix)))
+		require.True(t, bytes.Equal(key, val[len(valPrefix):]))
 	}
 }
 
-func deleteMemStore(c *C, ls *MemStore, prefix string, n int) {
+func deleteMemStore(t *testing.T, ls *MemStore, prefix string, n int) {
 	perms := rand.Perm(n)
 	for _, v := range perms {
 		key := []byte(fmt.Sprintf(keyFormat, prefix, v))
-		c.Assert(ls.Delete(key), IsTrue)
+		require.True(t, ls.Delete(key))
 	}
 }
 
-func (ts testSuite) TestIterator(c *C) {
+func TestIterator(t *testing.T) {
 	_ = checkKey
-	c.Skip("Skip this unstable test(#26235) and bring it back before 2021-07-29.")
+	t.Skip("Skip this unstable test(#26235) and bring it back before 2021-07-29.")
 	ls := NewMemStore(1 << 10)
 	hint := new(Hint)
 	for i := 10; i < 1000; i += 10 {
 		key := []byte(fmt.Sprintf(keyFormat, "ls", i))
 		ls.PutWithHint(key, bytes.Repeat(key, 10), hint)
 	}
-	c.Assert(ls.getArena().blocks, HasLen, 33)
+	require.Len(t, ls.getArena().blocks, 33)
 	it := ls.NewIterator()
 	it.SeekToFirst()
-	checkKey(c, it, 10)
+	checkKey(t, it, 10)
 	it.Next()
-	checkKey(c, it, 20)
+	checkKey(t, it, 20)
 	it.SeekToFirst()
-	checkKey(c, it, 10)
+	checkKey(t, it, 10)
 	it.SeekToLast()
-	checkKey(c, it, 990)
+	checkKey(t, it, 990)
 	it.Seek(numToKey(11))
-	checkKey(c, it, 20)
+	checkKey(t, it, 20)
 	it.Seek(numToKey(989))
-	checkKey(c, it, 990)
+	checkKey(t, it, 990)
 	it.Seek(numToKey(0))
-	checkKey(c, it, 10)
+	checkKey(t, it, 10)
 
 	it.Seek(numToKey(2000))
-	c.Assert(it.Valid(), IsFalse)
+	require.False(t, it.Valid())
 	it.Seek(numToKey(500))
-	checkKey(c, it, 500)
+	checkKey(t, it, 500)
 	it.Prev()
-	checkKey(c, it, 490)
+	checkKey(t, it, 490)
 	it.SeekForPrev(numToKey(100))
-	checkKey(c, it, 100)
+	checkKey(t, it, 100)
 	it.SeekForPrev(numToKey(99))
-	checkKey(c, it, 90)
+	checkKey(t, it, 90)
 
 	it.SeekForPrev(numToKey(2000))
-	checkKey(c, it, 990)
+	checkKey(t, it, 990)
 }
 
-func checkKey(c *C, it *Iterator, n int) {
-	c.Assert(it.Valid(), IsTrue)
-	c.Assert(bytes.Equal(it.Key(), []byte(fmt.Sprintf(keyFormat, "ls", n))), IsTrue)
-	c.Assert(bytes.Equal(it.Value(), bytes.Repeat(it.Key(), 10)), IsTrue)
+func checkKey(t *testing.T, it *Iterator, n int) {
+	require.True(t, it.Valid())
+	require.True(t, bytes.Equal(it.Key(), []byte(fmt.Sprintf(keyFormat, "ls", n))))
+	require.True(t, bytes.Equal(it.Value(), bytes.Repeat(it.Key(), 10)))
 }
 
 func numToKey(n int) []byte {
 	return []byte(fmt.Sprintf(keyFormat, "ls", n))
 }
 
-func (ts testSuite) TestReplace(c *C) {
+func TestReplace(t *testing.T) {
 	prefix := "ls"
 	n := 30000
 	ls := NewMemStore(1 << 10)
 	insertMemStore(ls, prefix, "old", n)
-	checkMemStore(c, ls, prefix, "old", n)
+	checkMemStore(t, ls, prefix, "old", n)
 	insertMemStore(ls, prefix, "new", n)
-	checkMemStore(c, ls, prefix, "new", n)
+	checkMemStore(t, ls, prefix, "new", n)
 }
 
-func (ts testSuite) TestConcurrent(c *C) {
+func TestMemStoreConcurrent(t *testing.T) {
 	keyRange := 10
 	concurrentKeys := make([][]byte, keyRange)
 	for i := 0; i < keyRange; i++ {
@@ -160,8 +149,10 @@ func (ts testSuite) TestConcurrent(c *C) {
 	ls := NewMemStore(1 << 20)
 	// Starts 10 readers and 1 writer.
 	closeCh := make(chan bool)
+	wg := new(sync.WaitGroup)
+	wg.Add(keyRange)
 	for i := 0; i < keyRange; i++ {
-		go runReader(ls, &lock, closeCh, i)
+		go runReader(ls, &lock, closeCh, i, wg)
 	}
 	ran := rand.New(rand.NewSource(time.Now().Unix()))
 	start := time.Now()
@@ -187,13 +178,14 @@ func (ts testSuite) TestConcurrent(c *C) {
 		lock.Unlock()
 	}
 	close(closeCh)
-	time.Sleep(time.Millisecond * 100)
+	wg.Wait()
 	arena := ls.getArena()
 	fmt.Println("total insert", totalInsert, "total delete", totalDelete)
 	fmt.Println(len(arena.pendingBlocks), len(arena.writableQueue), len(arena.blocks))
 }
 
-func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int) {
+func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int, wg *sync.WaitGroup) {
+	defer wg.Done()
 	key := numToKey(i)
 	buf := make([]byte, 100)
 	var n int

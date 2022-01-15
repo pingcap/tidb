@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,8 +16,7 @@ package expression
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -63,7 +63,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
@@ -91,14 +91,23 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
 			}
 		}
+
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
@@ -145,8 +154,10 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
+	} else if resultFieldType.Tp == mysql.TypeDatetime {
+		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
-	return resultFieldType
+	return resultFieldType, nil
 }
 
 type caseWhenFunctionClass struct {
@@ -160,7 +171,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
 	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
-	decimal, flen, isBinaryStr, isBinaryFlag := args[1].GetType().Decimal, 0, false, false
+	decimal, flen, isBinaryFlag := args[1].GetType().Decimal, 0, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
@@ -169,7 +180,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		} else if flen != -1 {
 			flen = mathutil.Max(flen, args[i].GetType().Flen)
 		}
-		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
@@ -180,7 +190,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		} else if flen != -1 {
 			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
 		}
-		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
 
@@ -194,9 +203,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
-	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
-		fieldTp.Charset, fieldTp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
-	}
+	types.TryToFixFlenOfDatetime(fieldTp)
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
 	}
@@ -219,7 +226,16 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	fieldTp.Charset, fieldTp.Collate = bf.tp.Charset, bf.tp.Collate
 	bf.tp = fieldTp
+	if fieldTp.Tp == mysql.TypeEnum || fieldTp.Tp == mysql.TypeSet {
+		switch tp {
+		case types.ETInt:
+			fieldTp.Tp = mysql.TypeLonglong
+		case types.ETString:
+			fieldTp.Tp = mysql.TypeVarchar
+		}
+	}
 
 	switch tp {
 	case types.ETInt:
@@ -508,7 +524,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	retTp := InferType4ControlFuncs(args[1], args[2])
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[1], args[2])
+	if err != nil {
+		return nil, err
+	}
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
@@ -702,7 +721,10 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := InferType4ControlFuncs(args[0], args[1])
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
+	if err != nil {
+		return nil, err
+	}
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull

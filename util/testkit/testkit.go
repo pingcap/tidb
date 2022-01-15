@@ -8,9 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -22,13 +24,15 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -137,6 +141,31 @@ func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	return tk
 }
 
+// MockGC is used to make GC work in the test environment.
+func MockGC(tk *TestKit) (string, string, string, func()) {
+	originGC := ddl.IsEmulatorGCEnable()
+	resetGC := func() {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
+
 var connectionID uint64
 
 // GetConnectionID get the connection ID for tk.Se
@@ -231,7 +260,7 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
-func containGloabl(rs *Result) bool {
+func containGlobal(rs *Result) bool {
 	partitionNameCol := 2
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
@@ -243,13 +272,13 @@ func containGloabl(rs *Result) bool {
 
 // MustNoGlobalStats checks if there is no global stats.
 func (tk *TestKit) MustNoGlobalStats(table string) bool {
-	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
 		return false
 	}
-	if containGloabl(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
 		return false
 	}
-	if containGloabl(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
 		return false
 	}
 	return true
@@ -322,7 +351,7 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)
 }
@@ -332,7 +361,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	if rs == nil {
 		var emptyStringAoA [][]string
 		return &Result{rows: emptyStringAoA, c: tk.c, comment: comment}
@@ -344,7 +373,7 @@ func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
 func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	res, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(res, check.NotNil, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 	tk.c.Assert(res.Close(), check.IsNil)
@@ -387,7 +416,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,6 +30,15 @@ func (ki KeyInfo) Clone() KeyInfo {
 	return result
 }
 
+// String implements fmt.Stringer interface.
+func (ki KeyInfo) String() string {
+	ukColStrs := make([]string, 0, len(ki))
+	for _, col := range ki {
+		ukColStrs = append(ukColStrs, col.String())
+	}
+	return "[" + strings.Join(ukColStrs, ",") + "]"
+}
+
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
@@ -46,11 +56,7 @@ func (s *Schema) String() string {
 	}
 	ukStrs := make([]string, 0, len(s.Keys))
 	for _, key := range s.Keys {
-		ukColStrs := make([]string, 0, len(key))
-		for _, col := range key {
-			ukColStrs = append(ukColStrs, col.String())
-		}
-		ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+		ukStrs = append(ukStrs, key.String())
 	}
 	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
@@ -224,7 +230,18 @@ func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {
-		used[i] = tmpSchema.Contains(col)
+		if !used[i] {
+			used[i] = tmpSchema.Contains(col)
+
+			// When cols are a generated expression col, compare them in terms of virtual expr.
+			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
+				for j, colToCompare := range schema.Columns {
+					if !used[j] && j != i && (expr).Equal(nil, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
+						used[j] = true
+					}
+				}
+			}
+		}
 	}
 	return used
 }

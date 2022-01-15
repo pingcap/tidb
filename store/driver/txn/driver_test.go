@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 package txn
@@ -15,28 +16,20 @@ package txn
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testTXNDriverSuite{})
-
-type testTXNDriverSuite struct {
-}
-
-func (s *testTXNDriverSuite) TestLockNotFoundPrint(c *C) {
+func TestLockNotFoundPrint(t *testing.T) {
 	msg := "Txn(Mvcc(TxnLockNotFound { start_ts: 408090278408224772, commit_ts: 408090279311835140, " +
 		"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
 	key := prettyLockNotFoundKey(msg)
-	c.Assert(key, Equals, "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}")
+	expected := "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}"
+	require.Equal(t, expected, key)
 }
 
-func (s *testTXNDriverSuite) TestWriteConflictPrettyFormat(c *C) {
+func TestWriteConflictPrettyFormat(t *testing.T) {
 	conflict := &kvrpcpb.WriteConflict{
 		StartTs:          399402937522847774,
 		ConflictTs:       399402937719455772,
@@ -50,7 +43,7 @@ func (s *testTXNDriverSuite) TestWriteConflictPrettyFormat(c *C) {
 		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
 		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
 		kv.TxnRetryableMark
-	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
+	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 
 	conflict = &kvrpcpb.WriteConflict{
 		StartTs:          399402937522847774,
@@ -64,5 +57,5 @@ func (s *testTXNDriverSuite) TestWriteConflictPrettyFormat(c *C) {
 		"key={metaKey=true, key=DB:56, field=TID:108} " +
 		"primary={metaKey=true, key=DB:56, field=TID:108} " +
 		kv.TxnRetryableMark
-	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
+	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }

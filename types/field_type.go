@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package types
 import (
 	"strconv"
 
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
@@ -40,23 +41,20 @@ func NewFieldType(tp byte) *FieldType {
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
 	}
-	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
-		ft.Collate = charset.CollationBin
-	} else {
-		ft.Collate = mysql.DefaultCollationName
-	}
-	// TODO: use DefaultCharsetForType to set charset and collate
+	ft.Charset, ft.Collate = DefaultCharsetForType(tp)
 	return ft
 }
 
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	coll, _ := charset.GetCollationByName(collation)
 	return &FieldType{
 		Tp:      tp,
 		Flen:    length,
 		Decimal: UnspecifiedLength,
 		Collate: collation,
+		Charset: coll.CharsetName,
 	}
 }
 
@@ -103,6 +101,16 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	}
 
 	return &currType
+}
+
+// TryToFixFlenOfDatetime try to fix flen of Datetime for specific func or other field merge cases
+func TryToFixFlenOfDatetime(resultTp *FieldType) {
+	if resultTp.Tp == mysql.TypeDatetime {
+		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if resultTp.Decimal > 0 {
+			resultTp.Flen += resultTp.Decimal + 1
+		}
+	}
 }
 
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
@@ -197,6 +205,9 @@ func hasVariantFieldLength(tp *FieldType) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+	if value != nil {
+		tp.Flag |= mysql.NotNullFlag
+	}
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
@@ -292,6 +303,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Flen = len(x.ToString())
 		tp.Decimal = int(x.digitsFrac)
+		// Add the length for `.`.
+		tp.Flen++
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
@@ -313,6 +326,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	}
 }
 

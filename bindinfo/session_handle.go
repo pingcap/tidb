@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -67,7 +68,8 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	oldRecord := h.GetBindRecord(originalSQL, db)
+	hash := parser.DigestNormalized(originalSQL).String()
+	oldRecord := h.GetBindRecord(hash, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -78,14 +80,13 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), newRecord)
+	h.ch.setBindRecord(hash, newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
-	hash := parser.DigestNormalized(normdOrigSQL).String()
+func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := h.ch[hash]
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {

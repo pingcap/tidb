@@ -8,46 +8,90 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package telemetry
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testClusterHardwareSuite{})
-
-type testClusterHardwareSuite struct{}
-
-func (s *testClusterHardwareSuite) TestNormalizeDiskName(c *C) {
-	c.Parallel()
-
-	c.Assert(normalizeDiskName("/dev/sdb"), Equals, "sdb")
-	c.Assert(normalizeDiskName("sda"), Equals, "sda")
-}
-
-func (s *testClusterHardwareSuite) TestIsNormalizedDiskNameAllowed(c *C) {
-	c.Parallel()
-
-	passList := []string{"disk1s4", "rootfs", "devtmpfs", "sda", "sda1", "sdb", "sdb3", "sdc", "nvme0", "nvme0n1", "nvme0n1p0", "md127", "mdisk1s4"}
-	for _, n := range passList {
-		c.Assert(isNormalizedDiskNameAllowed(n), Equals, true)
+func TestNormalizeDiskName(t *testing.T) {
+	tests := []struct {
+		diskName string
+		expected string
+	}{
+		{"/dev/sdb", "sdb"},
+		{"sda", "sda"},
 	}
 
-	failList := []string{"foo", "/rootfs", "asmdisk01p1"}
-	for _, n := range failList {
-		c.Assert(isNormalizedDiskNameAllowed(n), Equals, false)
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			require.Equal(t, test.expected, normalizeDiskName(test.diskName))
+		})
 	}
 }
 
-func (s *testClusterHardwareSuite) TestNormalizeFieldName(c *C) {
-	c.Parallel()
+func TestIsNormalizedDiskNameAllowed(t *testing.T) {
+	tests := []struct {
+		diskName string
+	}{
+		{"disk1s4"},
+		{"rootfs"},
+		{"sda"},
+		{"sda1"},
+		{"sdb"},
+		{"sdb3"},
+		{"sdc"},
+		{"nvme0"},
+		{"nvme0n1"},
+		{"nvme0n1p0"},
+		{"md127"},
+		{"mdisk1s4"},
+	}
 
-	c.Assert(normalizeFieldName("deviceName"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("device-name"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("device_name"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("l1-cache-size"), Equals, "l1CacheSize")
-	c.Assert(normalizeFieldName("free-percent"), Equals, "freePercent")
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			require.True(t, isNormalizedDiskNameAllowed(test.diskName))
+		})
+	}
+}
+
+func TestIsNormalizedDiskNameNotAllowed(t *testing.T) {
+	tests := []struct {
+		diskName string
+	}{
+		{"foo"},
+		{"/rootfs"},
+		{"asmdisk01p1"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			require.False(t, isNormalizedDiskNameAllowed(test.diskName))
+		})
+	}
+}
+
+func TestNormalizeFieldName(t *testing.T) {
+	tests := []struct {
+		fileName string
+		expected string
+	}{
+		{"deviceName", "deviceName"},
+		{"device-name", "deviceName"},
+		{"device_name", "deviceName"},
+		{"l1-cache-size", "l1CacheSize"},
+		{"free-percent", "freePercent"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.fileName, func(t *testing.T) {
+			require.Equal(t, test.expected, normalizeFieldName(test.fileName))
+		})
+	}
 }

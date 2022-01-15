@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,11 +24,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
@@ -150,7 +152,8 @@ type selectResult struct {
 	durationReported bool
 	memTracker       *memory.Tracker
 
-	stats *selectResultRuntimeStats
+	stats  *selectResultRuntimeStats
+	paging bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -204,7 +207,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
 				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				if r.paging {
+					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "paging").Observe(r.fetchDuration.Seconds())
+				} else {
+					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "common").Observe(r.fetchDuration.Seconds())
+				}
 				r.durationReported = true
 			}
 			return nil
@@ -272,6 +279,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
+	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mockNextRawError"))
+		}
+	})
+
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
 	r.feedback.Invalidate()
@@ -346,7 +359,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
-		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime)
+		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
+		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
 	if r.stats == nil {
@@ -394,9 +408,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-				zap.Int("expected", len(r.copPlanIDs)),
-				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
+			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
+			// not trigger an error log in this case.
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+					zap.Int("expected", len(r.copPlanIDs)),
+					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			}
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {

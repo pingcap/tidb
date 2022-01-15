@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor_test
 
 import (
@@ -26,6 +40,22 @@ func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
 	err := tk.QueryToErr("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
+}
+
+func (s *testSerialSuite) TestIssue28052(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`col_tinyint_key_signed` tinyint(4) DEFAULT NULL," +
+		"`col_year_key_signed` year(4) DEFAULT NULL," +
+		"KEY `col_tinyint_key_signed` (`col_tinyint_key_signed`)," +
+		"KEY `col_year_key_signed` (`col_year_key_signed`)" +
+		" ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("insert into t values(-100,NULL);")
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`").Check(testkit.Rows("1"))
 }
 
 func (s *testSerialSuite) TestIssue18068(c *C) {

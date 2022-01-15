@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,10 +16,11 @@ package statistics
 
 import (
 	"math"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 const eps = 1e-9
@@ -58,7 +60,7 @@ func getUnsignedFieldType() *types.FieldType {
 	return tp
 }
 
-func (s *testStatisticsSuite) TestCalcFraction(c *C) {
+func TestCalcFraction(t *testing.T) {
 	tests := []struct {
 		lower    types.Datum
 		upper    types.Datum
@@ -77,14 +79,14 @@ func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(4),
-			fraction: 1,
+			fraction: 1.0,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(-1),
-			fraction: 0,
+			fraction: 0.0,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
@@ -170,11 +172,11 @@ func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)
-		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
+		require.InDelta(t, test.fraction, fraction, eps)
 	}
 }
 
-func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
+func TestEnumRangeValues(t *testing.T) {
 	tests := []struct {
 		low         types.Datum
 		high        types.Datum
@@ -254,10 +256,10 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 			res:         "",
 		},
 	}
-	for _, t := range tests {
-		vals := enumRangeValues(t.low, t.high, t.lowExclude, t.highExclude)
+	for _, test := range tests {
+		vals := enumRangeValues(test.low, test.high, test.lowExclude, test.highExclude)
 		str, err := types.DatumsToString(vals, true)
-		c.Assert(err, IsNil)
-		c.Assert(str, Equals, t.res)
+		require.NoError(t, err)
+		require.Equal(t, test.res, str)
 	}
 }

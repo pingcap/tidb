@@ -8,30 +8,35 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuiteP2) TestQueryTime(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestQueryTime(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	costTime := time.Since(tk.Se.GetSessionVars().StartTime)
-	c.Assert(costTime < 1*time.Second, IsTrue)
+	costTime := time.Since(tk.Session().GetSessionVars().StartTime)
+	require.Less(t, costTime, time.Second)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1), (1), (1), (1), (1)")
 	tk.MustExec("select * from t t1 join t t2 on t1.a = t2.a")
 
-	costTime = time.Since(tk.Se.GetSessionVars().StartTime)
-	c.Assert(costTime < 1*time.Second, IsTrue)
+	costTime = time.Since(tk.Session().GetSessionVars().StartTime)
+	require.Less(t, costTime, time.Second)
 }

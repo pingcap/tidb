@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -66,6 +67,16 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
 		if val.(bool) && UnistoreRPCClientSendHook != nil {
 			UnistoreRPCClientSendHook(req)
+		}
+	})
+
+	failpoint.Inject("rpcTiKVAllowedOnAlmostFull", func(val failpoint.Value) {
+		if val.(bool) {
+			if req.Type == tikvrpc.CmdPrewrite || req.Type == tikvrpc.CmdCommit {
+				if req.Context.DiskFullOpt != kvrpcpb.DiskFullOpt_AllowedOnAlmostFull {
+					failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{DiskFull: &errorpb.DiskFull{StoreId: []uint64{1}, Reason: "disk full"}}))
+				}
+			}
 		}
 	})
 
@@ -379,15 +390,6 @@ func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *deb
 			Name:  "mvcc.num_rows",
 			Value: strconv.Itoa(len(scanResp.Pairs)),
 		}}}, nil
-}
-
-// Client is a client that sends RPC.
-// This is same with tikv.Client, define again for avoid circle import.
-type Client interface {
-	// Close should release all data.
-	Close() error
-	// SendRequest sends Request.
-	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
 // Close closes RPCClient and cleanup temporal resources.

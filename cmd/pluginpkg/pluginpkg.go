@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -39,7 +40,6 @@ package main
 
 import (
 	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func PluginManifest() *plugin.Manifest {
@@ -52,15 +52,6 @@ func PluginManifest() *plugin.Manifest {
 			RequireVersion: map[string]uint16{},
 			License:        "{{.license}}",
 			BuildTime:      "{{.buildTime}}",
-			SysVars: map[string]*variable.SysVar{
-			    {{range .sysVars}}
-				"{{.name}}": {
-					Scope: variable.Scope{{.scope}},
-					Name:  "{{.name}}",
-					Value: "{{.value}}",
-				},
-				{{end}}
-			},
 			{{if .validate }}
 				Validate:   {{.validate}},
 			{{end}}

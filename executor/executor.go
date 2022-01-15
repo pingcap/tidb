@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,12 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -44,7 +40,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,9 +64,9 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -345,7 +345,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	allocators := tbl.Allocators(e.ctx)
 	for _, alloc := range allocators {
-		nextGlobalID, err := alloc.NextGlobalAutoID(tblMeta.ID)
+		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
 			return err
 		}
@@ -471,6 +471,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if job.BinlogInfo.MultipleTableInfos != nil {
+			tablenames := new(strings.Builder)
+			for i, affect := range job.BinlogInfo.MultipleTableInfos {
+				if i > 0 {
+					fmt.Fprintf(tablenames, ",")
+				}
+				fmt.Fprintf(tablenames, "%s", affect.Name.L)
+			}
+			tableName = tablenames.String()
 		}
 		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
 			schemaName = job.BinlogInfo.DBInfo.Name.L
@@ -947,7 +957,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = tikv.LockNoWait
+		lockWaitTime = tikvstore.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
@@ -968,36 +978,44 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
-	var planDigest *parser.Digest
-	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
-		_, planDigest = seVars.StmtCtx.GetPlanDigest()
-	}
-	return &tikvstore.LockCtx{
-		Killed:                &seVars.Killed,
-		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
-		LockWaitTime:          lockWaitTime,
-		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
-		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
-		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
-		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
-		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
-		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
-			cfg := config.GetGlobalConfig()
-			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
-				return
+	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+	lockCtx.Killed = &seVars.Killed
+	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
+	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
+	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
+	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
+		if req == nil {
+			return nil
+		}
+		if len(req.Mutations) == 0 {
+			return nil
+		}
+		if mutation := req.Mutations[0]; mutation != nil {
+			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
+			normalized, digest := seVars.StmtCtx.SQLDigest()
+			if len(normalized) == 0 {
+				return nil
 			}
-			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-			deadlockhistory.GlobalDeadlockHistory.Push(rec)
-		},
+			_, planDigest := seVars.StmtCtx.GetPlanDigest()
+			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
+		}
+		return nil
 	}
+	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
+		cfg := config.GetGlobalConfig()
+		if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+			return
+		}
+		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+		deadlockhistory.GlobalDeadlockHistory.Push(rec)
+	}
+	return lockCtx
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
-// except 0 means alwaysWait 1 means nowait
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
 	sessVars := se.GetSessionVars()
 	sctx := sessVars.StmtCtx
@@ -1013,6 +1031,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
 
+	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1032,6 +1051,20 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
+	if len(stmtCtx.LockTableIDs) == 0 {
+		return keys
+	}
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1658,12 +1691,22 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	sc := &stmtctx.StatementContext{
-		TimeZone:      vars.Location(),
-		TaskID:        stmtctx.AllocateTaskID(),
-		CTEStorageMap: map[int]*CTEStorages{},
-		IsStaleness:   false,
+	var sc *stmtctx.StatementContext
+	if vars.TxnCtx.CouldRetry {
+		// Must construct new statement context object, the retry history need context for every statement.
+		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
+		sc = &stmtctx.StatementContext{}
+	} else {
+		sc = vars.InitStatementContext()
 	}
+	sc.TimeZone = vars.Location()
+	sc.TaskID = stmtctx.AllocateTaskID()
+	sc.CTEStorageMap = map[int]*CTEStorages{}
+	sc.IsStaleness = false
+	sc.LockTableIDs = make(map[int64]struct{})
+	sc.EnableOptimizeTrace = false
+	sc.LogicalOptimizeTrace = nil
+	sc.OptimizerCETrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -1685,7 +1728,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			return err
 		}
@@ -1697,8 +1740,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+		}
+		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
+			if s.LockInfo == nil {
+				sc.WeakConsistency = isWeakConsistencyRead(ctx, execStmt)
+			}
 		}
 	}
 	// execute missed stmtID uses empty sql
@@ -1706,10 +1754,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
 		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
+		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	}
-	if _, ok := s.(*ast.ExplainForStmt); ok {
+	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
+		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1743,7 +1793,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
+		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
+		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
@@ -1771,6 +1823,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1794,6 +1847,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
+	sc.SkipUTF8Check = vars.SkipUTF8Check
+	sc.SkipASCIICheck = vars.SkipASCIICheck
+	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
@@ -1874,8 +1930,22 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot != nil && topsqlstate.TopSQLEnabled() {
+		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
+}
+
+// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
+// the number of SQL executions of each TiKV.
+func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
+	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
+}
+
+func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
+		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
 }

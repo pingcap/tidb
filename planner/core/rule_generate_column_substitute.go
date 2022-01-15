@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -36,7 +37,7 @@ type ExprColumnMap map[expression.Expression]*expression.Column
 // For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 // an index on c. We need to replace a+1 with c so that we can use the index on c.
 // See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
-func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
 	if len(exprToColumn) == 0 {
@@ -94,26 +95,20 @@ func substituteExpression(cond expression.Expression, sctx *stmtctx.StatementCon
 	var tp types.EvalType
 	switch sf.FuncName.L {
 	case ast.EQ, ast.LT, ast.LE, ast.GT, ast.GE:
-		if sf.GetArgs()[0].ConstItem(sctx) {
-			expr = &sf.GetArgs()[1]
-			tp = sf.GetArgs()[0].GetType().EvalType()
-		} else if sf.GetArgs()[1].ConstItem(sctx) {
-			expr = &sf.GetArgs()[0]
-			tp = sf.GetArgs()[1].GetType().EvalType()
-		} else {
-			return
+		for candidateExpr, column := range exprToColumn {
+			tryToSubstituteExpr(&sf.GetArgs()[1], sessionCtx, candidateExpr, sf.GetArgs()[0].GetType().EvalType(), schema, column)
 		}
 		for candidateExpr, column := range exprToColumn {
-			tryToSubstituteExpr(expr, sessionCtx, candidateExpr, tp, schema, column)
+			tryToSubstituteExpr(&sf.GetArgs()[0], sessionCtx, candidateExpr, sf.GetArgs()[1].GetType().EvalType(), schema, column)
 		}
 	case ast.In:
 		expr = &sf.GetArgs()[0]
 		tp = sf.GetArgs()[1].GetType().EvalType()
 		canSubstitute := true
 		// Can only substitute if all the operands on the right-hand
-		// side are constants of the same type.
+		// side are the same type.
 		for i := 1; i < len(sf.GetArgs()); i++ {
-			if !sf.GetArgs()[i].ConstItem(sctx) || sf.GetArgs()[i].GetType().EvalType() != tp {
+			if sf.GetArgs()[i].GetType().EvalType() != tp {
 				canSubstitute = false
 				break
 			}

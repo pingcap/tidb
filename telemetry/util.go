@@ -8,13 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package telemetry
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"fmt"
 	"sort"
 	"strconv"
@@ -23,7 +24,7 @@ import (
 
 // hashString returns the SHA1 checksum in hex of the string.
 func hashString(text string) (string, error) {
-	hash := sha1.New()
+	hash := sha1.New() // #nosec G401
 	_, err := hash.Write([]byte(text))
 	if err != nil {
 		return "", err

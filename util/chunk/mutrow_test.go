@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,14 +18,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testChunkSuite) TestMutRow(c *check.C) {
+func TestMutRow(t *testing.T) {
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	sc := new(stmtctx.StatementContext)
@@ -32,59 +34,80 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.CompareDatum(sc, &d2)
-		c.Assert(err, check.IsNil)
-		c.Assert(cmp, check.Equals, 0)
+		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].Collate))
+		require.Nil(t, err)
+		require.Equal(t, 0, cmp)
 	}
 
 	mutRow = MutRowFromValues("abc", 123)
-	c.Assert(row.IsNull(0), check.IsFalse)
-	c.Assert(mutRow.ToRow().GetString(0), check.Equals, "abc")
-	c.Assert(row.IsNull(1), check.IsFalse)
-	c.Assert(mutRow.ToRow().GetInt64(1), check.Equals, int64(123))
+	require.False(t, row.IsNull(0))
+	require.Equal(t, "abc", mutRow.ToRow().GetString(0))
+	require.False(t, row.IsNull(1))
+	require.Equal(t, int64(123), mutRow.ToRow().GetInt64(1))
 	mutRow.SetValues("abcd", 456)
 	row = mutRow.ToRow()
-	c.Assert(row.GetString(0), check.Equals, "abcd")
-	c.Assert(row.IsNull(0), check.IsFalse)
-	c.Assert(row.GetInt64(1), check.Equals, int64(456))
-	c.Assert(row.IsNull(1), check.IsFalse)
+	require.Equal(t, "abcd", row.GetString(0))
+	require.False(t, row.IsNull(0))
+	require.Equal(t, int64(456), row.GetInt64(1))
+	require.False(t, row.IsNull(1))
 	mutRow.SetDatums(types.NewStringDatum("defgh"), types.NewIntDatum(33))
-	c.Assert(row.IsNull(0), check.IsFalse)
-	c.Assert(row.GetString(0), check.Equals, "defgh")
-	c.Assert(row.IsNull(1), check.IsFalse)
-	c.Assert(row.GetInt64(1), check.Equals, int64(33))
+	require.False(t, row.IsNull(0))
+	require.Equal(t, "defgh", row.GetString(0))
+	require.False(t, row.IsNull(1))
+	require.Equal(t, int64(33), row.GetInt64(1))
 
 	mutRow.SetRow(MutRowFromValues("foobar", nil).ToRow())
 	row = mutRow.ToRow()
-	c.Assert(row.IsNull(0), check.IsFalse)
-	c.Assert(row.IsNull(1), check.IsTrue)
+	require.False(t, row.IsNull(0))
+	require.True(t, row.IsNull(1))
 
 	nRow := MutRowFromValues(nil, 111).ToRow()
-	c.Assert(nRow.IsNull(0), check.IsTrue)
-	c.Assert(nRow.IsNull(1), check.IsFalse)
+	require.True(t, nRow.IsNull(0))
+	require.False(t, nRow.IsNull(1))
 	mutRow.SetRow(nRow)
 	row = mutRow.ToRow()
-	c.Assert(row.IsNull(0), check.IsTrue)
-	c.Assert(row.IsNull(1), check.IsFalse)
+	require.True(t, row.IsNull(0))
+	require.False(t, row.IsNull(1))
 
 	j, err := json.ParseBinaryFromString("true")
-	t := types.NewTime(types.FromDate(2000, 1, 1, 1, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp)
-	c.Assert(err, check.IsNil)
-	mutRow = MutRowFromValues(j, t)
+	time := types.NewTime(types.FromDate(2000, 1, 1, 1, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp)
+	require.NoError(t, err)
+	mutRow = MutRowFromValues(j, time)
 	row = mutRow.ToRow()
-	c.Assert(row.GetJSON(0), check.DeepEquals, j)
-	c.Assert(row.GetTime(1), check.DeepEquals, t)
+	require.Equal(t, j, row.GetJSON(0))
+	require.Equal(t, time, row.GetTime(1))
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
 	dur, err := types.ParseDuration(sc, "01:23:45", 0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
 	mutRow.SetValue(0, dur)
-	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
+	require.Equal(t, mutRow.c.columns[0].data, chk.columns[0].data)
 	mutRow.SetDatum(0, types.NewDurationDatum(dur))
-	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
+	require.Equal(t, mutRow.c.columns[0].data, chk.columns[0].data)
+}
+
+func TestIssue29947(t *testing.T) {
+	mutRow := MutRowFromTypes(allTypes)
+	nilDatum := types.NewDatum(nil)
+
+	dataBefore := make([][]byte, 0, len(mutRow.c.columns))
+	elemBufBefore := make([][]byte, 0, len(mutRow.c.columns))
+	for _, col := range mutRow.c.columns {
+		dataBefore = append(dataBefore, col.data)
+		elemBufBefore = append(elemBufBefore, col.elemBuf)
+	}
+	for i, col := range mutRow.c.columns {
+		mutRow.SetDatum(i, nilDatum)
+		require.Equal(t, col.IsNull(0), true)
+		for _, off := range col.offsets {
+			require.Equal(t, off, int64(0))
+		}
+		require.Equal(t, col.data, dataBefore[i])
+		require.Equal(t, col.elemBuf, elemBufBefore[i])
+	}
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
@@ -143,7 +166,7 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 	}
 }
 
-func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
+func TestMutRowShallowCopyPartialRow(t *testing.T) {
 	colTypes := make([]*types.FieldType, 0, 3)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
@@ -152,9 +175,9 @@ func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
 	mutRow.ShallowCopyPartialRow(0, row)
-	c.Assert(row.GetString(0), check.Equals, mutRow.ToRow().GetString(0))
-	c.Assert(row.GetInt64(1), check.Equals, mutRow.ToRow().GetInt64(1))
-	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
+	require.Equal(t, mutRow.ToRow().GetString(0), row.GetString(0))
+	require.Equal(t, mutRow.ToRow().GetInt64(1), row.GetInt64(1))
+	require.Equal(t, mutRow.ToRow().GetTime(2), row.GetTime(2))
 
 	row.c.Reset()
 	d := types.NewStringDatum("dfg")
@@ -164,10 +187,10 @@ func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	d = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
 	row.c.AppendDatum(2, &d)
 
-	c.Assert(d.GetMysqlTime(), check.DeepEquals, mutRow.ToRow().GetTime(2))
-	c.Assert(row.GetString(0), check.Equals, mutRow.ToRow().GetString(0))
-	c.Assert(row.GetInt64(1), check.Equals, mutRow.ToRow().GetInt64(1))
-	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
+	require.Equal(t, mutRow.ToRow().GetTime(2), d.GetMysqlTime())
+	require.Equal(t, mutRow.ToRow().GetString(0), row.GetString(0))
+	require.Equal(t, mutRow.ToRow().GetInt64(1), row.GetInt64(1))
+	require.Equal(t, mutRow.ToRow().GetTime(2), row.GetTime(2))
 }
 
 var rowsNum = 1024

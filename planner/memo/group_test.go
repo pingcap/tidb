@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,113 +18,92 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testMemoSuite{})
-
-type testMemoSuite struct {
-	*parser.Parser
-	is     infoschema.InfoSchema
-	schema *expression.Schema
-	sctx   sessionctx.Context
-}
-
-func (s *testMemoSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	s.sctx = plannercore.MockContext()
-	s.Parser = parser.New()
-	s.schema = expression.NewSchema()
-}
-
-func (s *testMemoSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
-
-func (s *testMemoSuite) TestNewGroup(c *C) {
+func TestNewGroup(t *testing.T) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, s.schema)
+	g := NewGroupWithSchema(expr, expression.NewSchema())
 
-	c.Assert(g.Equivalents.Len(), Equals, 1)
-	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
-	c.Assert(len(g.Fingerprints), Equals, 1)
-	c.Assert(g.Explored(0), IsFalse)
+	require.Equal(t, 1, g.Equivalents.Len())
+	require.Equal(t, expr, g.Equivalents.Front().Value.(*GroupExpr))
+	require.Len(t, g.Fingerprints, 1)
+	require.False(t, g.Explored(0))
 }
 
-func (s *testMemoSuite) TestGroupInsert(c *C) {
+func TestGroupInsert(t *testing.T) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, s.schema)
-	c.Assert(g.Insert(expr), IsFalse)
+	g := NewGroupWithSchema(expr, expression.NewSchema())
+	require.False(t, g.Insert(expr))
 	expr.selfFingerprint = "1"
-	c.Assert(g.Insert(expr), IsTrue)
+	require.True(t, g.Insert(expr))
 }
 
-func (s *testMemoSuite) TestGroupDelete(c *C) {
+func TestGroupDelete(t *testing.T) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, s.schema)
-	c.Assert(g.Equivalents.Len(), Equals, 1)
+	g := NewGroupWithSchema(expr, expression.NewSchema())
+	require.Equal(t, 1, g.Equivalents.Len())
 
 	g.Delete(expr)
-	c.Assert(g.Equivalents.Len(), Equals, 0)
+	require.Equal(t, 0, g.Equivalents.Len())
 
 	g.Delete(expr)
-	c.Assert(g.Equivalents.Len(), Equals, 0)
+	require.Equal(t, 0, g.Equivalents.Len())
 }
 
-func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
-	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0))
-	g := NewGroupWithSchema(expr, s.schema)
-	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))), IsTrue)
-	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))), IsTrue)
-	c.Assert(g.Equivalents.Len(), Equals, 3)
-	c.Assert(g.GetFirstElem(OperandProjection), NotNil)
-	c.Assert(g.Exists(expr), IsTrue)
+func TestGroupDeleteAll(t *testing.T) {
+	ctx := plannercore.MockContext()
+	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
+	g := NewGroupWithSchema(expr, expression.NewSchema())
+	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))))
+	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))))
+	require.Equal(t, 3, g.Equivalents.Len())
+	require.NotNil(t, g.GetFirstElem(OperandProjection))
+	require.True(t, g.Exists(expr))
 
 	g.DeleteAll()
-	c.Assert(g.Equivalents.Len(), Equals, 0)
-	c.Assert(g.GetFirstElem(OperandProjection), IsNil)
-	c.Assert(g.Exists(expr), IsFalse)
+	require.Equal(t, 0, g.Equivalents.Len())
+	require.Nil(t, g.GetFirstElem(OperandProjection))
+	require.False(t, g.Exists(expr))
 }
 
-func (s *testMemoSuite) TestGroupExists(c *C) {
+func TestGroupExists(t *testing.T) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	g := NewGroupWithSchema(expr, s.schema)
-	c.Assert(g.Exists(expr), IsTrue)
+	g := NewGroupWithSchema(expr, expression.NewSchema())
+	require.True(t, g.Exists(expr))
 
 	g.Delete(expr)
-	c.Assert(g.Exists(expr), IsFalse)
+	require.False(t, g.Exists(expr))
 }
 
-func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
-	stmt1, err := s.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
-	c.Assert(err, IsNil)
-	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
-	c.Assert(err, IsNil)
-	logic1, ok := p1.(plannercore.LogicalPlan)
-	c.Assert(ok, IsTrue)
+func TestGroupFingerPrint(t *testing.T) {
+	p := parser.New()
+	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
+	require.NoError(t, err)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	ctx := plannercore.MockContext()
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	require.NoError(t, err)
+	logic1, ok := plan.(plannercore.LogicalPlan)
+	require.True(t, ok)
+
 	// Plan tree should be: DataSource -> Selection -> Projection
 	proj, ok := logic1.(*plannercore.LogicalProjection)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	group1 := Convert2Group(logic1)
 	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
 
@@ -131,24 +111,24 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	newGroupExpr := NewGroupExpr(proj)
 	newGroupExpr.SetChildren(oldGroupExpr.Children[0])
 	group1.Insert(newGroupExpr)
-	c.Assert(group1.Equivalents.Len(), Equals, 1)
+	require.Equal(t, 1, group1.Equivalents.Len())
 
 	// Insert a GroupExpr with different children。
 	newGroupExpr2 := NewGroupExpr(proj)
 	newGroup := NewGroupWithSchema(oldGroupExpr, group1.Prop.Schema)
 	newGroupExpr2.SetChildren(newGroup)
 	group1.Insert(newGroupExpr2)
-	c.Assert(group1.Equivalents.Len(), Equals, 2)
+	require.Equal(t, 2, group1.Equivalents.Len())
 
 	// Insert a GroupExpr with different ExprNode.
 	limit := plannercore.LogicalLimit{}.Init(proj.SCtx(), 0)
 	newGroupExpr3 := NewGroupExpr(limit)
 	newGroupExpr3.SetChildren(oldGroupExpr.Children[0])
 	group1.Insert(newGroupExpr3)
-	c.Assert(group1.Equivalents.Len(), Equals, 3)
+	require.Equal(t, 3, group1.Equivalents.Len())
 
 	// Insert two LogicalSelections with same conditions but different order.
-	c.Assert(len(sel.Conditions), Equals, 2)
+	require.Len(t, sel.Conditions, 2)
 	newSelection := plannercore.LogicalSelection{
 		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
@@ -157,27 +137,28 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	newGroupExpr4.SetChildren(oldGroupExpr.Children[0])
 	newGroupExpr5.SetChildren(oldGroupExpr.Children[0])
 	group1.Insert(newGroupExpr4)
-	c.Assert(group1.Equivalents.Len(), Equals, 4)
+	require.Equal(t, 4, group1.Equivalents.Len())
 	group1.Insert(newGroupExpr5)
-	c.Assert(group1.Equivalents.Len(), Equals, 4)
+	require.Equal(t, 4, group1.Equivalents.Len())
 }
 
-func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
-	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
-	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
-	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
-	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
-	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+func TestGroupGetFirstElem(t *testing.T) {
+	ctx := plannercore.MockContext()
+	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
+	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
+	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
+	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
+	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
 
-	g := NewGroupWithSchema(expr0, s.schema)
+	g := NewGroupWithSchema(expr0, expression.NewSchema())
 	g.Insert(expr1)
 	g.Insert(expr2)
 	g.Insert(expr3)
 	g.Insert(expr4)
 
-	c.Assert(g.GetFirstElem(OperandProjection).Value.(*GroupExpr), Equals, expr0)
-	c.Assert(g.GetFirstElem(OperandLimit).Value.(*GroupExpr), Equals, expr1)
-	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
+	require.Equal(t, expr0, g.GetFirstElem(OperandProjection).Value.(*GroupExpr))
+	require.Equal(t, expr1, g.GetFirstElem(OperandLimit).Value.(*GroupExpr))
+	require.Equal(t, expr0, g.GetFirstElem(OperandAny).Value.(*GroupExpr))
 }
 
 type fakeImpl struct {
@@ -190,111 +171,115 @@ func (impl *fakeImpl) GetCost() float64                                { return 
 func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return impl.plan }
 func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
 func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
-func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
-	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), s.schema)
+
+func TestGetInsertGroupImpl(t *testing.T) {
+	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(plannercore.MockContext(), 0)), expression.NewSchema())
 	emptyProp := &property.PhysicalProperty{}
-	orderProp := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: &expression.Column{}}}}
+	require.Nil(t, g.GetImpl(emptyProp))
 
-	impl := g.GetImpl(emptyProp)
-	c.Assert(impl, IsNil)
-
-	impl = &fakeImpl{plan: &plannercore.PhysicalLimit{}}
+	impl := &fakeImpl{plan: &plannercore.PhysicalLimit{}}
 	g.InsertImpl(emptyProp, impl)
+	require.Equal(t, impl, g.GetImpl(emptyProp))
 
-	newImpl := g.GetImpl(emptyProp)
-	c.Assert(newImpl, Equals, impl)
-
-	newImpl = g.GetImpl(orderProp)
-	c.Assert(newImpl, IsNil)
+	orderProp := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: &expression.Column{}}}}
+	require.Nil(t, g.GetImpl(orderProp))
 }
 
-func (s *testMemoSuite) TestEngineTypeSet(c *C) {
-	c.Assert(EngineAll.Contains(EngineTiDB), IsTrue)
-	c.Assert(EngineAll.Contains(EngineTiKV), IsTrue)
-	c.Assert(EngineAll.Contains(EngineTiFlash), IsTrue)
+func TestEngineTypeSet(t *testing.T) {
+	require.True(t, EngineAll.Contains(EngineTiDB))
+	require.True(t, EngineAll.Contains(EngineTiKV))
+	require.True(t, EngineAll.Contains(EngineTiFlash))
 
-	c.Assert(EngineTiDBOnly.Contains(EngineTiDB), IsTrue)
-	c.Assert(EngineTiDBOnly.Contains(EngineTiKV), IsFalse)
-	c.Assert(EngineTiDBOnly.Contains(EngineTiFlash), IsFalse)
+	require.True(t, EngineTiDBOnly.Contains(EngineTiDB))
+	require.False(t, EngineTiDBOnly.Contains(EngineTiKV))
+	require.False(t, EngineTiDBOnly.Contains(EngineTiFlash))
 
-	c.Assert(EngineTiKVOnly.Contains(EngineTiDB), IsFalse)
-	c.Assert(EngineTiKVOnly.Contains(EngineTiKV), IsTrue)
-	c.Assert(EngineTiKVOnly.Contains(EngineTiFlash), IsFalse)
+	require.False(t, EngineTiKVOnly.Contains(EngineTiDB))
+	require.True(t, EngineTiKVOnly.Contains(EngineTiKV))
+	require.False(t, EngineTiKVOnly.Contains(EngineTiFlash))
 
-	c.Assert(EngineTiFlashOnly.Contains(EngineTiDB), IsFalse)
-	c.Assert(EngineTiFlashOnly.Contains(EngineTiKV), IsFalse)
-	c.Assert(EngineTiFlashOnly.Contains(EngineTiFlash), IsTrue)
+	require.False(t, EngineTiFlashOnly.Contains(EngineTiDB))
+	require.False(t, EngineTiFlashOnly.Contains(EngineTiKV))
+	require.True(t, EngineTiFlashOnly.Contains(EngineTiFlash))
 
-	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiDB), IsFalse)
-	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiKV), IsTrue)
-	c.Assert(EngineTiKVOrTiFlash.Contains(EngineTiFlash), IsTrue)
+	require.False(t, EngineTiKVOrTiFlash.Contains(EngineTiDB))
+	require.True(t, EngineTiKVOrTiFlash.Contains(EngineTiKV))
+	require.True(t, EngineTiKVOrTiFlash.Contains(EngineTiFlash))
 }
 
-func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
-	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(s.sctx, 0))
-	g := NewGroupWithSchema(oldExpr, s.schema)
-	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(s.sctx, 0))
+func TestFirstElemAfterDelete(t *testing.T) {
+	ctx := plannercore.MockContext()
+	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(ctx, 0))
+	g := NewGroupWithSchema(oldExpr, expression.NewSchema())
+	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(ctx, 0))
 	g.Insert(newExpr)
-	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
-	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, oldExpr)
+	require.NotNil(t, g.GetFirstElem(OperandLimit))
+	require.Equal(t, oldExpr, g.GetFirstElem(OperandLimit).Value)
 	g.Delete(oldExpr)
-	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
-	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, newExpr)
+	require.NotNil(t, g.GetFirstElem(OperandLimit))
+	require.Equal(t, newExpr, g.GetFirstElem(OperandLimit).Value)
 	g.Delete(newExpr)
-	c.Assert(g.GetFirstElem(OperandLimit), IsNil)
+	require.Nil(t, g.GetFirstElem(OperandLimit))
 }
 
-func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
+func TestBuildKeyInfo(t *testing.T) {
+	p := parser.New()
+	ctx := plannercore.MockContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
+
 	// case 1: primary key has constant constraint
-	stmt1, err := s.ParseOneStmt("select a from t where a = 10", "", "")
-	c.Assert(err, IsNil)
-	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
-	c.Assert(err, IsNil)
+	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
+	require.NoError(t, err)
+	p1, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	require.NoError(t, err)
 	logic1, ok := p1.(plannercore.LogicalPlan)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	group1 := Convert2Group(logic1)
 	group1.BuildKeyInfo()
-	c.Assert(group1.Prop.MaxOneRow, IsTrue)
-	c.Assert(len(group1.Prop.Schema.Keys), Equals, 1)
+	require.True(t, group1.Prop.MaxOneRow)
+	require.Len(t, group1.Prop.Schema.Keys, 1)
 
 	// case 2: group by column is key
-	stmt2, err := s.ParseOneStmt("select b, sum(a) from t group by b", "", "")
-	c.Assert(err, IsNil)
-	p2, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt2, s.is)
-	c.Assert(err, IsNil)
+	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
+	require.NoError(t, err)
+	p2, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
+	require.NoError(t, err)
 	logic2, ok := p2.(plannercore.LogicalPlan)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	group2 := Convert2Group(logic2)
 	group2.BuildKeyInfo()
-	c.Assert(group2.Prop.MaxOneRow, IsFalse)
-	c.Assert(len(group2.Prop.Schema.Keys), Equals, 1)
+	require.False(t, group2.Prop.MaxOneRow)
+	require.Len(t, group2.Prop.Schema.Keys, 1)
 
 	// case 3: build key info for new Group
-	newSel := plannercore.LogicalSelection{}.Init(s.sctx, 0)
+	newSel := plannercore.LogicalSelection{}.Init(ctx, 0)
 	newExpr1 := NewGroupExpr(newSel)
 	newExpr1.SetChildren(group2)
 	newGroup1 := NewGroupWithSchema(newExpr1, group2.Prop.Schema)
 	newGroup1.BuildKeyInfo()
-	c.Assert(len(newGroup1.Prop.Schema.Keys), Equals, 1)
+	require.Len(t, newGroup1.Prop.Schema.Keys, 1)
 
 	// case 4: build maxOneRow for new Group
-	newLimit := plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)
+	newLimit := plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)
 	newExpr2 := NewGroupExpr(newLimit)
 	newExpr2.SetChildren(group2)
 	newGroup2 := NewGroupWithSchema(newExpr2, group2.Prop.Schema)
 	newGroup2.BuildKeyInfo()
-	c.Assert(newGroup2.Prop.MaxOneRow, IsTrue)
+	require.True(t, newGroup2.Prop.MaxOneRow)
 }
 
-func (s *testMemoSuite) TestExploreMark(c *C) {
+func TestExploreMark(t *testing.T) {
 	mark := ExploreMark(0)
-	c.Assert(mark.Explored(0), IsFalse)
-	c.Assert(mark.Explored(1), IsFalse)
+	require.False(t, mark.Explored(0))
+	require.False(t, mark.Explored(1))
+
 	mark.SetExplored(0)
 	mark.SetExplored(1)
-	c.Assert(mark.Explored(0), IsTrue)
-	c.Assert(mark.Explored(1), IsTrue)
+	require.True(t, mark.Explored(0))
+	require.True(t, mark.Explored(1))
+
 	mark.SetUnexplored(1)
-	c.Assert(mark.Explored(0), IsTrue)
-	c.Assert(mark.Explored(1), IsFalse)
+	require.True(t, mark.Explored(0))
+	require.False(t, mark.Explored(1))
 }

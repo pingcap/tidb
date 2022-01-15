@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,61 +21,27 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/stretchr/testify/require"
 )
 
-func equalColumn(c1, c2 *Column) bool {
-	if c1.length != c2.length ||
-		c1.nullCount() != c2.nullCount() {
-		return false
-	}
-	if len(c1.nullBitmap) != len(c2.nullBitmap) ||
-		len(c1.offsets) != len(c2.offsets) ||
-		len(c1.data) != len(c2.data) ||
-		len(c1.elemBuf) != len(c2.elemBuf) {
-		return false
-	}
-	for i := range c1.nullBitmap {
-		if c1.nullBitmap[i] != c2.nullBitmap[i] {
-			return false
-		}
-	}
-	for i := range c1.offsets {
-		if c1.offsets[i] != c2.offsets[i] {
-			return false
-		}
-	}
-	for i := range c1.data {
-		if c1.data[i] != c2.data[i] {
-			return false
-		}
-	}
-	for i := range c1.elemBuf {
-		if c1.elemBuf[i] != c2.elemBuf[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *testChunkSuite) TestColumnCopy(c *check.C) {
+func TestColumnCopy(t *testing.T) {
 	col := newFixedLenColumn(8, 10)
 	for i := 0; i < 10; i++ {
 		col.AppendInt64(int64(i))
 	}
 
 	c1 := col.CopyConstruct(nil)
-	c.Check(equalColumn(col, c1), check.IsTrue)
+	require.Equal(t, col, c1)
 
 	c2 := newFixedLenColumn(8, 10)
 	c2 = col.CopyConstruct(c2)
-	c.Check(equalColumn(col, c2), check.IsTrue)
+	require.Equal(t, col, c2)
 }
 
-func (s *testChunkSuite) TestColumnCopyReconstructFixedLen(c *check.C) {
+func TestColumnCopyReconstructFixedLen(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -102,13 +69,13 @@ func (s *testChunkSuite) TestColumnCopyReconstructFixedLen(c *check.C) {
 	for n, i := range sel {
 		if nulls[i] {
 			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
+			require.True(t, col.IsNull(n))
 		} else {
-			c.Assert(col.GetInt64(n), check.Equals, results[i])
+			require.Equal(t, results[i], col.GetInt64(n))
 		}
 	}
-	c.Assert(nullCnt, check.Equals, col.nullCount())
-	c.Assert(col.length, check.Equals, len(sel))
+	require.Equal(t, col.nullCount(), nullCnt)
+	require.Equal(t, len(sel), col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -118,19 +85,19 @@ func (s *testChunkSuite) TestColumnCopyReconstructFixedLen(c *check.C) {
 		}
 	}
 
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount(), check.Equals, nullCnt+128/2)
+	require.Equal(t, len(sel)+128, col.length)
+	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
+			require.True(t, col.IsNull(len(sel)+i))
 		} else {
-			c.Assert(col.GetInt64(len(sel)+i), check.Equals, int64(i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
+			require.Equal(t, int64(i*i*i), col.GetInt64(len(sel)+i))
+			require.False(t, col.IsNull(len(sel)+i))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestColumnCopyReconstructVarLen(c *check.C) {
+func TestColumnCopyReconstructVarLen(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -158,13 +125,13 @@ func (s *testChunkSuite) TestColumnCopyReconstructVarLen(c *check.C) {
 	for n, i := range sel {
 		if nulls[i] {
 			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
+			require.True(t, col.IsNull(n))
 		} else {
-			c.Assert(col.GetString(n), check.Equals, results[i])
+			require.Equal(t, results[i], col.GetString(n))
 		}
 	}
-	c.Assert(nullCnt, check.Equals, col.nullCount())
-	c.Assert(col.length, check.Equals, len(sel))
+	require.Equal(t, col.nullCount(), nullCnt)
+	require.Equal(t, len(sel), col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -174,26 +141,28 @@ func (s *testChunkSuite) TestColumnCopyReconstructVarLen(c *check.C) {
 		}
 	}
 
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount(), check.Equals, nullCnt+128/2)
+	require.Equal(t, len(sel)+128, col.length)
+	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
+			require.True(t, col.IsNull(len(sel)+i))
 		} else {
-			c.Assert(col.GetString(len(sel)+i), check.Equals, fmt.Sprintf("%v", i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
+			require.Equal(t, fmt.Sprintf("%v", i*i*i), col.GetString(len(sel)+i))
+			require.False(t, col.IsNull(len(sel)+i))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestLargeStringColumnOffset(c *check.C) {
+func TestLargeStringColumnOffset(t *testing.T) {
 	numRows := 1
-	col := newVarLenColumn(numRows, nil)
+	col := newVarLenColumn(numRows)
+	// The max-length of a string field can be 6M, a typical batch size for Chunk is 1024, which is 1K.
+	// That is to say, the memory offset of a string column can be 6GB, which exceeds int32
 	col.offsets[0] = 6 << 30
-	c.Check(col.offsets[0], check.Equals, int64(6<<30)) // test no overflow.
+	require.Equal(t, int64(6<<30), col.offsets[0]) // test no overflow.
 }
 
-func (s *testChunkSuite) TestI64Column(c *check.C) {
+func TestI64Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -202,20 +171,20 @@ func (s *testChunkSuite) TestI64Column(c *check.C) {
 
 	i64s := col.Int64s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(i64s[i], check.Equals, int64(i))
+		require.Equal(t, int64(i), i64s[i])
 		i64s[i]++
 	}
 
 	it := NewIterator4Chunk(chk)
 	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetInt64(0), check.Equals, int64(i+1))
-		c.Assert(col.GetInt64(i), check.Equals, int64(i+1))
+		require.Equal(t, int64(i+1), row.GetInt64(0))
+		require.Equal(t, int64(i+1), col.GetInt64(i))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestF64Column(c *check.C) {
+func TestF64Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -224,20 +193,20 @@ func (s *testChunkSuite) TestF64Column(c *check.C) {
 
 	f64s := col.Float64s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(f64s[i], check.Equals, float64(i))
+		require.Equal(t, float64(i), f64s[i])
 		f64s[i] /= 2
 	}
 
 	it := NewIterator4Chunk(chk)
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetFloat64(0), check.Equals, float64(i)/2)
-		c.Assert(col.GetFloat64(int(i)), check.Equals, float64(i)/2)
+		require.Equal(t, float64(i)/2, row.GetFloat64(0))
+		require.Equal(t, float64(i)/2, col.GetFloat64(int(i)))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestF32Column(c *check.C) {
+func TestF32Column(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -246,20 +215,20 @@ func (s *testChunkSuite) TestF32Column(c *check.C) {
 
 	f32s := col.Float32s()
 	for i := 0; i < 1024; i++ {
-		c.Assert(f32s[i], check.Equals, float32(i))
+		require.Equal(t, float32(i), f32s[i])
 		f32s[i] /= 2
 	}
 
 	it := NewIterator4Chunk(chk)
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetFloat32(0), check.Equals, float32(i)/2)
-		c.Assert(col.GetFloat32(int(i)), check.Equals, float32(i)/2)
+		require.Equal(t, float32(i)/2, row.GetFloat32(0))
+		require.Equal(t, float32(i)/2, col.GetFloat32(int(i)))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestDurationSliceColumn(c *check.C) {
+func TestDurationSliceColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -268,7 +237,7 @@ func (s *testChunkSuite) TestDurationSliceColumn(c *check.C) {
 
 	ds := col.GoDurations()
 	for i := 0; i < 1024; i++ {
-		c.Assert(ds[i], check.Equals, time.Duration(i))
+		require.Equal(t, time.Duration(i), ds[i])
 		d := types.Duration{Duration: ds[i]}
 		d, _ = d.Add(d)
 		ds[i] = d.Duration
@@ -277,62 +246,54 @@ func (s *testChunkSuite) TestDurationSliceColumn(c *check.C) {
 	it := NewIterator4Chunk(chk)
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetDuration(0, 0).Duration, check.Equals, time.Duration(i)*2)
-		c.Assert(col.GetDuration(int(i), 0).Duration, check.Equals, time.Duration(i)*2)
+		require.Equal(t, time.Duration(i)*2, row.GetDuration(0, 0).Duration)
+		require.Equal(t, time.Duration(i)*2, col.GetDuration(int(i), 0).Duration)
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestMyDecimal(c *check.C) {
+func TestMyDecimal(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
-		if err := d.FromFloat64(float64(i) * 1.1); err != nil {
-			c.Fatal(err)
-		}
+		err := d.FromFloat64(float64(i) * 1.1)
+		require.NoError(t, err)
 		col.AppendMyDecimal(d)
 	}
 
 	ds := col.Decimals()
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
-		if err := d.FromFloat64(float64(i) * 1.1); err != nil {
-			c.Fatal(err)
-		}
-		c.Assert(d.Compare(&ds[i]), check.Equals, 0)
+		err := d.FromFloat64(float64(i) * 1.1)
+		require.NoError(t, err)
+		require.Zero(t, d.Compare(&ds[i]))
 
-		if err := types.DecimalAdd(&ds[i], d, &ds[i]); err != nil {
-			c.Fatal(err)
-		}
+		types.DecimalAdd(&ds[i], d, &ds[i])
+		require.NoError(t, err)
+
 	}
 
 	it := NewIterator4Chunk(chk)
 	var i int64
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		d := new(types.MyDecimal)
-		if err := d.FromFloat64(float64(i) * 1.1 * 2); err != nil {
-			c.Fatal(err)
-		}
+		err := d.FromFloat64(float64(i) * 1.1 * 2)
+		require.NoError(t, err)
 
 		delta := new(types.MyDecimal)
-		if err := types.DecimalSub(d, row.GetMyDecimal(0), delta); err != nil {
-			c.Fatal(err)
-		}
+		err = types.DecimalSub(d, row.GetMyDecimal(0), delta)
+		require.NoError(t, err)
 
 		fDelta, err := delta.ToFloat64()
-		if err != nil {
-			c.Fatal(err)
-		}
-		if fDelta > 0.0001 || fDelta < -0.0001 {
-			c.Fatal()
-		}
+		require.NoError(t, err)
+		require.InDelta(t, 0, fDelta, 0.0001)
 
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestStringColumn(c *check.C) {
+func TestStringColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -342,13 +303,13 @@ func (s *testChunkSuite) TestStringColumn(c *check.C) {
 	it := NewIterator4Chunk(chk)
 	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetString(0), check.Equals, fmt.Sprintf("%v", i*i))
-		c.Assert(col.GetString(i), check.Equals, fmt.Sprintf("%v", i*i))
+		require.Equal(t, fmt.Sprintf("%v", i*i), row.GetString(0))
+		require.Equal(t, fmt.Sprintf("%v", i*i), col.GetString(i))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestSetColumn(c *check.C) {
+func TestSetColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeSet)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -360,22 +321,21 @@ func (s *testChunkSuite) TestSetColumn(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		s1 := col.GetSet(i)
 		s2 := row.GetSet(0)
-		c.Assert(s1.Name, check.Equals, s2.Name)
-		c.Assert(s1.Value, check.Equals, s2.Value)
-		c.Assert(s1.Name, check.Equals, fmt.Sprintf("%v", i))
-		c.Assert(s1.Value, check.Equals, uint64(i))
+		require.Equal(t, s2.Name, s1.Name)
+		require.Equal(t, s2.Value, s1.Value)
+		require.Equal(t, fmt.Sprintf("%v", i), s1.Name)
+		require.Equal(t, uint64(i), s1.Value)
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestJSONColumn(c *check.C) {
+func TestJSONColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		j := new(json.BinaryJSON)
-		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i))); err != nil {
-			c.Fatal(err)
-		}
+		err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, i, i)))
+		require.NoError(t, err)
 		col.AppendJSON(*j)
 	}
 
@@ -384,12 +344,12 @@ func (s *testChunkSuite) TestJSONColumn(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		j1 := col.GetJSON(i)
 		j2 := row.GetJSON(0)
-		c.Assert(j1.String(), check.Equals, j2.String())
+		require.Equal(t, j2.String(), j1.String())
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestTimeColumn(c *check.C) {
+func TestTimeColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -404,13 +364,13 @@ func (s *testChunkSuite) TestTimeColumn(c *check.C) {
 		j1 := col.GetTime(i)
 		j2 := row.GetTime(0)
 		j3 := ts[i]
-		c.Assert(j1.Compare(j2), check.Equals, 0)
-		c.Assert(j1.Compare(j3), check.Equals, 0)
+		require.Zero(t, j1.Compare(j2))
+		require.Zero(t, j1.Compare(j3))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestDurationColumn(c *check.C) {
+func TestDurationColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -422,12 +382,12 @@ func (s *testChunkSuite) TestDurationColumn(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		j1 := col.GetDuration(i, 0)
 		j2 := row.GetDuration(0, 0)
-		c.Assert(j1.Compare(j2), check.Equals, 0)
+		require.Zero(t, j1.Compare(j2))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestEnumColumn(c *check.C) {
+func TestEnumColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeEnum)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -439,15 +399,15 @@ func (s *testChunkSuite) TestEnumColumn(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		s1 := col.GetEnum(i)
 		s2 := row.GetEnum(0)
-		c.Assert(s1.Name, check.Equals, s2.Name)
-		c.Assert(s1.Value, check.Equals, s2.Value)
-		c.Assert(s1.Name, check.Equals, fmt.Sprintf("%v", i))
-		c.Assert(s1.Value, check.Equals, uint64(i))
+		require.Equal(t, s2.Name, s1.Name)
+		require.Equal(t, s2.Value, s1.Value)
+		require.Equal(t, fmt.Sprintf("%v", i), s1.Name)
+		require.Equal(t, uint64(i), s1.Value)
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestNullsColumn(c *check.C) {
+func TestNullsColumn(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -462,16 +422,16 @@ func (s *testChunkSuite) TestNullsColumn(c *check.C) {
 	var i int
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		if i%2 == 0 {
-			c.Assert(row.IsNull(0), check.Equals, true)
-			c.Assert(col.IsNull(i), check.Equals, true)
+			require.True(t, row.IsNull(0))
+			require.True(t, col.IsNull(i))
 		} else {
-			c.Assert(row.GetInt64(0), check.Equals, int64(i))
+			require.Equal(t, int64(i), row.GetInt64(0))
 		}
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestReconstructFixedLen(c *check.C) {
+func TestReconstructFixedLen(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -499,13 +459,13 @@ func (s *testChunkSuite) TestReconstructFixedLen(c *check.C) {
 	for n, i := range sel {
 		if nulls[i] {
 			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
+			require.True(t, col.IsNull(n))
 		} else {
-			c.Assert(col.GetInt64(n), check.Equals, results[i])
+			require.Equal(t, results[i], col.GetInt64(n))
 		}
 	}
-	c.Assert(nullCnt, check.Equals, col.nullCount())
-	c.Assert(col.length, check.Equals, len(sel))
+	require.Equal(t, col.nullCount(), nullCnt)
+	require.Equal(t, len(sel), col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -515,19 +475,19 @@ func (s *testChunkSuite) TestReconstructFixedLen(c *check.C) {
 		}
 	}
 
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount(), check.Equals, nullCnt+128/2)
+	require.Equal(t, len(sel)+128, col.length)
+	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
+			require.True(t, col.IsNull(len(sel)+i))
 		} else {
-			c.Assert(col.GetInt64(len(sel)+i), check.Equals, int64(i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
+			require.Equal(t, int64(i*i*i), col.GetInt64(len(sel)+i))
+			require.False(t, col.IsNull(len(sel)+i))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
+func TestReconstructVarLen(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -555,13 +515,13 @@ func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
 	for n, i := range sel {
 		if nulls[i] {
 			nullCnt++
-			c.Assert(col.IsNull(n), check.Equals, true)
+			require.True(t, col.IsNull(n))
 		} else {
-			c.Assert(col.GetString(n), check.Equals, results[i])
+			require.Equal(t, results[i], col.GetString(n))
 		}
 	}
-	c.Assert(nullCnt, check.Equals, col.nullCount())
-	c.Assert(col.length, check.Equals, len(sel))
+	require.Equal(t, col.nullCount(), nullCnt)
+	require.Equal(t, len(sel), col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -571,106 +531,106 @@ func (s *testChunkSuite) TestReconstructVarLen(c *check.C) {
 		}
 	}
 
-	c.Assert(col.length, check.Equals, len(sel)+128)
-	c.Assert(col.nullCount(), check.Equals, nullCnt+128/2)
+	require.Equal(t, len(sel)+128, col.length)
+	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, true)
+			require.True(t, col.IsNull(len(sel)+i))
 		} else {
-			c.Assert(col.GetString(len(sel)+i), check.Equals, fmt.Sprintf("%v", i*i*i))
-			c.Assert(col.IsNull(len(sel)+i), check.Equals, false)
+			require.Equal(t, fmt.Sprintf("%v", i*i*i), col.GetString(len(sel)+i))
+			require.False(t, col.IsNull(len(sel)+i))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestPreAllocInt64(c *check.C) {
+func TestPreAllocInt64(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 128)
 	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
-	c.Assert(len(i64s), check.Equals, 256)
+	require.Equal(t, 256, len(i64s))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendInt64(2333)
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Int64s()), check.Equals, 257)
-	c.Assert(col.Int64s()[256], check.Equals, int64(2333))
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Int64s()))
+	require.Equal(t, int64(2333), col.Int64s()[256])
 }
 
-func (s *testChunkSuite) TestPreAllocUint64(c *check.C) {
+func TestPreAllocUint64(t *testing.T) {
 	tll := types.NewFieldType(mysql.TypeLonglong)
 	tll.Flag |= mysql.UnsignedFlag
 	col := NewColumn(tll, 128)
 	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()
-	c.Assert(len(u64s), check.Equals, 256)
+	require.Equal(t, 256, len(u64s))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendUint64(2333)
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Uint64s()), check.Equals, 257)
-	c.Assert(col.Uint64s()[256], check.Equals, uint64(2333))
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Uint64s()))
+	require.Equal(t, uint64(2333), col.Uint64s()[256])
 }
 
-func (s *testChunkSuite) TestPreAllocFloat32(c *check.C) {
+func TestPreAllocFloat32(t *testing.T) {
 	col := newFixedLenColumn(sizeFloat32, 128)
 	col.ResizeFloat32(256, true)
 	f32s := col.Float32s()
-	c.Assert(len(f32s), check.Equals, 256)
+	require.Equal(t, 256, len(f32s))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat32(2333)
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float32s()), check.Equals, 257)
-	c.Assert(col.Float32s()[256], check.Equals, float32(2333))
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Float32s()))
+	require.Equal(t, float32(2333), col.Float32s()[256])
 }
 
-func (s *testChunkSuite) TestPreAllocFloat64(c *check.C) {
+func TestPreAllocFloat64(t *testing.T) {
 	col := newFixedLenColumn(sizeFloat64, 128)
 	col.ResizeFloat64(256, true)
 	f64s := col.Float64s()
-	c.Assert(len(f64s), check.Equals, 256)
+	require.Equal(t, 256, len(f64s))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendFloat64(2333)
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float64s()), check.Equals, 257)
-	c.Assert(col.Float64s()[256], check.Equals, float64(2333))
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Float64s()))
+	require.Equal(t, float64(2333), col.Float64s()[256])
 }
 
-func (s *testChunkSuite) TestPreAllocDecimal(c *check.C) {
+func TestPreAllocDecimal(t *testing.T) {
 	col := newFixedLenColumn(sizeMyDecimal, 128)
 	col.ResizeDecimal(256, true)
 	ds := col.Decimals()
-	c.Assert(len(ds), check.Equals, 256)
+	require.Equal(t, 256, len(ds))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendMyDecimal(new(types.MyDecimal))
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Float64s()), check.Equals, 257)
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Float64s()))
 }
 
-func (s *testChunkSuite) TestPreAllocTime(c *check.C) {
+func TestPreAllocTime(t *testing.T) {
 	col := newFixedLenColumn(sizeTime, 128)
 	col.ResizeTime(256, true)
 	ds := col.Times()
-	c.Assert(len(ds), check.Equals, 256)
+	require.Equal(t, 256, len(ds))
 	for i := 0; i < 256; i++ {
-		c.Assert(col.IsNull(i), check.Equals, true)
+		require.True(t, col.IsNull(i))
 	}
 	col.AppendTime(types.ZeroDatetime)
-	c.Assert(col.IsNull(256), check.Equals, false)
-	c.Assert(len(col.Times()), check.Equals, 257)
+	require.False(t, col.IsNull(256))
+	require.Equal(t, 257, len(col.Times()))
 }
 
-func (s *testChunkSuite) TestNull(c *check.C) {
+func TestNull(t *testing.T) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024, true)
-	c.Assert(col.nullCount(), check.Equals, 1024)
+	require.Equal(t, 1024, col.nullCount())
 
 	notNulls := make(map[int]struct{})
 	for i := 0; i < 512; i++ {
@@ -679,33 +639,33 @@ func (s *testChunkSuite) TestNull(c *check.C) {
 		col.SetNull(idx, false)
 	}
 
-	c.Assert(col.nullCount(), check.Equals, 1024-len(notNulls))
+	require.Equal(t, 1024-len(notNulls), col.nullCount())
 	for idx := range notNulls {
-		c.Assert(col.IsNull(idx), check.Equals, false)
+		require.False(t, col.IsNull(idx))
 	}
 
 	col.ResizeFloat64(8, true)
 	col.SetNulls(0, 8, true)
 	col.SetNull(7, false)
-	c.Assert(col.nullCount(), check.Equals, 7)
+	require.Equal(t, 7, col.nullCount())
 
 	col.ResizeFloat64(8, true)
 	col.SetNulls(0, 8, true)
-	c.Assert(col.nullCount(), check.Equals, 8)
+	require.Equal(t, 8, col.nullCount())
 
 	col.ResizeFloat64(9, true)
 	col.SetNulls(0, 9, true)
 	col.SetNull(8, false)
-	c.Assert(col.nullCount(), check.Equals, 8)
+	require.Equal(t, 8, col.nullCount())
 }
 
-func (s *testChunkSuite) TestSetNulls(c *check.C) {
+func TestSetNulls(t *testing.T) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024, true)
-	c.Assert(col.nullCount(), check.Equals, 1024)
+	require.Equal(t, 1024, col.nullCount())
 
 	col.SetNulls(0, 1024, false)
-	c.Assert(col.nullCount(), check.Equals, 0)
+	require.Zero(t, col.nullCount())
 
 	nullMap := make(map[int]struct{})
 	for i := 0; i < 100; i++ {
@@ -720,37 +680,37 @@ func (s *testChunkSuite) TestSetNulls(c *check.C) {
 		}
 		col.SetNulls(begin, end, true)
 
-		c.Assert(col.nullCount(), check.Equals, len(nullMap))
+		require.Equal(t, len(nullMap), col.nullCount())
 		for k := range nullMap {
-			c.Assert(col.IsNull(k), check.Equals, true)
+			require.True(t, col.IsNull(k))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestResizeReserve(c *check.C) {
+func TestResizeReserve(t *testing.T) {
 	cI64s := newFixedLenColumn(sizeInt64, 0)
-	c.Assert(cI64s.length, check.Equals, 0)
+	require.Zero(t, cI64s.length)
 	for i := 0; i < 100; i++ {
-		t := rand.Intn(1024)
-		cI64s.ResizeInt64(t, true)
-		c.Assert(cI64s.length, check.Equals, t)
-		c.Assert(len(cI64s.Int64s()), check.Equals, t)
+		n := rand.Intn(1024)
+		cI64s.ResizeInt64(n, true)
+		require.Equal(t, n, cI64s.length)
+		require.Equal(t, n, len(cI64s.Int64s()))
 	}
 	cI64s.ResizeInt64(0, true)
-	c.Assert(cI64s.length, check.Equals, 0)
-	c.Assert(len(cI64s.Int64s()), check.Equals, 0)
+	require.Zero(t, cI64s.length)
+	require.Zero(t, len(cI64s.Int64s()))
 
-	cStrs := newVarLenColumn(0, nil)
+	cStrs := newVarLenColumn(0)
 	for i := 0; i < 100; i++ {
-		t := rand.Intn(1024)
-		cStrs.ReserveString(t)
-		c.Assert(cStrs.length, check.Equals, 0)
+		n := rand.Intn(1024)
+		cStrs.ReserveString(n)
+		require.Zero(t, cStrs.length)
 	}
 	cStrs.ReserveString(0)
-	c.Assert(cStrs.length, check.Equals, 0)
+	require.Zero(t, cStrs.length)
 }
 
-func (s *testChunkSuite) TestGetRaw(c *check.C) {
+func TestGetRaw(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -761,8 +721,8 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		f := float32(i)
 		b := (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
-		c.Assert(row.GetRaw(0), check.DeepEquals, b)
-		c.Assert(col.GetRaw(i), check.DeepEquals, b)
+		require.Equal(t, b, row.GetRaw(0))
+		require.Equal(t, b, col.GetRaw(i))
 		i++
 	}
 
@@ -774,20 +734,20 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 	it = NewIterator4Chunk(chk)
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		c.Assert(row.GetRaw(0), check.DeepEquals, []byte(fmt.Sprint(i)))
-		c.Assert(col.GetRaw(i), check.DeepEquals, []byte(fmt.Sprint(i)))
+		require.Equal(t, []byte(fmt.Sprint(i)), row.GetRaw(0))
+		require.Equal(t, []byte(fmt.Sprint(i)), col.GetRaw(i))
 		i++
 	}
 }
 
-func (s *testChunkSuite) TestResize(c *check.C) {
+func TestResize(t *testing.T) {
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendInt64(int64(i))
 	}
 	col.ResizeInt64(1024, false)
 	for i := 0; i < 1024; i++ {
-		c.Assert(col.Int64s()[i], check.Equals, int64(0))
+		require.Equal(t, int64(0), col.Int64s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeFloat), 1024)
@@ -796,7 +756,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	}
 	col.ResizeFloat32(1024, false)
 	for i := 0; i < 1024; i++ {
-		c.Assert(col.Float32s()[i], check.Equals, float32(0))
+		require.Equal(t, float32(0), col.Float32s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDouble), 1024)
@@ -805,7 +765,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	}
 	col.ResizeFloat64(1024, false)
 	for i := 0; i < 1024; i++ {
-		c.Assert(col.Float64s()[i], check.Equals, float64(0))
+		require.Equal(t, float64(0), col.Float64s()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeNewDecimal), 1024)
@@ -815,7 +775,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	col.ResizeDecimal(1024, false)
 	for i := 0; i < 1024; i++ {
 		var d types.MyDecimal
-		c.Assert(col.Decimals()[i], check.Equals, d)
+		require.Equal(t, d, col.Decimals()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
@@ -824,7 +784,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	}
 	col.ResizeGoDuration(1024, false)
 	for i := 0; i < 1024; i++ {
-		c.Assert(col.GoDurations()[i], check.Equals, time.Duration(0))
+		require.Equal(t, time.Duration(0), col.GoDurations()[i])
 	}
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDatetime), 1024)
@@ -835,8 +795,8 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	}
 	col.ResizeTime(1024, false)
 	for i := 0; i < 1024; i++ {
-		var t types.Time
-		c.Assert(col.Times()[i], check.Equals, t)
+		var time types.Time
+		require.Equal(t, time, col.Times()[i])
 	}
 }
 
@@ -960,7 +920,7 @@ func genNullCols(n int) []*Column {
 	return cols
 }
 
-func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
+func TestVectorizedNulls(t *testing.T) {
 	for i := 0; i < 256; i++ {
 		cols := genNullCols(4)
 		lCol, rCol := cols[0], cols[1]
@@ -973,12 +933,12 @@ func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
 		}
 
 		for i := 0; i < 1024; i++ {
-			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
+			require.Equal(t, vecResult.IsNull(i), rowResult.IsNull(i))
 		}
 	}
 }
 
-func (s *testChunkSuite) TestResetColumn(c *check.C) {
+func TestResetColumn(t *testing.T) {
 	col0 := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
 	col1 := NewColumn(types.NewFieldType(mysql.TypeLonglong), 0)
 
@@ -992,7 +952,7 @@ func (s *testChunkSuite) TestResetColumn(c *check.C) {
 	col.AppendDuration(types.Duration{})
 	// using col.reset() above will let this assertion fail since the length of initialized elemBuf
 	// is sizeTime.
-	c.Assert(len(col.data), check.Equals, sizeGoDuration)
+	require.Equal(t, sizeGoDuration, len(col.data))
 }
 
 func BenchmarkMergeNullsVectorized(b *testing.B) {

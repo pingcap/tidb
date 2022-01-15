@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,10 +21,34 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
+
+// MutableRanges represents a range may change after it is created.
+// It's mainly designed for plan-cache, since some ranges in a cached plan have to be rebuild when reusing.
+type MutableRanges interface {
+	// Range returns the underlying range values.
+	Range() []*Range
+	// Rebuild rebuilds the underlying ranges again.
+	Rebuild() error
+}
+
+// Ranges implements the MutableRanges interface for range array.
+type Ranges []*Range
+
+// Range returns the range array.
+func (rs Ranges) Range() []*Range {
+	return rs
+}
+
+// Rebuild rebuilds this range.
+func (rs Ranges) Rebuild() error {
+	return nil
+}
 
 // Range represents a range generated in physical plan building phase.
 type Range struct {
@@ -32,6 +57,12 @@ type Range struct {
 
 	LowExclude  bool // Low value is exclusive.
 	HighExclude bool // High value is exclusive.
+	Collators   []collate.Collator
+}
+
+// Width returns the width of this range.
+func (ran *Range) Width() int {
+	return len(ran.LowVal)
 }
 
 // Clone clones a Range.
@@ -48,37 +79,16 @@ func (ran *Range) Clone() *Range {
 	for i, length := 0, len(ran.HighVal); i < length; i++ {
 		newRange.HighVal = append(newRange.HighVal, ran.HighVal[i])
 	}
+	newRange.Collators = append(newRange.Collators, ran.Collators...)
 	return newRange
 }
 
 // IsPoint returns if the range is a point.
-func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
-	if len(ran.LowVal) != len(ran.HighVal) {
-		return false
-	}
-	for i := range ran.LowVal {
-		a := ran.LowVal[i]
-		b := ran.HighVal[i]
-		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
-			return false
-		}
-		cmp, err := a.CompareDatum(sc, &b)
-		if err != nil {
-			return false
-		}
-		if cmp != 0 {
-			return false
-		}
-
-		if a.IsNull() {
-			return false
-		}
-	}
-	return !ran.LowExclude && !ran.HighExclude
+func (ran *Range) IsPoint(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx.GetSessionVars().StmtCtx, sctx.GetSessionVars().RegardNULLAsPoint)
 }
 
-// IsPointNullable returns if the range is a point.
-func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
+func (ran *Range) isPoint(stmtCtx *stmtctx.StatementContext, regardNullAsPoint bool) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -88,7 +98,7 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := a.CompareDatum(sc, &b)
+		cmp, err := a.Compare(stmtCtx, &b, ran.Collators[i])
 		if err != nil {
 			return false
 		}
@@ -96,8 +106,8 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 			return false
 		}
 
-		if a.IsNull() {
-			if !b.IsNull() {
+		if a.IsNull() && b.IsNull() { // [NULL, NULL]
+			if !regardNullAsPoint {
 				return false
 			}
 		}
@@ -105,8 +115,27 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+// IsPointNonNullable returns if the range is a point without NULL.
+func (ran *Range) IsPointNonNullable(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx.GetSessionVars().StmtCtx, false)
+}
+
+// IsPointNullable returns if the range is a point.
+// TODO: unify the parameter type with IsPointNullable and IsPoint
+func (ran *Range) IsPointNullable(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx.GetSessionVars().StmtCtx, true)
+}
+
 // IsFullRange check if the range is full scan range
-func (ran *Range) IsFullRange() bool {
+func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
+	if unsignedIntHandle {
+		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
+			return false
+		}
+		lowValRawString := formatDatum(ran.LowVal[0], true)
+		highValRawString := formatDatum(ran.HighVal[0], false)
+		return lowValRawString == "0" && highValRawString == "+inf"
+	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -123,9 +152,9 @@ func (ran *Range) IsFullRange() bool {
 }
 
 // HasFullRange checks if any range in the slice is a full range.
-func HasFullRange(ranges []*Range) bool {
+func HasFullRange(ranges []*Range, unsignedIntHandle bool) bool {
 	for _, ran := range ranges {
-		if ran.IsFullRange() {
+		if ran.IsFullRange(unsignedIntHandle) {
 			return true
 		}
 	}
@@ -177,7 +206,7 @@ func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []b
 func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
 	for i := 0; i < len(ran.LowVal); i++ {
-		cmp, err := ran.LowVal[i].CompareDatum(sc, &ran.HighVal[i])
+		cmp, err := ran.LowVal[i].Compare(sc, &ran.HighVal[i], ran.Collators[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

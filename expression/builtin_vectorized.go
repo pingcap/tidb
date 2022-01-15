@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -48,26 +49,6 @@ func newLocalColumnPool() *localColumnPool {
 }
 
 var globalColumnAllocator = newLocalColumnPool()
-
-func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	switch evalType {
-	case types.ETInt:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
-	case types.ETReal:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDouble), capacity), nil
-	case types.ETDecimal:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), capacity), nil
-	case types.ETDuration:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDuration), capacity), nil
-	case types.ETDatetime, types.ETTimestamp:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), capacity), nil
-	case types.ETString:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeString), capacity), nil
-	case types.ETJson:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), capacity), nil
-	}
-	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
-}
 
 // GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
 func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {

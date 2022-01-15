@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,21 +17,22 @@ package memo
 import (
 	"encoding/binary"
 	"reflect"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testMemoSuite) TestNewGroupExpr(c *C) {
+func TestNewGroupExpr(t *testing.T) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	c.Assert(expr.ExprNode, Equals, p)
-	c.Assert(expr.Children, IsNil)
-	c.Assert(expr.Explored(0), IsFalse)
+	require.Equal(t, p, expr.ExprNode)
+	require.Nil(t, expr.Children)
+	require.False(t, expr.Explored(0))
 }
 
-func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
+func TestGroupExprFingerprint(t *testing.T) {
 	p := &plannercore.LogicalLimit{Count: 3}
 	expr := NewGroupExpr(p)
 	childGroup := NewGroupWithSchema(nil, expression.NewSchema())
@@ -41,5 +43,5 @@ func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
 	binary.BigEndian.PutUint16(buffer, 1)
 	binary.BigEndian.PutUint64(buffer[2:], uint64(reflect.ValueOf(childGroup).Pointer()))
 	copy(buffer[10:], planHash)
-	c.Assert(expr.FingerPrint(), Equals, string(buffer))
+	require.Equal(t, string(buffer), expr.FingerPrint())
 }

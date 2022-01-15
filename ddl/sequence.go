@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,11 +20,11 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	math2 "github.com/pingcap/tidb/util/math"
 )
 
@@ -104,7 +105,9 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 			maxSetFlag = true
 		case ast.SequenceCache:
 			sequenceInfo.CacheValue = op.IntValue
+			sequenceInfo.Cache = true
 		case ast.SequenceNoCache:
+			sequenceInfo.CacheValue = 0
 			sequenceInfo.Cache = false
 		case ast.SequenceCycle:
 			sequenceInfo.Cycle = true
@@ -139,13 +142,13 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 }
 
 func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
-	// To ensure that cache * increment will never overflows.
+	// To ensure that cache * increment will never overflow.
 	var maxIncrement int64
 	if seqInfo.Increment == 0 {
 		// Increment shouldn't be set as 0.
 		return false
 	}
-	if seqInfo.CacheValue <= 0 {
+	if seqInfo.Cache && seqInfo.CacheValue <= 0 {
 		// Cache value should be bigger than 0.
 		return false
 	}
@@ -204,7 +207,9 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			oldSequence.MaxValue = op.IntValue
 		case ast.SequenceCache:
 			oldSequence.CacheValue = op.IntValue
+			oldSequence.Cache = true
 		case ast.SequenceNoCache:
+			oldSequence.CacheValue = 0
 			oldSequence.Cache = false
 		case ast.SequenceCycle:
 			oldSequence.Cycle = true

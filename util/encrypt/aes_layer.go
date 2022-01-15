@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,10 +17,12 @@ package encrypt
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
-	"math/rand"
+	"math"
+	"math/big"
 )
 
 var errInvalidBlockSize = errors.New("invalid encrypt block size")
@@ -45,7 +48,10 @@ func NewCtrCipher() (ctr *CtrCipher, err error) {
 // NewCtrCipherWithBlockSize return a CtrCipher with the encrypt block size
 func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err error) {
 	key := make([]byte, aes.BlockSize)
-	rand.Read(key)
+	_, err = rand.Read(key)
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -55,7 +61,11 @@ func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err erro
 	}
 	ctr = new(CtrCipher)
 	ctr.block = block
-	ctr.nonce = rand.Uint64()
+	nonce, err := rand.Int(rand.Reader, big.NewInt(int64(math.MaxInt64)))
+	if err != nil {
+		return nil, err
+	}
+	ctr.nonce = nonce.Uint64()
 	ctr.encryptBlockSize = encryptBlockSize
 	ctr.aesBlockCount = encryptBlockSize / aes.BlockSize
 	return

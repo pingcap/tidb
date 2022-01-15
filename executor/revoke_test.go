@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -84,7 +85,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View,References"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {
@@ -192,4 +193,26 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustExec("GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT ON *.* TO dyn WITH GRANT OPTION")
 	tk.MustExec("REVOKE BACKUP_ADMIN, SELECT, GRANT OPTION ON *.* FROM dyn")
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % SYSTEM_VARIABLES_ADMIN Y"))
+}
+
+func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
+	// issue #28533
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE d1;")
+	defer tk.MustExec("DROP DATABASE IF EXISTS d1;")
+	tk.MustExec("USE d1;")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	defer tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE USER issue28533")
+	defer tk.MustExec("DROP USER issue28533")
+
+	// GRANT ON existent table success
+	tk.MustExec("GRANT ALTER ON d1.t1 TO issue28533;")
+	// GRANT ON non-existent table success
+	tk.MustExec("GRANT INSERT, CREATE ON d1.t2 TO issue28533;")
+
+	// REVOKE ON non-existent table success
+	tk.MustExec("DROP TABLE t1;")
+	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
 }

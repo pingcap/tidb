@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,13 +25,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// Used for pessimistic lock wait time
+// LockNoWait is used for pessimistic lock wait time
 // these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
-)
+// -1 means nowait, others meaning lock wait in milliseconds
+var LockNoWait = int64(-1)
 
 // Manager represents a waiters manager.
 type Manager struct {

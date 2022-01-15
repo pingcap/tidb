@@ -8,14 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	pmysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -33,6 +34,8 @@ var (
 	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
+	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
+	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
@@ -48,6 +51,8 @@ var (
 	errUnknownLocale                 = dbterror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
 	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 	errWrongValueForType             = dbterror.ClassExpression.NewStd(mysql.ErrWrongValueForType)
+	errUnknown                       = dbterror.ClassExpression.NewStd(mysql.ErrUnknown)
+	errSpecificAccessDenied          = dbterror.ClassExpression.NewStd(mysql.ErrSpecificAccessDenied)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
@@ -82,5 +87,23 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 		}
 	}
 	sc.AppendWarning(ErrDivisionByZero)
+	return nil
+}
+
+// handleAllowedPacketOverflowed reports error or warning depend on the context.
+func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxAllowedPacketSize uint64) error {
+	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	// insert|update|delete ignore ...
+	if sc.TruncateAsWarning {
+		sc.AppendWarning(err)
+		return nil
+	}
+
+	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
+		return err
+	}
+	sc.AppendWarning(err)
 	return nil
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,16 +21,16 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
-	ptypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
+	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,12 +40,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -542,7 +544,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
 				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
-					waitTime = tikv.LockNoWait
+					waitTime = tikvstore.LockNoWait
 				}
 			}
 		}
@@ -555,6 +557,7 @@ func newBatchPointGetPlan(
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
 ) *BatchPointGetPlan {
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
 	var partitionExpr *tables.PartitionExpr
 	if tbl.GetPartitionInfo() != nil {
@@ -592,16 +595,8 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			if !checkCanConvertInPointGet(handleCol, d) {
-				return nil
-			}
-			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
-			if err != nil {
-				return nil
-			}
-			// The converted result must be same as original datum
-			cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &d)
-			if err != nil || cmp != 0 {
+			intDatum := getPointGetValue(stmtCtx, handleCol, &d)
+			if intDatum == nil {
 				return nil
 			}
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
@@ -685,12 +680,14 @@ func newBatchPointGetPlan(
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
-					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					if dval == nil {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
-					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					if dval == nil {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
@@ -705,18 +702,20 @@ func newBatchPointGetPlan(
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			if dval == nil {
 				return nil
 			}
-			values = []types.Datum{x.Datum}
+			values = []types.Datum{*dval}
 		case *driver.ParamMarkerExpr:
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			if dval == nil {
 				return nil
 			}
-			values = []types.Datum{x.Datum}
+			values = []types.Datum{*dval}
 			valuesParams = []*driver.ParamMarkerExpr{x}
 		default:
 			return nil
@@ -830,7 +829,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // To use the PointGetPlan the following rules must be satisfied:
 // 1. For the limit clause, the count should at least 1 and the offset is 0.
 // 2. It must be a single table select.
-// 3. All the columns must be public and generated.
+// 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
 	if selStmt.Having != nil {
@@ -1034,7 +1033,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	var visitInfos []visitInfo
+	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
 		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
@@ -1215,17 +1214,29 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			}
 		}
 		// The converted result must be same as original datum.
-		// Compare them based on the dVal's type.
-		cmp, err := dVal.CompareDatum(stmtCtx, &d)
-		if err != nil {
+		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
+		if err != nil || cmp != 0 {
 			return nil, false
-		} else if cmp != 0 {
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
-
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
+}
+
+func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, d *types.Datum) *types.Datum {
+	if !checkCanConvertInPointGet(col, *d) {
+		return nil
+	}
+	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+	if err != nil {
+		return nil
+	}
+	// The converted result must be same as original datum.
+	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.Collate))
+	if err != nil || cmp != 0 {
+		return nil
+	}
+	return &dVal
 }
 
 func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {

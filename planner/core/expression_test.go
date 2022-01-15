@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,37 +16,21 @@ package core
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testExpressionSuite{})
-
-type testExpressionSuite struct {
-	*parser.Parser
-	ctx sessionctx.Context
-}
-
-func (s *testExpressionSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	s.ctx = mock.NewContext()
-}
-
-func (s *testExpressionSuite) TearDownSuite(c *C) {
-}
-
-func (s *testExpressionSuite) parseExpr(c *C, expr string) ast.ExprNode {
-	st, err := s.ParseOneStmt("select "+expr, "", "")
-	c.Assert(err, IsNil)
+func parseExpr(t *testing.T, expr string) ast.ExprNode {
+	p := parser.New()
+	st, err := p.ParseOneStmt("select "+expr, "", "")
+	require.NoError(t, err)
 	stmt := st.(*ast.SelectStmt)
 	return stmt.Fields.Fields[0].Expr
 }
@@ -55,18 +40,18 @@ type testCase struct {
 	resultStr string
 }
 
-func (s *testExpressionSuite) runTests(c *C, tests []testCase) {
+func runTests(t *testing.T, tests []testCase) {
+	ctx := MockContext()
 	for _, tt := range tests {
-		expr := s.parseExpr(c, tt.exprStr)
-		val, err := evalAstExpr(s.ctx, expr)
-		c.Assert(err, IsNil)
+		expr := parseExpr(t, tt.exprStr)
+		val, err := evalAstExpr(ctx, expr)
+		require.NoError(t, err)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %s", tt.exprStr))
+		require.Equalf(t, tt.resultStr, valStr, "for %s", tt.exprStr)
 	}
 }
 
-func (s *testExpressionSuite) TestBetween(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBetween(t *testing.T) {
 	tests := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
@@ -74,11 +59,10 @@ func (s *testExpressionSuite) TestBetween(c *C) {
 		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 010501", resultStr: "0"},
 		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 20010501123456", resultStr: "1"},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 }
 
-func (s *testExpressionSuite) TestCaseWhen(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCaseWhen(t *testing.T) {
 	tests := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
@@ -97,7 +81,7 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 			resultStr: "str3",
 		},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 
 	// When expression value changed, result set back to null.
 	valExpr := ast.NewValueExpr(1, "", "")
@@ -106,53 +90,55 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
-	v, err := evalAstExpr(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
+	ctx := MockContext()
+	v, err := evalAstExpr(ctx, caseExpr)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDatum(int64(1)), v)
 	valExpr.SetValue(4)
-	v, err = evalAstExpr(s.ctx, caseExpr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
+	v, err = evalAstExpr(ctx, caseExpr)
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, v.Kind())
 }
 
-func (s *testExpressionSuite) TestCast(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCast(t *testing.T) {
 	f := types.NewFieldType(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
 		Expr: ast.NewValueExpr(1, "", ""),
 		Tp:   f,
 	}
+
+	ctx := MockContext()
+
 	ast.SetFlag(expr)
-	v, err := evalAstExpr(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
+	v, err := evalAstExpr(ctx, expr)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDatum(int64(1)), v)
 
 	f.Flag |= mysql.UnsignedFlag
-	v, err = evalAstExpr(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(1)))
+	v, err = evalAstExpr(ctx, expr)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDatum(uint64(1)), v)
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetBin
-	v, err = evalAstExpr(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum([]byte("1")))
+	v, err = evalAstExpr(ctx, expr)
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	f.Tp = mysql.TypeString
-	f.Charset = "utf8"
-	v, err = evalAstExpr(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
+	f.Charset = charset.CharsetUTF8
+	v, err = evalAstExpr(ctx, expr)
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	expr.Expr = ast.NewValueExpr(nil, "", "")
-	v, err = evalAstExpr(s.ctx, expr)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
+	v, err = evalAstExpr(ctx, expr)
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, v.Kind())
 }
 
-func (s *testExpressionSuite) TestPatternIn(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPatternIn(t *testing.T) {
 	tests := []testCase{
 		{
 			exprStr:   "1 not in (1, 2, 3)",
@@ -195,11 +181,10 @@ func (s *testExpressionSuite) TestPatternIn(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 }
 
-func (s *testExpressionSuite) TestIsNull(c *C) {
-	defer testleak.AfterTest(c)()
+func TestIsNull(t *testing.T) {
 	tests := []testCase{
 		{
 			exprStr:   "1 IS NULL",
@@ -218,11 +203,10 @@ func (s *testExpressionSuite) TestIsNull(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 }
 
-func (s *testExpressionSuite) TestCompareRow(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCompareRow(t *testing.T) {
 	tests := []testCase{
 		{
 			exprStr:   "row(1,2,3)=row(1,2,3)",
@@ -261,11 +245,10 @@ func (s *testExpressionSuite) TestCompareRow(c *C) {
 			resultStr: "1",
 		},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 }
 
-func (s *testExpressionSuite) TestIsTruth(c *C) {
-	defer testleak.AfterTest(c)()
+func TestIsTruth(t *testing.T) {
 	tests := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
@@ -332,5 +315,5 @@ func (s *testExpressionSuite) TestIsTruth(c *C) {
 			resultStr: "1",
 		},
 	}
-	s.runTests(c, tests)
+	runTests(t, tests)
 }

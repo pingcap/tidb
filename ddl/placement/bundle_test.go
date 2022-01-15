@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -340,207 +341,18 @@ func (s *testBundleSuite) TestGetLeaderDCByBundle(c *C) {
 	}
 }
 
-func (s *testBundleSuite) TestApplyPlacmentSpec(c *C) {
-	type TestCase struct {
-		name   string
-		input  []*ast.PlacementSpec
-		output []*Rule
-		err    error
-	}
-	var tests []TestCase
-
-	tests = append(tests, TestCase{
-		name:   "empty",
-		input:  []*ast.PlacementSpec{},
-		output: []*Rule{},
-	})
-
-	rules, err := NewRules(3, `["+zone=sh", "+zone=sh"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules, HasLen, 1)
-	rules[0].Role = Voter
-	tests = append(tests, TestCase{
-		name: "add voter array",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleVoter,
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: `["+zone=sh", "+zone=sh"]`,
-		}},
-		output: rules,
-	})
-
-	rules, err = NewRules(3, `["+zone=sh", "+zone=sh"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules, HasLen, 1)
-	rules[0].Role = Learner
-	tests = append(tests, TestCase{
-		name: "add learner array",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleLearner,
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: `["+zone=sh", "+zone=sh"]`,
-		}},
-		output: rules,
-	})
-
-	rules, err = NewRules(3, `["+zone=sh", "+zone=sh"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules, HasLen, 1)
-	rules[0].Role = Follower
-	tests = append(tests, TestCase{
-		name: "add follower array",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleFollower,
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: `["+zone=sh", "+zone=sh"]`,
-		}},
-		output: rules,
-	})
-
-	tests = append(tests, TestCase{
-		name: "add invalid constraints",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleVoter,
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: "ne",
-		}},
-		err: ErrInvalidConstraintsFormat,
-	})
-
-	tests = append(tests, TestCase{
-		name: "add empty role",
-		input: []*ast.PlacementSpec{{
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: "",
-		}},
-		err: ErrMissingRoleField,
-	})
-
-	tests = append(tests, TestCase{
-		name: "add multiple leaders",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleLeader,
-			Tp:          ast.PlacementAdd,
-			Replicas:    3,
-			Constraints: "",
-		}},
-		err: ErrLeaderReplicasMustOne,
-	})
-
-	rules, err = NewRules(1, "")
-	c.Assert(err, IsNil)
-	c.Assert(rules, HasLen, 1)
-	rules[0].Role = Leader
-	tests = append(tests, TestCase{
-		name: "omit leader field",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleLeader,
-			Tp:          ast.PlacementAdd,
-			Constraints: "",
-		}},
-		output: rules,
-	})
-
-	rules, err = NewRules(3, `["-zone=sh","+zone=bj"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules, HasLen, 1)
-	rules[0].Role = Follower
-	tests = append(tests, TestCase{
-		name: "drop",
-		input: []*ast.PlacementSpec{
-			{
-				Role:        ast.PlacementRoleFollower,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["-  zone=sh", "+zone = bj"]`,
-			},
-			{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+  zone=sh", "-zone = bj"]`,
-			},
-			{
-				Role: ast.PlacementRoleVoter,
-				Tp:   ast.PlacementDrop,
-			},
-		},
-		output: rules,
-	})
-
-	tests = append(tests, TestCase{
-		name: "drop unexisted",
-		input: []*ast.PlacementSpec{{
-			Role:        ast.PlacementRoleLeader,
-			Tp:          ast.PlacementDrop,
-			Constraints: "",
-		}},
-		err: ErrNoRulesToDrop,
-	})
-
-	rules1, err := NewRules(3, `["-zone=sh","+zone=bj"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules1, HasLen, 1)
-	rules1[0].Role = Follower
-	rules2, err := NewRules(3, `["+zone=sh","-zone=bj"]`)
-	c.Assert(err, IsNil)
-	c.Assert(rules2, HasLen, 1)
-	rules2[0].Role = Voter
-	tests = append(tests, TestCase{
-		name: "alter",
-		input: []*ast.PlacementSpec{
-			{
-				Role:        ast.PlacementRoleFollower,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["-  zone=sh", "+zone = bj"]`,
-			},
-			{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["-  zone=sh", "+zone = bj"]`,
-			},
-			{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAlter,
-				Replicas:    3,
-				Constraints: `["+  zone=sh", "-zone = bj"]`,
-			},
-		},
-		output: append(rules1, rules2...),
-	})
-
-	for _, t := range tests {
-		comment := Commentf("%s", t.name)
-		bundle := &Bundle{}
-		err := bundle.ApplyPlacementSpec(t.input)
-		if t.err == nil {
-			c.Assert(err, IsNil)
-			matchRules(t.output, bundle.Rules, comment.CheckCommentString(), c)
-		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, comment)
-		}
-	}
-}
-
 func (s *testBundleSuite) TestString(c *C) {
 	bundle := &Bundle{
 		ID: GroupID(1),
 	}
 
-	rules1, err := NewRules(3, `["+zone=sh", "+zone=sh"]`)
+	rules1, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
 	c.Assert(err, IsNil)
-	rules2, err := NewRules(4, `["-zone=sh", "+zone=bj"]`)
+	rules2, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	c.Assert(err, IsNil)
 	bundle.Rules = append(rules1, rules2...)
 
-	c.Assert(bundle.String(), Equals, `{"group_id":"TiDB_DDL_1","group_index":0,"group_override":false,"rules":[{"group_id":"","id":"","start_key":"","end_key":"","role":"","count":3,"label_constraints":[{"key":"zone","op":"in","values":["sh"]}]},{"group_id":"","id":"","start_key":"","end_key":"","role":"","count":4,"label_constraints":[{"key":"zone","op":"notIn","values":["sh"]},{"key":"zone","op":"in","values":["bj"]}]}]}`)
+	c.Assert(bundle.String(), Equals, "{\"group_id\":\"TiDB_DDL_1\",\"group_index\":0,\"group_override\":false,\"rules\":[{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":3,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"sh\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":4,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"notIn\",\"values\":[\"sh\"]},{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"bj\"]}]}]}")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/placement/MockMarshalFailure", `return(true)`), IsNil)
 	defer func() {
@@ -552,27 +364,475 @@ func (s *testBundleSuite) TestString(c *C) {
 func (s *testBundleSuite) TestNew(c *C) {
 	c.Assert(NewBundle(3), DeepEquals, &Bundle{ID: GroupID(3)})
 	c.Assert(NewBundle(-1), DeepEquals, &Bundle{ID: GroupID(-1)})
+	_, err := NewBundleFromConstraintsOptions(nil)
+	c.Assert(err, NotNil)
+	_, err = NewBundleFromSugarOptions(nil)
+	c.Assert(err, NotNil)
+	_, err = NewBundleFromOptions(nil)
+	c.Assert(err, NotNil)
 }
 
-func (s *testBundleSuite) TestReset(c *C) {
+func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
+	type TestCase struct {
+		name   string
+		input  *model.PlacementSettings
+		output []*Rule
+		err    error
+	}
+	var tests []TestCase
+
+	tests = append(tests, TestCase{
+		name:  "empty 1",
+		input: &model.PlacementSettings{},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name:  "empty 2",
+		input: nil,
+		err:   ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "empty 3",
+		input: &model.PlacementSettings{
+			LearnerConstraints: "[+region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: normal case 1",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: normal case 2",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us",
+			Schedule:      "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 1, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: few followers",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "bj,sh,us",
+			Followers:     1,
+		},
+		output: []*Rule{
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "bj", "sh"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 1",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "even",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 2",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: wrong schedule prop",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us",
+			Schedule:      "wrong",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: invalid region name 1",
+		input: &model.PlacementSettings{
+			PrimaryRegion: ",=,",
+			Regions:       ",=,",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: invalid region name 2",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "f",
+			Regions:       ",=",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: invalid region name 4",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "",
+			Regions:       "g",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: normal case 2",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "sh,us",
+			Followers:     5,
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
+			)),
+		},
+	})
+	tests = append(tests, tests[len(tests)-1])
+	tests[len(tests)-1].name = "sugar syntax: explicit schedule"
+	tests[len(tests)-1].input.Schedule = "even"
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: majority schedule",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "sh",
+			Regions:       "bj,sh",
+			Followers:     4,
+			Schedule:      "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
+			)),
+			NewRule(Follower, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "bj"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: normal case 1",
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: normal case 3",
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
+			Followers:   2,
+			Learners:    2,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Learner, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 1",
+		input: &model.PlacementSettings{
+			LeaderConstraints:   "[+region=as]",
+			FollowerConstraints: "[-region=us]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", NotIn, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 2",
+		input: &model.PlacementSettings{
+			LeaderConstraints:  "[+region=as]",
+			LearnerConstraints: "[-region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: omit leader",
+		input: &model.PlacementSettings{
+			Followers:           2,
+			FollowerConstraints: "[+region=bj]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "bj"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: conflicts 1",
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "[-region=us]",
+			Followers:         2,
+		},
+		err: ErrConflictingConstraints,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: conflicts 3",
+		input: &model.PlacementSettings{
+			Constraints:         "[+region=us]",
+			FollowerConstraints: "[-region=us]",
+			Followers:           2,
+		},
+		err: ErrConflictingConstraints,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: conflicts 4",
+		input: &model.PlacementSettings{
+			Constraints:        "[+region=us]",
+			LearnerConstraints: "[-region=us]",
+			Followers:          2,
+			Learners:           2,
+		},
+		err: ErrConflictingConstraints,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: invalid format 1",
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "-region=us]",
+			Followers:         2,
+		},
+		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: invalid format 2",
+		input: &model.PlacementSettings{
+			Constraints:       "+region=us]",
+			LeaderConstraints: "[-region=us]",
+			Followers:         2,
+		},
+		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: invalid format 4",
+		input: &model.PlacementSettings{
+			Constraints:         "[+region=us]",
+			FollowerConstraints: "-region=us]",
+			Followers:           2,
+		},
+		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: invalid format 5",
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "-region=us]",
+			Learners:          2,
+			Followers:         2,
+		},
+		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect()),
+			NewRule(Learner, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints, with count",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+			Learners:           4,
+		},
+		err: ErrInvalidConstraintsRelicas,
+	})
+
+	for _, t := range tests {
+		bundle, err := newBundleFromOptions(t.input)
+		comment := Commentf("[%s]\nerr1 %s\nerr2 %s", t.name, err, t.err)
+		if t.err != nil {
+			c.Assert(errors.Is(err, t.err), IsTrue, comment)
+		} else {
+			c.Assert(err, IsNil, comment)
+			matchRules(t.output, bundle.Rules, comment.CheckCommentString(), c)
+		}
+	}
+}
+
+func (s *testBundleSuite) TestResetBundleWithSingleRule(c *C) {
 	bundle := &Bundle{
 		ID: GroupID(1),
 	}
 
-	rules, err := NewRules(3, `["+zone=sh", "+zone=sh"]`)
+	rules, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
 	c.Assert(err, IsNil)
 	bundle.Rules = rules
 
-	bundle.Reset(3)
+	bundle.Reset(RuleIndexTable, []int64{3})
 	c.Assert(bundle.ID, Equals, GroupID(3))
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
 	c.Assert(bundle.Rules, HasLen, 1)
 	c.Assert(bundle.Rules[0].GroupID, Equals, bundle.ID)
 
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(3)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
 	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
 
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(4)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
 	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+}
+
+func (s *testBundleSuite) TestResetBundleWithMultiRules(c *C) {
+	// build a bundle with three rules.
+	bundle, err := NewBundleFromOptions(&model.PlacementSettings{
+		LeaderConstraints:   `["+zone=bj"]`,
+		Followers:           2,
+		FollowerConstraints: `["+zone=hz"]`,
+		Learners:            1,
+		LearnerConstraints:  `["+zone=cd"]`,
+		Constraints:         `["+disk=ssd"]`,
+	})
+	c.Assert(err, IsNil)
+	c.Assert(len(bundle.Rules), Equals, 3)
+
+	// test if all the three rules are basic rules even the start key are not set.
+	bundle.Reset(RuleIndexTable, []int64{1, 2, 3})
+	c.Assert(bundle.ID, Equals, GroupID(1))
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(len(bundle.Rules), Equals, 3*3)
+	// for id 1.
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[1].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[1].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[2].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[2].EndKeyHex, Equals, endKey)
+	// for id 2.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	c.Assert(bundle.Rules[3].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[3].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[4].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[4].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[5].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[5].EndKeyHex, Equals, endKey)
+	// for id 3.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	c.Assert(bundle.Rules[6].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[6].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[7].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[7].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[8].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[8].EndKeyHex, Equals, endKey)
+
+	// test if bundle has redundant rules.
+	// for now, the bundle has 9 rules, each table id or partition id has the three with them.
+	// once we reset this bundle for another ids, for example, adding partitions. we should
+	// extend the basic rules(3 of them) to the new partition id.
+	bundle.Reset(RuleIndexTable, []int64{1, 3, 4, 5})
+	c.Assert(bundle.ID, Equals, GroupID(1))
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(len(bundle.Rules), Equals, 3*4)
+	// for id 1.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[1].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[1].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[2].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[2].EndKeyHex, Equals, endKey)
+	// for id 3.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	c.Assert(bundle.Rules[3].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[3].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[4].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[4].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[5].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[5].EndKeyHex, Equals, endKey)
+	// for id 4.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(5)))
+	c.Assert(bundle.Rules[6].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[6].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[7].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[7].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[8].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[8].EndKeyHex, Equals, endKey)
+	// for id 5.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(5)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(6)))
+	c.Assert(bundle.Rules[9].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[9].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[10].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[10].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[11].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[11].EndKeyHex, Equals, endKey)
 }
 
 func (s *testBundleSuite) TestTidy(c *C) {
@@ -580,14 +840,15 @@ func (s *testBundleSuite) TestTidy(c *C) {
 		ID: GroupID(1),
 	}
 
-	rules0, err := NewRules(1, `["+zone=sh", "+zone=sh"]`)
+	rules0, err := NewRules(Voter, 1, `["+zone=sh", "+zone=sh"]`)
 	c.Assert(err, IsNil)
 	c.Assert(rules0, HasLen, 1)
-	rules0[0].Count = 0
-	rules1, err := NewRules(4, `["-zone=sh", "+zone=bj"]`)
+	rules0[0].Count = 0 // test prune useless rules
+
+	rules1, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	c.Assert(err, IsNil)
 	c.Assert(rules1, HasLen, 1)
-	rules2, err := NewRules(4, `["-zone=sh", "+zone=bj"]`)
+	rules2, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	c.Assert(err, IsNil)
 	bundle.Rules = append(bundle.Rules, rules0...)
 	bundle.Rules = append(bundle.Rules, rules1...)
@@ -606,15 +867,13 @@ func (s *testBundleSuite) TestTidy(c *C) {
 	c.Assert(bundle.Rules[1].ID, Equals, "2")
 
 	// merge
-	rules3, err := NewRules(4, "")
+	rules3, err := NewRules(Follower, 4, "")
 	c.Assert(err, IsNil)
 	c.Assert(rules3, HasLen, 1)
-	rules3[0].Role = Follower
 
-	rules4, err := NewRules(5, "")
+	rules4, err := NewRules(Follower, 5, "")
 	c.Assert(err, IsNil)
 	c.Assert(rules4, HasLen, 1)
-	rules4[0].Role = Follower
 
 	rules0[0].Role = Voter
 	bundle.Rules = append(bundle.Rules, rules0...)

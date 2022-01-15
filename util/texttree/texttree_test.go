@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,7 +22,6 @@ import (
 )
 
 func TestPrettyIdentifier(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, "test", texttree.PrettyIdentifier("test", "", false))
 	require.Equal(t, "  ├ ─test", texttree.PrettyIdentifier("test", "  │  ", false))
 	require.Equal(t, "\t\t├\t─test", texttree.PrettyIdentifier("test", "\t\t│\t\t", false))
@@ -30,7 +30,6 @@ func TestPrettyIdentifier(t *testing.T) {
 }
 
 func TestIndent4Child(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, "    │ ", texttree.Indent4Child("    ", false))
 	require.Equal(t, "    │ ", texttree.Indent4Child("    ", true))
 	require.Equal(t, "     │ ", texttree.Indent4Child("   │ ", true))

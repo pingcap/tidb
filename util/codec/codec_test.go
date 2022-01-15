@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package codec
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
@@ -22,28 +24,17 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testCodecSuite{})
-
-type testCodecSuite struct {
-}
-
-func (s *testCodecSuite) TestCodecKey(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCodecKey(t *testing.T) {
 	table := []struct {
 		Input  []types.Datum
 		Expect []types.Datum
@@ -83,27 +74,31 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for i, t := range table {
-		comment := Commentf("%d %v", i, t)
-		b, err := EncodeKey(sc, nil, t.Input...)
-		c.Assert(err, IsNil, comment)
-		args, err := Decode(b, 1)
-		c.Assert(err, IsNil)
-		c.Assert(args, DeepEquals, t.Expect)
+	for i, datums := range table {
+		comment := fmt.Sprintf("%d %v", i, datums)
+		b, err := EncodeKey(sc, nil, datums.Input...)
+		require.NoError(t, err, comment)
 
-		b, err = EncodeValue(sc, nil, t.Input...)
-		c.Assert(err, IsNil)
-		size, err := estimateValuesSize(sc, t.Input)
-		c.Assert(err, IsNil)
-		c.Assert(len(b), Equals, size)
+		args, err := Decode(b, 1)
+		require.NoError(t, err, comment)
+		require.Equal(t, datums.Expect, args, comment)
+
+		b, err = EncodeValue(sc, nil, datums.Input...)
+		require.NoError(t, err, comment)
+
+		size, err := estimateValuesSize(sc, datums.Input)
+		require.NoError(t, err, comment)
+		require.Len(t, b, size, comment)
+
 		args, err = Decode(b, 1)
-		c.Assert(err, IsNil)
-		c.Assert(args, DeepEquals, t.Expect)
+		require.NoError(t, err, comment)
+		require.Equal(t, datums.Expect, args, comment)
 	}
+
 	var raw types.Datum
 	raw.SetRaw([]byte("raw"))
 	_, err := EncodeKey(sc, nil, raw)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
 func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
@@ -118,8 +113,7 @@ func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, 
 	return size, nil
 }
 
-func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCodecKeyCompare(t *testing.T) {
 	table := []struct {
 		Left   []types.Datum
 		Right  []types.Datum
@@ -206,13 +200,13 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			1,
 		},
 		{
-			types.MakeDatums(parseTime(c, "2011-11-11 00:00:00"), 1),
-			types.MakeDatums(parseTime(c, "2011-11-11 00:00:00"), 0),
+			types.MakeDatums(parseTime(t, "2011-11-11 00:00:00"), 1),
+			types.MakeDatums(parseTime(t, "2011-11-11 00:00:00"), 0),
 			1,
 		},
 		{
-			types.MakeDatums(parseDuration(c, "00:00:00"), 1),
-			types.MakeDatums(parseDuration(c, "00:00:01"), 0),
+			types.MakeDatums(parseDuration(t, "00:00:00"), 1),
+			types.MakeDatums(parseDuration(t, "00:00:01"), 0),
 			-1,
 		},
 		{
@@ -222,19 +216,19 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for _, t := range table {
-		b1, err := EncodeKey(sc, nil, t.Left...)
-		c.Assert(err, IsNil)
+	for _, datums := range table {
+		b1, err := EncodeKey(sc, nil, datums.Left...)
+		require.NoError(t, err)
 
-		b2, err := EncodeKey(sc, nil, t.Right...)
-		c.Assert(err, IsNil)
+		b2, err := EncodeKey(sc, nil, datums.Right...)
+		require.NoError(t, err)
 
-		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
+		comparedRes := bytes.Compare(b1, b2)
+		require.Equalf(t, datums.Expect, comparedRes, "%v - %v - %v - %v - %v", datums.Left, datums.Right, b1, b2, datums.Expect)
 	}
 }
 
-func (s *testCodecSuite) TestNumberCodec(c *C) {
-	defer testleak.AfterTest(c)()
+func TestNumberCodec(t *testing.T) {
 	tblInt64 := []int64{
 		math.MinInt64,
 		math.MinInt32,
@@ -257,26 +251,26 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		-1,
 	}
 
-	for _, t := range tblInt64 {
-		b := EncodeInt(nil, t)
+	for _, intNum := range tblInt64 {
+		b := EncodeInt(nil, intNum)
 		_, v, err := DecodeInt(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, intNum, v)
 
-		b = EncodeIntDesc(nil, t)
+		b = EncodeIntDesc(nil, intNum)
 		_, v, err = DecodeIntDesc(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, intNum, v)
 
-		b = EncodeVarint(nil, t)
+		b = EncodeVarint(nil, intNum)
 		_, v, err = DecodeVarint(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, intNum, v)
 
-		b = EncodeComparableVarint(nil, t)
+		b = EncodeComparableVarint(nil, intNum)
 		_, v, err = DecodeComparableVarint(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, intNum, v)
 	}
 
 	tblUint64 := []uint64{
@@ -295,44 +289,46 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		math.MaxInt64,
 	}
 
-	for _, t := range tblUint64 {
-		b := EncodeUint(nil, t)
+	for _, uintNum := range tblUint64 {
+		b := EncodeUint(nil, uintNum)
 		_, v, err := DecodeUint(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, uintNum, v)
 
-		b = EncodeUintDesc(nil, t)
+		b = EncodeUintDesc(nil, uintNum)
 		_, v, err = DecodeUintDesc(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, uintNum, v)
 
-		b = EncodeUvarint(nil, t)
+		b = EncodeUvarint(nil, uintNum)
 		_, v, err = DecodeUvarint(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, uintNum, v)
 
-		b = EncodeComparableUvarint(nil, t)
+		b = EncodeComparableUvarint(nil, uintNum)
 		_, v, err = DecodeComparableUvarint(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, uintNum, v)
 	}
+
 	var b []byte
 	b = EncodeComparableVarint(b, -1)
 	b = EncodeComparableUvarint(b, 1)
 	b = EncodeComparableVarint(b, 2)
 	b, i, err := DecodeComparableVarint(b)
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(-1))
+	require.NoError(t, err)
+	require.Equal(t, int64(-1), i)
+
 	b, u, err := DecodeComparableUvarint(b)
-	c.Assert(err, IsNil)
-	c.Assert(u, Equals, uint64(1))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), u)
+
 	_, i, err = DecodeComparableVarint(b)
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), i)
 }
 
-func (s *testCodecSuite) TestNumberOrder(c *C) {
-	defer testleak.AfterTest(c)()
+func TestNumberOrder(t *testing.T) {
 	tblInt64 := []struct {
 		Arg1 int64
 		Arg2 int64
@@ -353,23 +349,18 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 		{math.MaxInt16, math.MaxInt16, 0},
 	}
 
-	for _, t := range tblInt64 {
-		b1 := EncodeInt(nil, t.Arg1)
-		b2 := EncodeInt(nil, t.Arg2)
+	for _, intNums := range tblInt64 {
+		b1 := EncodeInt(nil, intNums.Arg1)
+		b2 := EncodeInt(nil, intNums.Arg2)
+		require.Equal(t, intNums.Ret, bytes.Compare(b1, b2))
 
-		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		b1 = EncodeIntDesc(nil, intNums.Arg1)
+		b2 = EncodeIntDesc(nil, intNums.Arg2)
+		require.Equal(t, -intNums.Ret, bytes.Compare(b1, b2))
 
-		b1 = EncodeIntDesc(nil, t.Arg1)
-		b2 = EncodeIntDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, -t.Ret)
-
-		b1 = EncodeComparableVarint(nil, t.Arg1)
-		b2 = EncodeComparableVarint(nil, t.Arg2)
-		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		b1 = EncodeComparableVarint(nil, intNums.Arg1)
+		b2 = EncodeComparableVarint(nil, intNums.Arg2)
+		require.Equal(t, intNums.Ret, bytes.Compare(b1, b2))
 	}
 
 	tblUint64 := []struct {
@@ -390,28 +381,22 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 		{0, math.MaxUint64, -1},
 	}
 
-	for _, t := range tblUint64 {
-		b1 := EncodeUint(nil, t.Arg1)
-		b2 := EncodeUint(nil, t.Arg2)
+	for _, uintNums := range tblUint64 {
+		b1 := EncodeUint(nil, uintNums.Arg1)
+		b2 := EncodeUint(nil, uintNums.Arg2)
+		require.Equal(t, uintNums.Ret, bytes.Compare(b1, b2))
 
-		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		b1 = EncodeUintDesc(nil, uintNums.Arg1)
+		b2 = EncodeUintDesc(nil, uintNums.Arg2)
+		require.Equal(t, -uintNums.Ret, bytes.Compare(b1, b2))
 
-		b1 = EncodeUintDesc(nil, t.Arg1)
-		b2 = EncodeUintDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, -t.Ret)
-
-		b1 = EncodeComparableUvarint(nil, t.Arg1)
-		b2 = EncodeComparableUvarint(nil, t.Arg2)
-		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		b1 = EncodeComparableUvarint(nil, uintNums.Arg1)
+		b2 = EncodeComparableUvarint(nil, uintNums.Arg2)
+		require.Equal(t, uintNums.Ret, bytes.Compare(b1, b2))
 	}
 }
 
-func (s *testCodecSuite) TestFloatCodec(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFloatCodec(t *testing.T) {
 	tblFloat := []float64{
 		-1,
 		0,
@@ -424,16 +409,16 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 		math.Inf(1),
 	}
 
-	for _, t := range tblFloat {
-		b := EncodeFloat(nil, t)
+	for _, floatNum := range tblFloat {
+		b := EncodeFloat(nil, floatNum)
 		_, v, err := DecodeFloat(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, floatNum, v)
 
-		b = EncodeFloatDesc(nil, t)
+		b = EncodeFloatDesc(nil, floatNum)
 		_, v, err = DecodeFloatDesc(b)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t)
+		require.NoError(t, err)
+		require.Equal(t, floatNum, v)
 	}
 
 	tblCmp := []struct {
@@ -454,23 +439,22 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 		{math.Inf(-1), math.Inf(1), -1},
 	}
 
-	for _, t := range tblCmp {
-		b1 := EncodeFloat(nil, t.Arg1)
-		b2 := EncodeFloat(nil, t.Arg2)
+	for _, floatNums := range tblCmp {
+		b1 := EncodeFloat(nil, floatNums.Arg1)
+		b2 := EncodeFloat(nil, floatNums.Arg2)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		require.Equal(t, floatNums.Ret, ret)
 
-		b1 = EncodeFloatDesc(nil, t.Arg1)
-		b2 = EncodeFloatDesc(nil, t.Arg2)
+		b1 = EncodeFloatDesc(nil, floatNums.Arg1)
+		b2 = EncodeFloatDesc(nil, floatNums.Arg2)
 
 		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, -t.Ret)
+		require.Equal(t, -floatNums.Ret, ret)
 	}
 }
 
-func (s *testCodecSuite) TestBytes(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBytes(t *testing.T) {
 	tblBytes := [][]byte{
 		{},
 		{0x00, 0x01},
@@ -480,21 +464,21 @@ func (s *testCodecSuite) TestBytes(c *C) {
 		[]byte("hello world"),
 	}
 
-	for _, t := range tblBytes {
-		b := EncodeBytes(nil, t)
+	for _, bytesDatum := range tblBytes {
+		b := EncodeBytes(nil, bytesDatum)
 		_, v, err := DecodeBytes(b, nil)
-		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		require.NoError(t, err)
+		require.Equalf(t, bytesDatum, v, "%v - %v - %v", bytesDatum, b, v)
 
-		b = EncodeBytesDesc(nil, t)
+		b = EncodeBytesDesc(nil, bytesDatum)
 		_, v, err = DecodeBytesDesc(b, nil)
-		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		require.NoError(t, err)
+		require.Equalf(t, bytesDatum, v, "%v - %v - %v", bytesDatum, b, v)
 
-		b = EncodeCompactBytes(nil, t)
+		b = EncodeCompactBytes(nil, bytesDatum)
 		_, v, err = DecodeCompactBytes(b)
-		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		require.NoError(t, err)
+		require.Equal(t, bytesDatum, v, "%v - %v - %v", bytesDatum, b, v)
 	}
 
 	tblCmp := []struct {
@@ -520,54 +504,55 @@ func (s *testCodecSuite) TestBytes(c *C) {
 		{[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00}, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}, 1},
 	}
 
-	for _, t := range tblCmp {
-		b1 := EncodeBytes(nil, t.Arg1)
-		b2 := EncodeBytes(nil, t.Arg2)
+	for _, bytesData := range tblCmp {
+		b1 := EncodeBytes(nil, bytesData.Arg1)
+		b2 := EncodeBytes(nil, bytesData.Arg2)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		require.Equal(t, bytesData.Ret, ret)
 
-		b1 = EncodeBytesDesc(nil, t.Arg1)
-		b2 = EncodeBytesDesc(nil, t.Arg2)
+		b1 = EncodeBytesDesc(nil, bytesData.Arg1)
+		b2 = EncodeBytesDesc(nil, bytesData.Arg2)
 
 		ret = bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, -t.Ret)
+		require.Equal(t, -bytesData.Ret, ret)
 	}
 }
 
-func parseTime(c *C, s string) types.Time {
+func parseTime(t *testing.T, s string) types.Time {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return m
 }
 
-func parseDuration(c *C, s string) types.Duration {
+func parseDuration(t *testing.T, s string) types.Duration {
 	m, err := types.ParseDuration(nil, s, types.DefaultFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return m
 }
 
-func (s *testCodecSuite) TestTime(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTime(t *testing.T) {
 	tbl := []string{
 		"2011-01-01 00:00:00",
 		"2011-01-01 00:00:00",
 		"0001-01-01 00:00:00",
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for _, t := range tbl {
-		m := types.NewDatum(parseTime(c, t))
+	for _, timeDatum := range tbl {
+		m := types.NewDatum(parseTime(t, timeDatum))
 
 		b, err := EncodeKey(sc, nil, m)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		v, err := Decode(b, 1)
-		c.Assert(err, IsNil)
-		var t types.Time
-		t.SetType(mysql.TypeDatetime)
-		err = t.FromPackedUint(v[0].GetUint64())
-		c.Assert(err, IsNil)
-		c.Assert(types.NewDatum(t), DeepEquals, m)
+		require.NoError(t, err)
+
+		var rawTime types.Time
+		rawTime.SetType(mysql.TypeDatetime)
+		err = rawTime.FromPackedUint(v[0].GetUint64())
+		require.NoError(t, err)
+
+		require.Equal(t, m, types.NewDatum(rawTime))
 	}
 
 	tblCmp := []struct {
@@ -580,37 +565,36 @@ func (s *testCodecSuite) TestTime(c *C) {
 		{"2000-10-10 00:00:00", "2000-10-10 00:00:00", 0},
 	}
 
-	for _, t := range tblCmp {
-		m1 := types.NewDatum(parseTime(c, t.Arg1))
-		m2 := types.NewDatum(parseTime(c, t.Arg2))
+	for _, timeData := range tblCmp {
+		m1 := types.NewDatum(parseTime(t, timeData.Arg1))
+		m2 := types.NewDatum(parseTime(t, timeData.Arg2))
 
 		b1, err := EncodeKey(sc, nil, m1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b2, err := EncodeKey(sc, nil, m2)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		require.Equal(t, timeData.Ret, ret)
 	}
 }
 
-func (s *testCodecSuite) TestDuration(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDuration(t *testing.T) {
 	tbl := []string{
 		"11:11:11",
 		"00:00:00",
 		"1 11:11:11",
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for _, t := range tbl {
-		m := parseDuration(c, t)
+	for _, duration := range tbl {
+		m := parseDuration(t, duration)
 
 		b, err := EncodeKey(sc, nil, types.NewDatum(m))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		v, err := Decode(b, 1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		m.Fsp = types.MaxFsp
-		c.Assert(v, DeepEquals, types.MakeDatums(m))
+		require.Equal(t, types.MakeDatums(m), v)
 	}
 
 	tblCmp := []struct {
@@ -623,22 +607,21 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		{"00:00:00", "00:00:00", 0},
 	}
 
-	for _, t := range tblCmp {
-		m1 := parseDuration(c, t.Arg1)
-		m2 := parseDuration(c, t.Arg2)
+	for _, durations := range tblCmp {
+		m1 := parseDuration(t, durations.Arg1)
+		m2 := parseDuration(t, durations.Arg2)
 
 		b1, err := EncodeKey(sc, nil, types.NewDatum(m1))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b2, err := EncodeKey(sc, nil, types.NewDatum(m2))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret)
+		require.Equal(t, durations.Ret, ret)
 	}
 }
 
-func (s *testCodecSuite) TestDecimal(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDecimal(t *testing.T) {
 	tbl := []string{
 		"1234.00",
 		"1234",
@@ -656,17 +639,19 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		"-0.1234",
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for _, t := range tbl {
+	for _, decimalNum := range tbl {
 		dec := new(types.MyDecimal)
-		err := dec.FromString([]byte(t))
-		c.Assert(err, IsNil)
+		err := dec.FromString([]byte(decimalNum))
+		require.NoError(t, err)
+
 		b, err := EncodeKey(sc, nil, types.NewDatum(dec))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		v, err := Decode(b, 1)
-		c.Assert(err, IsNil)
-		c.Assert(v, HasLen, 1)
+		require.NoError(t, err)
+		require.Len(t, v, 1)
+
 		vv := v[0].GetMysqlDecimal()
-		c.Assert(vv.Compare(dec), Equals, 0)
+		require.Equal(t, 0, vv.Compare(dec))
 	}
 
 	tblCmp := []struct {
@@ -734,34 +719,35 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-	for _, t := range tblCmp {
-		d1 := types.NewDatum(t.Arg1)
+	for _, decimalNums := range tblCmp {
+		d1 := types.NewDatum(decimalNums.Arg1)
 		dec1, err := d1.ToDecimal(sc)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		d1.SetMysqlDecimal(dec1)
-		d2 := types.NewDatum(t.Arg2)
+
+		d2 := types.NewDatum(decimalNums.Arg2)
 		dec2, err := d2.ToDecimal(sc)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		d2.SetMysqlDecimal(dec2)
 
 		d1.SetLength(30)
 		d1.SetFrac(6)
 		d2.SetLength(30)
 		d2.SetFrac(6)
+
 		b1, err := EncodeKey(sc, nil, d1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b2, err := EncodeKey(sc, nil, d2)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
-		c.Assert(ret, Equals, t.Ret, Commentf("%v %x %x", t, b1, b2))
+		require.Equalf(t, decimalNums.Ret, ret, "%v %x %x", decimalNums, b1, b2)
 
 		b1, err = EncodeValue(sc, b1[:0], d1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		size, err := EstimateValueSize(sc, d1)
-		c.Assert(err, IsNil)
-		c.Assert(len(b1), Equals, size)
-
+		require.NoError(t, err)
+		require.Len(t, b1, size)
 	}
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
@@ -774,70 +760,69 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d.SetFrac(6)
 		d.SetMysqlDecimal(dec)
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		decs = append(decs, b)
 		size, err := EstimateValueSize(sc, d)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		// size - 1 because the flag occupy 1 bit.
-		c.Assert(len(b), Equals, size-1)
+		require.Len(t, b, size-1)
 	}
 	for i := 0; i < len(decs)-1; i++ {
-		cmp := bytes.Compare(decs[i], decs[i+1])
-		c.Assert(cmp, LessEqual, 0)
+		cmpRes := bytes.Compare(decs[i], decs[i+1])
+		require.LessOrEqual(t, cmpRes, 0)
 	}
 
 	d := types.NewDecFromStringForTest("-123.123456789")
 	_, err := EncodeDecimal(nil, d, 20, 5)
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, types.ErrTruncated), "err %v", err)
+
 	_, err = EncodeDecimal(nil, d, 12, 10)
-	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, types.ErrOverflow), "err %v", err)
 
 	sc.IgnoreTruncate = true
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)
 	_, err = EncodeValue(sc, nil, decimalDatum)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	sc.OverflowAsWarning = true
 	decimalDatum.SetLength(12)
 	decimalDatum.SetFrac(10)
 	_, err = EncodeValue(sc, nil, decimalDatum)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testCodecSuite) TestJSON(c *C) {
-	defer testleak.AfterTest(c)()
+func TestJSON(t *testing.T) {
 	tbl := []string{
 		"1234.00",
 		`{"a": "b"}`,
 	}
 
-	datums := make([]types.Datum, 0, len(tbl))
-	for _, t := range tbl {
+	originalDatums := make([]types.Datum, 0, len(tbl))
+	for _, jsonDatum := range tbl {
 		var d types.Datum
-		j, err := json.ParseBinaryFromString(t)
-		c.Assert(err, IsNil)
+		j, err := json.ParseBinaryFromString(jsonDatum)
+		require.NoError(t, err)
 		d.SetMysqlJSON(j)
-		datums = append(datums, d)
+		originalDatums = append(originalDatums, d)
 	}
 
 	buf := make([]byte, 0, 4096)
-	buf, err := encode(nil, buf, datums, false)
-	c.Assert(err, IsNil)
+	buf, err := encode(nil, buf, originalDatums, false)
+	require.NoError(t, err)
 
-	datums1, err := Decode(buf, 2)
-	c.Assert(err, IsNil)
+	decodedDatums, err := Decode(buf, 2)
+	require.NoError(t, err)
 
-	for i := range datums1 {
-		lhs := datums[i].GetMysqlJSON().String()
-		rhs := datums1[i].GetMysqlJSON().String()
-		c.Assert(lhs, Equals, rhs)
+	for i := range decodedDatums {
+		lhs := originalDatums[i].GetMysqlJSON().String()
+		rhs := decodedDatums[i].GetMysqlJSON().String()
+		require.Equal(t, lhs, rhs)
 	}
 }
 
-func (s *testCodecSuite) TestCut(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCut(t *testing.T) {
 	table := []struct {
 		Input  []types.Datum
 		Expect []types.Datum
@@ -889,96 +874,104 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	for i, t := range table {
-		comment := Commentf("%d %v", i, t)
-		b, err := EncodeKey(sc, nil, t.Input...)
-		c.Assert(err, IsNil, comment)
+	for i, datums := range table {
+		b, err := EncodeKey(sc, nil, datums.Input...)
+		require.NoErrorf(t, err, "%d %v", i, datums)
+
 		var d []byte
-		for j, e := range t.Expect {
+		for j, e := range datums.Expect {
 			d, b, err = CutOne(b)
-			c.Assert(err, IsNil)
-			c.Assert(d, NotNil)
+			require.NoError(t, err)
+			require.NotNil(t, d)
+
 			ed, err1 := EncodeKey(sc, nil, e)
-			c.Assert(err1, IsNil)
-			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
+			require.NoError(t, err1)
+			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
 		}
-		c.Assert(b, HasLen, 0)
-	}
-	for i, t := range table {
-		comment := Commentf("%d %v", i, t)
-		b, err := EncodeValue(sc, nil, t.Input...)
-		c.Assert(err, IsNil, comment)
-		var d []byte
-		for j, e := range t.Expect {
-			d, b, err = CutOne(b)
-			c.Assert(err, IsNil)
-			c.Assert(d, NotNil)
-			ed, err1 := EncodeValue(sc, nil, e)
-			c.Assert(err1, IsNil)
-			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
-		}
-		c.Assert(b, HasLen, 0)
+		require.Len(t, b, 0)
 	}
 
-	b, err := EncodeValue(sc, nil, types.NewDatum(42))
-	c.Assert(err, IsNil)
+	for i, datums := range table {
+		b, err := EncodeValue(sc, nil, datums.Input...)
+		require.NoErrorf(t, err, "%d %v", i, datums)
+
+		var d []byte
+		for j, e := range datums.Expect {
+			d, b, err = CutOne(b)
+			require.NoError(t, err)
+			require.NotNil(t, d)
+
+			ed, err1 := EncodeValue(sc, nil, e)
+			require.NoError(t, err1)
+			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
+		}
+		require.Len(t, b, 0)
+	}
+
+	input := 42
+	b, err := EncodeValue(sc, nil, types.NewDatum(input))
+	require.NoError(t, err)
 	rem, n, err := CutColumnID(b)
-	c.Assert(err, IsNil)
-	c.Assert(rem, HasLen, 0)
-	c.Assert(n, Equals, int64(42))
+	require.NoError(t, err)
+	require.Len(t, rem, 0)
+	require.Equal(t, int64(input), n)
 }
 
-func (s *testCodecSuite) TestCutOneError(c *C) {
+func TestCutOneError(t *testing.T) {
 	var b []byte
 	_, _, err := CutOne(b)
-	c.Assert(err, ErrorMatches, "invalid encoded key")
+	require.Error(t, err)
+	require.EqualError(t, err, "invalid encoded key")
+
 	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
 	_, _, err = CutOne(b)
-	c.Assert(err, ErrorMatches, "invalid encoded key.*")
+	require.Error(t, err)
+	require.Regexp(t, "^invalid encoded key", err.Error())
 }
 
-func (s *testCodecSuite) TestSetRawValues(c *C) {
+func TestSetRawValues(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(sc, nil, datums...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	values := make([]types.Datum, 4)
 	err = SetRawValues(rowData, values)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	for i, rawVal := range values {
-		c.Assert(rawVal.Kind(), Equals, types.KindRaw)
-		encoded, err1 := EncodeValue(sc, nil, datums[i])
-		c.Assert(err1, IsNil)
-		c.Assert(encoded, BytesEquals, rawVal.GetBytes())
+		require.IsType(t, types.KindRaw, rawVal.Kind())
+		encoded, encodedErr := EncodeValue(sc, nil, datums[i])
+		require.NoError(t, encodedErr)
+		require.Equal(t, rawVal.GetBytes(), encoded)
 	}
 }
 
-func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDecodeOneToChunk(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums, tps := datumsForTest(sc)
 	rowCount := 3
-	chk := chunkForTest(c, sc, datums, tps, rowCount)
+	chk := chunkForTest(t, sc, datums, tps, rowCount)
 	for colIdx, tp := range tps {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, tp)
 			expect := datums[colIdx]
 			if got.IsNull() {
-				c.Assert(expect.IsNull(), IsTrue)
+				require.True(t, expect.IsNull())
 			} else {
 				if got.Kind() != types.KindMysqlDecimal {
-					cmp, err := got.CompareDatum(sc, &expect)
-					c.Assert(err, IsNil)
-					c.Assert(cmp, Equals, 0, Commentf("expect: %v, got %v", expect, got))
+					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.Collate))
+					require.NoError(t, err)
+					require.Equalf(t, 0, cmp, "expect: %v, got %v", expect, got)
 				} else {
-					c.Assert(got.GetString(), Equals, expect.GetString(), Commentf("expect: %v, got %v", expect, got))
+					require.Equal(t, expect.GetString(), got.GetString(), "expect: %v, got %v", expect, got)
 				}
 			}
 		}
 	}
 }
 
-func (s *testCodecSuite) TestHashGroup(c *C) {
+func TestHashGroup(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tps := []*types.FieldType{tp}
@@ -993,12 +986,13 @@ func (s *testCodecSuite) TestHashGroup(c *C) {
 	tp1.Flen = 20
 	tp1.Decimal = 5
 	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
+
 	tp2 := tp
 	tp2.Flen = 12
 	tp2.Decimal = 10
 	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
 func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
@@ -1060,44 +1054,44 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	return datums, tps
 }
 
-func chunkForTest(c *C, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
+func chunkForTest(t *testing.T, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
 	decoder := NewDecoder(chunk.New(tps, 32, 32), sc.TimeZone)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		decoder.buf = make([]byte, 0, len(encoded))
 		for colIdx, tp := range tps {
 			encoded, err = decoder.DecodeOne(encoded, colIdx, tp)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 	return decoder.chk
 }
 
-func (s *testCodecSuite) TestDecodeRange(c *C) {
+func TestDecodeRange(t *testing.T) {
 	_, _, err := DecodeRange(nil, 0, nil, nil)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(nil, nil, datums...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i, datum := range datums1 {
-		cmp, err := datum.CompareDatum(nil, &datums[i])
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
+		cmp, err := datum.Compare(nil, &datums[i], collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equal(t, 0, cmp)
 	}
 
 	for _, b := range []byte{NilFlag, bytesFlag, maxFlag, maxFlag + 1} {
 		newData := append(rowData, b)
 		_, _, err := DecodeRange(newData, len(datums)+1, nil, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
+func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)
@@ -1122,29 +1116,29 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	h.Reset()
 	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
+	require.NoError(t, err1)
+	require.NoError(t, err2)
 	if equal {
-		c.Assert(sum1, Equals, sum2)
+		require.Equal(t, sum2, sum1)
 	} else {
-		c.Assert(sum1, Not(Equals), sum2)
+		require.NotEqual(t, sum2, sum1)
 	}
 	e, err := EqualChunkRow(sc,
 		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
 		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	if equal {
-		c.Assert(e, IsTrue)
+		require.True(t, e)
 	} else {
-		c.Assert(e, IsFalse)
+		require.False(t, e)
 	}
 }
 
-func (s *testCodecSuite) TestHashChunkRow(c *C) {
+func TestHashChunkRow(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
-	chk := chunkForTest(c, sc, datums, tps, 1)
+	chk := chunkForTest(t, sc, datums, tps, 1)
 
 	colIdx := make([]int, len(tps))
 	for i := 0; i < len(tps); i++ {
@@ -1157,78 +1151,78 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
 	sum2 := h.Sum32()
 
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(sum1, Equals, sum2)
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	require.Equal(t, sum2, sum1)
 	e, err := EqualChunkRow(sc,
 		chk.GetRow(0), tps, colIdx,
 		chk.GetRow(0), tps, colIdx)
-	c.Assert(err, IsNil)
-	c.Assert(e, IsTrue)
+	require.NoError(t, err)
+	require.True(t, e)
 
-	testHashChunkRowEqual(c, nil, nil, true)
-	testHashChunkRowEqual(c, uint64(1), int64(1), true)
-	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
+	testHashChunkRowEqual(t, nil, nil, true)
+	testHashChunkRowEqual(t, uint64(1), int64(1), true)
+	testHashChunkRowEqual(t, uint64(18446744073709551615), int64(-1), false)
 
 	dec1 := types.NewDecFromStringForTest("1.1")
 	dec2 := types.NewDecFromStringForTest("01.100")
-	testHashChunkRowEqual(c, dec1, dec2, true)
+	testHashChunkRowEqual(t, dec1, dec2, true)
 	dec1 = types.NewDecFromStringForTest("1.1")
 	dec2 = types.NewDecFromStringForTest("01.200")
-	testHashChunkRowEqual(c, dec1, dec2, false)
+	testHashChunkRowEqual(t, dec1, dec2, false)
 
-	testHashChunkRowEqual(c, float32(1.0), float64(1.0), true)
-	testHashChunkRowEqual(c, float32(1.0), float64(1.1), false)
+	testHashChunkRowEqual(t, float32(1.0), float64(1.0), true)
+	testHashChunkRowEqual(t, float32(1.0), float64(1.1), false)
 
-	testHashChunkRowEqual(c, "x", []byte("x"), true)
-	testHashChunkRowEqual(c, "x", []byte("y"), false)
+	testHashChunkRowEqual(t, "x", []byte("x"), true)
+	testHashChunkRowEqual(t, "x", []byte("y"), false)
 }
 
-func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
+func TestValueSizeOfSignedInt(t *testing.T) {
 	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
 	var b []byte
 	for _, v := range testCase {
 		b := encodeSignedInt(b[:0], v-10, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(v-10))
+		require.Equal(t, valueSizeOfSignedInt(v-10), len(b))
 
 		b = encodeSignedInt(b[:0], v, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(v))
+		require.Equal(t, valueSizeOfSignedInt(v), len(b))
 
 		b = encodeSignedInt(b[:0], v+10, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(v+10))
+		require.Equal(t, valueSizeOfSignedInt(v+10), len(b))
 
 		// Test for negative value.
 		b = encodeSignedInt(b[:0], 0-v, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v))
+		require.Equal(t, valueSizeOfSignedInt(0-v), len(b))
 
 		b = encodeSignedInt(b[:0], 0-v+10, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v+10))
+		require.Equal(t, valueSizeOfSignedInt(0-v+10), len(b))
 
 		b = encodeSignedInt(b[:0], 0-v-10, false)
-		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v-10))
+		require.Equal(t, valueSizeOfSignedInt(0-v-10), len(b))
 	}
 }
 
-func (s *testCodecSuite) TestValueSizeOfUnsignedInt(c *C) {
+func TestValueSizeOfUnsignedInt(t *testing.T) {
 	testCase := []uint64{128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 9223372036854775808}
 	var b []byte
 	for _, v := range testCase {
 		b := encodeUnsignedInt(b[:0], v-10, false)
-		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v-10))
+		require.Equal(t, valueSizeOfUnsignedInt(v-10), len(b))
 
 		b = encodeUnsignedInt(b[:0], v, false)
-		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v))
+		require.Equal(t, valueSizeOfUnsignedInt(v), len(b))
 
 		b = encodeUnsignedInt(b[:0], v+10, false)
-		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v+10))
+		require.Equal(t, valueSizeOfUnsignedInt(v+10), len(b))
 	}
 }
 
-func (s *testCodecSuite) TestHashChunkColumns(c *C) {
+func TestHashChunkColumns(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
-	chk := chunkForTest(c, sc, datums, tps, 4)
+	chk := chunkForTest(t, sc, datums, tps, 4)
 
 	colIdx := make([]int, len(tps))
 	for i := 0; i < len(tps); i++ {
@@ -1245,23 +1239,22 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
-		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
+		require.True(t, chk.GetRow(0).IsNull(i))
 		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
-		c.Assert(err1, IsNil)
-		c.Assert(err2, IsNil)
-		c.Assert(err3, IsNil)
-		c.Assert(err4, IsNil)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		require.NoError(t, err3)
+		require.NoError(t, err4)
 
-		c.Assert(hasNull[0], Equals, true)
-		c.Assert(hasNull[1], Equals, true)
-		c.Assert(hasNull[2], Equals, true)
-		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
-		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
-		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
-
+		require.True(t, hasNull[0])
+		require.True(t, hasNull[1])
+		require.True(t, hasNull[2])
+		require.Equal(t, rowHash[0].Sum64(), vecHash[0].Sum64())
+		require.Equal(t, rowHash[1].Sum64(), vecHash[1].Sum64())
+		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
 	}
 
 	// Test hash value of every single column that is not `Null`
@@ -1270,21 +1263,23 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
-		c.Assert(err1, IsNil)
-		c.Assert(err2, IsNil)
-		c.Assert(err3, IsNil)
-		c.Assert(err4, IsNil)
+		require.False(t, chk.GetRow(0).IsNull(i))
 
-		c.Assert(hasNull[0], Equals, false)
-		c.Assert(hasNull[1], Equals, false)
-		c.Assert(hasNull[2], Equals, false)
-		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
-		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
-		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		require.NoError(t, err3)
+		require.NoError(t, err4)
+
+		require.False(t, hasNull[0])
+		require.False(t, hasNull[1])
+		require.False(t, hasNull[2])
+		require.Equal(t, rowHash[0].Sum64(), vecHash[0].Sum64())
+		require.Equal(t, rowHash[1].Sum64(), vecHash[1].Sum64())
+		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
 	}
 }

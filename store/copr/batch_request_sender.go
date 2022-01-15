@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -37,12 +38,14 @@ type RegionInfo struct {
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	*tikv.RegionRequestSender
+	enableCollectExecutionInfo bool
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender: tikv.NewRegionRequestSender(cache.RegionCache, client),
+		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
+		enableCollectExecutionInfo: enableCollectExecutionInfo,
 	}
 }
 
@@ -58,7 +61,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
-	if ss.Stats != nil {
+	if ss.Stats != nil && ss.enableCollectExecutionInfo {
 		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {

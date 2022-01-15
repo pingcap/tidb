@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
+	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000},
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
@@ -41,42 +43,41 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
-	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: Off, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "gtid_mode", Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: FlushTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: FlushTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: ScopeNone, Name: "performance_schema_max_mutex_classes", Value: "200"},
 	{Scope: ScopeGlobal | ScopeSession, Name: LowPriorityUpdates, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: SessionTrackGtids, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, "OWN_GTID", "ALL_GTIDS"}},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndbinfo_max_rows", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_index_stat_option", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: OldPasswords, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 2, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: OldPasswords, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 2},
 	{Scope: ScopeNone, Name: "innodb_version", Value: "5.6.25"},
 	{Scope: ScopeGlobal | ScopeSession, Name: BigTables, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "skip_external_locking", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_sync_array_size", Value: "1"},
-	{Scope: ScopeSession, Name: "rand_seed2", Value: ""},
 	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeSession, Name: "gtid_next", Value: ""},
 	{Scope: ScopeGlobal, Name: "ndb_show_foreign_key_mock_tables", Value: ""},
 	{Scope: ScopeNone, Name: "multi_range_count", Value: "256"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_error_action", Value: "IGNORE_ERROR"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "default_storage_engine", Value: "InnoDB"},
 	{Scope: ScopeNone, Name: "ft_query_expansion_limit", Value: "20"},
-	{Scope: ScopeGlobal, Name: MaxConnectErrors, Value: "100", Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: SyncBinlog, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: MaxConnectErrors, Value: "100", Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal, Name: SyncBinlog, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295},
 	{Scope: ScopeNone, Name: "max_digest_length", Value: "1024"},
 	{Scope: ScopeNone, Name: "innodb_force_load_corrupted", Value: "0"},
 	{Scope: ScopeNone, Name: "performance_schema_max_table_handles", Value: "4000"},
-	{Scope: ScopeGlobal, Name: InnodbFastShutdown, Value: "1", Type: TypeUnsigned, MinValue: 0, MaxValue: 2, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: InnodbFastShutdown, Value: "1", Type: TypeUnsigned, MinValue: 0, MaxValue: 2},
 	{Scope: ScopeNone, Name: "ft_max_word_len", Value: "84"},
 	{Scope: ScopeGlobal, Name: "log_backward_compatible_user_definitions", Value: ""},
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
-	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_statement_classes", Value: "168"},
@@ -167,7 +168,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "thread_concurrency", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_prealloc_size", Value: "8192"},
 	{Scope: ScopeNone, Name: "relay_log_space_limit", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxUserConnections, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxUserConnections, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 4294967295},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "innodb_api_trx_level", Value: "0"},
 	{Scope: ScopeNone, Name: "disconnect_on_expired_password", Value: "1"},
@@ -194,10 +195,36 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct_lwm", Value: "0"},
 	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_heap_table_size", Value: "16777216", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: "tmp_table_size", Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "div_precision_increment", Value: "4", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs != OFF for the same scope otherwise an error will be returned.
+		// See also https://github.com/pingcap/tidb/issues/28230
+		errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("sql_auto_is_null")
+		if TiDBOptOn(normalizedValue) {
+			if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
+				if vars.NoopFuncsMode == OffInt {
+					return Off, errMsg
+				}
+				vars.StmtCtx.AppendWarning(errMsg)
+			}
+			if scope == ScopeGlobal {
+				val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+				if err != nil {
+					return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+				}
+				if val == Off {
+					return Off, errMsg
+				}
+				if val == Warn {
+					vars.StmtCtx.AppendWarning(errMsg)
+				}
+			}
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeNone, Name: "innodb_api_enable_binlog", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "innodb_ft_user_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "server_id_bits", Value: "32"},
@@ -222,7 +249,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_log_buffer_size", Value: "8388608"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_timeout", Value: "300"},
 	{Scope: ScopeGlobal, Name: "max_relay_log_size", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxSortLength, Value: "1024", Type: TypeUnsigned, MinValue: 4, MaxValue: 8388608, AutoConvertOutOfRange: true, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxSortLength, Value: "1024", Type: TypeUnsigned, MinValue: 4, MaxValue: 8388608, IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "metadata_locks_hash_instances", Value: "8"},
 	{Scope: ScopeGlobal, Name: "ndb_eventbuffer_free_percent", Value: ""},
 	{Scope: ScopeNone, Name: "large_files_support", Value: "1"},
@@ -247,7 +274,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "binlog_gtid_simple_recovery", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_digests_size", Value: "10000"},
 	{Scope: ScopeGlobal | ScopeSession, Name: Profiling, Value: Off, Type: TypeBool},
-	{Scope: ScopeSession, Name: "rand_seed1", Value: ""},
 	{Scope: ScopeGlobal, Name: "sha256_password_proxy_users", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLQuoteShowCreate, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlogging_impossible_mode", Value: "IGNORE_ERROR"},
@@ -259,7 +285,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_force_send", Value: ""},
 	{Scope: ScopeNone, Name: "skip_show_database", Value: "0"},
 	{Scope: ScopeGlobal, Name: "log_timestamps", Value: ""},
-	{Scope: ScopeNone, Name: "version_compile_machine", Value: "x86_64"},
 	{Scope: ScopeGlobal, Name: "event_scheduler", Value: Off},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_deferred_constraints", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_syslog_include_pid", Value: ""},
@@ -326,7 +351,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_api_enable_mdl", Value: "0"},
 	{Scope: ScopeGlobal, Name: "binlog_cache_size", Value: "32768"},
 	{Scope: ScopeGlobal, Name: "innodb_compression_pad_pct_max", Value: "50"},
-	{Scope: ScopeGlobal, Name: InnodbCommitConcurrency, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 1000, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: InnodbCommitConcurrency, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 1000},
 	{Scope: ScopeNone, Name: "ft_min_word_len", Value: "4"},
 	{Scope: ScopeGlobal, Name: EnforceGtidConsistency, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, "WARN"}},
 	{Scope: ScopeGlobal, Name: SecureAuth, Value: On, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -349,7 +374,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "lock_wait_timeout", Value: "31536000"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "read_buffer_size", Value: "131072", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "innodb_read_io_threads", Value: "4"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxSpRecursionDepth, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 255, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxSpRecursionDepth, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 255},
 	{Scope: ScopeNone, Name: "ignore_builtin_innodb", Value: "0"},
 	{Scope: ScopeGlobal, Name: "slow_query_log_file", Value: "/usr/local/mysql/data/localhost-slow.log"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_sleep_delay", Value: "10000"},
@@ -417,13 +442,12 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_stats_method", Value: "nulls_equal"},
 	{Scope: ScopeGlobal, Name: LocalInFile, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "myisam_stats_method", Value: "nulls_unequal"},
-	{Scope: ScopeNone, Name: "version_compile_os", Value: "osx10.8"},
 	{Scope: ScopeNone, Name: "relay_log_recovery", Value: "0"},
 	{Scope: ScopeNone, Name: "old", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: PerformanceSchema, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "myisam_recover_options", Value: Off},
-	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384"},
+	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384", Type: TypeUnsigned, MinValue: 1024, MaxValue: 1048576},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_row_image", Value: "FULL"},
 	{Scope: ScopeNone, Name: "innodb_locks_unsafe_for_binlog", Value: "0"},
 	{Scope: ScopeSession, Name: "rbr_exec_mode", Value: ""},
@@ -448,7 +472,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "sync_relay_log_info", Value: "10000"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_trace_limit", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_ft_max_token_size", Value: "84"},
-	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: ValidatePasswordLength, Value: "8", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal, Name: "ndb_log_binlog_index", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_api_bk_commit_interval", Value: "5"},
 	{Scope: ScopeNone, Name: "innodb_undo_directory", Value: "."},
@@ -458,18 +482,17 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_concurrency", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_dump_pct", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_time_names", Value: "en_US"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_time_names", Value: "en_US", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_statement_time", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: EndMarkersInJSON, Value: Off, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_age_threshold", Value: "300"},
 	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeSession, Name: "identity", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "min_examined_row_limit", Value: "0"},
 	{Scope: ScopeGlobal, Name: "sync_frm", Type: TypeBool, Value: On},
 	{Scope: ScopeGlobal, Name: "innodb_online_alter_log_max_size", Value: "134217728"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "information_schema_stats_expiry", Value: "86400"},
-	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64},
 	{Scope: ScopeNone, Name: "lower_case_file_system", Value: "1"},
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +20,7 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -113,12 +113,12 @@ var vecBuiltinControlCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinControlEvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinControlCases)
+func TestVectorizedBuiltinControlEvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinControlCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinControlFuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinControlCases)
+func TestVectorizedBuiltinControlFuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinControlCases)
 }
 
 func BenchmarkVectorizedBuiltinControlEvalOneVecGenerated(b *testing.B) {

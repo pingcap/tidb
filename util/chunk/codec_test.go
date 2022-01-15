@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,17 +18,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = check.Suite(&testCodecSuite{})
-
-type testCodecSuite struct{}
-
-func (s *testCodecSuite) TestCodec(c *check.C) {
+func TestCodec(t *testing.T) {
 	numCols := 6
 	numRows := 10
 
@@ -56,44 +53,44 @@ func (s *testCodecSuite) TestCodec(c *check.C) {
 	newChk := NewChunkWithCapacity(colTypes, numRows)
 	remained := codec.DecodeToChunk(buffer, newChk)
 
-	c.Assert(len(remained), check.Equals, 0)
-	c.Assert(newChk.NumCols(), check.Equals, numCols)
-	c.Assert(newChk.NumRows(), check.Equals, numRows)
+	require.Empty(t, remained)
+	require.Equal(t, numCols, newChk.NumCols())
+	require.Equal(t, numRows, newChk.NumRows())
 	for i := 0; i < numRows; i++ {
 		row := newChk.GetRow(i)
 		str := fmt.Sprintf("%d.12345", i)
-		c.Assert(row.IsNull(0), check.IsTrue)
-		c.Assert(row.IsNull(1), check.IsFalse)
-		c.Assert(row.IsNull(2), check.IsFalse)
-		c.Assert(row.IsNull(3), check.IsFalse)
-		c.Assert(row.IsNull(4), check.IsFalse)
-		c.Assert(row.IsNull(5), check.IsFalse)
+		require.True(t, row.IsNull(0))
+		require.False(t, row.IsNull(1))
+		require.False(t, row.IsNull(2))
+		require.False(t, row.IsNull(3))
+		require.False(t, row.IsNull(4))
+		require.False(t, row.IsNull(5))
 
-		c.Assert(row.GetInt64(1), check.Equals, int64(i))
-		c.Assert(row.GetString(2), check.Equals, str)
-		c.Assert(row.GetString(3), check.Equals, str)
-		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
-		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
+		require.Equal(t, int64(i), row.GetInt64(1))
+		require.Equal(t, str, row.GetString(2))
+		require.Equal(t, str, row.GetString(3))
+		require.Equal(t, str, row.GetMyDecimal(4).String())
+		require.Equal(t, str, string(row.GetJSON(5).GetString()))
 	}
 }
 
-func (s *testCodecSuite) TestEstimateTypeWidth(c *check.C) {
+func TestEstimateTypeWidth(t *testing.T) {
 	var colType *types.FieldType
 
 	colType = &types.FieldType{Tp: mysql.TypeLonglong}
-	c.Assert(EstimateTypeWidth(colType), check.Equals, 8) // fixed-witch type
+	require.Equal(t, 8, EstimateTypeWidth(colType)) // fixed-witch type
 
 	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 31}
-	c.Assert(EstimateTypeWidth(colType), check.Equals, 31) // colLen <= 32
+	require.Equal(t, 31, EstimateTypeWidth(colType)) // colLen <= 32
 
 	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 999}
-	c.Assert(EstimateTypeWidth(colType), check.Equals, 515) // colLen < 1000
+	require.Equal(t, 515, EstimateTypeWidth(colType)) // colLen < 1000
 
 	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 2000}
-	c.Assert(EstimateTypeWidth(colType), check.Equals, 516) // colLen < 1000
+	require.Equal(t, 516, EstimateTypeWidth(colType)) // colLen < 1000
 
 	colType = &types.FieldType{Tp: mysql.TypeString}
-	c.Assert(EstimateTypeWidth(colType), check.Equals, 32) // value after guessing
+	require.Equal(t, 32, EstimateTypeWidth(colType)) // value after guessing
 }
 
 func BenchmarkEncodeChunk(b *testing.B) {
