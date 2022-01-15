@@ -1025,11 +1025,11 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		if err != nil {
 			return nil, err
 		}
-		for _, regionInfo := range storeRegionsInfo.Regions {
+		for i, regionInfo := range storeRegionsInfo.Regions {
 			// regionMap is used to remove dup regions and record the region in regionsInfoByStoreID.
 			if _, ok := regionMap[regionInfo.ID]; !ok {
 				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
-				regionMap[regionInfo.ID] = &regionInfo
+				regionMap[regionInfo.ID] = &storeRegionsInfo.Regions[i]
 			}
 		}
 	}
