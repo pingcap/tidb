@@ -515,7 +515,7 @@ func (rc *Client) GoCreateTables(
 
 	var err error
 
-	if rc.batchDdlSize > minBatchDdlSize {
+	if rc.batchDdlSize > minBatchDdlSize && len(dbPool) > 0 {
 
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
