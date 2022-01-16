@@ -127,7 +127,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -176,7 +176,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -186,7 +185,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -248,7 +246,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -289,7 +287,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -299,7 +296,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -361,7 +357,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -410,7 +406,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -420,7 +415,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -482,7 +476,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -523,7 +517,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -533,7 +526,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -554,7 +546,7 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)",
+      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)\nmax: max(cpu utilization)",
       "editable": true,
       "error": false,
       "fieldConfig": {
@@ -595,7 +587,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -621,6 +613,14 @@
           "interval": "",
           "legendFormat": "delta",
           "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\",job=\"tidb\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "max",
+          "refId": "C"
         }
       ],
       "thresholds": [],
@@ -644,7 +644,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": null,
           "format": "percentunit",
           "label": null,
@@ -654,7 +653,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -675,7 +673,7 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)",
+      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)\nmax: max(cpu utilization)",
       "editable": true,
       "error": false,
       "fieldConfig": {
@@ -716,7 +714,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -742,6 +740,14 @@
           "interval": "",
           "legendFormat": "delta",
           "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "max",
+          "refId": "C"
         }
       ],
       "thresholds": [],
@@ -765,7 +771,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:803",
           "decimals": 0,
           "format": "percentunit",
           "label": null,
@@ -775,7 +780,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:804",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -814,8 +818,8 @@
         "alignAsTable": true,
         "avg": true,
         "current": false,
-        "hideEmpty": false,
-        "hideZero": false,
+        "hideEmpty": true,
+        "hideZero": true,
         "max": true,
         "min": false,
         "rightSide": true,
@@ -831,7 +835,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -841,26 +845,30 @@
       "steppedLine": false,
       "targets": [
         {
+          "exemplar": true,
           "expr": "histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le))",
           "format": "time_series",
+          "interval": "",
           "intervalFactor": 2,
           "legendFormat": "99",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(tidb_server_handle_query_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le))",
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
           "format": "time_series",
-          "hide": true,
-          "intervalFactor": 2,
-          "legendFormat": "95",
-          "refId": "C"
-        },
-        {
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[30s])) / sum(rate(tidb_server_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[30s]))",
-          "format": "time_series",
+          "interval": "",
           "intervalFactor": 2,
           "legendFormat": "avg",
           "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type) / sum(rate(tidb_server_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "avg-{{sql_type}}",
+          "refId": "A"
         }
       ],
       "thresholds": [],
@@ -883,7 +891,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1093",
           "format": "s",
           "label": null,
           "logBase": 1,
@@ -892,7 +899,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1094",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -942,8 +948,8 @@
         "min": false,
         "rightSide": true,
         "show": true,
-        "sort": null,
-        "sortDesc": null,
+        "sort": "avg",
+        "sortDesc": true,
         "total": false,
         "values": true
       },
@@ -955,7 +961,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -971,7 +977,7 @@
           "instant": false,
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "avg_not_in_txn",
+          "legendFormat": "avg-not-in-txn",
           "refId": "A",
           "step": 30
         },
@@ -980,8 +986,24 @@
           "expr": "(sum(rate(tidb_server_conn_idle_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) / sum(rate(tidb_server_conn_idle_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])))",
           "hide": false,
           "interval": "",
-          "legendFormat": "avg_in_txn",
+          "legendFormat": "avg-in-txn",
           "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) by (le,in_txn))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "99-in-txn",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])) by (le,in_txn))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "99-not-in-txn",
+          "refId": "D"
         }
       ],
       "thresholds": [],
@@ -1005,7 +1027,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1169",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1015,7 +1036,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1170",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1078,7 +1098,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1134,7 +1154,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1241",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1144,7 +1163,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1242",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1201,7 +1219,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1249,7 +1267,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1313",
           "format": "s",
           "label": null,
           "logBase": 1,
@@ -1258,7 +1275,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1314",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1321,7 +1337,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1377,7 +1393,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1389",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1387,7 +1402,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1390",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1444,7 +1458,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1507,7 +1521,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1461",
           "format": "s",
           "label": null,
           "logBase": 1,
@@ -1516,7 +1529,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1462",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1579,7 +1591,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1618,7 +1630,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1537",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1628,7 +1639,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1538",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1691,7 +1701,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1730,7 +1740,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1609",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1740,7 +1749,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1610",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1803,7 +1811,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1850,7 +1858,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1021",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1860,7 +1867,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1022",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1923,7 +1929,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1970,7 +1976,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1021",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1980,7 +1985,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1022",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2043,7 +2047,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2090,7 +2094,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:1021",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2100,7 +2103,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:1022",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2163,7 +2165,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2210,7 +2212,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:713",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2220,7 +2221,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:714",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2283,7 +2283,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2330,7 +2330,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:879",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2340,7 +2339,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:880",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2403,7 +2401,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.7",
+      "pluginVersion": "7.5.11",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2450,7 +2448,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:713",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2460,7 +2457,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:714",
           "format": "short",
           "label": null,
           "logBase": 1,
