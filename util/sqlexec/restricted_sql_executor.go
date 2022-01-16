@@ -52,9 +52,10 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt option.
 type ExecOption struct {
-	IgnoreWarning bool
-	SnapshotTS    uint64
-	AnalyzeVer    int
+	IgnoreWarning     bool
+	SnapshotTS        uint64
+	AnalyzeVer        int
+	IgnoreSessionPool bool
 }
 
 // OptionFuncAlias is defined for the optional paramater of ExecRestrictedStmt.
@@ -68,6 +69,11 @@ var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt to collect statistics with version1.
 var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 1
+}
+
+// ExecOptionIgnoreSessionPool tells ExecRestrictedStmt to use current session.
+var ExecOptionIgnoreSessionPool OptionFuncAlias = func(option *ExecOption) {
+	option.IgnoreSessionPool = true
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt to collect statistics with version2.

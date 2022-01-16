@@ -1553,13 +1553,16 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	for _, opt := range opts {
 		opt(&execOption)
 	}
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
+	se := s
+	if !execOption.IgnoreSessionPool {
+		// Use special session to execute the sql.
+		tmp, err := s.sysSessionPool().Get()
+		if err != nil {
+			return nil, nil, err
+		}
+		defer s.sysSessionPool().Put(tmp)
+		se = tmp.(*session)
 	}
-	defer s.sysSessionPool().Put(tmp)
-	se := tmp.(*session)
 
 	startTime := time.Now()
 	// The special session will share the `InspectionTableCache` with current session
@@ -1584,6 +1587,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}()
 
 	if execOption.SnapshotTS != 0 {
+		var err error
 		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
 		if err != nil {
 			return nil, nil, err

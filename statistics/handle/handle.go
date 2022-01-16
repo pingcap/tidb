@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -120,8 +121,11 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// statsLoad is used to load stats concurrently
+	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
+
+	// workingAutoAnalyze tracks working auto analyze process
+	workingAutoAnalyze sessionctx.Context
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
@@ -145,7 +149,13 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	})
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (h *Handle) execRestrictedSQLWithStatsVer(
+	ctx context.Context,
+	statsVer int,
+	sql string,
+	trackFunc func(session sessionctx.Context),
+	deferFunc func(session sessionctx.Context),
+	params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
 		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
@@ -158,7 +168,9 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer])
+		trackFunc(exec.(sessionctx.Context))
+		defer deferFunc(exec.(sessionctx.Context))
+		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionIgnoreSessionPool)
 	})
 }
 
@@ -1943,4 +1955,22 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 		}
 	}
 	return columnIDs, nil
+}
+
+func (h *Handle) GetProcesses() map[uint64]sessionctx.Context {
+	if h.workingAutoAnalyze != nil {
+		processes := make(map[uint64]sessionctx.Context, 1)
+		processes[tidbutil.ReservedConnIDAutoAnalyze] = h.workingAutoAnalyze
+		return processes
+	}
+	return map[uint64]sessionctx.Context{}
+}
+
+func (h *Handle) KillBgProcess(id uint64) {
+	switch id {
+	case tidbutil.ReservedConnIDAutoAnalyze:
+		if h.workingAutoAnalyze != nil {
+			atomic.StoreUint32(&h.workingAutoAnalyze.GetSessionVars().Killed, 1)
+		}
+	}
 }

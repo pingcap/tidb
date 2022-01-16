@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	syncatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -1180,7 +1181,16 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
+	trackFunc := func(ctx sessionctx.Context) {
+		h.workingAutoAnalyze = ctx
+		syncatomic.StoreUint32(&ctx.GetSessionVars().Killed, 0)
+	}
+	deferFunc := func(ctx sessionctx.Context) {
+		h.workingAutoAnalyze = nil
+		syncatomic.StoreUint32(&ctx.GetSessionVars().Killed, 0)
+	}
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, trackFunc, deferFunc, params...)
+	h.workingAutoAnalyze = nil
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

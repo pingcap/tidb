@@ -1807,3 +1807,11 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
+
+func (d *Domain) GetProcesses() map[uint64]sessionctx.Context {
+	return d.StatsHandle().GetProcesses()
+}
+
+func (d *Domain) KillBgProcess(id uint64) {
+	d.StatsHandle().KillBgProcess(id)
+}

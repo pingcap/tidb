@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -166,6 +167,7 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 	s.globalConnID = util.GlobalConnID{
 		ServerIDGetter: serverIDGetter,
 		Is64bits:       true,
+		LocalConnID:    util.ReservedLocalConns,
 	}
 }
 
@@ -193,7 +195,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
+		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true, LocalConnID: util.ReservedLocalConns},
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -623,7 +625,7 @@ func (s *Server) checkConnectionCount() error {
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo, len(s.clients)+util.ReservedLocalConns)
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
@@ -631,6 +633,11 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
+	}
+	for connID, p := range s.dom.GetProcesses() {
+		pi := p.(session.Session).ShowProcess()
+		pi.ID = connID
+		rs[connID] = pi
 	}
 	return rs
 }
@@ -671,6 +678,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
 	if !ok {
+		s.dom.KillBgProcess(connectionID)
 		return
 	}
 

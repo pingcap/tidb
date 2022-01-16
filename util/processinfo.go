@@ -251,3 +251,8 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 		ServerID:    0,
 	}, false, nil
 }
+
+const (
+	ReservedLocalConns        = 100
+	ReservedConnIDAutoAnalyze = 1
+)
