@@ -369,11 +369,10 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				panic("forcing failure due to FailBeforeIndexEngineImported")
+			})
 		}
-
-		failpoint.Inject("FailBeforeIndexEngineImported", func() {
-			panic("forcing failure due to FailBeforeIndexEngineImported")
-		})
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
 		if err = firstErr(err, saveCpErr); err != nil {
@@ -928,12 +927,14 @@ func (tr *TableRestore) importKV(
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
 	if regionSplitSize == 0 && rc.taskMgr != nil {
 		regionSplitSize = int64(config.SplitRegionSize)
-		rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
 				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
-		})
+		}); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)

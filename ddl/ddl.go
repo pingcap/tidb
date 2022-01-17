@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -505,15 +504,29 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
+// mayNeedReorg indicates that this job may need to reorganize the data.
+func mayNeedReorg(job *model.Job) bool {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return true
+	case model.ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
-	// If the workers don't run, we needn't to notify workers.
+	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
 		return
 	}
-
 	var worker *worker
-	jobTp := job.Type
-	if admin.MayNeedBackfill(jobTp) {
+	if mayNeedReorg(job) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]

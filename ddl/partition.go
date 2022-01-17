@@ -208,6 +208,10 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
 
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
@@ -459,14 +463,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 
 	if err != nil {
 		return nil, err
-	}
-
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return partitions, nil
@@ -1584,7 +1580,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(w.ddlJobCtx, sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1602,7 +1598,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	var buf strings.Builder
 	paramList := make([]interface{}, 0, 4)
-	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParamsInternal(...)
+	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
 	// So we write it to the origin sql string here.
 	if index == 0 {
 		buf.WriteString("select 1 from %n.%n where ")

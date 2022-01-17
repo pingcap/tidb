@@ -39,6 +39,11 @@ type Session interface {
 	Close()
 }
 
+// BatchCreateTableSession is an interface to batch create table parallelly
+type BatchCreateTableSession interface {
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error
+}
+
 // Progress is an interface recording the current execution progress.
 type Progress interface {
 	// Inc increases the progress. This method must be goroutine-safe, and can

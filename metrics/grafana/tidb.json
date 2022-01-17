@@ -3180,17 +3180,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "expr": "sum(rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-rate",
+              "legendFormat": "{{type}}-rate",
               "refId": "A"
             },
             {
-              "expr": "tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-total",
+              "legendFormat": "{{type}}-total",
               "refId": "B"
             }
           ],
@@ -9228,7 +9228,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB batch add index durations by histogram buckets",
+          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
           "fill": 1,
           "gridPos": {
             "h": 7,
@@ -9264,25 +9264,18 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}",
-              "refId": "A"
-            },
-            {
               "expr": "sum(rate(tidb_ddl_add_index_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
-              "refId": "B"
+              "refId": "A"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Batch Add Index Duration 100",
+          "title": "DDL Backfill Data Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -10865,7 +10858,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "tidb-cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -10877,7 +10870,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 33
+            "y": 170
           },
           "hiddenSeries": false,
           "id": 229,
@@ -10898,7 +10891,6 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -10975,7 +10967,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "tidb-cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -10987,7 +10979,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 33
+            "y": 170
           },
           "hiddenSeries": false,
           "id": 230,
@@ -11008,7 +11000,6 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
