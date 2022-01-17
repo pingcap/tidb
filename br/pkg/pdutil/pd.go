@@ -38,6 +38,7 @@ const (
 	schedulerPrefix      = "pd/api/v1/schedulers"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
+	configPrefix         = "pd/api/v1/config"
 	pauseTimeout         = 5 * time.Minute
 
 	// pd request retry time when connection fail
@@ -46,6 +47,14 @@ const (
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
+
+func getPauseTimeout() time.Duration {
+	timeout := pauseTimeout
+	failpoint.Inject("PDPauseConfigSeconds", func(v failpoint.Value) {
+		timeout = time.Duration(v.(int)) * time.Second
+	})
+	return timeout
+}
 
 // pauseConfigGenerator generate a config value according to store count and current value.
 type pauseConfigGenerator func(int, interface{}) interface{}
@@ -378,7 +387,7 @@ func (p *PdController) getStoreInfoWith(
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout)})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(getPauseTimeout())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -424,7 +433,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 	}
 
 	go func() {
-		tick := time.NewTicker(pauseTimeout / 3)
+		tick := time.NewTicker(getPauseTimeout() / 3)
 		defer tick.Stop()
 
 		for {
@@ -541,7 +550,7 @@ func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 func (p *PdController) doUpdatePDScheduleConfig(
 	ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest, prefixs ...string,
 ) error {
-	prefix := scheduleConfigPrefix
+	prefix := configPrefix
 	if len(prefixs) != 0 {
 		prefix = prefixs[0]
 	}
@@ -562,7 +571,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", scheduleConfigPrefix, pauseTimeout.Seconds())
+	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, getPauseTimeout().Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
@@ -584,7 +593,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	prefix := make([]string, 0, 1)
 	if pd.isPauseConfigEnabled() {
 		// set config's ttl to zero, make temporary config invalid immediately.
-		prefix = append(prefix, fmt.Sprintf("%s?ttlSecond=%d", scheduleConfigPrefix, 0))
+		prefix = append(prefix, fmt.Sprintf("%s?ttlSecond=%d", configPrefix, 0))
 	}
 	// reset config with previous value.
 	if err := pd.doUpdatePDScheduleConfig(ctx, mergeCfg, pdRequest, prefix...); err != nil {
