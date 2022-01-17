@@ -5030,7 +5030,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 
 	// For issue #13189
 	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
-	tk.MustExec("create table t1(a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("create table t1 (a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("SET @@time_zone = '+00:00'")
+	defer tk.MustExec("SET @@time_zone = DEFAULT")
+	tk.MustQuery("SELECT @@time_zone").Check(testkit.Rows("+00:00"))
+	tk.MustExec("create table t2 (a int primary key, b timestamp DEFAULT CURRENT_TIMESTAMP, c timestamp DEFAULT '2000-01-01 00:00:00')")
 	tk.MustExec("insert into t1 set a = 1, b = default(c);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
 	tk.MustExec("insert into t1 set a = 2, b = default(c), c = default(d), d = default(b);")
@@ -5040,6 +5044,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 set a = default(b) + default(c) - default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
+	tk.MustExec("set @@timestamp = 1321009871")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustQuery("SELECT NOW()").Check(testkit.Rows("2011-11-11 11:11:11"))
+	tk.MustExec("insert into t2 set a = 1, b = default(c)")
+	tk.MustExec("insert into t2 set a = 2, c = default(b)")
+	tk.MustGetErrCode("insert into t2 set a = 3, b = default(a)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t2 set a = 4, b = default(b), c = default(c)")
+	tk.MustExec("insert into t2 set a = 5, b = default, c = default")
+	tk.MustExec("insert into t2 set a = 6")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows(
+		"1 2000-01-01 00:00:00 2000-01-01 00:00:00",
+		"2 2011-11-11 11:11:11 2011-11-11 11:11:11",
+		"4 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"6 2011-11-11 11:11:11 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `UPDATE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5052,6 +5071,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("insert into t1 set a = 10")
 	tk.MustExec("update t1 set a = 10, b = default(c) + default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	tk.MustExec("set @@timestamp = 1671747742")
+	tk.MustExec("update t2 set b = default(c) WHERE a = 6")
+	tk.MustExec("update t2 set c = default(b) WHERE a = 5")
+	tk.MustGetErrCode("update t2 set b = default(a) WHERE a = 4", errno.ErrNoDefaultForField)
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 4")
+	// Non existing row!
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 3")
+	tk.MustExec("update t2 set b = default, c = default WHERE a = 2")
+	tk.MustExec("update t2 set b = default(b) WHERE a = 1")
+	tk.MustQuery("select * from t2;").Sort().Check(testkit.Rows(
+		"1 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"2 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"4 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2022-12-22 22:22:22",
+		"6 2000-01-01 00:00:00 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `REPLACE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5068,9 +5102,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40", "20 20 30 50"))
 
 	// Use `DEFAULT()` in expression of generate columns, issue #12471
+	tk.MustExec("DROP TABLE t2")
 	tk.MustExec("create table t2(a int default 9, b int as (1 + default(a)));")
 	tk.MustExec("insert into t2 values(1, default);")
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10"))
+	tk.MustExec("insert into t2 values(2, default(b))")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
 
 	// Use `DEFAULT()` with subquery, issue #13390
 	tk.MustExec("create table t3(f1 int default 11);")

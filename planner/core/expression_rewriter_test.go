@@ -110,6 +110,10 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		e datetime default '20180101',
 		f datetime default current_timestamp);`)
 	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
+	tk.MustExec("set @@timestamp = 1321009871")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustExec("set @@time_zone = '+00:00'")
+	defer tk.MustExec("set @@time_zone = DEFAULT")
 	tk.MustQuery(`select
 		default(a) as defa,
 		default(b) as defb,
@@ -117,7 +121,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(d) as defd,
 		default(e) as defe,
 		default(f) as deff
-		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|<nil>"))
+		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
 	err = tk.ExecToErr("select default(x) from t1")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'x' in 'field list'")
 
@@ -142,7 +146,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(b) as defb,
 		default(c) as defc,
 		default(d) as defd
-		from t3`).Check(testutil.RowsWithSep("|", "<nil>|0000-00-00 00:00:00|0000-00-00 00:00:00.000000|current_timestamp"))
+		from t3`).Check(testutil.RowsWithSep("|", "2011-11-11 11:11:11|2011-11-11 11:11:11|2011-11-11 11:11:11.000000|current_timestamp"))
 
 	tk.MustExec(`create table t4(a int default 1, b varchar(5))`)
 	tk.MustExec(`insert into t4 values (0, 'B'), (1, 'B'), (2, 'B')`)

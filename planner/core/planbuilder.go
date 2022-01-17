@@ -3250,15 +3250,6 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 }
 
-func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
-	for _, col := range cols {
-		if col.Name.L == name.Name.L {
-			return b.getDefaultValue(col)
-		}
-	}
-	return nil, ErrUnknownColumn.GenWithStackByArgs(name.Name.O, "field_list")
-}
-
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
@@ -3448,7 +3439,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		if err != nil {
 			return nil, err
 		} else if idx < 0 {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), clauseMsg[fieldList])
 		}
 
 		column := colMap[assign.Column.Name.L]
@@ -3456,17 +3447,17 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 			return nil, ErrUnknownColumn.GenWithStackByArgs(column.Name, clauseMsg[fieldList])
 		}
 		// Check whether the column to be updated is the generated column.
-		defaultExpr := extractDefaultExpr(assign.Expr)
-		if defaultExpr != nil {
-			defaultExpr.Name = assign.Column
-		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 		if column.IsGenerated() {
-			if defaultExpr != nil {
+			if IsDefaultExprSameColumn(p.tableColNames[idx:idx+1], assign.Expr) {
 				continue
 			}
 			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		}
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
 
 		onDupColSet[column.Name.L] = struct{}{}
@@ -3514,6 +3505,68 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 	return affectedValuesCols, nil
 }
 
+func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+	if col.Hidden {
+		return nil, ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+	}
+	switch x := expr.(type) {
+	case *ast.DefaultExpr:
+		refCol := col
+		if x.Name != nil {
+			refCol = table.FindColLowerCase(insertPlan.Table.Cols(), x.Name.Name.L)
+			if refCol == nil {
+				return nil, ErrUnknownColumn.GenWithStackByArgs(x.Name.OrigColName(), clauseMsg[fieldList])
+			}
+			// Cannot use DEFAULT(generated column) except for the same column
+			if col != refCol && (col.IsGenerated() || refCol.IsGenerated()) {
+				return nil, ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			} else if col == refCol && col.IsGenerated() {
+				return nil, nil
+			}
+		} else if col.IsGenerated() {
+			// See note in the end of the function. Only default for generated columns are OK.
+			return nil, nil
+		}
+		outExpr, err = b.getDefaultValue(refCol)
+	case *driver.ValueExpr:
+		outExpr = &expression.Constant{
+			Value:   x.Datum,
+			RetType: &x.Type,
+		}
+	case *driver.ParamMarkerExpr:
+		outExpr, err = expression.ParamMarkerExpression(b.ctx, x)
+	default:
+		b.curClause = fieldList
+		// subquery in insert values should not reference upper scope
+		usingPlan := mockTablePlan
+		if _, ok := expr.(*ast.SubqueryExpr); ok {
+			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		}
+		var np LogicalPlan
+		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
+		if np != nil {
+			if _, ok := np.(*LogicalTableDual); !ok {
+				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
+				// This is a TODO and we will support it later.
+				return nil, errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if insertPlan.AllAssignmentsAreConstant {
+		_, isConstant := outExpr.(*expression.Constant)
+		insertPlan.AllAssignmentsAreConstant = isConstant
+	}
+	// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+	// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+	if col.IsGenerated() {
+		return nil, ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+	}
+	return outExpr, nil
+}
+
 func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
 	tableInfo := insertPlan.Table.Meta()
 	colNames := make([]string, 0, len(insert.Setlist))
@@ -3535,47 +3588,15 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	if missingColIdx >= 0 {
 		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
-	generatedColumns := make(map[string]struct{}, len(tCols))
-	for _, tCol := range tCols {
-		if tCol.IsGenerated() {
-			generatedColumns[tCol.Name.L] = struct{}{}
-		}
-	}
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
-		defaultExpr := extractDefaultExpr(assign.Expr)
-		if defaultExpr != nil {
-			defaultExpr.Name = assign.Column
-		}
-		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
-		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
-			if defaultExpr != nil {
-				continue
-			}
-			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
-		}
-		b.curClause = fieldList
-		// subquery in insert values should not reference upper scope
-		usingPlan := mockTablePlan
-		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
-			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-		}
-		expr, np, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
+		expr, err := b.getInsertColExpr(ctx, insertPlan, mockTablePlan, tCols[i], assign.Expr, checkRefColumn)
 		if err != nil {
 			return err
 		}
-		if np != nil {
-			if _, ok := np.(*LogicalTableDual); !ok {
-				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
-				// This is a TODO and we will support it later.
-				return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
-			}
-		}
-		if insertPlan.AllAssignmentsAreConstant {
-			_, isConstant := expr.(*expression.Constant)
-			insertPlan.AllAssignmentsAreConstant = isConstant
+		if expr == nil {
+			continue
 		}
 
 		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
@@ -3605,7 +3626,6 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
-	totalTableCols := insertPlan.Table.Cols()
 	for i, valuesItem := range insert.Lists {
 		// The length of all the value_list should be the same.
 		// "insert into t values (), ()" is valid.
@@ -3617,62 +3637,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		}
 		exprList := make([]expression.Expression, 0, len(valuesItem))
 		for j, valueItem := range valuesItem {
-			var expr expression.Expression
-			var err error
-			var generatedColumnWithDefaultExpr bool
-			col := affectedValuesCols[j]
-			switch x := valueItem.(type) {
-			case *ast.DefaultExpr:
-				if col.IsGenerated() {
-					if x.Name != nil {
-						return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
-					}
-					generatedColumnWithDefaultExpr = true
-					break
-				}
-				if x.Name != nil {
-					expr, err = b.findDefaultValue(totalTableCols, x.Name)
-				} else {
-					expr, err = b.getDefaultValue(affectedValuesCols[j])
-				}
-			case *driver.ValueExpr:
-				expr = &expression.Constant{
-					Value:   x.Datum,
-					RetType: &x.Type,
-				}
-			case *driver.ParamMarkerExpr:
-				expr, err = expression.ParamMarkerExpression(b.ctx, x)
-			default:
-				b.curClause = fieldList
-				// subquery in insert values should not reference upper scope
-				usingPlan := mockTablePlan
-				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
-					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				}
-				var np LogicalPlan
-				expr, np, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
-				if np != nil {
-					if _, ok := np.(*LogicalTableDual); !ok {
-						// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
-						// This is a TODO and we will support it later.
-						return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
-					}
-				}
-			}
+			expr, err := b.getInsertColExpr(ctx, insertPlan, mockTablePlan, affectedValuesCols[j], valueItem, checkRefColumn)
 			if err != nil {
 				return err
 			}
-			if insertPlan.AllAssignmentsAreConstant {
-				_, isConstant := expr.(*expression.Constant)
-				insertPlan.AllAssignmentsAreConstant = isConstant
-			}
-			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
-			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-			if col.IsGenerated() {
-				if generatedColumnWithDefaultExpr {
-					continue
-				}
-				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			if expr == nil {
+				continue
 			}
 			exprList = append(exprList, expr)
 		}
