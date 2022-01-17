@@ -270,7 +270,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 	return nil
 }
 
-func (e *AnalyzeExec) recordHistoricalStats(tableId int64) error {
+func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
@@ -278,14 +278,14 @@ func (e *AnalyzeExec) recordHistoricalStats(tableId int64) error {
 	}
 	if historicalStatsEnabled {
 		is := domain.GetDomain(e.ctx).InfoSchema()
-		tbl, existed := is.TableByID(tableId)
+		tbl, existed := is.TableByID(tableID)
 		if !existed {
-			return errors.New(fmt.Sprintf("cannot get table by id %d", tableId))
+			return errors.New(fmt.Sprintf("cannot get table by id %d", tableID))
 		}
 		tblInfo := tbl.Meta()
 		dbInfo, existed := is.SchemaByTable(tblInfo)
 		if !existed {
-			return errors.New(fmt.Sprintf("cannot get DBInfo by TableID %d", tableId))
+			return errors.New(fmt.Sprintf("cannot get DBInfo by TableID %d", tableID))
 		}
 		if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
 			return errors.New(fmt.Sprintf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O))
