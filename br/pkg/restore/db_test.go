@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -119,6 +121,43 @@ func TestRestoreAutoIncID(t *testing.T) {
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
 	require.Equal(t, uint64(globalAutoID+300), autoIncID)
+
+}
+
+func TestCreateTablesInDb(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
+	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+
+	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	require.True(t, isExist)
+
+	tables := make([]*metautil.Table, 4)
+	intField := types.NewFieldType(mysql.TypeLong)
+	intField.Charset = "binary"
+	for i := len(tables) - 1; i >= 0; i-- {
+		tables[i] = &metautil.Table{
+			DB: dbSchema,
+			Info: &model.TableInfo{
+				ID:   int64(i),
+				Name: model.NewCIStr("test" + strconv.Itoa(i)),
+				Columns: []*model.ColumnInfo{{
+					ID:        1,
+					Name:      model.NewCIStr("id"),
+					FieldType: *intField,
+					State:     model.StatePublic,
+				}},
+				Charset: "utf8mb4",
+				Collate: "utf8mb4_bin",
+			},
+		}
+	}
+	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	require.Nil(t, err)
+
+	err = db.CreateTables(context.Background(), tables)
+	require.Nil(t, err)
 
 }
 
