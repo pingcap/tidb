@@ -1659,7 +1659,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableAttributes),
-			strings.ToLower(infoschema.TablePlacementRules):
+			strings.ToLower(infoschema.TablePlacementPolicies):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -3919,8 +3919,8 @@ type kvRangeBuilderFromRangeAndPartition struct {
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
-	var ret [][]kv.KeyRange
-	var pids []int64
+	ret := make([][]kv.KeyRange, 0, len(h.partitions))
+	pids := make([]int64, 0, len(h.partitions))
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()

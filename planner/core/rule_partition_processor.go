@@ -1590,7 +1590,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		return
 	}
 	var action, reason func() string
-	var used []model.PartitionDefinition
+	used := make([]model.PartitionDefinition, 0, len(usedMap))
 	for _, def := range usedMap {
 		used = append(used, def)
 	}

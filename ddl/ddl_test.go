@@ -237,17 +237,6 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 	}
 }
 
-func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	newCol := table.ToColumn(tblInfo.Columns[0])
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
-	}
-}
-
 func testCreatePrimaryKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
 	job.Type = model.ActionAddPrimaryKey
