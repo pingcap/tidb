@@ -118,6 +118,9 @@ type Config struct {
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
 	ServerVersion              string             `toml:"server-version" json:"server-version"`
+	VersionComment             string             `toml:"version-comment" json:"version-comment"`
+	TiDBEdition                string             `toml:"tidb-edition" json:"tidb-edition"`
+	TiDBReleaseVersion         string             `toml:"tidb-release-version" json:"tidb-release-version"`
 	Log                        Log                `toml:"log" json:"log"`
 	Security                   Security           `toml:"security" json:"security"`
 	Status                     Status             `toml:"status" json:"status"`
@@ -648,6 +651,9 @@ var defaultConf = Config{
 	LowerCaseTableNames:          2,
 	GracefulWaitBeforeShutdown:   0,
 	ServerVersion:                "",
+	TiDBEdition:                  "Community",
+	VersionComment:               "TiDB Server (Apache License 2.0) Community Edition, MySQL 5.7 compatible",
+	TiDBReleaseVersion:           "None",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
