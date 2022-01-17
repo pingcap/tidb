@@ -1292,6 +1292,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if res.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
@@ -1825,11 +1828,21 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
-func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation, enumOrSetRealTypeIsStr bool) Expression {
+	if expr.GetType().EvalType() != types.ETString {
+		return expr
+	}
 	if expr.GetType().Collate == ec.Collation {
 		return expr
 	}
 	tp := expr.GetType().Clone()
+	if expr.GetType().Hybrid() {
+		if enumOrSetRealTypeIsStr {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		} else {
+			return expr
+		}
+	}
 	tp.Charset, tp.Collate = ec.Charset, ec.Collation
 	newExpr := BuildCastFunction(ctx, expr, tp)
 	return newExpr
