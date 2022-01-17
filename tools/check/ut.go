@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"regexp"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
@@ -188,28 +189,39 @@ func cmdRun(args ...string) {
 		}
 	}
 
-	// run tests for a single package
+	// run tests for packages
 	if len(args) == 1 {
-		pkg := args[0]
-		err := buildTestBinary(pkg)
+		re, err := regexp.Compile(args[0])
 		if err != nil {
-			fmt.Println("build package error", pkg, err)
-			return
-		}
-		exist, err := testBinaryExist(pkg)
-		if err != nil {
-			fmt.Println("check test binary existance error", err)
-			return
+			fmt.Println("compile regexp error for", args[0])
 		}
 
-		if !exist {
-			fmt.Println("no test case in ", pkg)
-			return
-		}
-		tasks, err = listTestCases(pkg, tasks)
-		if err != nil {
-			fmt.Println("list test cases error", err)
-			return
+		for _, pkg := range pkgs {
+			if !re.MatchString(pkg) {
+				continue
+			}
+			fmt.Println("add package ====", pkg)
+			
+			err := buildTestBinary(pkg)
+			if err != nil {
+				fmt.Println("build package error", pkg, err)
+				return
+			}
+			exist, err := testBinaryExist(pkg)
+			if err != nil {
+				fmt.Println("check test binary existance error", err)
+				continue
+			}
+
+			if !exist {
+				fmt.Println("no test case in ", pkg)
+				continue
+			}
+			tasks, err = listTestCases(pkg, tasks)
+			if err != nil {
+				fmt.Println("list test cases error", err)
+				return
+			}
 		}
 	}
 
@@ -362,11 +374,11 @@ type testResult struct {
 func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	exe := "./" + testFileName(pkg)
 	var cmd *exec.Cmd
-	if n.numactl {
-		cmd = n.testCommandWithNumaCtl(exe, fn, old)
-	} else {
+	// if n.numactl {
+	// 	cmd = n.testCommandWithNumaCtl(exe, fn, old)
+	// } else {
 		cmd = n.testCommand(exe, fn, old)
-	}
+	// }
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	cmd.Stdout = &res.output

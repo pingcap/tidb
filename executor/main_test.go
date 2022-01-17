@@ -15,8 +15,10 @@
 package executor_test
 
 import (
+	"syscall"
 	"fmt"
 	"os"
+	"os/signal"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -63,7 +65,16 @@ func TestMain(m *testing.M) {
 		return i
 	}
 
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGSEGV, syscall.SIGHUP)
+
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+
+	select {
+	case <-c:
+		fmt.Println("signal !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+	default:
+	}
 }
 
 func fillData(tk *testkit.TestKit, table string) {
