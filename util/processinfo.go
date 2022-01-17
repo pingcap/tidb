@@ -148,7 +148,7 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string
+	var l []string // nolint: prealloc
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -134,6 +135,12 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
 	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
+	return builder
+}
+
+// SetIsolationLevel sets "IsolationLevel" for "kv.Request".
+func (builder *RequestBuilder) SetIsolationLevel(level kv.IsoLevel) *RequestBuilder {
+	builder.Request.IsolationLevel = level
 	return builder
 }
 
@@ -292,13 +299,18 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
 	}
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
+	if builder.IsStaleness {
+		return nil
+	}
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
