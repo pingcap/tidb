@@ -1000,11 +1000,9 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
-	// StmtStats is used to count various indicators of each SQL in this session
-	// at each point in time. These data will be periodically taken away by the
-	// background goroutine. The background goroutine will continue to aggregate
-	// all the local data in each session, and finally report them to the remote
-	// regularly.
+	// StmtStats is a pointer to session.stmtStats, and the life cycle of StmtStats
+	// is controlled by session.
+	// See session.stmtStats for more details.
 	StmtStats *stmtstats.StatementStats
 
 	// ReadConsistency indicates the read consistency requirement.
@@ -1251,7 +1249,6 @@ func NewSessionVars() *SessionVars {
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		Rng:                         utilMath.NewWithTime(),
-		StmtStats:                   stmtstats.CreateStatementStats(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
