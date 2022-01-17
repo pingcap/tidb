@@ -2266,21 +2266,14 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) fl
 	return cpuCost + memoryCost
 }
 
-//func (p *PhysicalWindow) attach2Task(tasks ...task) task {
-//	if p.storeTp == kv.TiFlash {
-//		return p.attach2TaskForTiFlash(tasks...)
-//	}
-//	lTask := tasks[0].convertToRootTask(p.ctx)
-//	rTask := tasks[1].convertToRootTask(p.ctx)
-//	p.SetChildren(lTask.plan(), rTask.plan())
-//	task := &rootTask{
-//		p:   p,
-//		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
-//	}
-//	p.cost = task.cost()
-//	return task
-//}
-
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	if mppTask, ok := tasks[0].(*mppTask); ok && p.storeTp == kv.TiFlash {
+		return attachPlan2Task(p, mppTask)
+	}
+	t := tasks[0].convertToRootTask(p.ctx)
+	p.cost = t.cost()
+	return attachPlan2Task(p.self, t)
+}
 
 // mppTask can not :
 // 1. keep order
