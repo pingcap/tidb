@@ -360,7 +360,6 @@ var schemataCols = []columnInfo{
 	{name: "DEFAULT_COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SQL_PATH", tp: mysql.TypeVarchar, size: 512},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tablesCols = []columnInfo{
@@ -389,7 +388,6 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -562,7 +560,6 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tableConstraintsCols = []columnInfo{
