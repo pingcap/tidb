@@ -8,8 +8,8 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -36,7 +36,7 @@ const (
 func ResetTS(ctx context.Context, pdAddr string, ts uint64, tlsConf *tls.Config) error {
 	payload, err := json.Marshal(struct {
 		TSO string `json:"tso,omitempty"`
-	}{TSO: fmt.Sprintf("%d", ts)})
+	}{TSO: strconv.FormatUint(ts, 10)})
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -23,17 +23,15 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+var mc *mock.Cluster
+
 var defaultKeepaliveCfg = keepalive.ClientParameters{
 	Time:    3 * time.Second,
 	Timeout: 10 * time.Second,
 }
 
 func TestCreateTables(t *testing.T) {
-	m, err := mock.NewCluster()
-	require.NoError(t, err)
-	require.NoError(t, m.Start())
-	defer m.Stop()
-
+	m := mc
 	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
 	require.NoError(t, err)
 
@@ -42,6 +40,7 @@ func TestCreateTables(t *testing.T) {
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
 	require.True(t, isExist)
 
+	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
@@ -89,11 +88,7 @@ func TestCreateTables(t *testing.T) {
 }
 
 func TestIsOnline(t *testing.T) {
-	m, err := mock.NewCluster()
-	require.NoError(t, err)
-	require.NoError(t, m.Start())
-	defer m.Stop()
-
+	m := mc
 	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
 	require.NoError(t, err)
 
@@ -103,11 +98,7 @@ func TestIsOnline(t *testing.T) {
 }
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
-	m, err := mock.NewCluster()
-	require.NoError(t, err)
-	require.NoError(t, m.Start())
-	defer m.Stop()
-
+	m := mc
 	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
 	require.NoError(t, err)
 
@@ -178,11 +169,7 @@ func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]
 }
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
-	m, err := mock.NewCluster()
-	require.NoError(t, err)
-	require.NoError(t, m.Start())
-	defer m.Stop()
-
+	m := mc
 	mockStores := []*metapb.Store{
 		{
 			Id: 1,

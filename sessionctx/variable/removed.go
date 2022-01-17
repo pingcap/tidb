@@ -22,8 +22,10 @@ package variable
 // careful not to return dummy data.
 
 var removedSysVars = map[string]string{
+	TiDBEnableAlterPlacement:       "alter placement is now always enabled",
 	TiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
 	TiDBSlowLogMasking:             "use tidb_redact_log instead",
+	PlacementChecks:                "placement_checks is removed and use tidb_placement_mode instead",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed

@@ -353,7 +353,7 @@ func (p *listPartitionLocationHelper) Intersect(location ListPartitionLocation) 
 		return true
 	}
 	currPgs := p.location
-	var remainPgs []ListPartitionGroup
+	remainPgs := make([]ListPartitionGroup, 0, len(location))
 	for _, pg := range location {
 		idx := currPgs.findByPartitionIdx(pg.PartIdx)
 		if idx < 0 {
@@ -964,7 +964,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
-					valueMsg = fmt.Sprintf("%d", val)
+					valueMsg = strconv.FormatInt(val, 10)
 				}
 			}
 		} else {

@@ -5882,7 +5882,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
@@ -6488,20 +6488,9 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 
 func TestCharsetIntroducer(t *testing.T) {
 	p := parser.New()
-	// `_gbk` is treated as an identifier.
-	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.NoError(t, err)
-
-	charset.AddCharset(&charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-		Desc:             "gbk",
-		Maxlen:           2,
-	})
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
-	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
