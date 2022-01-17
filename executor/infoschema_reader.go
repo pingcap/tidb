@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -162,8 +164,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
 			err = e.setDataForAttributes(sctx)
-		case infoschema.TablePlacementRules:
-			err = e.setDataFromPlacementRules(ctx, sctx, dbs)
+		case infoschema.TablePlacementPolicies:
+			err = e.setDataFromPlacementPolicies(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -464,7 +466,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
 				"",                    // COMMENT
-				"",                    // INDEX_COMMENT
+				index.Comment,         // INDEX_COMMENT
 				visible,               // IS_VISIBLE
 				expression,            // Expression
 			)
@@ -693,13 +695,33 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
 	if !extractor.SkipRequest {
 		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
 		tableNameFilterEnable = extractor.TableName.Count() > 0
 		columnsFilterEnable = extractor.ColumnName.Count() > 0
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.ColumnNamePatterns) > 0 {
+			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			for i, pattern := range extractor.ColumnNamePatterns {
+				columnsRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
 	}
+ForColumnsTag:
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -713,6 +735,21 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 			if columnsFilterEnable && !extractor.ColumnName.Exist(col.Name.L) {
 				continue
+			}
+			for _, re := range tableSchemaRegexp {
+				if !re.MatchString(schema.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range tableNameRegexp {
+				if !re.MatchString(tbl.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range columnsRegexp {
+				if !re.MatchString(col.Name.L) {
+					continue ForColumnsTag
+				}
 			}
 		}
 
@@ -2857,9 +2894,8 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	checker := privilege.GetPrivilegeManager(sctx)
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context) error {
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	placementPolicies := is.AllPlacementPolicies()
 	rows := make([][]types.Datum, 0, len(placementPolicies))
 	// Get global PLACEMENT POLICIES
@@ -2874,9 +2910,6 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
 			policy.Name.O,         // Policy Name
-			nil,                   // dbName,                // SCHEMA
-			nil,                   // tbName,                // TABLE
-			nil,                   // ptName,                // PARTITION
 			policy.PlacementSettings.PrimaryRegion,
 			policy.PlacementSettings.Regions,
 			policy.PlacementSettings.Constraints,
@@ -2889,99 +2922,6 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 		)
 		rows = append(rows, row)
 	}
-
-	// Get DIRECT PLACEMENT from schemas/tables/partitions
-	for _, schema := range schemas {
-		// Traverse all schemas and all tables (and eventually all partitions)
-		// to extract any Direct Placement information on Schema/Table/Partition.
-		// Currently there is no filtering during traversal implemented for queries like
-		// SELECT * FROM placment_rules WHERE SCHEMA_NAME IN ('schema1', 'schema2')
-		// or SELECT * FROM placment_rules WHERE SCHEMA_NAME = 'schema1' AND TABLE_NAME = 'table1'
-		anyTablePriv := false
-		for _, table := range schema.Tables {
-			if table.IsView() {
-				continue
-			}
-			// TODO: Filter on table, to avoid iterating over every table if SELECT * FROM placment_rules WHERE TABLE_NAME IN ('t1', 't2')
-			// Any privilege on the schema or a table within the schema should allow showing the direct placement rules for that schema (on schema level)
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			anyTablePriv = true
-			if partInfo := table.GetPartitionInfo(); partInfo != nil {
-				for _, pi := range partInfo.Definitions {
-					if pi.DirectPlacementOpts != nil {
-						record := types.MakeDatums(
-							nil,                   // PLACEMENT POLICY ID, null since direct placement
-							infoschema.CatalogVal, // CATALOG
-							nil,                   // PLACEMENT POLICY, null since direct placement
-							schema.Name.O,         // SCHEMA
-							table.Name.O,          // TABLE
-							pi.Name.O,             // PARTITION
-							pi.DirectPlacementOpts.PrimaryRegion,
-							pi.DirectPlacementOpts.Regions,
-							pi.DirectPlacementOpts.Constraints,
-							pi.DirectPlacementOpts.LeaderConstraints,
-							pi.DirectPlacementOpts.FollowerConstraints,
-							pi.DirectPlacementOpts.LearnerConstraints,
-							pi.DirectPlacementOpts.Schedule,
-							pi.DirectPlacementOpts.Followers,
-							pi.DirectPlacementOpts.Learners,
-						)
-						rows = append(rows, record)
-					}
-				}
-			}
-			if table.DirectPlacementOpts == nil {
-				continue
-			}
-			record := types.MakeDatums(
-				nil,                   // PLACEMENT POLICY ID, null since direct placement
-				infoschema.CatalogVal, // CATALOG
-				nil,                   // PLACEMENT POLICY, null since direct placement
-				schema.Name.O,         // SCHEMA
-				table.Name.O,          // TABLE
-				nil,                   // PARTITION
-				table.DirectPlacementOpts.PrimaryRegion,
-				table.DirectPlacementOpts.Regions,
-				table.DirectPlacementOpts.Constraints,
-				table.DirectPlacementOpts.LeaderConstraints,
-				table.DirectPlacementOpts.FollowerConstraints,
-				table.DirectPlacementOpts.LearnerConstraints,
-				table.DirectPlacementOpts.Schedule,
-				table.DirectPlacementOpts.Followers,
-				table.DirectPlacementOpts.Learners,
-			)
-			rows = append(rows, record)
-		}
-		// Any privilege on global level, the schema or any table within that schema
-		// should allow showing the direct placement rules for that schema (on schema level)
-		if !anyTablePriv && checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
-			continue
-		}
-		if schema.DirectPlacementOpts == nil {
-			continue
-		}
-		record := types.MakeDatums(
-			nil,                   // PLACEMENT POLICY ID, null since direct placement
-			infoschema.CatalogVal, // CATALOG
-			nil,                   // PLACEMENT POLICY, null since direct placement
-			schema.Name.O,         // SCHEMA
-			nil,                   // TABLE
-			nil,                   // PARTITION
-			schema.DirectPlacementOpts.PrimaryRegion,
-			schema.DirectPlacementOpts.Regions,
-			schema.DirectPlacementOpts.Constraints,
-			schema.DirectPlacementOpts.LeaderConstraints,
-			schema.DirectPlacementOpts.FollowerConstraints,
-			schema.DirectPlacementOpts.LearnerConstraints,
-			schema.DirectPlacementOpts.Schedule,
-			schema.DirectPlacementOpts.Followers,
-			schema.DirectPlacementOpts.Learners,
-		)
-		rows = append(rows, record)
-	}
-
 	e.rows = rows
 	return nil
 }

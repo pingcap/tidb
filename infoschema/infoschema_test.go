@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testutil"
@@ -291,7 +292,7 @@ func TestInfoTables(t *testing.T) {
 		"PROCESSLIST",
 		"TIDB_TRX",
 		"DEADLOCKS",
-		"PLACEMENT_RULES",
+		"PLACEMENT_POLICIES",
 	}
 	for _, tbl := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(tbl))
@@ -644,4 +645,15 @@ func TestLocalTemporaryTables(t *testing.T) {
 	info, ok = is.SchemaByTable(tb22.Meta())
 	require.False(t, ok)
 	require.Nil(t, info)
+}
+
+func TestIndexComment(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS `t1`;")
+	tk.MustExec("create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';")
+	tk.MustQuery("SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' ORDER BY index_comment;").Check(testkit.Rows(" 0 c2", "i1 comment 10 c1"))
 }
