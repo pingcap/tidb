@@ -651,9 +651,9 @@ var defaultConf = Config{
 	LowerCaseTableNames:          2,
 	GracefulWaitBeforeShutdown:   0,
 	ServerVersion:                "",
-	TiDBEdition:                  "Community",
-	VersionComment:               "TiDB Server (Apache License 2.0) Community Edition, MySQL 5.7 compatible",
-	TiDBReleaseVersion:           "None",
+	TiDBEdition:                  "",
+	VersionComment:               "",
+	TiDBReleaseVersion:           "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
