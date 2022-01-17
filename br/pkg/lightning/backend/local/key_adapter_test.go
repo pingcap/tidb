@@ -87,7 +87,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 		{0x0, 0x1, 0x3, 0x4, 0x0, 0x0, 0x0},
 	}
 	keyAdapter := dupDetectKeyAdapter{}
-	var encodedKeys [][]byte
+	encodedKeys := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, 1))
 	}
