@@ -1438,5 +1438,8 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
+	if rows.Err() != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
 	return charsetAndDefaultCollation, err
 }
