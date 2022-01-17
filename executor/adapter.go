@@ -1306,13 +1306,15 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		stats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
-		if vars := a.Ctx.GetSessionVars(); vars != nil {
-			vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
-		}
+		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
 
