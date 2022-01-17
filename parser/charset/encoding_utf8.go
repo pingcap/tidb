@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"bytes"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
@@ -67,9 +68,25 @@ func (e *encodingUTF8) Peek(src []byte) []byte {
 	return src[:nextLen]
 }
 
+func (e *encodingUTF8) MbLen(bs string) int {
+	_, size := utf8.DecodeRuneInString(bs)
+	if size <= 1 {
+		return 0
+	}
+	return size
+}
+
+// IsValid implements Encoding interface.
+func (e *encodingUTF8) IsValid(src []byte) bool {
+	if utf8.Valid(src) {
+		return true
+	}
+	return e.encodingBase.IsValid(src)
+}
+
 // Transform implements Encoding interface.
-func (e *encodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
-	if IsValid(e, src) {
+func (e *encodingUTF8) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
+	if e.IsValid(src) {
 		return src, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)
@@ -93,6 +110,11 @@ type encodingUTF8MB3Strict struct {
 	encodingUTF8
 }
 
+// IsValid implements Encoding interface.
+func (e *encodingUTF8MB3Strict) IsValid(src []byte) bool {
+	return e.encodingBase.IsValid(src)
+}
+
 // Foreach implements Encoding interface.
 func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
@@ -106,8 +128,8 @@ func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh 
 }
 
 // Transform implements Encoding interface.
-func (e *encodingUTF8MB3Strict) Transform(dest, src []byte, op Op) ([]byte, error) {
-	if IsValid(e, src) {
+func (e *encodingUTF8MB3Strict) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
+	if e.IsValid(src) {
 		return src, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)

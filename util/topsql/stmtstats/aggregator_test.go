@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 )
@@ -38,7 +39,7 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	SetupAggregator()
 	defer CloseAggregator()
 	time.Sleep(100 * time.Millisecond)
-	collector := newMockCollector(func(records []StatementStatsRecord) {})
+	collector := newMockCollector(func(data StatementStatsMap) {})
 	RegisterCollector(collector)
 	_, ok := globalAggregator.collectors.Load(collector)
 	assert.True(t, ok)
@@ -55,13 +56,15 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}
 	a.register(stats)
 	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
-	var records []StatementStatsRecord
-	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
-		records = append(records, rs...)
+	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), time.Millisecond)
+	total := StatementStatsMap{}
+	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		total.Merge(data)
 	}))
 	a.aggregate()
-	assert.NotEmpty(t, records)
-	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.NotEmpty(t, total)
+	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
@@ -80,14 +83,47 @@ func Test_aggregator_run_close(t *testing.T) {
 	assert.True(t, a.closed())
 }
 
-type mockCollector struct {
-	f func(records []StatementStatsRecord)
+func Test_aggregator_disable_aggregate(t *testing.T) {
+	total := StatementStatsMap{}
+	a := newAggregator()
+	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		total.Merge(data)
+	}))
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		a.run()
+		wg.Done()
+	}()
+
+	stats := &StatementStats{
+		data: StatementStatsMap{
+			SQLPlanDigest{SQLDigest: BinaryDigest("")}: &StatementStatsItem{},
+		},
+		finished: atomic.NewBool(false),
+	}
+	state.DisableTopSQL()
+	a.register(stats)
+	time.Sleep(1500 * time.Millisecond)
+	assert.Empty(t, total)
+	state.EnableTopSQL()
+	time.Sleep(1500 * time.Millisecond)
+	assert.Len(t, total, 1)
+	state.DisableTopSQL()
+
+	a.close()
+	wg.Wait()
 }
 
-func newMockCollector(f func(records []StatementStatsRecord)) Collector {
+type mockCollector struct {
+	f func(data StatementStatsMap)
+}
+
+func newMockCollector(f func(data StatementStatsMap)) Collector {
 	return &mockCollector{f: f}
 }
 
-func (c *mockCollector) CollectStmtStatsRecords(records []StatementStatsRecord) {
-	c.f(records)
+func (c *mockCollector) CollectStmtStatsMap(data StatementStatsMap) {
+	c.f(data)
 }

@@ -26,12 +26,17 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
+// ErrInvalidCharacterString returns when the string is invalid in the specific charset.
+var ErrInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 // encodingBase defines some generic functions.
 type encodingBase struct {
 	enc  encoding.Encoding
 	self Encoding
+}
+
+func (b encodingBase) MbLen(_ string) int {
+	return 0
 }
 
 func (b encodingBase) ToUpper(src string) string {
@@ -42,11 +47,21 @@ func (b encodingBase) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 
-func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
+func (b encodingBase) IsValid(src []byte) bool {
+	isValid := true
+	b.self.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
+		isValid = ok
+		return ok
+	})
+	return isValid
+}
+
+func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
-		dest = make([]byte, len(src))
+		dest = &bytes.Buffer{}
+		dest.Grow(len(src))
 	}
-	dest = dest[:0]
+	dest.Reset()
 	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
 		if !ok {
 			if err == nil && (op&opSkipError == 0) {
@@ -56,18 +71,18 @@ func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err err
 				return false
 			}
 			if op&opTruncateReplace != 0 {
-				dest = append(dest, '?')
+				dest.WriteByte('?')
 				return true
 			}
 		}
 		if op&opCollectFrom != 0 {
-			dest = append(dest, from...)
+			dest.Write(from)
 		} else if op&opCollectTo != 0 {
-			dest = append(dest, to...)
+			dest.Write(to)
 		}
 		return true
 	})
-	return dest, err
+	return dest.Bytes(), err
 }
 
 func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
@@ -102,16 +117,29 @@ func beginWithReplacementChar(dst []byte) bool {
 // generateEncodingErr generates an invalid string in charset error.
 func generateEncodingErr(name string, invalidBytes []byte) error {
 	arg := fmt.Sprintf("%X", invalidBytes)
-	return errInvalidCharacterString.FastGenByArgs(name, arg)
+	return ErrInvalidCharacterString.FastGenByArgs(name, arg)
 }
 
-// Slice converts string to slice without copy.
+// HackSlice converts string to slice without copy.
 // Use at your own risk.
-func Slice(s string) (b []byte) {
+func HackSlice(s string) (b []byte) {
 	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
 	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pBytes.Data = pString.Data
 	pBytes.Len = pString.Len
 	pBytes.Cap = pString.Len
+	return
+}
+
+// HackString converts slice to string without copy.
+// Use it at your own risk.
+func HackString(b []byte) (s string) {
+	if len(b) == 0 {
+		return ""
+	}
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
 	return
 }

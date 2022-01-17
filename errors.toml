@@ -698,7 +698,7 @@ Placement policy didn't meet the constraint, reason: %s
 
 ["ddl:8237"]
 error = '''
-Invalid attributes '%s': %s
+Invalid attributes: %s
 '''
 
 ["ddl:8240"]
@@ -1004,6 +1004,11 @@ Invalid JSON text: %-.192s
 ["json:3143"]
 error = '''
 Invalid JSON path expression %s.
+'''
+
+["json:3144"]
+error = '''
+Cannot create a JSON value from a string with CHARACTER SET '%s'.
 '''
 
 ["json:3149"]

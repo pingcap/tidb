@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"bytes"
 	"golang.org/x/text/encoding"
 )
 
@@ -47,6 +48,11 @@ func (e *encodingBin) Peek(src []byte) []byte {
 	return src[:1]
 }
 
+// IsValid implements Encoding interface.
+func (e *encodingBin) IsValid(src []byte) bool {
+	return true
+}
+
 // Foreach implements Encoding interface.
 func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	for i := 0; i < len(src); i++ {
@@ -56,6 +62,6 @@ func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *encodingBin) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingBin) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }
