@@ -88,4 +88,5 @@ func TestBufferIsolation(t *testing.T) {
 	b3 := append([]byte(nil), b2...)
 	b1 = append(b1, 0, 1, 2, 3)
 	require.Equal(t, b3, b2)
+	require.NotEqual(t, b2, b1)
 }

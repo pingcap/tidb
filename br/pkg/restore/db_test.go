@@ -108,6 +108,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
 	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
@@ -117,6 +118,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{"test", "\"t\""}] = true
 	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
