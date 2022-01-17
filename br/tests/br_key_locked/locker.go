@@ -185,6 +185,7 @@ type Locker struct {
 }
 
 // generateLocks sends Prewrite requests to TiKV to generate locks, without committing and rolling back.
+//nolint:gosec
 func (c *Locker) generateLocks(pctx context.Context) error {
 	log.Info("genLock started")
 
@@ -340,6 +341,7 @@ func (c *Locker) lockBatch(ctx context.Context, keys [][]byte, primary []byte) (
 	}
 }
 
+//nolint:gosec
 func randStr() string {
 	length := rand.Intn(128)
 	res := ""

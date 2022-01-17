@@ -738,6 +738,8 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	err = tk.ExecToErr("alter table tp partition p0 primary_region='r2' regions='r2'")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp add partition(partition p2 VALUES LESS THAN (10000) placement policy p1)")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
