@@ -15,6 +15,7 @@
 package tracing
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -114,20 +115,17 @@ func TestFlattenPhysicalPlanTrace(t *testing.T) {
 			BestTask: &PhysicalPlanTrace{
 				ID:       1,
 				TP:       "pp",
-				Selected: true,
 				Property: "p1",
 			},
 			Candidates: []*PhysicalPlanTrace{
 				{
 					ID:       1,
 					TP:       "pp",
-					Selected: true,
 					Property: "p1",
 				},
 				{
 					ID:       2,
 					TP:       "pp",
-					Selected: false,
 					Property: "p1",
 				},
 			},
@@ -139,7 +137,6 @@ func TestFlattenPhysicalPlanTrace(t *testing.T) {
 				{
 					ID:       3,
 					TP:       "pp",
-					Selected: false,
 					Property: "p2",
 				},
 			},
@@ -148,39 +145,43 @@ func TestFlattenPhysicalPlanTrace(t *testing.T) {
 	expected := &FlattenPhysicalPlanTrace{
 		PhysicalPlanCandidatesTrace: []*PhysicalPlanTrace{
 			{
-				ID:       1,
-				TP:       "pp",
-				Selected: true,
-				Property: "p1",
+				ID:                 1,
+				TP:                 "pp",
+				Selected:           true,
+				Property:           "p1",
+				MappingLogicalPlan: "lp_1",
 			},
 			{
-				ID:       2,
-				TP:       "pp",
-				Selected: false,
-				Property: "p1",
+				ID:                 2,
+				TP:                 "pp",
+				Selected:           false,
+				Property:           "p1",
+				MappingLogicalPlan: "lp_1",
 			},
 			{
-				ID:       3,
-				TP:       "pp",
-				Selected: false,
-				Property: "p2",
+				ID:                 3,
+				TP:                 "pp",
+				Selected:           false,
+				Property:           "p2",
+				MappingLogicalPlan: "lp_1",
 			},
-		},
-		LogicalMapping: map[string]string{
-			"pp_1": "lp_1",
-			"pp_2": "lp_1",
-			"pp_3": "lp_1",
 		},
 	}
 	tracer.BuildFlattenPhysicalPlanTrace()
+	sort.Slice(tracer.FlattenPhysicalPlanTrace.PhysicalPlanCandidatesTrace, func(i, j int) bool {
+		return tracer.FlattenPhysicalPlanTrace.PhysicalPlanCandidatesTrace[i].ID <
+			tracer.FlattenPhysicalPlanTrace.PhysicalPlanCandidatesTrace[j].ID
+	})
+	sort.Slice(expected.PhysicalPlanCandidatesTrace, func(i, j int) bool {
+		return expected.PhysicalPlanCandidatesTrace[i].ID <
+			expected.PhysicalPlanCandidatesTrace[j].ID
+	})
 	isFlattenPhysicalPlanTraceEqual(t, tracer.FlattenPhysicalPlanTrace, expected)
 }
 
 func isFlattenPhysicalPlanTraceEqual(t *testing.T, actual, expected *FlattenPhysicalPlanTrace) {
 	require.Len(t, actual.PhysicalPlanCandidatesTrace, len(expected.PhysicalPlanCandidatesTrace))
-	require.Len(t, actual.LogicalMapping, len(expected.LogicalMapping))
 	for i, v := range actual.PhysicalPlanCandidatesTrace {
 		require.EqualValues(t, v, expected.PhysicalPlanCandidatesTrace[i])
 	}
-	require.EqualValues(t, actual.LogicalMapping, expected.LogicalMapping)
 }

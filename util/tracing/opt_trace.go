@@ -173,13 +173,14 @@ type PhysicalOptimizeTraceInfo struct {
 
 // PhysicalPlanTrace records each generated physical plan during findBestTask
 type PhysicalPlanTrace struct {
-	ID       int                  `json:"id"`
-	TP       string               `json:"type"`
-	Cost     float64              `json:"cost"`
-	Info     string               `json:"info"`
-	Children []*PhysicalPlanTrace `json:"children"`
-	Selected bool                 `json:"selected"`
-	Property string               `json:"property"`
+	ID                 int                  `json:"id"`
+	TP                 string               `json:"type"`
+	Cost               float64              `json:"cost"`
+	Info               string               `json:"info"`
+	Children           []*PhysicalPlanTrace `json:"children"`
+	Selected           bool                 `json:"selected"`
+	Property           string               `json:"property"`
+	MappingLogicalPlan string               `json:"mapping"`
 }
 
 // SetCost sets cost for PhysicalPlanTrace
@@ -198,8 +199,6 @@ type PhysicalOptimizeTracer struct {
 type FlattenPhysicalPlanTrace struct {
 	// PhysicalPlanCandidatesTrace indicates PhysicalPlanTrace list
 	PhysicalPlanCandidatesTrace []*PhysicalPlanTrace `json:"candidates"`
-	// LogicalMapping indicates the (physical type, id) mapping (logical type, id)
-	LogicalMapping map[string]string `json:"mapping"`
 }
 
 // BuildFlattenPhysicalPlanTrace builds FlattenPhysicalPlanTrace
@@ -211,7 +210,6 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 	if tracer.FlattenPhysicalPlanTrace == nil {
 		tracer.FlattenPhysicalPlanTrace = &FlattenPhysicalPlanTrace{
 			PhysicalPlanCandidatesTrace: make([]*PhysicalPlanTrace, 0),
-			LogicalMapping:              make(map[string]string),
 		}
 	}
 	pTracer = tracer.FlattenPhysicalPlanTrace
@@ -225,9 +223,9 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 			bestKeys[bestKey] = struct{}{}
 		}
 	}
-	for logicalKey, v := range tracer.State {
-		for _, tasksInfo := range v {
-			for _, candidate := range tasksInfo.Candidates {
+	for logicalKey, tasksInfo := range tracer.State {
+		for _, taskInfo := range tasksInfo {
+			for _, candidate := range taskInfo.Candidates {
 				key := CodecPlanName(candidate.TP, candidate.ID)
 				if _, ok := bestKeys[key]; ok {
 					candidate.Selected = true
@@ -236,10 +234,10 @@ func (tracer *PhysicalOptimizeTracer) BuildFlattenPhysicalPlanTrace() {
 					key = CodecPlanName(child.TP, child.ID)
 					if _, ok := bestKeys[key]; ok {
 						child.Selected = true
-						candidate.Children[i] = child
 					}
+					candidate.Children[i] = child
 				}
-				pTracer.LogicalMapping[key] = logicalKey
+				candidate.MappingLogicalPlan = logicalKey
 				pTracer.PhysicalPlanCandidatesTrace = append(pTracer.PhysicalPlanCandidatesTrace, candidate)
 			}
 		}
