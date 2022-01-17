@@ -6082,27 +6082,6 @@ func TestRedundantColumnResolve(t *testing.T) {
 	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
 }
 
-func TestCoercibilityWithColumn(t *testing.T) {
-	// issue #31541
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (a char(20), b blob(100), c text, d json, e timestamp, f set('a一','b二','c三','d四'), g text, h enum('a一','b二','c三','d四') default 'c三');`)
-	tk.MustExec(`insert into t values ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');`)
-
-	tk.MustQuery(`select coercibility(a) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(b) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(c) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(d) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(e) from t`).Check(testkit.Rows("5"))
-	tk.MustQuery(`select coercibility(f) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(g) from t`).Check(testkit.Rows("2"))
-	tk.MustQuery(`select coercibility(h) from t`).Check(testkit.Rows("2"))
-}
-
 func TestControlFunctionWithEnumOrSet(t *testing.T) {
 	// issue 23114
 	store, clean := testkit.CreateMockStore(t)
