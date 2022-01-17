@@ -282,7 +282,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		if candidateInfo != nil {
 			candidateInfo.SetCost(curTask.cost())
-			candidateInfo.Info = curTask.plan().ExplainInfo()
+			candidateInfo.ExplainInfo = curTask.plan().ExplainInfo()
 		}
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
@@ -322,11 +322,11 @@ func (op *physicalOptimizeOp) buildPhysicalOptimizeTraceInfo(p LogicalPlan, prop
 	return traceInfo
 }
 
-func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.PhysicalPlanTrace, plan PhysicalPlan) {
+func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.PlanTrace, plan PhysicalPlan) {
 	if op == nil || op.tracer == nil || candidateInfo == nil {
 		return
 	}
-	childPhysicalPlanTrace := &tracing.PhysicalPlanTrace{TP: plan.TP(), ID: plan.ID(), Info: plan.ExplainInfo(), Cost: plan.Cost()}
+	childPhysicalPlanTrace := &tracing.PlanTrace{TP: plan.TP(), ID: plan.ID(), ExplainInfo: plan.ExplainInfo(), Cost: plan.Cost()}
 	candidateInfo.Children = append(candidateInfo.Children, childPhysicalPlanTrace)
 }
 
@@ -338,14 +338,14 @@ func (op *physicalOptimizeOp) setBest(lp LogicalPlan, pp PhysicalPlan, prop stri
 	if traceInfo == nil {
 		return
 	}
-	traceInfo.BestTask = &tracing.PhysicalPlanTrace{ID: pp.ID(), TP: pp.TP(), Cost: pp.Cost(), Info: pp.ExplainInfo()}
+	traceInfo.BestTask = &tracing.PlanTrace{ID: pp.ID(), TP: pp.TP(), Cost: pp.Cost(), ExplainInfo: pp.ExplainInfo()}
 }
 
-func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PhysicalPlanTrace {
+func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PlanTrace {
 	if op == nil || op.tracer == nil {
 		return nil
 	}
-	PhysicalPlanTrace := &tracing.PhysicalPlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID()}
+	PhysicalPlanTrace := &tracing.PlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID()}
 	name := tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())
 	traceInfo := op.tracer.State[name][prop]
 	if traceInfo == nil {
