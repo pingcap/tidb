@@ -425,7 +425,7 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 			// Cannot apply conversion.
 			repertoire |= arg.Repertoire()
-			coercibility, dstCharset, dstCollation = CoercibilityNone, charset.CharsetBin, charset.CollationBin
+			coercibility, dstCharset, dstCollation, isJSON = CoercibilityNone, charset.CharsetBin, charset.CollationBin, false
 			unknownCS = true
 		} else {
 			// If charset is the same, use lower coercibility, if coercibility is the same and none of them are _bin,
@@ -452,6 +452,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		return nil
 	}
 
+	// The collation of JSON is always utf8mb4_bin in builtin-func which is same as MySQL
+	// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
 	if isJSON {
 		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
 	}

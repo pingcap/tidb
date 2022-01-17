@@ -523,9 +523,7 @@ func TestDeriveCollation(t *testing.T) {
 			[]types.EvalType{types.ETInt, types.ETJson},
 			types.ETString,
 			false,
-			// The charset and collation is inconsistent with MySQL which should be utf8mb4
-			// https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CollationBin},
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{
@@ -552,6 +550,18 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote,
+			},
+			[]Expression{
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{
