@@ -413,7 +413,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	// Use allConds instread of pushedDownConds,
 	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
 	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
-	var indexMergeConds []expression.Expression
+	indexMergeConds := make([]expression.Expression, 0, len(ds.allConds))
 	for _, expr := range ds.allConds {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}

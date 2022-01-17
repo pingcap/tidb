@@ -461,14 +461,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		return nil, err
 	}
 
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return partitions, nil
 }
 
@@ -1584,7 +1576,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(w.ddlJobCtx, sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1602,7 +1594,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	var buf strings.Builder
 	paramList := make([]interface{}, 0, 4)
-	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParamsInternal(...)
+	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
 	// So we write it to the origin sql string here.
 	if index == 0 {
 		buf.WriteString("select 1 from %n.%n where ")
