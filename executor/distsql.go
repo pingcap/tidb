@@ -99,7 +99,6 @@ type lookupTableTask struct {
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
 	memUsage   int64
 	memTracker *memory.Tracker
-	err        error
 }
 
 func (task *lookupTableTask) Len() int {

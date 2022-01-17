@@ -489,9 +489,11 @@ type partialTableWorker struct {
 
 func (w *partialTableWorker) syncErr(ctx context.Context, fetchCh chan<- *lookupTableTask, err error) {
 	logutil.Logger(ctx).Error("got error when read table handles", zap.Error(err))
-	fetchCh <- &lookupTableTask{
-		err: err,
+	task := &lookupTableTask{
+		doneCh: make(chan error, 1),
 	}
+	task.doneCh <- err
+	fetchCh <- task
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
@@ -721,12 +723,16 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
 	for task := range fetchCh {
-		if task.err != nil {
-			// Tell main routine to finish. And continue drain fetchCh.
-			task.doneCh = make(chan error, 1)
-			task.doneCh <- task.err
-			resultCh <- task
-			continue
+		select {
+		case err := <-task.doneCh:
+			if err != nil {
+				// Tell main routine to finish. And continue drain fetchCh.
+				task.doneCh <- err
+				resultCh <- task
+				return
+			}
+		default:
+			// No error, process this task.
 		}
 		start := time.Now()
 		handles := task.handles
@@ -800,9 +806,11 @@ type partialIndexWorker struct {
 
 func (w *partialIndexWorker) syncErr(ctx context.Context, fetchCh chan<- *lookupTableTask, err error) {
 	logutil.Logger(ctx).Error("got error when read index handles", zap.Error(err))
-	fetchCh <- &lookupTableTask{
-		err: err,
+	task := &lookupTableTask{
+		doneCh: make(chan error, 1),
 	}
+	task.doneCh <- err
+	fetchCh <- task
 }
 
 func (w *partialIndexWorker) fetchHandles(
