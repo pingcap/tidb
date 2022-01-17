@@ -1181,8 +1181,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			return errors.Trace(err)
 		}
 
-		// If ctx is cancelled, `Next` may re turn empty result when the actual data is not empty. To avoid producing
-		// false-positive error logs that causes confusion, exit in this case.
+		// If ctx is cancelled, `Next` may return empty result when the actual data is not empty. To avoid producing
+		// false-positive error logs that cause confusion, exit in this case.
 		select {
 		case <-ctx.Done():
 			return nil
