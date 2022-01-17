@@ -3851,8 +3851,8 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("set global tidb_enable_noop_functions=1")
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
-	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.NoError(t, err)
+	//require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
