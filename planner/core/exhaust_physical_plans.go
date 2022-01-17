@@ -2293,62 +2293,70 @@ func disableAggPushDownToCop(p LogicalPlan) {
 	}
 }
 
-func (p *LogicalWindow) tryToGetMppWindow(prop *property.PhysicalProperty) []PhysicalPlan {
-	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
-		return nil
+func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
+	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(lw.GetPartitionByCols()))
+	for _, item := range lw.PartitionBy {
+		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
+			Col:       item.Col,
+			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetType().Collate),
+		})
 	}
 
+	return partitionByCols
+}
+
+func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
 		return nil
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
 
-	//groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
-	//for _, item := range p.PartitionBy {
-	//	if col, ok := item.(*expression.Column); ok {
-	//		groupByCols = append(groupByCols, &property.MPPPartitionColumn{
-	//			Col:       col,
-	//			CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
-	//		})
-	//	}
-	//}
-	//
-	//// trying to match the required parititions.
-	//if prop.MPPPartitionTp == property.HashType {
-	//	if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-	//		partitionCols = choosePartitionKeys(partitionCols, matches)
-	//	} else {
-	//		// do not satisfy the property of its parent, so return empty
-	//		return nil
-	//	}
-	//}
-
 	var byItems []property.SortItem
-	byItems = append(byItems, p.PartitionBy...)
-	byItems = append(byItems, p.OrderBy...)
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
 	childProperty := &property.PhysicalProperty{
-		ExpectedCnt: math.MaxFloat64,
-		CanAddEnforcer: true,
-		SortItems: byItems,
-		TaskTp: property.MppTaskType,
+		ExpectedCnt:           math.MaxFloat64,
+		CanAddEnforcer:        true,
+		SortItems:             byItems,
+		TaskTp:                property.MppTaskType,
 		SortItemsForPartition: byItems,
-		MPPPartitionTp: property.HashType,
 	}
 	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
-	window := PhysicalWindow{
-		WindowFuncDescs: p.WindowFuncDescs,
-		PartitionBy:     p.PartitionBy,
-		OrderBy:         p.OrderBy,
-		Frame:           p.Frame,
-		storeTp: 		 kv.TiFlash,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
-	window.SetSchema(p.Schema())
 
-	return nil
+	if len(lw.PartitionBy) > 0 {
+		partitionCols := lw.GetPartitionKeys()
+		// trying to match the required parititions.
+		if prop.MPPPartitionTp == property.HashType {
+			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
+				partitionCols = choosePartitionKeys(partitionCols, matches)
+			} else {
+				// do not satisfy the property of its parent, so return empty
+				return nil
+			}
+		}
+		childProperty.MPPPartitionTp = property.HashType
+		childProperty.MPPPartitionCols = partitionCols
+	}/* else {
+		childProperty.MPPPartitionTp = property.AnyType
+	}*/
+
+	window := PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+		storeTp: 		 kv.TiFlash,
+	}.Init(lw.ctx, lw.stats.ScaleByExpectCnt(prop.ExpectedCnt), lw.blockOffset, childProperty)
+	window.SetSchema(lw.Schema())
+
+	return []PhysicalPlan{window}
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -2356,7 +2364,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
 	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		mppWindows := p.tryToGetMppWindow(prop)
+		mppWindows := p.tryToGetMppWindows(prop)
 		windows = append(windows, mppWindows...)
 	}
 
