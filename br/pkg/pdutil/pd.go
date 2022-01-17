@@ -554,6 +554,13 @@ func (p *PdController) doUpdatePDScheduleConfig(
 	if len(prefixs) != 0 {
 		prefix = prefixs[0]
 	}
+	for c := range cfg {
+		// if we want use ttl, we need use config prefix first.
+		// which means cfg should transfer from "max-merge-region-keys" to "schedule.max-merge-region-keys".
+		sc := fmt.Sprintf("schedule.%s", c)
+		cfg[sc] = c
+		delete(cfg, c)
+	}
 	for _, addr := range p.addrs {
 		reqData, err := json.Marshal(cfg)
 		if err != nil {
