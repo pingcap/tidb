@@ -192,6 +192,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		}
 	})
 	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
 	return nil
 }
 
@@ -307,7 +308,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
 				HandleEncode: func(handle kv.Handle) kv.Key {
 					return key

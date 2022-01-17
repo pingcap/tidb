@@ -215,6 +215,11 @@
             "info": {
                 "writes": [
                     {
+                        "type": 1,
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328
+                    },
+                    {
                         "start_ts": 423158426542538752,
                         "commit_ts": 423158426543587328,
                         "short_value": "gAACAAAAAQMDAAQAYWFhZA=="
@@ -228,6 +233,21 @@
                 ]
             }
         }
+    }
+    ```
+
+    *Hint: The meaning of the MVCC operation type:*
+
+    ```protobuf
+    enum Op {
+	Put = 0;
+	Del = 1;
+	Lock = 2;
+	Rollback = 3;
+	// insert operation has a constraint that key should not exist before.
+	Insert = 4;
+	PessimisticLock = 5;
+	CheckNotExists = 6;
     }
     ```
 

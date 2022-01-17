@@ -26,8 +26,6 @@ import (
 )
 
 func TestKeywordConsistent(t *testing.T) {
-	t.Parallel()
-
 	_, filename, _, _ := runtime.Caller(0)
 	parserFilename := path.Join(path.Dir(filename), "parser.y")
 	parserFile, err := os.Open(parserFilename)

@@ -31,7 +31,6 @@ import (
 )
 
 func TestTimeEncoding(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		Year, Month, Day, Hour, Minute, Second, Microsecond int
 		Type                                                uint8
@@ -61,7 +60,6 @@ func TestTimeEncoding(t *testing.T) {
 }
 
 func TestDateTime(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -182,7 +180,6 @@ func TestDateTime(t *testing.T) {
 }
 
 func TestTimestamp(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect string
@@ -208,7 +205,6 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestDate(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -304,7 +300,6 @@ func TestDate(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -399,7 +394,6 @@ func TestTime(t *testing.T) {
 }
 
 func TestDurationAdd(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input    string
 		Fsp      int8
@@ -436,7 +430,6 @@ func TestDurationAdd(t *testing.T) {
 }
 
 func TestDurationSub(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -461,7 +454,6 @@ func TestDurationSub(t *testing.T) {
 }
 
 func TestTimeFsp(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -501,7 +493,6 @@ func TestTimeFsp(t *testing.T) {
 }
 
 func TestYear(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect int16
@@ -563,7 +554,6 @@ func TestYear(t *testing.T) {
 }
 
 func TestCodec(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
@@ -621,7 +611,6 @@ func TestCodec(t *testing.T) {
 }
 
 func TestParseTimeFromNum(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -695,7 +684,6 @@ func TestParseTimeFromNum(t *testing.T) {
 }
 
 func TestToNumber(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
@@ -772,7 +760,6 @@ func TestToNumber(t *testing.T) {
 }
 
 func TestParseTimeFromFloatString(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -805,7 +792,6 @@ func TestParseTimeFromFloatString(t *testing.T) {
 }
 
 func TestParseFrac(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		S        string
 		Fsp      int8
@@ -842,7 +828,6 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestRoundFrac(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
@@ -935,7 +920,6 @@ func TestRoundFrac(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
@@ -986,7 +970,6 @@ func TestConvert(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tbl := []struct {
 		Arg1 string
@@ -1036,7 +1019,6 @@ func TestCompare(t *testing.T) {
 }
 
 func TestDurationClock(t *testing.T) {
-	t.Parallel()
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -1061,7 +1043,6 @@ func TestDurationClock(t *testing.T) {
 }
 
 func TestParseDateFormat(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Input  string
 		Result []string
@@ -1085,7 +1066,6 @@ func TestParseDateFormat(t *testing.T) {
 }
 
 func TestTimestampDiff(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		unit   string
 		t1     types.CoreTime
@@ -1109,7 +1089,6 @@ func TestTimestampDiff(t *testing.T) {
 }
 
 func TestDateFSP(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		date   string
 		expect int
@@ -1126,7 +1105,6 @@ func TestDateFSP(t *testing.T) {
 }
 
 func TestConvertTimeZone(t *testing.T) {
-	t.Parallel()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
 		input  types.CoreTime
@@ -1148,7 +1126,6 @@ func TestConvertTimeZone(t *testing.T) {
 }
 
 func TestTimeAdd(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1179,7 +1156,6 @@ func TestTimeAdd(t *testing.T) {
 }
 
 func TestTruncateOverflowMySQLTime(t *testing.T) {
-	t.Parallel()
 	v := types.MaxTime + 1
 	res, err := types.TruncateOverflowMySQLTime(v)
 	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
@@ -1212,8 +1188,6 @@ func TestTruncateOverflowMySQLTime(t *testing.T) {
 }
 
 func TestCheckTimestamp(t *testing.T) {
-	t.Parallel()
-
 	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
 
 	tests := []struct {
@@ -1323,7 +1297,6 @@ func TestCheckTimestamp(t *testing.T) {
 }
 
 func TestExtractDurationValue(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		unit   string
 		format string
@@ -1464,14 +1437,12 @@ func TestExtractDurationValue(t *testing.T) {
 }
 
 func TestCurrentTime(t *testing.T) {
-	t.Parallel()
 	res := types.CurrentTime(mysql.TypeTimestamp)
 	require.Equal(t, mysql.TypeTimestamp, res.Type())
 	require.Equal(t, int8(0), res.Fsp())
 }
 
 func TestInvalidZero(t *testing.T) {
-	t.Parallel()
 	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
@@ -1481,7 +1452,6 @@ func TestInvalidZero(t *testing.T) {
 }
 
 func TestGetFsp(t *testing.T) {
-	t.Parallel()
 	res := types.GetFsp("2019:04:12 14:00:00.123456")
 	require.Equal(t, int8(6), res)
 
@@ -1496,7 +1466,6 @@ func TestGetFsp(t *testing.T) {
 }
 
 func TestExtractDatetimeNum(t *testing.T) {
-	t.Parallel()
 	in := types.NewTime(types.FromDate(2019, 04, 12, 14, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err := types.ExtractDatetimeNum(&in, "day")
@@ -1568,7 +1537,6 @@ func TestExtractDatetimeNum(t *testing.T) {
 }
 
 func TestExtractDurationNum(t *testing.T) {
-	t.Parallel()
 	type resultTbl struct {
 		unit   string
 		expect int64
@@ -1634,7 +1602,6 @@ func TestExtractDurationNum(t *testing.T) {
 }
 
 func TestParseDurationValue(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		format string
 		unit   string
@@ -1691,7 +1658,6 @@ func TestParseDurationValue(t *testing.T) {
 }
 
 func TestIsClockUnit(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		input    string
 		expected bool
@@ -1719,7 +1685,6 @@ func TestIsClockUnit(t *testing.T) {
 }
 
 func TestIsDateFormat(t *testing.T) {
-	t.Parallel()
 	input := "1234:321"
 	output := types.IsDateFormat(input)
 	require.False(t, output)
@@ -1731,10 +1696,13 @@ func TestIsDateFormat(t *testing.T) {
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
 	require.True(t, output)
+
+	input = "20129"
+	output = types.IsDateFormat(input)
+	require.True(t, output)
 }
 
 func TestParseTimeFromInt64(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 
@@ -1753,7 +1721,6 @@ func TestParseTimeFromInt64(t *testing.T) {
 }
 
 func TestGetFormatType(t *testing.T) {
-	t.Parallel()
 	input := "TEST"
 	isDuration, isDate := types.GetFormatType(input)
 	require.False(t, isDuration)
@@ -1771,7 +1738,6 @@ func TestGetFormatType(t *testing.T) {
 }
 
 func TestGetFracIndex(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		str         string
 		expectIndex int
@@ -1787,7 +1753,6 @@ func TestGetFracIndex(t *testing.T) {
 }
 
 func TestTimeOverflow(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -1821,7 +1786,6 @@ func TestTimeOverflow(t *testing.T) {
 }
 
 func TestTruncateFrac(t *testing.T) {
-	t.Parallel()
 	cols := []struct {
 		input  time.Time
 		fsp    int8
@@ -1839,7 +1803,6 @@ func TestTruncateFrac(t *testing.T) {
 }
 
 func TestTimeSub(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1866,7 +1829,6 @@ func TestTimeSub(t *testing.T) {
 }
 
 func TestCheckMonthDay(t *testing.T) {
-	t.Parallel()
 	dates := []struct {
 		date        types.CoreTime
 		isValidDate bool
@@ -1903,7 +1865,6 @@ func TestCheckMonthDay(t *testing.T) {
 }
 
 func TestFormatIntWidthN(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		num    int
 		width  int
@@ -1926,7 +1887,6 @@ func TestFormatIntWidthN(t *testing.T) {
 }
 
 func TestFromGoTime(t *testing.T) {
-	t.Parallel()
 	// Test rounding of nanosecond to millisecond.
 	cases := []struct {
 		input string
@@ -1956,7 +1916,6 @@ func TestFromGoTime(t *testing.T) {
 }
 
 func TestGetTimezone(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		input    string
 		idx      int
@@ -1985,7 +1944,6 @@ func TestGetTimezone(t *testing.T) {
 }
 
 func TestParseWithTimezone(t *testing.T) {
-	t.Parallel()
 	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
 		offset := tzHour*60*60 + tzMinue*60
 		if tzSign == "-" {

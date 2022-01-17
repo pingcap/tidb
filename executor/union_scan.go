@@ -103,6 +103,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	case *IndexMergeReaderExecutor:
+		us.addedRows, err = buildMemIndexMergeReader(us, x).getMemRows()
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}

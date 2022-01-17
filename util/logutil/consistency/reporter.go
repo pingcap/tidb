@@ -46,6 +46,7 @@ var (
 	ErrAdminCheckInconsistentWithColInfo = dbterror.ClassExecutor.NewStd(errno.ErrDataInconsistentMismatchIndex)
 )
 
+// GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
 func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})) string {
 	if key == nil {
 		return ""
@@ -99,6 +100,7 @@ type Reporter struct {
 	Sctx         sessionctx.Context
 }
 
+// DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
 func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
 	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
 		colMap := make(map[int64]*types.FieldType, 3)
@@ -130,6 +132,7 @@ func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGet
 	}
 }
 
+// DecodeIndexMvccData creates a closure that captures the indexInfo to be used a decode function in GetMvccByKey.
 func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
 	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
 		if respValue.Info != nil {
@@ -186,7 +189,8 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index_name", r.Idx.Name.O),
 			zap.Int("index_cnt", idxCnt),
-			zap.Int("table_cnt", tblCnt))
+			zap.Int("table_cnt", tblCnt),
+			zap.Stack("stack"))
 	} else {
 		const maxFullHandleCnt = 50
 		displayFullHdCnt := len(fullHd)
@@ -223,6 +227,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 			zap.String("index", r.Idx.Name.O),
 			zap.String("col", colName),
 			zap.Error(err),
+			zap.Stack("stack"),
 		)
 	} else {
 		fs := []zap.Field{
@@ -239,6 +244,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 			fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
 		}
 		fs = append(fs, zap.Error(err))
+		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistentWithColInfo.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, colName, fmt.Sprint(handle), fmt.Sprint(idxDat), fmt.Sprint(tblDat), err)
@@ -263,6 +269,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		logutil.Logger(ctx).Error("admin check found data inconsistency",
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index", r.Idx.Name.O),
+			zap.Stack("stack"),
 		)
 	} else {
 		fs := []zap.Field{
@@ -279,6 +286,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 				fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
 			}
 		}
+		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))

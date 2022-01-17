@@ -39,6 +39,8 @@ const (
 	TimeFormat = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
+	// UTCTimeFormat is used to parse and format gotime.
+	UTCTimeFormat = "2006-01-02 15:04:05 UTC"
 )
 
 const (
@@ -49,9 +51,9 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
+	MinTime = -(838*gotime.Hour + 59*gotime.Minute + 59*gotime.Second)
 	// MaxTime is the maximum for mysql time type.
-	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
+	MaxTime = 838*gotime.Hour + 59*gotime.Minute + 59*gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
 	ZeroDatetimeStr = "0000-00-00 00:00:00"
 	// ZeroDateStr is the string representation of a zero date.
@@ -466,7 +468,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	hour, minute, second := t.Clock()
 	frac := t.Microsecond() * 1000
 
-	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
+	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac) //nolint:durationcheck
 	// TODO: check convert validation
 	return Duration{Duration: d, Fsp: t.Fsp()}, nil
 }
@@ -579,7 +581,7 @@ func RoundFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	return t.Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
+	return t.Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil //nolint:durationcheck
 }
 
 // TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
@@ -589,7 +591,7 @@ func TruncateFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
 	if _, err := CheckFsp(int(fsp)); err != nil {
 		return t, err
 	}
-	return t.Truncate(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil
+	return t.Truncate(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil //nolint:durationcheck
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -1270,7 +1272,7 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 // NewDuration construct duration with time.
 func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
 	return Duration{
-		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond,
+		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond, //nolint:durationcheck
 		Fsp:      fsp,
 	}
 }
@@ -1490,7 +1492,7 @@ func (d Duration) RoundFrac(fsp int8, loc *gotime.Location) (Duration, error) {
 	}
 
 	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n) //nolint:durationcheck
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -1711,7 +1713,7 @@ func matchDuration(str string, fsp int8) (Duration, error) {
 		return Duration{t, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
+	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond //nolint:durationcheck
 	if negative {
 		d = -d
 	}
@@ -1800,11 +1802,11 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 	}
 
 	hours := t / gotime.Hour
-	t -= hours * gotime.Hour
+	t -= hours * gotime.Hour //nolint:durationcheck
 	minutes := t / gotime.Minute
-	t -= minutes * gotime.Minute
+	t -= minutes * gotime.Minute //nolint:durationcheck
 	seconds := t / gotime.Second
-	t -= seconds * gotime.Second
+	t -= seconds * gotime.Second //nolint:durationcheck
 	fraction := t / gotime.Microsecond
 
 	return sign, int(hours), int(minutes), int(seconds), int(fraction)
@@ -1988,7 +1990,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning {
+		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning && sc.NoZeroDate {
 			switch tp {
 			case mysql.TypeTimestamp:
 				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
@@ -2556,7 +2558,8 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		if (length == 8) || (length == 6) {
+		// "20129" will be parsed to 2020-12-09, which is date format.
+		if (length == 8) || (length == 6) || (length == 5) {
 			return true
 		}
 	case 3:
