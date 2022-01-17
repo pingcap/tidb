@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -250,7 +250,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 
 func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	a.RetTp.Charset, a.RetTp.Collate = charset.GetDefaultCharsetAndCollate()
+	a.RetTp.Charset, a.RetTp.Collate = collate.GetDefaultCharsetAndCollate()
 
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])

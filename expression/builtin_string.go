@@ -1087,7 +1087,7 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 	// Here in syntax CONVERT(expr USING transcoding_name), behavior is kept the same,
 	// picking the default collation of target charset.
-	bf.tp.Collate, err = charset.GetDefaultCollation(bf.tp.Charset)
+	bf.tp.Collate, err = collate.GetDefaultCollation(bf.tp.Charset)
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
@@ -2348,7 +2348,7 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		bf.tp.Flag |= mysql.BinaryFlag
 	} else {
 		bf.tp.Charset = charsetName
-		defaultCollate, err := charset.GetDefaultCollation(charsetName)
+		defaultCollate, err := collate.GetDefaultCollation(charsetName)
 		if err != nil {
 			return nil, err
 		}

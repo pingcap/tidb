@@ -194,7 +194,7 @@ func GetCollatorByID(id int) Collator {
 // CollationID2Name return the collation name by the given id.
 // If the id is not found in the map, the default collation is returned.
 func CollationID2Name(id int32) string {
-	collation, err := charset.GetCollationByID(int(id))
+	collation, err := charset.FindCollationByID(int(id))
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
 		// logutil.BgLogger().Warn(
@@ -209,7 +209,7 @@ func CollationID2Name(id int32) string {
 // CollationName2ID return the collation id by the given name.
 // If the name is not found in the map, the default collation id is returned
 func CollationName2ID(name string) int {
-	if coll, err := charset.GetCollationByName(name); err == nil {
+	if coll, err := charset.FindCollationByName(name); err == nil {
 		return coll.ID
 	}
 	return mysql.DefaultCollationID
@@ -232,7 +232,7 @@ func SubstituteMissingCollationToDefault(co string) string {
 
 // GetCollationByName wraps charset.GetCollationByName, it checks the collation.
 func GetCollationByName(name string) (coll *charset.Collation, err error) {
-	if coll, err = charset.GetCollationByName(name); err != nil {
+	if coll, err = charset.FindCollationByName(name); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
@@ -245,26 +245,27 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 
 // GetSupportedCollations gets information for all collations supported so far.
 func GetSupportedCollations() []*charset.Collation {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
+	var supportedCollationNames []string
+	if NewCollationEnabled() {
 		for name := range newCollatorMap {
-			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.
-			if name == "utf8mb4_zh_pinyin_tidb_as_cs" {
-				continue
-			}
-			if coll, err := charset.GetCollationByName(name); err != nil {
-				// Should never happens.
-				terror.Log(err)
-			} else {
-				newSupportedCollations = append(newSupportedCollations, coll)
-			}
+			supportedCollationNames = append(supportedCollationNames, name)
 		}
-		sort.Slice(newSupportedCollations, func(i int, j int) bool {
-			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
-		})
-		return newSupportedCollations
+	} else {
+		supportedCollationNames = supportedCollationWithoutNewCollation
 	}
-	return charset.GetSupportedCollations()
+	var supportedCollations []*charset.Collation
+	for _, name := range supportedCollationNames {
+		if coll, err := charset.FindCollationByName(name); err != nil {
+			// Should never happens.
+			terror.Log(err)
+		} else {
+			supportedCollations = append(supportedCollations, coll)
+		}
+	}
+	sort.Slice(supportedCollations, func(i int, j int) bool {
+		return supportedCollations[i].Name < supportedCollations[j].Name
+	})
+	return supportedCollations
 }
 
 func truncateTailingSpace(str string) string {
@@ -339,7 +340,7 @@ func IsBinCollation(collate string) bool {
 
 // CollationToProto converts collation from string to int32(used by protocol).
 func CollationToProto(c string) int32 {
-	if coll, err := charset.GetCollationByName(c); err == nil {
+	if coll, err := charset.FindCollationByName(c); err == nil {
 		return RewriteNewCollationIDIfNeeded(int32(coll.ID))
 	}
 	v := RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
@@ -354,17 +355,17 @@ func CollationToProto(c string) int32 {
 
 // ProtoToCollation converts collation from int32(used by protocol) to string.
 func ProtoToCollation(c int32) string {
-	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
-	if err == nil {
-		return coll.Name
-	}
-	logutil.BgLogger().Warn(
-		"Unable to get collation name from ID, use name of the default collation instead",
-		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return mysql.DefaultCollationName
+	return CollationID2Name(RestoreCollationIDIfNeeded(c))
+}
+
+// All the names supported collations when new collation is not enabled should be in the following table.
+var supportedCollationWithoutNewCollation = []string{
+	charset.CollationUTF8,
+	charset.CollationUTF8MB4,
+	charset.CollationASCII,
+	charset.CollationLatin1,
+	charset.CollationBin,
+	charset.CollationGBKBin,
 }
 
 func init() {
@@ -389,8 +390,6 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
-	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
-	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCSCollator{}
 	newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}

@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -368,7 +367,7 @@ func (s *session) SetCommandValue(command byte) {
 }
 
 func (s *session) SetCollation(coID int) error {
-	cs, co, err := charset.GetCharsetInfoByID(coID)
+	cs, co, err := collate.GetCharsetByCollationID(coID)
 	if err != nil {
 		return err
 	}

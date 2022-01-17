@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -48,7 +49,7 @@ func NewFieldType(tp byte) *FieldType {
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
-	coll, _ := charset.GetCollationByName(collation)
+	coll, _ := collate.GetCollationByName(collation)
 	return &FieldType{
 		Tp:      tp,
 		Flen:    length,

@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/collate"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -154,7 +154,7 @@ func (dr *mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
-	chs, coll := charset.GetDefaultCharsetAndCollate()
+	chs, coll := collate.GetDefaultCharsetAndCollate()
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, chs, coll)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -834,7 +833,7 @@ ForColumnsTag:
 
 func calcCharOctLength(lenInChar int, cs string) int {
 	lenInBytes := lenInChar
-	if desc, err := charset.GetCharsetInfo(cs); err == nil {
+	if desc, err := collate.GetCharsetByName(cs); err == nil {
 		lenInBytes = desc.Maxlen * lenInChar
 	}
 	return lenInBytes
@@ -1252,7 +1251,7 @@ func (e *memtableRetriever) setDataFromEngines() {
 }
 
 func (e *memtableRetriever) setDataFromCharacterSets() {
-	charsets := charset.GetSupportedCharsets()
+	charsets := collate.GetAllSupportedCharsets()
 	var rows = make([][]types.Datum, 0, len(charsets))
 	for _, charset := range charsets {
 		rows = append(rows,

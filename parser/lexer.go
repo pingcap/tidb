@@ -314,8 +314,8 @@ func (s *Scanner) handleIdent(lval *yySymType) int {
 	if !strings.HasPrefix(str, "_") {
 		return identifier
 	}
-	cs, err := charset.GetCharsetInfo(str[1:])
-	if err != nil {
+	cs := charset.FindCharsetByName(str[1:])
+	if cs == nil {
 		return identifier
 	}
 	lval.ident = cs.Name

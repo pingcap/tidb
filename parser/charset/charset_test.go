@@ -36,8 +36,8 @@ func TestValidCharset(t *testing.T) {
 		{"utf8mb4", "utf8mb4_bin", true},
 		{"latin1", "latin1_bin", true},
 		{"utf8", "utf8_invalid_ci", false},
-		{"utf16", "utf16_bin", false},
-		{"gb2312", "gb2312_chinese_ci", false},
+		{"utf16", "utf16_bin", true},
+		{"gb2312", "gb2312_chinese_ci", true},
 		{"UTF8", "UTF8_BIN", true},
 		{"UTF8", "utf8_bin", true},
 		{"UTF8MB4", "utf8mb4_bin", true},
@@ -51,12 +51,12 @@ func TestValidCharset(t *testing.T) {
 }
 
 func testGetDefaultCollation(t *testing.T, charset string, expectCollation string, succ bool) {
-	b, err := GetDefaultCollation(charset)
+	b := FindCharsetByName(charset)
 	if !succ {
-		require.Error(t, err)
+		require.Nil(t, b)
 		return
 	}
-	require.Equal(t, expectCollation, b)
+	require.Equal(t, expectCollation, b.DefaultCollation)
 }
 
 func TestGetDefaultCollation(t *testing.T) {
@@ -82,13 +82,15 @@ func TestGetDefaultCollation(t *testing.T) {
 	charsetNum := 0
 	for _, collate := range collations {
 		if collate.IsDefault {
-			if desc, ok := CharacterSetInfos[collate.CharsetName]; ok {
+			if desc, ok := charsetNameMap[collate.CharsetName]; ok {
 				require.Equal(t, desc.DefaultCollation, collate.Name)
 				charsetNum += 1
+			} else {
+				println(collate.Name)
 			}
 		}
 	}
-	require.Equal(t, len(CharacterSetInfos), charsetNum)
+	require.Equal(t, len(charsetNameMap), charsetNum)
 }
 
 func TestGetCharsetDesc(t *testing.T) {
@@ -107,9 +109,9 @@ func TestGetCharsetDesc(t *testing.T) {
 		{"", "utf8_bin", false},
 	}
 	for _, tt := range tests {
-		desc, err := GetCharsetInfo(tt.cs)
+		desc := FindCharsetByName(tt.cs)
 		if !tt.succ {
-			require.Error(t, err)
+			require.Nil(t, desc)
 		} else {
 			require.Equal(t, tt.result, desc.Name)
 		}
@@ -118,31 +120,13 @@ func TestGetCharsetDesc(t *testing.T) {
 
 func TestGetCollationByName(t *testing.T) {
 	for _, collation := range collations {
-		coll, err := GetCollationByName(collation.Name)
+		coll, err := FindCollationByName(collation.Name)
 		require.NoError(t, err)
 		require.Equal(t, collation, coll)
 	}
 
-	_, err := GetCollationByName("non_exist")
+	_, err := FindCollationByName("non_exist")
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'non_exist'")
-}
-
-func TestValidCustomCharset(t *testing.T) {
-	AddCharset(&Charset{"custom", "custom_collation", make(map[string]*Collation), "Custom", 4})
-	defer RemoveCharset("custom")
-	AddCollation(&Collation{99999, "custom", "custom_collation", true})
-
-	tests := []struct {
-		cs   string
-		co   string
-		succ bool
-	}{
-		{"custom", "custom_collation", true},
-		{"utf8", "utf8_invalid_ci", false},
-	}
-	for _, tt := range tests {
-		testValidCharset(t, tt.cs, tt.co, tt.succ)
-	}
 }
 
 func BenchmarkGetCharsetDesc(b *testing.B) {
@@ -152,6 +136,6 @@ func BenchmarkGetCharsetDesc(b *testing.B) {
 	cs := charsets[index]
 
 	for i := 0; i < b.N; i++ {
-		GetCharsetInfo(cs)
+		FindCharsetByName(cs)
 	}
 }

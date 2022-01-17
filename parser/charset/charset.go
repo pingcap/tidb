@@ -14,19 +14,17 @@
 package charset
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"go.uber.org/zap"
 )
 
 var (
 	ErrUnknownCollation         = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
 	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
+	ErrUnknownCharacterSet      = terror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
 )
 
 // Charset is a charset.
@@ -34,7 +32,6 @@ var (
 type Charset struct {
 	Name             string
 	DefaultCollation string
-	Collations       map[string]*Collation
 	Desc             string
 	Maxlen           int
 }
@@ -50,55 +47,7 @@ type Collation struct {
 
 var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
-var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
-
-// CharacterSetInfos: All the supported charsets should be in the following table.
-var CharacterSetInfos = map[string]*Charset{
-	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
-	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
-	CharsetASCII:   {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
-	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
-	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
-	CharsetGBK:     {CharsetGBK, CollationGBKBin, make(map[string]*Collation), "Chinese Internal Code Specification", 2},
-}
-
-// All the names supported collations should be in the following table.
-var supportedCollationNames = map[string]struct{}{
-	CollationUTF8:    {},
-	CollationUTF8MB4: {},
-	CollationASCII:   {},
-	CollationLatin1:  {},
-	CollationBin:     {},
-	CollationGBKBin:  {},
-}
-
-// TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
-var TiFlashSupportedCharsets = map[string]struct{}{
-	CharsetUTF8:    {},
-	CharsetUTF8MB4: {},
-	CharsetASCII:   {},
-	CharsetLatin1:  {},
-	CharsetBin:     {},
-}
-
-// GetSupportedCharsets gets descriptions for all charsets supported so far.
-func GetSupportedCharsets() []*Charset {
-	charsets := make([]*Charset, 0, len(CharacterSetInfos))
-	for _, ch := range CharacterSetInfos {
-		charsets = append(charsets, ch)
-	}
-
-	// sort charset by name.
-	sort.Slice(charsets, func(i, j int) bool {
-		return charsets[i].Name < charsets[j].Name
-	})
-	return charsets
-}
-
-// GetSupportedCollations gets information for all collations supported so far.
-func GetSupportedCollations() []*Collation {
-	return supportedCollations
-}
+var charsetNameMap = make(map[string]*Charset)
 
 // ValidCharsetAndCollation checks the charset and the collation validity
 // and returns a boolean.
@@ -107,74 +56,32 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	if cs == "" {
 		cs = "utf8"
 	}
-	chs, err := GetCharsetInfo(cs)
-	if err != nil {
-		return false
-	}
-
 	if co == "" {
 		return true
 	}
-	co = strings.ToLower(co)
-	_, ok := chs.Collations[co]
-	return ok
+	collation, ok := collationsNameMap[strings.ToLower(co)]
+	if !ok {
+		return false
+	}
+	return collation.CharsetName == strings.ToLower(cs)
 }
 
-// GetDefaultCollationLegacy is compatible with the charset support in old version parser.
-func GetDefaultCollationLegacy(charset string) (string, error) {
+// FindDefaultCollationLegacy is compatible with the charset support in old version parser.
+func FindDefaultCollationLegacy(charset string) (string, error) {
 	switch strings.ToLower(charset) {
 	case CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin:
-		return GetDefaultCollation(charset)
+		return FindCharsetByName(charset).DefaultCollation, nil
 	default:
-		return "", errors.Errorf("Unknown charset %s", charset)
+		return "", ErrUnknownCharacterSet.GenWithStackByArgs(charset)
 	}
 }
 
-// GetDefaultCollation returns the default collation for charset.
-func GetDefaultCollation(charset string) (string, error) {
-	cs, err := GetCharsetInfo(charset)
-	if err != nil {
-		return "", err
-	}
-	return cs.DefaultCollation, nil
+// FindCharsetByName returns charset and collation for cs as name.
+func FindCharsetByName(cs string) *Charset {
+	return charsetNameMap[strings.ToLower(cs)]
 }
 
-// GetDefaultCharsetAndCollate returns the default charset and collation.
-func GetDefaultCharsetAndCollate() (string, string) {
-	return mysql.DefaultCharset, mysql.DefaultCollationName
-}
-
-// GetCharsetInfo returns charset and collation for cs as name.
-func GetCharsetInfo(cs string) (*Charset, error) {
-	if c, ok := CharacterSetInfos[strings.ToLower(cs)]; ok {
-		return c, nil
-	}
-
-	return nil, errors.Errorf("Unknown charset %s", cs)
-}
-
-// GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(coID int) (string, string, error) {
-	if coID == mysql.DefaultCollationID {
-		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
-	}
-	if collation, ok := collationsIDMap[coID]; ok {
-		return collation.CharsetName, collation.Name, nil
-	}
-
-	log.Warn(
-		"unable to get collation name from collation ID, return default charset and collation instead",
-		zap.Int("ID", coID),
-		zap.Stack("stack"))
-	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
-}
-
-// GetCollations returns a list for all collations.
-func GetCollations() []*Collation {
-	return collations
-}
-
-func GetCollationByName(name string) (*Collation, error) {
+func FindCollationByName(name string) (*Collation, error) {
 	collation, ok := collationsNameMap[strings.ToLower(name)]
 	if !ok {
 		return nil, ErrUnknownCollation.GenWithStackByArgs(name)
@@ -182,8 +89,8 @@ func GetCollationByName(name string) (*Collation, error) {
 	return collation, nil
 }
 
-// GetCollationByID returns collations by given id.
-func GetCollationByID(id int) (*Collation, error) {
+// FindCollationByID returns collations by given id.
+func FindCollationByID(id int) (*Collation, error) {
 	collation, ok := collationsIDMap[id]
 	if !ok {
 		return nil, errors.Errorf("Unknown collation id %d", id)
@@ -191,70 +98,6 @@ func GetCollationByID(id int) (*Collation, error) {
 
 	return collation, nil
 }
-
-const (
-	// CharsetBin is used for marking binary charset.
-	CharsetBin = "binary"
-	// CollationBin is the default collation for CharsetBin.
-	CollationBin = "binary"
-	// CharsetUTF8 is the default charset for string types.
-	CharsetUTF8 = "utf8"
-	// CollationUTF8 is the default collation for CharsetUTF8.
-	CollationUTF8 = "utf8_bin"
-	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
-	CharsetUTF8MB4 = "utf8mb4"
-	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
-	CollationUTF8MB4 = "utf8mb4_bin"
-	// CharsetASCII is a subset of UTF8.
-	CharsetASCII = "ascii"
-	// CollationASCII is the default collation for CharsetACSII.
-	CollationASCII = "ascii_bin"
-	// CharsetLatin1 is a single byte charset.
-	CharsetLatin1 = "latin1"
-	// CollationLatin1 is the default collation for CharsetLatin1.
-	CollationLatin1 = "latin1_bin"
-
-	CollationGBKBin       = "gbk_bin"
-	CollationGBKChineseCI = "gbk_chinese_ci"
-
-	CharsetARMSCII8 = "armscii8"
-	CharsetBig5     = "big5"
-	CharsetBinary   = "binary"
-	CharsetCP1250   = "cp1250"
-	CharsetCP1251   = "cp1251"
-	CharsetCP1256   = "cp1256"
-	CharsetCP1257   = "cp1257"
-	CharsetCP850    = "cp850"
-	CharsetCP852    = "cp852"
-	CharsetCP866    = "cp866"
-	CharsetCP932    = "cp932"
-	CharsetDEC8     = "dec8"
-	CharsetEUCJPMS  = "eucjpms"
-	CharsetEUCKR    = "euckr"
-	CharsetGB18030  = "gb18030"
-	CharsetGB2312   = "gb2312"
-	CharsetGBK      = "gbk"
-	CharsetGEOSTD8  = "geostd8"
-	CharsetGreek    = "greek"
-	CharsetHebrew   = "hebrew"
-	CharsetHP8      = "hp8"
-	CharsetKEYBCS2  = "keybcs2"
-	CharsetKOI8R    = "koi8r"
-	CharsetKOI8U    = "koi8u"
-	CharsetLatin2   = "latin2"
-	CharsetLatin5   = "latin5"
-	CharsetLatin7   = "latin7"
-	CharsetMacCE    = "macce"
-	CharsetMacRoman = "macroman"
-	CharsetSJIS     = "sjis"
-	CharsetSWE7     = "swe7"
-	CharsetTIS620   = "tis620"
-	CharsetUCS2     = "ucs2"
-	CharsetUJIS     = "ujis"
-	CharsetUTF16    = "utf16"
-	CharsetUTF16LE  = "utf16le"
-	CharsetUTF32    = "utf32"
-)
 
 var collations = []*Collation{
 	{1, "big5", "big5_chinese_ci", true},
@@ -476,51 +319,146 @@ var collations = []*Collation{
 	{245, "utf8mb4", "utf8mb4_croatian_ci", false},
 	{246, "utf8mb4", "utf8mb4_unicode_520_ci", false},
 	{247, "utf8mb4", "utf8mb4_vietnamese_ci", false},
+	{249, "gb18030", "gb18030_bin", false},
+	{248, "gb18030", "gb18030_chinese_ci", true},
+	{250, "gb18030", "gb18030_unicode_520_ci", false},
 	{255, "utf8mb4", "utf8mb4_0900_ai_ci", false},
-	{2048, "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs", false},
 }
 
-// AddCharset adds a new charset.
-// Use only when adding a custom charset to the parser.
-func AddCharset(c *Charset) {
-	CharacterSetInfos[c.Name] = c
+var charsets = []*Charset{
+	{"armscii8", "armscii8_general_ci", "ARMSCII-8 Armenian", 1},
+	{"ascii", "ascii_bin", "US ASCII", 1},
+	{"big5", "big5_chinese_ci", "Big5 Traditional Chinese", 2},
+	{"binary", "binary", "Binary pseudo charset", 1},
+	{"cp1250", "cp1250_general_ci", "Windows Central European", 1},
+	{"cp1251", "cp1251_general_ci", "Windows Cyrillic", 1},
+	{"cp1256", "cp1256_general_ci", "Windows Arabic", 1},
+	{"cp1257", "cp1257_general_ci", "Windows Baltic", 1},
+	{"cp850", "cp850_general_ci", "DOS West European", 1},
+	{"cp852", "cp852_general_ci", "DOS Central European", 1},
+	{"cp866", "cp866_general_ci", "DOS Russian", 1},
+	{"cp932", "cp932_japanese_ci", "SJIS for Windows Japanese", 2},
+	{"dec8", "dec8_swedish_ci", "DEC West European", 1},
+	{"eucjpms", "eucjpms_japanese_ci", "UJIS for Windows Japanese", 3},
+	{"euckr", "euckr_korean_ci", "EUC-KR Korean", 2},
+	{"gb18030", "gb18030_chinese_ci", "China National Standard GB18030", 4},
+	{"gb2312", "gb2312_chinese_ci", "GB2312 Simplified Chinese", 2},
+	{"gbk", "gbk_bin", "GBK Simplified Chinese", 2},
+	{"geostd8", "geostd8_general_ci", "GEOSTD8 Georgian", 1},
+	{"greek", "greek_general_ci", "ISO 8859-7 Greek", 1},
+	{"hebrew", "hebrew_general_ci", "ISO 8859-8 Hebrew", 1},
+	{"hp8", "hp8_english_ci", "HP West European", 1},
+	{"keybcs2", "keybcs2_general_ci", "DOS Kamenicky Czech-Slovak", 1},
+	{"koi8r", "koi8r_general_ci", "KOI8-R Relcom Russian", 1},
+	{"koi8u", "koi8u_general_ci", "KOI8-U Ukrainian", 1},
+	{"latin1", "latin1_bin", "cp1252 West European", 1},
+	{"latin2", "latin2_general_ci", "ISO 8859-2 Central European", 1},
+	{"latin5", "latin5_turkish_ci", "ISO 8859-9 Turkish", 1},
+	{"latin7", "latin7_general_ci", "ISO 8859-13 Baltic", 1},
+	{"macce", "macce_general_ci", "Mac Central European", 1},
+	{"macroman", "macroman_general_ci", "Mac West European", 1},
+	{"sjis", "sjis_japanese_ci", "Shift-JIS Japanese", 2},
+	{"swe7", "swe7_swedish_ci", "7bit Swedish", 1},
+	{"tis620", "tis620_thai_ci", "TIS620 Thai", 1},
+	{"ucs2", "ucs2_general_ci", "UCS-2 Unicode", 2},
+	{"ujis", "ujis_japanese_ci", "EUC-JP Japanese", 3},
+	{"utf16", "utf16_general_ci", "UTF-16 Unicode", 4},
+	{"utf16le", "utf16le_general_ci", "UTF-16LE Unicode", 4},
+	{"utf32", "utf32_general_ci", "UTF-32 Unicode", 4},
+	{"utf8", "utf8_bin", "UTF-8 Unicode", 3},
+	{"utf8mb4", "utf8mb4_bin", "UTF-8 Unicode", 4},
 }
 
-// RemoveCharset remove a charset.
-// Use only when remove a custom charset to the parser.
-func RemoveCharset(c string) {
-	delete(CharacterSetInfos, c)
-	for i := range supportedCollations {
-		if supportedCollations[i].Name == c {
-			supportedCollations = append(supportedCollations[:i], supportedCollations[i+1:]...)
+// SetDefaultCollation set the `co` as the default collation of `cs` charset.
+func SetDefaultCollation(cs string, co string) {
+	chs, ok := charsetNameMap[cs]
+	if !ok {
+		return
+	}
+	_, ok = collationsNameMap[co]
+	if !ok {
+		return
+	}
+	chs.DefaultCollation = co
+	for _, collation := range collations {
+		if collation.CharsetName == cs {
+			collation.IsDefault = collation.Name == co
 		}
 	}
-}
-
-// AddCollation adds a new collation.
-// Use only when adding a custom collation to the parser.
-func AddCollation(c *Collation) {
-	collationsIDMap[c.ID] = c
-	collationsNameMap[c.Name] = c
-
-	if _, ok := supportedCollationNames[c.Name]; ok {
-		AddSupportedCollation(c)
-	}
-
-	if charset, ok := CharacterSetInfos[c.CharsetName]; ok {
-		charset.Collations[c.Name] = c
-	}
-}
-
-// AddSupportedCollation adds a new collation into supportedCollations.
-// Use only when adding a custom collation to the parser.
-func AddSupportedCollation(c *Collation) {
-	supportedCollations = append(supportedCollations, c)
 }
 
 // init method always puts to the end of file.
 func init() {
 	for _, c := range collations {
-		AddCollation(c)
+		collationsIDMap[c.ID] = c
+		collationsNameMap[c.Name] = c
+	}
+
+	for _, c := range charsets {
+		charsetNameMap[c.Name] = c
 	}
 }
+
+const (
+	// CharsetBin is used for marking binary charset.
+	CharsetBin = "binary"
+	// CollationBin is the default collation for CharsetBin.
+	CollationBin = "binary"
+	// CharsetUTF8 is the default charset for string types.
+	CharsetUTF8 = "utf8"
+	// CollationUTF8 is the default collation for CharsetUTF8.
+	CollationUTF8 = "utf8_bin"
+	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
+	CharsetUTF8MB4 = "utf8mb4"
+	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
+	CollationUTF8MB4 = "utf8mb4_bin"
+	// CharsetASCII is a subset of UTF8.
+	CharsetASCII = "ascii"
+	// CollationASCII is the default collation for CharsetACSII.
+	CollationASCII = "ascii_bin"
+	// CharsetLatin1 is a single byte charset.
+	CharsetLatin1 = "latin1"
+	// CollationLatin1 is the default collation for CharsetLatin1.
+	CollationLatin1 = "latin1_bin"
+
+	CollationGBKBin       = "gbk_bin"
+	CollationGBKChineseCI = "gbk_chinese_ci"
+
+	CharsetARMSCII8 = "armscii8"
+	CharsetBig5     = "big5"
+	CharsetBinary   = "binary"
+	CharsetCP1250   = "cp1250"
+	CharsetCP1251   = "cp1251"
+	CharsetCP1256   = "cp1256"
+	CharsetCP1257   = "cp1257"
+	CharsetCP850    = "cp850"
+	CharsetCP852    = "cp852"
+	CharsetCP866    = "cp866"
+	CharsetCP932    = "cp932"
+	CharsetDEC8     = "dec8"
+	CharsetEUCJPMS  = "eucjpms"
+	CharsetEUCKR    = "euckr"
+	CharsetGB18030  = "gb18030"
+	CharsetGB2312   = "gb2312"
+	CharsetGBK      = "gbk"
+	CharsetGEOSTD8  = "geostd8"
+	CharsetGreek    = "greek"
+	CharsetHebrew   = "hebrew"
+	CharsetHP8      = "hp8"
+	CharsetKEYBCS2  = "keybcs2"
+	CharsetKOI8R    = "koi8r"
+	CharsetKOI8U    = "koi8u"
+	CharsetLatin2   = "latin2"
+	CharsetLatin5   = "latin5"
+	CharsetLatin7   = "latin7"
+	CharsetMacCE    = "macce"
+	CharsetMacRoman = "macroman"
+	CharsetSJIS     = "sjis"
+	CharsetSWE7     = "swe7"
+	CharsetTIS620   = "tis620"
+	CharsetUCS2     = "ucs2"
+	CharsetUJIS     = "ujis"
+	CharsetUTF16    = "utf16"
+	CharsetUTF16LE  = "utf16le"
+	CharsetUTF32    = "utf32"
+)

@@ -6456,7 +6456,7 @@ Literal:
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
-		co, err := charset.GetDefaultCollationLegacy($1)
+		co, err := charset.FindDefaultCollationLegacy($1)
 		if err != nil {
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
@@ -6480,7 +6480,7 @@ Literal:
 	}
 |	"UNDERSCORE_CHARSET" hexLit
 	{
-		co, err := charset.GetDefaultCollationLegacy($1)
+		co, err := charset.FindDefaultCollationLegacy($1)
 		if err != nil {
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
@@ -6496,7 +6496,7 @@ Literal:
 	}
 |	"UNDERSCORE_CHARSET" bitLit
 	{
-		co, err := charset.GetDefaultCollationLegacy($1)
+		co, err := charset.FindDefaultCollationLegacy($1)
 		if err != nil {
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
@@ -7714,12 +7714,12 @@ CastType:
 			x.Charset = charset.CharsetBin
 			x.Collate = charset.CollationBin
 		} else if x.Charset != "" {
-			co, err := charset.GetDefaultCollation(x.Charset)
-			if err != nil {
+			cs := charset.FindCharsetByName(x.Charset)
+			if cs == nil {
 				yylex.AppendError(yylex.Errorf("Get collation error for charset: %s", x.Charset))
 				return 1
 			}
-			x.Collate = co
+			x.Collate = cs.DefaultCollation
 			parser.explicitCharset = true
 		} else {
 			x.Charset = parser.charset
@@ -9817,12 +9817,12 @@ CharsetName:
 	StringName
 	{
 		// Validate input charset name to keep the same behavior as parser of MySQL.
-		cs, err := charset.GetCharsetInfo($1)
-		if err != nil {
+		cs := charset.FindCharsetByName($1)
+		if cs == nil {
 			yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs($1))
 			return 1
 		}
-		// Use charset name returned from charset.GetCharsetInfo(),
+		// Use charset name returned from charset.FindCharsetByName(),
 		// to keep lower case of input for generated column restore.
 		$$ = cs.Name
 	}
@@ -9834,7 +9834,7 @@ CharsetName:
 CollationName:
 	StringName
 	{
-		info, err := charset.GetCollationByName($1)
+		info, err := charset.FindCollationByName($1)
 		if err != nil {
 			yylex.AppendError(err)
 			return 1
@@ -11884,8 +11884,8 @@ OptCharsetWithOptBinary:
 	}
 |	"UNICODE"
 	{
-		cs, err := charset.GetCharsetInfo("ucs2")
-		if err != nil {
+		cs := charset.FindCharsetByName("ucs2")
+		if cs == nil {
 			yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs("ucs2"))
 			return 1
 		}

@@ -265,7 +265,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
 		}
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
-		chs, coll := charset.GetDefaultCharsetAndCollate()
+		chs, coll := collate.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2:
 		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
@@ -354,7 +354,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 func inferCollation(exprs ...Expression) *ExprCollation {
 	if len(exprs) == 0 {
 		// TODO: see if any function with no arguments could run here.
-		dstCharset, dstCollation := charset.GetDefaultCharsetAndCollate()
+		dstCharset, dstCollation := collate.GetDefaultCharsetAndCollate()
 		return &ExprCollation{
 			Coer:      CoercibilityIgnorable,
 			Repe:      UNICODE,

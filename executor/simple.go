@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
@@ -563,10 +562,6 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	if dbCollate == "" {
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-	// If new collations are enabled, switch to the default
-	// collation if this one is not supported.
-	// The SetSystemVar will also update the CharsetDatabase
-	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
 	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 

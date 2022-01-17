@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1229,7 +1228,7 @@ func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	chs, coll := charset.GetDefaultCharsetAndCollate()
+	chs, coll := collate.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
 	return &col.FieldType

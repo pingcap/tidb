@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -343,7 +344,7 @@ func (d *resultEncoder) clean() {
 }
 
 func (d *resultEncoder) updateDataEncoding(chsID uint16) {
-	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
+	chs, _, err := collate.GetCharsetByCollationID(int(chsID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}

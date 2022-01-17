@@ -469,10 +469,10 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
 		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
 		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "[expression:1115]Unknown character set: 'somecharset'")
 		// we do not support set character_set_xxx or collation_xxx to a collation id.
-		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
-		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "[expression:1115]Unknown character set: '46'")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "[expression:1115]Unknown character set: '46'")
 	}
 
 	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")

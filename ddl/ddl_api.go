@@ -86,7 +86,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset = chs
 		dbInfo.Collate = coll
 	} else {
-		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
+		dbInfo.Charset, dbInfo.Collate = collate.GetDefaultCharsetAndCollate()
 	}
 
 	dbInfo.PlacementPolicyRef = placementPolicyRef
@@ -148,7 +148,7 @@ func (d *ddl) CreateSchemaWithInfo(
 
 func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
 	if toCollate == "" {
-		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+		if toCollate, err = collate.GetDefaultCollation(toCharset); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -494,14 +494,14 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 			return collation.CharsetName, v.Col, nil
 		}
 		if v.Chs != "" {
-			coll, err := charset.GetDefaultCollation(v.Chs)
+			coll, err := collate.GetDefaultCollation(v.Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
 			return v.Chs, coll, err
 		}
 	}
-	chs, coll := charset.GetDefaultCharsetAndCollate()
+	chs, coll := collate.GetDefaultCharsetAndCollate()
 	return chs, coll, nil
 }
 
@@ -515,7 +515,7 @@ func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (
 	}
 	needOverwriteBinColl := types.IsString(colDef.Tp.Tp) && mysql.HasBinaryFlag(colDef.Tp.Flag)
 	if needOverwriteBinColl {
-		newColl, err := charset.GetDefaultCollation(chs)
+		newColl, err := collate.GetDefaultCollation(chs)
 		if err != nil {
 			return chs, coll
 		}
@@ -707,7 +707,7 @@ func processColumnFlags(col *table.Column) {
 }
 
 func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
-	cs, err := charset.GetCharsetInfo(colCharset)
+	cs, err := collate.GetCharsetByName(colCharset)
 	// when we meet the unsupported charset, we do not adjust.
 	if err != nil {
 		return err
@@ -1152,7 +1152,7 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
 	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
-	desc, err := charset.GetCharsetInfo(col.Charset)
+	desc, err := collate.GetCharsetByName(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1299,7 +1299,7 @@ func checkColumnFieldLength(col *table.Column) error {
 
 // IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
 func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
-	desc, err := charset.GetCharsetInfo(setCharset)
+	desc, err := collate.GetCharsetByName(setCharset)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2635,7 +2635,7 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err 
 	chs = def.Tp.Charset
 	coll = def.Tp.Collate
 	if chs != "" && coll == "" {
-		if coll, err = charset.GetDefaultCollation(chs); err != nil {
+		if coll, err = collate.GetDefaultCollation(chs); err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
@@ -2666,7 +2666,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			info, err := charset.GetCharsetInfo(opt.StrValue)
+			info, err := collate.GetCharsetByName(opt.StrValue)
 			if err != nil {
 				return "", "", err
 			}
@@ -4799,7 +4799,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 
 	if toCollate == "" {
 		// get the default collation of the charset.
-		toCollate, err = charset.GetDefaultCollation(toCharset)
+		toCollate, err = collate.GetDefaultCollation(toCharset)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4840,7 +4840,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	// Ban setting replica count for tables which has charset not supported by TiFlash
 	for _, col := range tb.Cols() {
-		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		_, ok := collate.TiFlashSupportedCharsets[col.Charset]
 		if !ok {
 			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
 		}

@@ -186,7 +186,7 @@ func (d *Datum) GetString() string {
 
 // GetBinaryStringEncoded gets the string value encoded with given charset.
 func (d *Datum) GetBinaryStringEncoded() string {
-	coll, err := charset.GetCollationByName(d.Collation())
+	coll, err := collate.GetCollationByName(d.Collation())
 	if err != nil {
 		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
 		return d.GetString()

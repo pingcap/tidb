@@ -247,7 +247,7 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
 	sessionVars := e.ctx.GetSessionVars()
 	if co == "" {
-		if co, err = charset.GetDefaultCollation(cs); err != nil {
+		if co, err = collate.GetDefaultCollation(cs); err != nil {
 			return err
 		}
 	} else {

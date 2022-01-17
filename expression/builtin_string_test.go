@@ -885,7 +885,7 @@ func TestConvert(t *testing.T) {
 		require.NotNil(t, f)
 		retType := f.getRetTp()
 		require.Equal(t, strings.ToLower(v.cs), retType.Charset)
-		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
+		collate, err := collate.GetDefaultCollation(strings.ToLower(v.cs))
 		require.NoError(t, err)
 		require.Equal(t, collate, retType.Collate)
 		require.Equal(t, v.hasBinaryFlag, mysql.HasBinaryFlag(retType.Flag))

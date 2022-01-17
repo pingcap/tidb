@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -398,7 +398,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * utf8mb4, the multiple is 4
 		// We used to check non-string types to avoid the truncation problem in some MySQL
 		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetInfo(fld.Column.Charset)
+		charsetDesc, err := collate.GetCharsetByName(fld.Column.Charset)
 		if err != nil {
 			ci.ColumnLength *= 4
 		} else {

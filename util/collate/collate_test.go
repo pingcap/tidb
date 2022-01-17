@@ -141,7 +141,6 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8_general_ci"))
 	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8mb4_unicode_ci"))
 	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8_unicode_ci"))
-	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
@@ -150,7 +149,6 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(33))
 	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(224))
 	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(192))
-	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollatorByID(2048))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(9999))
 
 	SetNewCollationEnabledForTest(false)

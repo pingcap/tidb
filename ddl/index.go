@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -168,7 +168,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	if types.IsString(col.FieldType.Tp) {
-		desc, err := charset.GetCharsetInfo(col.Charset)
+		desc, err := collate.GetCharsetByName(col.Charset)
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
-		desc, err := charset.GetCharsetInfo(col.Charset)
+		desc, err := collate.GetCharsetByName(col.Charset)
 		if err != nil {
 			return 0, errUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
 		}

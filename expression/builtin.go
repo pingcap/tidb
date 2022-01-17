@@ -363,7 +363,7 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 			b.tp.Tp = mysql.TypeMediumBlob
 		}
 		if len(b.tp.Charset) <= 0 {
-			b.tp.Charset, b.tp.Collate = charset.GetDefaultCharsetAndCollate()
+			b.tp.Charset, b.tp.Collate = collate.GetDefaultCharsetAndCollate()
 		}
 	}
 	return b.tp

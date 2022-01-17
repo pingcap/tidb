@@ -3572,18 +3572,6 @@ func TestErrorMsg(t *testing.T) {
 	_, _, err = p.Parse("alter table t lock = randomStr123", "", "")
 	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'randomStr123'")
 
-	_, _, err = p.Parse("create table t (a longtext unicode)", "", "")
-	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
-
-	_, _, err = p.Parse("create table t (a long byte, b text unicode)", "", "")
-	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
-
-	_, _, err = p.Parse("create table t (a long ascii, b long unicode)", "", "")
-	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
-
-	_, _, err = p.Parse("create table t (a text unicode, b mediumtext ascii, c int)", "", "")
-	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
-
 	_, _, err = p.Parse("select 1 collate some_unknown_collation", "", "")
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
 }
@@ -6488,7 +6476,6 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 
 func TestCharsetIntroducer(t *testing.T) {
 	p := parser.New()
-	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
 	_, _, err := p.Parse("select _gbk 'a';", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")

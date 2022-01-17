@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -178,7 +177,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharsetDatabase)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if cs, err := charset.GetCharsetInfo(val); err == nil {
+		if cs, err := collate.GetCharsetByName(val); err == nil {
 			s.systems[CollationDatabase] = cs.DefaultCollation
 		}
 		return nil
@@ -211,7 +210,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if cs, err := charset.GetCharsetInfo(val); err == nil {
+		if cs, err := collate.GetCharsetByName(val); err == nil {
 			s.systems[CollationConnection] = cs.DefaultCollation
 		}
 		return nil
@@ -219,7 +218,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetServer)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if cs, err := charset.GetCharsetInfo(val); err == nil {
+		if cs, err := collate.GetCharsetByName(val); err == nil {
 			s.systems[CollationServer] = cs.DefaultCollation
 		}
 		return nil

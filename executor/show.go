@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -692,7 +691,7 @@ func (e *ShowExec) fetchShowIndex() error {
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	descs := charset.GetSupportedCharsets()
+	descs := collate.GetAllSupportedCharsets()
 	for _, desc := range descs {
 		e.appendRow([]interface{}{
 			desc.Name,
@@ -793,7 +792,7 @@ func (e *ShowExec) fetchShowStatus() error {
 }
 
 func getDefaultCollate(charsetName string) string {
-	ch, err := charset.GetCharsetInfo(charsetName)
+	ch, err := collate.GetCharsetByName(charsetName)
 	if err != nil {
 		// The charset is invalid, return server default.
 		return mysql.DefaultCollationName
@@ -850,7 +849,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			if col.Collate != tblCollate {
 				fmt.Fprintf(buf, " COLLATE %s", col.Collate)
 			} else {
-				defcol, err := charset.GetDefaultCollation(col.Charset)
+				defcol, err := collate.GetDefaultCollation(col.Charset)
 				if err == nil && defcol != col.Collate {
 					fmt.Fprintf(buf, " COLLATE %s", col.Collate)
 				}
@@ -1332,7 +1331,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
 		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
-		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		defaultCollate, err := collate.GetDefaultCollation(dbInfo.Charset)
 		if err != nil {
 			return errors.Trace(err)
 		}
