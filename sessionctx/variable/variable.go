@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -377,7 +376,7 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 		}
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	val, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
@@ -385,11 +384,12 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	}
 	if val < uint64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
+
 	}
 	return value, nil
 }
@@ -404,11 +404,11 @@ func (sv *SysVar) checkInt64SystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < sv.MinValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > int64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -418,7 +418,7 @@ func (sv *SysVar) checkEnumSystemVar(value string, vars *SessionVars) (string, e
 	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
 	var iStr string
 	for i, v := range sv.PossibleValues {
-		iStr = fmt.Sprintf("%d", i)
+		iStr = strconv.Itoa(i)
 		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
 			return v, nil
 		}
@@ -436,11 +436,11 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < float64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > float64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }

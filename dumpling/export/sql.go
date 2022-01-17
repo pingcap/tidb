@@ -391,7 +391,7 @@ func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
+		if strings.Contains(errMsg, strconv.Itoa(errBadFieldCode)) {
 			return false, nil
 		}
 		return false, errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
