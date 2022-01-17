@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // TiDBDriver implements IDriver.
@@ -290,6 +291,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	return
 }
 
+// GetStmtStats implements the sessionctx.Context interface.
+func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
+	return tc.Session.GetStmtStats()
+}
+
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo
@@ -372,9 +378,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen == types.UnspecifiedLength {
-		ci.ColumnLength = 0
-	} else {
+	if fld.Column.Flen != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {

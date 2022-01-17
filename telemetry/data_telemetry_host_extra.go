@@ -15,8 +15,8 @@
 package telemetry
 
 import (
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/host"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/host"
 )
 
 // Some information that is not included in current system tables. There is no easy way to retrieve information
