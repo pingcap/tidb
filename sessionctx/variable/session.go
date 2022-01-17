@@ -1304,11 +1304,9 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	var enableChunkRPC string
+	enableChunkRPC := "0"
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
-	} else {
-		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
@@ -2196,7 +2194,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				vStr = "pseudo"
 			} else {
 				vStr = strconv.FormatUint(v, 10)
-
 			}
 			if firstComma {
 				buf.WriteString("," + k + ":" + vStr)
