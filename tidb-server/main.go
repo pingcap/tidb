@@ -170,8 +170,8 @@ func main() {
 		os.Exit(0)
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
-	setVersions()
 	if *version {
+		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
@@ -591,15 +591,21 @@ func setGlobalVars() {
 	variable.ForcePriority = int32(priority)
 
 	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
 		variable.SetSysVar(variable.Version, cfg.ServerVersion)
 	}
 
 	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
 		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
 	}
 
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
+	}
+
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
