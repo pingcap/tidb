@@ -372,9 +372,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen == types.UnspecifiedLength {
-		ci.ColumnLength = 0
-	} else {
+	if fld.Column.Flen != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -422,7 +423,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 			FileMeta: mydump.SourceFileMeta{
 				Path:     fakeFileName,
 				Type:     mydump.SourceTypeSQL,
-				SortKey:  fmt.Sprintf("%d", i),
+				SortKey:  strconv.Itoa(i),
 				FileSize: 37,
 			},
 		})

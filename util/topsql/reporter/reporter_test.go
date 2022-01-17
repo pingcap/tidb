@@ -397,7 +397,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	for i := 0; i < 7; i++ {
 		chs = append(chs, make(chan *ReportData, 1))
 	}
-	var dss []DataSink
+	dss := make([]DataSink, 0, len(chs))
 	for _, ch := range chs {
 		dss = append(dss, newMockDataSink(ch))
 	}

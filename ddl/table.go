@@ -378,14 +378,8 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
 		}
 
-		bundles, err := placement.NewFullTableBundles(t, tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		// Send the placement bundle to PD.
-		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+		// Clear all placement when recover
+		err = clearTablePlacementAndBundles(tblInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -463,6 +457,32 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
+}
+
+func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
+	var bundles []*placement.Bundle
+	if tblInfo.PlacementPolicyRef != nil || tblInfo.DirectPlacementOpts != nil {
+		tblInfo.PlacementPolicyRef = nil
+		tblInfo.DirectPlacementOpts = nil
+		bundles = append(bundles, placement.NewBundle(tblInfo.ID))
+	}
+
+	if tblInfo.Partition != nil {
+		for i := range tblInfo.Partition.Definitions {
+			par := &tblInfo.Partition.Definitions[i]
+			if par.PlacementPolicyRef != nil || par.DirectPlacementOpts != nil {
+				par.PlacementPolicyRef = nil
+				par.DirectPlacementOpts = nil
+				bundles = append(bundles, placement.NewBundle(par.ID))
+			}
+		}
+	}
+
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure

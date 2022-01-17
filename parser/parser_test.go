@@ -5882,7 +5882,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
