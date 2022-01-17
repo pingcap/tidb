@@ -256,7 +256,7 @@ func cmdRun(args ...string) {
 		go n.worker(&wg, taskCh)
 	}
 
-	shuffle(tasks)
+	// shuffle(tasks)
 	for _, task := range tasks {
 		taskCh <- task
 	}
@@ -331,6 +331,7 @@ func listPackages() ([]string, error) {
 		if skipDIR(pkg) {
 			continue
 		}
+
 		ret = append(ret, pkg)
 	}
 	return ret, nil
@@ -382,7 +383,7 @@ func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd
 		return exec.Command(
 			"numactl", "--physcpubind", n.cpu, "--",
 			exe,
-			"-test.timeout", "20s",
+			// "-test.timeout", "20s",
 			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
 	}
 
@@ -390,7 +391,7 @@ func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd
 	return exec.Command(
 		"numactl", "--physcpubind", n.cpu, "--",
 		exe,
-		"-test.timeout", "20s",
+		// "-test.timeout", "20s",
 		"-test.cpu", "1", "-test.run", fn)
 }
 
@@ -399,14 +400,14 @@ func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		return exec.Command(
 			exe,
-			"-test.timeout", "20s",
+			// "-test.timeout", "20s",
 			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
 	}
 
 	// session.test -test.run TestClusteredPrefixColum
 	return exec.Command(
 		exe,
-		"-test.timeout", "20s",
+		// "-test.timeout", "20s",
 		"-test.cpu", "1", "-test.run", fn)
 }
 
