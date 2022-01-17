@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -999,11 +998,6 @@ type SessionVars struct {
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
-
-	// StmtStats is a pointer to session.stmtStats, and the life cycle of StmtStats
-	// is controlled by session.
-	// See session.stmtStats for more details.
-	StmtStats *stmtstats.StatementStats
 
 	// ReadConsistency indicates the read consistency requirement.
 	ReadConsistency ReadConsistencyLevel

@@ -2786,7 +2786,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
-	s.sessionVars.StmtStats = s.stmtStats
 	s.txn.init()
 
 	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
@@ -2816,7 +2815,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.sessionVars.StmtStats = s.stmtStats
 	s.txn.init()
 	return s, nil
 }
@@ -3262,4 +3260,8 @@ func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 	return temptable.SessionSnapshotInterceptor(s)
+}
+
+func (s *session) GetStmtStats() *stmtstats.StatementStats {
+	return s.stmtStats
 }
