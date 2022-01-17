@@ -1,14 +1,18 @@
 package mydump
 
 import (
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/util/slice"
+	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 
 type SourceType int
@@ -106,13 +110,13 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
 	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql$`, Type: "ignore"},
 	// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql$`, Schema: "$1", Table: "", Type: SchemaSchema},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql$`, Schema: "$1", Table: "", Type: SchemaSchema, Unescape: true},
 	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql$`, Schema: "$1", Table: "$2", Type: TableSchema},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql$`, Schema: "$1", Table: "$2", Type: TableSchema, Unescape: true},
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql$`, Schema: "$1", Table: "$2", Type: ViewSchema},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql$`, Schema: "$1", Table: "$2", Type: ViewSchema, Unescape: true},
 	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3"},
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Unescape: true},
 }
 
 // // RouteRule is a rule to route file path to target schema/table
@@ -217,8 +221,21 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 		return rule, nil
 	}
 
+	setValue := func(target *string, value string, unescape bool) {
+		if unescape {
+			val, err := url.PathUnescape(value)
+			if err != nil {
+				log.L().Warn("unescape string failed, will be ignored", zap.String("value", value),
+					zap.Error(err))
+			} else {
+				value = val
+			}
+		}
+		*target = value
+	}
+
 	err = p.parseFieldExtractor(rule, "schema", r.Schema, func(result *RouteResult, value string) error {
-		result.Schema = value
+		setValue(&result.Schema, value, r.Unescape)
 		return nil
 	})
 	if err != nil {
@@ -228,7 +245,7 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 	// special case: when the pattern is for db schema, should not parse table name
 	if r.Type != SchemaSchema {
 		err = p.parseFieldExtractor(rule, "table", r.Table, func(result *RouteResult, value string) error {
-			result.Name = value
+			setValue(&result.Name, value, r.Unescape)
 			return nil
 		})
 		if err != nil {

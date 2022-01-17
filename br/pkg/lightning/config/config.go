@@ -510,6 +510,8 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
+	// unescape the schema/table name only used in lightning's internal logic
+	Unescape bool `json:"unescape" toml:"-" yaml:"-"`
 	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
 	// This could provide users a more flexable usage to configure different files with
 	// different data charsets.

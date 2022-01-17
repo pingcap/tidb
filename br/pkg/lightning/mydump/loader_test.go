@@ -631,6 +631,10 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 			test.t%22.0.sql
 			test.t%2522-schema.sql
 			test.t%2522.0.csv
+			test.t%gg-schema.sql
+			test.t%gg.csv
+			test.t+gg-schema.sql
+			test.t+gg.csv
 
 			db%22.t%2522-schema.sql
 			db%22.t%2522.0.csv
@@ -641,6 +645,10 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 	s.touch(c, "test.t%22.sql")
 	s.touch(c, "test.t%2522-schema.sql")
 	s.touch(c, "test.t%2522.csv")
+	s.touch(c, "test.t%gg-schema.sql")
+	s.touch(c, "test.t%gg.csv")
+	s.touch(c, "test.t+gg-schema.sql")
+	s.touch(c, "test.t+gg.csv")
 
 	s.touch(c, "db%22-schema-create.sql")
 	s.touch(c, "db%22.t%2522-schema.sql")
@@ -650,19 +658,19 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
 		{
-			Name:       "db\"",
+			Name:       `db"`,
 			SchemaFile: filepath.FromSlash("db%22-schema-create.sql"),
 			Tables: []*md.MDTableMeta{
 				{
-					DB:   "db\"",
+					DB:   `db"`,
 					Name: "t%22",
 					SchemaFile: md.FileInfo{
-						TableName: filter.Table{Schema: "db\"", Name: "t%22"},
+						TableName: filter.Table{Schema: `db"`, Name: "t%22"},
 						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
 					DataFiles: []md.FileInfo{
 						{
-							TableName: filter.Table{Schema: "db\"", Name: "t%22"},
+							TableName: filter.Table{Schema: `db"`, Name: "t%22"},
 							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522.0.csv"), Type: md.SourceTypeCSV, SortKey: "0"},
 						},
 					},
@@ -677,12 +685,12 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 			Tables: []*md.MDTableMeta{
 				{
 					DB:   "test",
-					Name: "t\"",
+					Name: `t"`,
 					SchemaFile: md.FileInfo{
-						TableName: filter.Table{Schema: "test", Name: "t\""},
+						TableName: filter.Table{Schema: "test", Name: `t"`},
 						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%22-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t\""}, FileMeta: md.SourceFileMeta{Path: "test.t%22.sql", Type: md.SourceTypeSQL}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: `t"`}, FileMeta: md.SourceFileMeta{Path: "test.t%22.sql", Type: md.SourceTypeSQL}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
@@ -694,6 +702,28 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%2522-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
 					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%22"}, FileMeta: md.SourceFileMeta{Path: "test.t%2522.csv", Type: md.SourceTypeCSV}}},
+					IndexRatio:   0,
+					IsRowOrdered: true,
+				},
+				{
+					DB:   "test",
+					Name: "t%gg",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "test", Name: "t%gg"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%gg-schema.sql"), Type: md.SourceTypeTableSchema},
+					},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%gg"}, FileMeta: md.SourceFileMeta{Path: "test.t%gg.csv", Type: md.SourceTypeCSV}}},
+					IndexRatio:   0,
+					IsRowOrdered: true,
+				},
+				{
+					DB:   "test",
+					Name: "t+gg",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "test", Name: "t+gg"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t+gg-schema.sql"), Type: md.SourceTypeTableSchema},
+					},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t+gg"}, FileMeta: md.SourceFileMeta{Path: "test.t+gg.csv", Type: md.SourceTypeCSV}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
