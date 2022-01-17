@@ -946,6 +946,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCharSig{base}
 	case tipb.ScalarFuncSig_CharLengthUTF8:
 		f = &builtinCharLengthUTF8Sig{base}
+	case tipb.ScalarFuncSig_CharLength:
+		f = &builtinCharLengthBinarySig{base}
 	case tipb.ScalarFuncSig_Concat:
 		f = &builtinConcatSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_ConcatWS:
