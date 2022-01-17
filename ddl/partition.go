@@ -94,10 +94,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, err
 	}
 
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
-		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
@@ -197,6 +193,10 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
+
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
