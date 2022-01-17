@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
 
@@ -83,7 +84,7 @@ func Test_aggregator_run_close(t *testing.T) {
 	assert.True(t, a.closed())
 }
 
-func Test_aggregator_disable_aggregate(t *testing.T) {
+func TestAggregatorDisableAggregate(t *testing.T) {
 	var mu sync.Mutex
 	total := StatementStatsMap{}
 	a := newAggregator()
@@ -110,12 +111,12 @@ func Test_aggregator_disable_aggregate(t *testing.T) {
 	a.register(stats)
 	time.Sleep(1500 * time.Millisecond)
 	mu.Lock()
-	assert.Empty(t, total)
+	require.Empty(t, total)
 	mu.Unlock()
 	state.EnableTopSQL()
 	time.Sleep(1500 * time.Millisecond)
 	mu.Lock()
-	assert.Len(t, total, 1)
+	require.Len(t, total, 1)
 	mu.Unlock()
 	state.DisableTopSQL()
 
