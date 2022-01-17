@@ -330,7 +330,7 @@ func (g inGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return strconv.FormatInt(randNum,10)
+		return strconv.FormatInt(randNum, 10)
 	}
 	return randNum
 }
