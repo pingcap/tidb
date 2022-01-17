@@ -1306,19 +1306,27 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		stats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
+		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := time.Since(vars.StartTime) + vars.DurationParse
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }
 
