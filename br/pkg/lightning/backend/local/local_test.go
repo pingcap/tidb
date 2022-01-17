@@ -912,8 +912,6 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 
 func (f *mockImportClientFactory) Close() {}
 
-type testMultiIngestSuite struct{}
-
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
 		{
