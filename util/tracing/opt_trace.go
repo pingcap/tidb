@@ -197,7 +197,7 @@ type CandidatePlanTrace struct {
 	MappingLogicalPlan string `json:"mapping"`
 }
 
-func NewCandidatePlanTrace(trace *PlanTrace, logicalPlanKey, property string, bestKey map[string]struct{}) *CandidatePlanTrace {
+func newCandidatePlanTrace(trace *PlanTrace, logicalPlanKey, property string, bestKey map[string]struct{}) *CandidatePlanTrace {
 	selected := false
 	if _, ok := bestKey[CodecPlanName(trace.TP, trace.ID)]; ok {
 		selected = true
@@ -237,7 +237,7 @@ func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
 	for logicalKey, tasksInfo := range tracer.State {
 		for _, taskInfo := range tasksInfo {
 			for _, candidate := range taskInfo.Candidates {
-				c := NewCandidatePlanTrace(candidate, logicalKey, taskInfo.Property, bestKeys)
+				c := newCandidatePlanTrace(candidate, logicalKey, taskInfo.Property, bestKeys)
 				if c.Selected {
 					sCandidates = append(sCandidates, c)
 				} else {
