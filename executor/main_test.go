@@ -69,12 +69,6 @@ func TestMain(m *testing.M) {
 	signal.Notify(c, syscall.SIGINT, syscall.SIGSEGV, syscall.SIGHUP)
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-
-	select {
-	case <-c:
-		fmt.Println("signal !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-	default:
-	}
 }
 
 func fillData(tk *testkit.TestKit, table string) {
