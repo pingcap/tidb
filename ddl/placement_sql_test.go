@@ -262,7 +262,6 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 
 	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz,nl" FOLLOWERS=3`)
 	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME='SchemaDirectPlacementTest'").Check(testkit.Rows("<nil> def <nil> SchemaDirectPlacementTest <nil> <nil> nl se,nz,nl      3 0"))
 
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicyTableTest LEADER_CONSTRAINTS = "[+region=tl]" FOLLOWER_CONSTRAINTS="[+region=tf]" FOLLOWERS=2 LEARNER_CONSTRAINTS="[+region=tle]" LEARNERS=1`)
@@ -738,6 +737,8 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	err = tk.ExecToErr("alter table tp partition p0 primary_region='r2' regions='r2'")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp add partition(partition p2 VALUES LESS THAN (10000) placement policy p1)")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
