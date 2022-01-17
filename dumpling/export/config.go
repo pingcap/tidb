@@ -449,7 +449,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	conf.Tables, err = GetConfTables(tablesList)
+	conf.Tables, err = GetConfTables(conf, tablesList)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -534,13 +534,12 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
-func GetConfTables(tablesList []string) (DatabaseTables, error) {
+func GetConfTables(conf *Config, tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
 		schema, name string
 		tableType    TableType
 		avgRowLength uint64
-		conf         *Config
 	)
 	tableType = TableTypeBase
 	avgRowLength = 0
