@@ -94,6 +94,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, err
 	}
 
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
