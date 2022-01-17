@@ -797,7 +797,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "SEQ_IN_INDEX", tp: mysql.TypeLonglong, size: 21},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SUB_PART", tp: mysql.TypeLonglong, size: 21},
-	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
+	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},

@@ -40,6 +40,7 @@ func TestCreateTables(t *testing.T) {
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
 	require.True(t, isExist)
 
+	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
