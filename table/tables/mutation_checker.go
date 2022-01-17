@@ -411,8 +411,14 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				key := make([]byte, len(indexMutation.key))
 				copy(key, indexMutation.key)
 				key[len(key)-1] += 1
-				if err := memBuffer.Set(key, indexMutation.value); err != nil {
-					return errors.Trace(err)
+				if len(indexMutation.value) == 0 {
+					if err := memBuffer.Delete(key); err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					if err := memBuffer.Set(key, indexMutation.value); err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 		//case "extraIndexByHandle":
@@ -423,9 +429,6 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 			// "missIndex" should be placed in front of "extraIndex"es,
 			// in case it removes the mutation that was just added
 			{
-				if len(indexMutations) == 0 {
-					continue
-				}
 				indexMutation := indexMutations[0]
 				memBuffer.RemoveFromBuffer(indexMutation.key)
 			}
@@ -433,9 +436,6 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 			// a corrupted index mutation.
 			// TODO: distinguish which part is corrupted, value or handle
 			{
-				if len(indexMutations) == 0 {
-					continue
-				}
 				indexMutation := indexMutations[0]
 				key := indexMutation.key
 				memBuffer.RemoveFromBuffer(key)
