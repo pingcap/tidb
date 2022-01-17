@@ -119,22 +119,27 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 }
 
 // DumpStatsToJSONBlocks dumps statistic to json, then compresses the json to blocks by gzip.
-func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo, blockSize int) ([][]byte, error) {
+func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo, blockSize int) ([][]byte, uint64, error) {
 	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	version := uint64(0)
+	for _, value := range js.Columns {
+		version = uint64(*value.StatsVer)
+		break
+	}
 	if err != nil {
-		return nil, err
+		return nil, version, err
 	}
 	data, err := json.Marshal(interface{}(js))
 	if err != nil {
-		return nil, err
+		return nil, version, err
 	}
 	var gzippedData bytes.Buffer
 	gzipWriter := gzip.NewWriter(&gzippedData)
 	if _, err := gzipWriter.Write(data); err != nil {
-		return nil, err
+		return nil, version, err
 	}
 	if err := gzipWriter.Close(); err != nil {
-		return nil, err
+		return nil, version, err
 	}
 	blocksNum := gzippedData.Len() / blockSize
 	if gzippedData.Len()%blockSize != 0 {
@@ -145,7 +150,7 @@ func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo
 		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
 	}
 	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
-	return blocks, nil
+	return blocks, version, nil
 }
 
 // ConvertStatsBlocksToJSON dumps statistic to json, then compresses the json to blocks by gzip.

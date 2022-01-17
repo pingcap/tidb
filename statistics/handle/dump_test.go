@@ -406,7 +406,7 @@ func TestDumpStatsToJSONBlocks(t *testing.T) {
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 
 	blockSize := 30
-	dumpJSONBlocks, err := h.DumpStatsToJSONBlocks("test", tableInfo.Meta(), blockSize)
+	dumpJSONBlocks, _, err := h.DumpStatsToJSONBlocks("test", tableInfo.Meta(), blockSize)
 	require.NoError(t, err)
 	jsConverted, err := h.ConvertStatsBlocksToJSON(dumpJSONBlocks)
 	require.NoError(t, err)

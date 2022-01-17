@@ -3117,7 +3117,7 @@ func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
 }
 
-func (s *testStatsSuite) TestSaveHistoryStatsToStorage(c *C) {
+func (s *testStatsSuite) TestRecordHistoricalStatsToStorage(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
@@ -3134,7 +3134,7 @@ func (s *testStatsSuite) TestSaveHistoryStatsToStorage(c *C) {
 
 	tableInfo, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(c, err)
-	version, err := s.do.StatsHandle().SaveHistoryStatsToStorage("t", tableInfo.Meta())
+	version, err := s.do.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta())
 	require.NoError(c, err)
 
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()

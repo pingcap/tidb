@@ -1945,20 +1945,11 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 	return columnIDs, nil
 }
 
-// SaveHistoryStatsToStorage saves the given table's stats data to mysql.stats_history
-func (h *Handle) SaveHistoryStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
+// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
 	ctx := context.Background()
-	rows, _, err := h.execRestrictedSQL(ctx, "select version from mysql.stats_meta WHERE table_id = %?", tableInfo.ID)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-
-	version := rows[0].GetUint64(0)
 	blockSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLongBlob)
-	blocks, err := h.DumpStatsToJSONBlocks(dbName, tableInfo, blockSize)
+	blocks, version, err := h.DumpStatsToJSONBlocks(dbName, tableInfo, blockSize)
 	if err != nil {
 		return version, err
 	}

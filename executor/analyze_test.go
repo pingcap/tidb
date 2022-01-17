@@ -2585,7 +2585,7 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	}
 }
 
-func TestSaveHistoryStatsAfterAnalyze(t *testing.T) {
+func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 

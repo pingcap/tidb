@@ -104,10 +104,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
-	if err != nil {
-		logutil.BgLogger().Error("Check TiDBEnableHistoricalStats Failed.")
-	}
 	panicCnt := 0
 
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
@@ -183,17 +179,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		} else {
 			finishJobWithLogFn(ctx, results.Job, false)
 			// Dump stats to historical storage.
-			if historicalStatsEnabled {
-				is := domain.GetDomain(e.ctx).InfoSchema()
-				if tbl, existed := is.TableByID(results.TableID.TableID); existed {
-					tblInfo := tbl.Meta()
-					if dbInfo, existed := is.SchemaByTable(tblInfo); existed {
-						if _, err := statsHandle.SaveHistoryStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-							logutil.BgLogger().Error("Save historical stats failed.", zap.String("db", dbInfo.Name.O),
-								zap.String("table", tblInfo.Name.O))
-						}
-					}
-				}
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
 	}
@@ -228,17 +215,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
 				// Dump stats to historical storage.
-				if historicalStatsEnabled {
-					is := domain.GetDomain(e.ctx).InfoSchema()
-					if tbl, existed := is.TableByID(globalStatsID.tableID); existed {
-						tblInfo := tbl.Meta()
-						if dbInfo, existed := is.SchemaByTable(tblInfo); existed {
-							if _, err := statsHandle.SaveHistoryStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-								logutil.BgLogger().Error("Save historical stats failed.", zap.String("db", dbInfo.Name.O),
-									zap.String("table", tblInfo.Name.O))
-							}
-						}
-					}
+				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 				}
 			}
 		}
@@ -288,6 +266,30 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (e *AnalyzeExec) recordHistoricalStats(tableId int64) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
+	if err != nil {
+		return errors.New("check tidb_enable_historical_stats failed")
+	}
+	if historicalStatsEnabled {
+		is := domain.GetDomain(e.ctx).InfoSchema()
+		tbl, existed := is.TableByID(tableId)
+		if !existed {
+			return errors.New(fmt.Sprintf("cannot get table by id %d", tableId))
+		}
+		tblInfo := tbl.Meta()
+		dbInfo, existed := is.SchemaByTable(tblInfo)
+		if !existed {
+			return errors.New(fmt.Sprintf("cannot get DBInfo by TableID %d", tableId))
+		}
+		if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+			return errors.New(fmt.Sprintf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O))
+		}
 	}
 	return nil
 }
