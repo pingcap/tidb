@@ -83,6 +83,28 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 			return tbInfo, errors.Trace(err)
 		}
 
+		if tbInfo.TiFlashReplica != nil {
+			replicaInfo := tbInfo.TiFlashReplica
+			if pi := tbInfo.GetPartitionInfo(); pi != nil {
+				logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(err)
+				}
+				// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+				if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(err)
+				}
+			} else {
+				logutil.BgLogger().Info("Set TiFlash replica pd rule when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForTable(tbInfo.ID, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(err)
+				}
+			}
+		}
+
 		bundles, err := placement.NewFullTableBundles(t, tbInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
