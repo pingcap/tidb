@@ -287,7 +287,7 @@ Many of the alternatives are difficult to implement because they break compatibi
 - An [earlier proposal](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit) for `INSTANCE` scope, with rules for precedence (same author)
 - CockroachDB has cluster level settings and node-level settings. Most settings are cluster level, and [node-level](https://www.cockroachlabs.com/docs/v21.2/cockroach-start) needs to be parsed as arguments when starting the server.
 
-## Unresolved Questions
+### SET INSTANCE syntax
 
 A small behavior change (still with the restriction that `INSTANCE` and `GLOBAL` are mutually exclusive) proposes adding `SET INSTANCE` as explicit syntax to set an instance-scoped variable. This would require the following modifications to be complete:
 - `SHOW INSTANCE VARIABLES` will need to return variables that have `NONE` or `INSTANCE` scope (and `SHOW VARIABLES` continues to return all variables).
@@ -297,3 +297,9 @@ A small behavior change (still with the restriction that `INSTANCE` and `GLOBAL`
 The advantage of this proposal is that the documentation and usage is clearer. The disadvantage is that because MySQL does not have an instance scope (global scope in MySQL is instance-like) it could create strange behaviors with compatibility sysvars which are implemented. This **only** affects `INSTANCE` variables which are *not already* `ScopeNone` (so Port, Socket, GrantTables, LogBin are not affected). The only currently known example that is affected is `max_connections`, which is currently a noop in system variables, but available in the configuration file as `max-server-connections` (it is presumed it would be [mapped](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit?n=2020-09-15_Design_Doc_for_Instance_Variables#) to `max_connections` in Stage 2).
 
 This means that `SET GLOBAL max_connections` would need to return an error in TiDB, because the correct syntax is `SET INSTANCE max_connections`. There is a known failover use-case to execute `SET GLOBAL max_connections = 1` + `SET GLOBAL [super_]read_only = 1` to disable writes. However, this already does not work in TiDB as there is no support for `SET GLOBAL [super_]read_only=1`. Thus, removing this compatibility does not appear to be a blocking issue.
+
+However, the IBG support team rejects this proposal based on the expectation that there will be further tool compatibility issues not yet discovered. As MySQL does not have `SET INSTANCE` scope, users will also not be used to using this syntax.
+
+## Unresolved Questions
+
+- None
