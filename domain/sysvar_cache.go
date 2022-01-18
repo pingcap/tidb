@@ -229,12 +229,7 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		}
 		topsqlstate.GlobalState.ReportIntervalSeconds.Store(val)
 	case variable.TiDBRestrictedReadOnly:
-		on := variable.TiDBOptOn(sVal)
-		if on {
-			// when restricted readonly is on, super readonly must be on
-			variable.VarTiDBSuperReadOnly.Store(on)
-		}
-		variable.RestrictedReadOnly.Store(on)
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBSuperReadOnly:
 		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
