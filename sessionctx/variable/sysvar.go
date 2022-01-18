@@ -1136,13 +1136,11 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			if RestrictedReadOnly.Load() || TiDBOptOn(result) {
+			if TiDBOptOn(result) {
 				return fmt.Errorf("can't turn off %s when %s is on", TiDBSuperReadOnly, TiDBRestrictedReadOnly)
 			}
 		}
 		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(VarTiDBSuperReadOnly.Load()), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
