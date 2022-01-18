@@ -598,7 +598,7 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
 	if err != nil {
-		err = s.handleAssertionFailure(err)
+		err = s.handleAssertionFailure(ctx, err)
 	}
 	return err
 }
@@ -689,7 +689,7 @@ func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 // handleAssertionFailure extracts the possible underlying assertionFailed error,
 // gets the corresponding MVCC history and logs it.
 // If it's not an assertion failure, returns the original error.
-func (s *session) handleAssertionFailure(err error) error {
+func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	var assertionFailure *tikverr.ErrAssertionFailed
 	if !stderrs.As(err, &assertionFailure) {
 		return err
@@ -716,7 +716,7 @@ func (s *session) handleAssertionFailure(err error) error {
 				tableInfo := table.Meta()
 				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
 				if e != nil {
-					logutil.BgLogger().Error("assertion failed but cannot decode index key", zap.Error(e))
+					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
 					return err
 				}
 				var indexInfo *model.IndexInfo
@@ -732,12 +732,12 @@ func (s *session) handleAssertionFailure(err error) error {
 				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
 			}
 		} else {
-			logutil.BgLogger().Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
 		}
 	}
 	if store, ok := s.store.(helper.Storage); ok {
 		content := consistency.GetMvccByKey(store, key, decodeFunc)
-		logutil.BgLogger().Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
 	}
 	return newErr
 }
