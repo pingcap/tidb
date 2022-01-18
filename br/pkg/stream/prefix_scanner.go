@@ -20,7 +20,11 @@ type etcdSource struct {
 // return at most limit kvs at once.
 // WARNING: The method for scanning keeps poor consistency: we may get different reversion of different pages.
 // This might be accpetable just for calculating min backup ts or ranges to backup.
-func (e etcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int) (kvs []kv.Entry, more bool, err error) {
+func (e etcdSource) Scan(
+	ctx context.Context,
+	from, to []byte,
+	limit int,
+) (kvs []kv.Entry, more bool, err error) {
 	kvs = make([]kv.Entry, 0, limit)
 	configs := []clientv3.OpOption{clientv3.WithRange(string(to)), clientv3.WithLimit(int64(limit))}
 	resp, err := e.Get(ctx, string(from), configs...)
@@ -71,9 +75,10 @@ func (scan *prefixScanner) Page(ctx context.Context, size int) ([]kv.Entry, erro
 	}
 	if !more {
 		scan.done = true
+	} else {
+		// Append a 0x00 to the end, for getting the 'next key' of the last key.
+		scan.next = append(kvs[len(kvs)-1].Key, 0)
 	}
-	// Append a 0x00 to the end, for getting the 'next key' of the last key.
-	scan.next = append(kvs[len(kvs)-1].Key, 0)
 	return kvs, nil
 }
 
