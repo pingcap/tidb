@@ -19,9 +19,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -166,13 +164,16 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
 	c.Assert(err, IsNil)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for i := 0; i <= maxErrorRetryCount; i++ {
 		kvClient.maxErrCount = i
 		kvClient.curErrCount = 0
 		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 		startTS := oracle.ComposeTS(time.Now().Unix()*1000, 0)
-		ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-		_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+		subCtx := context.WithValue(ctx, &checksumManagerKey, checksumExec)
+		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			c.Assert(err, ErrorMatches, "tikv timeout")
@@ -186,10 +187,8 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 		// 1ms for the schedule deviation
 		c.Assert(ts <= startTS+1, IsTrue)
 		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
+		c.Assert(len(checksumExec.manager.tableGCSafeTS), Equals, 0)
 	}
-}
-
-func (s *checksumSuite) TestDoChecksumWithTikvErrRetry(c *C) {
 }
 
 func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
@@ -393,7 +392,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
 		return &mockErrorResponse{err: "tikv timeout"}

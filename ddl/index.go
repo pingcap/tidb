@@ -1043,7 +1043,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_speed"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
 			sqlMode:        sqlMode,
 		},
 		index: index,
@@ -1293,8 +1293,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	return nil
 }
 
-// BackfillDataInTxn will backfill table index in a transaction. If the value of rowKey is changed, there must be some other transactions
-// update the row, result in write conflict, so the txn will rollback and retry.
+// BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
+// Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
@@ -1327,6 +1327,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
 				continue
+			}
+
+			// We need to add this lock to make sure pessimistic transaction can realize this operation.
+			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			// Create the index.
@@ -1494,7 +1501,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("clean_up_idx_speed"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
 			sqlMode:        sqlMode,
 		},
 	}

@@ -214,7 +214,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 			return col
 		}
 	}
+	return nil
+}
 
+// FindColumnInfoByID finds ColumnInfo in cols by id.
+func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
+	for _, col := range cols {
+		if col.ID == id {
+			return col
+		}
+	}
 	return nil
 }
 
@@ -1278,13 +1287,13 @@ const (
 func (s ColumnChoice) String() string {
 	switch s {
 	case AllColumns:
-		return "AllColumns"
+		return "ALL"
 	case PredicateColumns:
-		return "PredicateColumns"
+		return "PREDICATE"
 	case ColumnList:
-		return "ColumnList"
+		return "LIST"
 	default:
-		return ""
+		return "DEFAULT"
 	}
 }
 

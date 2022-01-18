@@ -28,6 +28,8 @@ import (
 func (s *testSuite5) TestShowPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists t1, t2, t3, t4, db2.t2")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
@@ -87,15 +89,15 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL",
-		"DATABASE db2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" INPROGRESS",
+		"DATABASE db2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
 		"DATABASE db3 LEADER_CONSTRAINTS=\"[+region=hz]\" FOLLOWERS=3 SCHEDULED",
-		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 INPROGRESS",
-		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
-		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 INPROGRESS",
-		"TABLE test.t4 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
-		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" INPROGRESS",
-		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" INPROGRESS",
-		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
+		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 PENDING",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PENDING",
+		"TABLE test.t4 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" PENDING",
+		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 	))
 
 	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
@@ -117,6 +119,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists t1,t2,t3, db2.t1, db2.t3")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
@@ -174,16 +177,18 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	// after grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
-		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
-		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 INPROGRESS",
-		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
-		"TABLE test.t3 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" INPROGRESS",
+		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 PENDING",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t3 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" PENDING",
 	))
 }
 
 func (s *testSuite5) TestShowPlacementForDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
 
@@ -214,6 +219,7 @@ func (s *testSuite5) TestShowPlacementForDB(c *C) {
 func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
@@ -228,14 +234,14 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustQuery("show placement for table t1").Check(testkit.Rows(
-		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 	))
 
 	// table direct setting
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show placement for table t2").Check(testkit.Rows(
-		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 INPROGRESS",
+		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PENDING",
 	))
 
 	// table no placement
@@ -251,20 +257,20 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 		")")
 	defer tk.MustExec("drop table if exists t4")
 	tk.MustQuery("show placement for table t4").Check(testkit.Rows(
-		"TABLE test.t4 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 INPROGRESS",
+		"TABLE test.t4 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PENDING",
 	))
 
 	// partition inherent table
 	tk.MustQuery("show placement for table t4 partition p0").Check(testkit.Rows(
-		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 INPROGRESS",
+		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PENDING",
 	))
 
 	// partition custom placement
 	tk.MustQuery("show placement for table t4 partition p1").Check(testkit.Rows(
-		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" INPROGRESS",
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" PENDING",
 	))
 	tk.MustQuery("show placement for table t4 partition p2").Check(testkit.Rows(
-		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
+		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 	))
 
 	// partition without placement
@@ -279,7 +285,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	tk.MustExec("create table db2.t1 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists db2.t1")
 	tk.MustQuery("show placement for table db2.t1").Check(testkit.Rows(
-		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 INPROGRESS",
+		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2 PENDING",
 	))
 
 	// not exists
@@ -298,6 +304,8 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
+
 	tk.MustExec("drop table if exists db2.t1")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop user if exists user1")
@@ -341,12 +349,12 @@ func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 		// do grant
 		tk.MustExec(fmt.Sprintf("grant %s to 'user1'@'%%'", priv))
 		tk1.MustQuery("show placement for database db2").Check(testkit.Rows(
-			"DATABASE db2 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" INPROGRESS",
+			"DATABASE db2 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" PENDING",
 		))
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
-			"DATABASE db2 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" INPROGRESS",
-			"TABLE db2.t1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r3\" SCHEDULE=\"EVEN\" INPROGRESS",
+			"DATABASE db2 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" PENDING",
+			"TABLE db2.t1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r3\" SCHEDULE=\"EVEN\" PENDING",
 		))
 
 		err = tk1.QueryToErr("show placement for database test")
@@ -364,6 +372,7 @@ func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
@@ -437,16 +446,16 @@ func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 		tk.MustExec(fmt.Sprintf("grant %s to 'user1'@'%%'", priv))
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
-			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
-			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" INPROGRESS",
+			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" PENDING",
 		))
 
 		tk1.MustQuery("show placement for table test.t1").Check(testkit.Rows(
-			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" INPROGRESS",
+			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 		))
 
 		tk1.MustQuery("show placement for table test.t1 partition p1").Check(testkit.Rows(
-			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" INPROGRESS",
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" PENDING",
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")

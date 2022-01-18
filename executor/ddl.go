@@ -506,7 +506,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			stmt, err := exec.ParseWithParams(context.TODO(), true, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			if err != nil {
 				return err
 			}
@@ -672,42 +672,15 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
-	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+	getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
+		snapMeta, err := dom.GetSnapshotMeta(StartTS)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
-
-		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
-		if err != nil {
-			return false, err
-		}
-		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
-		if err != nil {
-			if meta.ErrDBNotExists.Equal(err) {
-				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-				// then can't find the table from the snapshot info-schema. Should just ignore error here,
-				// see more in TestParallelDropSchemaAndDropTable.
-				continue
-			}
-			return false, err
-		}
-		if tbl == nil {
-			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-			// then can't find the table from the snapshot info-schema. Should just ignore error here,
-			// see more in TestParallelDropSchemaAndDropTable.
-			continue
-		}
-		finish, err := fn(job, tbl)
-		if err != nil || finish {
-			return finish, err
-		}
+		tbl, err := snapMeta.GetTable(SchemaID, TableID)
+		return tbl, err
 	}
-	return false, nil
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
 }
 
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
@@ -787,6 +760,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if err != nil {
 		return err
 	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,

@@ -150,12 +150,16 @@ func TestJobCodec(t *testing.T) {
 	type A struct {
 		Name string
 	}
+	tzName, tzOffset := time.Now().In(time.UTC).Zone()
 	job := &Job{
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
+		ReorgMeta: &DDLReorgMeta{
+			Location: &TimeZone{Name: tzName, Offset: tzOffset},
+		},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
@@ -204,6 +208,8 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, NewCIStr(""), name)
 	require.Equal(t, A{Name: ""}, a)
 	require.Greater(t, len(newJob.String()), 0)
+	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
+	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)

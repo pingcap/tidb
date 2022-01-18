@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -690,7 +691,9 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*range
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
 				HighVal:     []types.Datum{lower},
-				HighExclude: true}
+				HighExclude: true,
+				Collators:   ranges[0].Collators,
+			}
 			if validRange(sc, newRange, encoded) {
 				split = append(split, newRange)
 			}
@@ -1072,10 +1075,25 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sctx != nil && sctx.GetSessionVars().StmtCtx != nil {
-		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+	if sctx != nil {
+		stmtctx := sctx.GetSessionVars().StmtCtx
+		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
+			return true
+		}
+		if c.Histogram.NDV > 0 && c.notNullCount() == 0 && stmtctx != nil {
+			if stmtctx.StatsLoad.Timeout > 0 {
+				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
+			}
+			HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+		}
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
+}
+
+// IsHistNeeded checks if this column needs histogram to be loaded
+func (c *Column) IsHistNeeded(collPseudo bool) bool {
+	return (!collPseudo || !c.NotAccurate()) && c.Histogram.NDV > 0 && c.notNullCount() == 0
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1414,8 +1432,9 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
 	tmpRan := []*ranger.Range{
 		{
-			LowVal:  make([]types.Datum, 1),
-			HighVal: make([]types.Datum, 1),
+			LowVal:    make([]types.Datum, 1),
+			HighVal:   make([]types.Datum, 1),
+			Collators: make([]collate.Collator, 1),
 		},
 	}
 	colsIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -1428,6 +1447,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	for i := 0; i < len(indexRange.LowVal); i++ {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
+		tmpRan[0].Collators[0] = indexRange.Collators[0]
 		if i == len(indexRange.LowVal)-1 {
 			tmpRan[0].LowExclude = indexRange.LowExclude
 			tmpRan[0].HighExclude = indexRange.HighExclude

@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1056,6 +1057,51 @@ func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 }
 
+// writeDBTablesData writes all the table data in a database. The format is the marshal result of []*model.TableInfo, you can
+// unmarshal it to []*model.TableInfo. In this function, we manually construct the marshal result so that the memory
+// can be deallocated quickly.
+// For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
+// Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
+// Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
+func writeDBTablesData(w http.ResponseWriter, tbs []table.Table) {
+	if len(tbs) == 0 {
+		writeData(w, []*model.TableInfo{})
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	// We assume that marshal is always OK.
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write(hack.Slice("[\n"))
+	if err != nil {
+		terror.Log(errors.Trace(err))
+		return
+	}
+	init := false
+	for _, tb := range tbs {
+		if init {
+			_, err = w.Write(hack.Slice(",\n"))
+			if err != nil {
+				terror.Log(errors.Trace(err))
+				return
+			}
+		} else {
+			init = true
+		}
+		js, err := json.MarshalIndent(tb.Meta(), "", " ")
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return
+		}
+		_, err = w.Write(js)
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return
+		}
+	}
+	_, err = w.Write(hack.Slice("\n]"))
+	terror.Log(errors.Trace(err))
+}
+
 // ServeHTTP handles request of list a database or table's schemas.
 func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	schema, err := h.schema()
@@ -1083,11 +1129,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			tbs := schema.SchemaTables(cDBName)
-			tbsInfo := make([]*model.TableInfo, len(tbs))
-			for i := range tbsInfo {
-				tbsInfo[i] = tbs[i].Meta()
-			}
-			writeData(w, tbsInfo)
+			writeDBTablesData(w, tbs)
 			return
 		}
 		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
@@ -1479,7 +1521,7 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWriter) {
 	tableID := tbl.Meta().ID
 	var stats helper.PDRegionStats
-	err := h.GetPDRegionStats(tableID, &stats)
+	err := h.GetPDRegionStats(tableID, &stats, false)
 	if err != nil {
 		writeError(w, err)
 		return

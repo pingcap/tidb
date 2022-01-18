@@ -90,7 +90,7 @@ func TestDumpTableMeta(t *testing.T) {
 		}
 		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-		meta, err := dumpTableMeta(conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
+		meta, err := dumpTableMeta(tctx, conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
 		require.Equal(t, table, meta.TableName())
@@ -142,8 +142,15 @@ func TestAdjustDatabaseCollation(t *testing.T) {
 		"CREATE DATABASE `test` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci",
 	}
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
+
+	for _, originSQL := range originSQLs {
+		newSQL, err := adjustDatabaseCollation(tctx, LooseCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
+		require.NoError(t, err)
+		require.Equal(t, originSQL, newSQL)
+	}
+
 	for i, originSQL := range originSQLs {
-		newSQL, err := adjustDatabaseCollation(tctx, parser1, originSQL, charsetAndDefaultCollationMap)
+		newSQL, err := adjustDatabaseCollation(tctx, StrictCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
@@ -182,9 +189,17 @@ func TestAdjustTableCollation(t *testing.T) {
 	}
 
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
+
+	for _, originSQL := range originSQLs {
+		newSQL, err := adjustTableCollation(tctx, LooseCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
+		require.NoError(t, err)
+		require.Equal(t, originSQL, newSQL)
+	}
+
 	for i, originSQL := range originSQLs {
-		newSQL, err := adjustTableCollation(tctx, parser1, originSQL, charsetAndDefaultCollationMap)
+		newSQL, err := adjustTableCollation(tctx, StrictCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
+
 }

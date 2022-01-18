@@ -11,6 +11,7 @@ import (
 func DefineFlags(flags *pflag.FlagSet) {
 	defineS3Flags(flags)
 	defineGCSFlags(flags)
+	defineAzblobFlags(flags)
 }
 
 // ParseFromFlags obtains the backend options from the flag set.
@@ -18,5 +19,11 @@ func (options *BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := options.S3.parseFromFlags(flags); err != nil {
 		return errors.Trace(err)
 	}
-	return options.GCS.parseFromFlags(flags)
+	if err := options.GCS.parseFromFlags(flags); err != nil {
+		return errors.Trace(err)
+	}
+	if err := options.Azblob.parseFromFlags(flags); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }

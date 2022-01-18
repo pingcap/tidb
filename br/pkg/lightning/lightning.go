@@ -216,7 +216,7 @@ func (l *Lightning) RunServer() error {
 			return err
 		}
 		err = l.run(context.Background(), task, nil)
-		if err != nil {
+		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
@@ -789,7 +789,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
 	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
 		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
+		engineID, err := strconv.Atoi(engine[index+1:]) // nolint:gosec
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
