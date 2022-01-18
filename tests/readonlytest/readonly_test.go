@@ -31,6 +31,8 @@ var (
 	tidbAPort              = flag.Int("tidb_a_port", 4000, "first tidb server listening port")
 	tidbBPort              = flag.Int("tidb_b_port", 4001, "second tidb server listening port")
 	ReadOnlyErrMsg         = "Error 1836: Running in read-only mode"
+	ConflictErrMsg         = "Error 1105: can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
+	PriviledgedErrMsg      = "Error 1227: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation"
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 	TiDBSuperReadOnly      = "tidb_super_read_only"
 )
@@ -50,9 +52,9 @@ func checkVariable(t *testing.T, db *sql.DB, variable string, on bool) {
 	require.NoError(t, rs.Scan(&name, &status))
 	require.Equal(t, name, variable)
 	if on {
-		require.Equal(t, status, "ON")
+		require.Equal(t, "ON", status)
 	} else {
-		require.Equal(t, status, "OFF")
+		require.Equal(t, "OFF", status)
 	}
 	require.NoError(t, rs.Close())
 }
@@ -118,6 +120,38 @@ func TestRestriction(t *testing.T) {
 	_, err := s.udb.Exec("create table t(a int)")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err = setVariable(t, s.db, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ConflictErrMsg)
+
+	// can't change global variable
+	err = setVariable(t, s.udb, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), PriviledgedErrMsg)
+
+	err = setVariable(t, s.rdb, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), PriviledgedErrMsg)
+
+	// turn off tidb_restricted_read_only does not affect tidb_super_read_only
+	setVariableNoError(t, s.db, TiDBRestrictedReadOnly, 0)
+
+	checkVariable(t, s.udb, TiDBRestrictedReadOnly, false)
+	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, false)
+
+	checkVariable(t, s.udb, TiDBSuperReadOnly, true)
+	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
+
+	// it is now allowed to turn off tidb_super_read_only
+	setVariableNoError(t, s.db, TiDBSuperReadOnly, 0)
+
+	checkVariable(t, s.udb, TiDBRestrictedReadOnly, false)
+	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, false)
+
+	checkVariable(t, s.udb, TiDBSuperReadOnly, false)
+	checkVariable(t, s.rdb, TiDBSuperReadOnly, false)
 }
 
 func TestRestrictionWithConnectionPool(t *testing.T) {
