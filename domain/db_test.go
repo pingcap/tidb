@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/ddl"
 )
 
 // SubTestDomainSession is batched in TestDomainSerial
