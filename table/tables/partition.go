@@ -834,7 +834,7 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 		highVal = types.GetMaxValue(lp.ExprCol.GetType())
 	}
 
-	// for string type, values returned by GetMinValue and GetMaxValue are already encoded,
+	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
 	// so it's unnecessary to invoke genKey to encode them.
 	if lp.ExprCol.GetType().EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowKey = (&lowVal).GetBytes()
