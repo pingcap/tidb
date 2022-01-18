@@ -530,11 +530,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
-
-	// Wait GC
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = s.CheckPlacementRule(*expectRule)
-	c.Assert(res, Equals, false)
 }
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
