@@ -241,6 +241,11 @@ error = '''
 the system table isn't supported for restoring yet
 '''
 
+["BR:Stream:ErrStreamLogTaskExist"]
+error = '''
+stream task already exists
+'''
+
 ["admin:8003"]
 error = '''
 TiDB admin check table failed.
