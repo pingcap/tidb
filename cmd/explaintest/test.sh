@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-echo -e "mysql_test start\n"
+echo -e "test start\n"
 
 # `set -eu` prevent referencing an var before setting it, so we set the env vars here
 TIKV_PATH=$TIKV_PATH
@@ -71,7 +71,7 @@ trap 'echo "tidb-server(PID: $SERVER_PID) stopped"; kill -9 "$SERVER_PID" || tru
 
 sleep 5
 
-echo "run all mysql test cases"
+echo "run all test cases"
 
 if [[ $COLLATION_DISABLE -eq 1 ]];then
     $explain_test -port 4001 -status 9081 --log-level=error --collation-disable=true
@@ -85,4 +85,4 @@ if [[ -n $race ]]; then
     cat "$mysql_test_log"
     exit 1
 fi
-echo "mysqltest end"
+echo "test end"
