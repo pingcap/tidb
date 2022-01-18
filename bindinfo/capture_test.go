@@ -149,8 +149,6 @@ func TestCapturePlanBaseline4PC(t *testing.T) {
 	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
 
 	tk.MustExec("execute stmt")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
