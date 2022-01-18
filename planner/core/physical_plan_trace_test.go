@@ -57,10 +57,9 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
 	require.NotNil(t, otrace)
-	logicalList, physicalList, bests := getList(otrace)
-	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
+	logicalList, physicalList := getList(otrace)
 	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
-	require.True(t, checkList(bests, []string{"Projection_4", "Selection_5"}))
+	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
 }
 
 func checkList(d []string, s []string) bool {
@@ -75,11 +74,10 @@ func checkList(d []string, s []string) bool {
 	return true
 }
 
-func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string, bests []string) {
+func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
 	for logicalPlan, v := range otrace.State {
 		ll = append(ll, logicalPlan)
 		for _, info := range v {
-			bests = append(bests, tracing.CodecPlanName(info.BestTask.TP, info.BestTask.ID))
 			for _, task := range info.Candidates {
 				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
 			}
@@ -87,6 +85,5 @@ func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string, 
 	}
 	sort.Strings(ll)
 	sort.Strings(pl)
-	sort.Strings(bests)
-	return ll, pl, bests
+	return ll, pl
 }
