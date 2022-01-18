@@ -274,22 +274,26 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
-		return errors.New("check tidb_enable_historical_stats failed")
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
-	if historicalStatsEnabled {
-		is := domain.GetDomain(e.ctx).InfoSchema()
-		tbl, existed := is.TableByID(tableID)
-		if !existed {
-			return errors.New(fmt.Sprintf("cannot get table by id %d", tableID))
-		}
-		tblInfo := tbl.Meta()
-		dbInfo, existed := is.SchemaByTable(tblInfo)
-		if !existed {
-			return errors.New(fmt.Sprintf("cannot get DBInfo by TableID %d", tableID))
-		}
-		if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-			return errors.New(fmt.Sprintf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O))
-		}
+	if !historicalStatsEnabled {
+		return nil
+	}
+
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, existed := is.TableByID(tableID)
+	if !existed {
+		return errors.Errorf("cannot get table by id %d", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, existed := is.SchemaByTable(tblInfo)
+	if !existed {
+
+		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
+	}
+	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+
+		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
 	}
 	return nil
 }

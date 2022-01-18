@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -2596,9 +2597,12 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")
 
+	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
+
+	// 1. switch off the tidb_enable_historical_stats, and there is no records in table `mysql.stats_history`
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -2608,9 +2612,33 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
 
+	// 2. switch on the tidb_enable_historical_stats and do analyze
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("analyze table t with 2 topn")
 	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
+
+	// 3. dump current stats json
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+	jsOrigin, _ := json.Marshal(dumpJSONTable)
+
+	// 4. get the historical stats json
+	rows = tk.MustQuery(fmt.Sprintf("select * from mysql.stats_history where table_id = '%d' and create_time = ("+
+		"select create_time from mysql.stats_history order by create_time desc limit 1)", tableInfo.Meta().ID)).Rows()
+	num = len(rows)
+	require.GreaterOrEqual(t, num, 1)
+	data := make([][]byte, num)
+	for _, row := range rows {
+		index, err := strconv.Atoi(row[2].(string))
+		require.NoError(t, err)
+		data[index] = []byte(row[1].(string))
+	}
+	jsonTbl, err := h.ConvertStatsBlocksToJSON(data)
+	require.NoError(t, err)
+	jsCur, err := json.Marshal(jsonTbl)
+	require.NoError(t, err)
+	// 5. historical stats must be equal to the current stats
+	require.JSONEq(t, string(jsOrigin), string(jsCur))
 }

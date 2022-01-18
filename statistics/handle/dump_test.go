@@ -410,6 +410,7 @@ func TestDumpStatsToJSONBlocks(t *testing.T) {
 	require.NoError(t, err)
 	jsConverted, err := h.ConvertStatsBlocksToJSON(dumpJSONBlocks)
 	require.NoError(t, err)
-
-	require.JSONEq(t, string(jsOrigin), string(jsConverted))
+	jsonStr, err := json.Marshal(jsConverted)
+	require.NoError(t, err)
+	require.JSONEq(t, string(jsOrigin), string(jsonStr))
 }
