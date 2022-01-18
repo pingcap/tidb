@@ -363,65 +363,24 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.curBatchCnt = 0
 }
 
-// getValidData returns prevData and curData that starts from starting symbol.
-// If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
-// If curData size less than startingLen, curData is returned directly.
-func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
-	startingLen := len(e.LinesInfo.Starting)
-	if startingLen == 0 {
-		return prevData, curData
-	}
-
-	prevLen := len(prevData)
-	if prevLen > 0 {
-		// starting symbol in the prevData
-		idx := strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
-		if idx != -1 {
-			return prevData[idx:], curData
-		}
-
-		// starting symbol in the middle of prevData and curData
-		restStart := curData
-		if len(curData) >= startingLen {
-			restStart = curData[:startingLen-1]
-		}
-		prevData = append(prevData, restStart...)
-		idx = strings.Index(string(hack.String(prevData)), e.LinesInfo.Starting)
-		if idx != -1 {
-			return prevData[idx:prevLen], curData
-		}
-	}
-
-	// starting symbol in the curData
+// getValidData returns curData that starts from starting symbol.
+// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
+func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
-	if idx != -1 {
-		return nil, curData[idx:]
+	if idx == -1 {
+		return curData[len(curData)-len(e.LinesInfo.Starting)+1:], false
 	}
 
-	// no starting symbol
-	if len(curData) >= startingLen {
-		curData = curData[len(curData)-startingLen+1:]
-	}
-	return nil, curData
-}
-
-func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
-	inQuoter := false
-	for i := 0; i < len(bs); i++ {
-		switch bs[i] {
-		case e.FieldsInfo.Enclosed:
-			inQuoter = !inQuoter
-		case e.FieldsInfo.Escaped:
-			i++
-		default:
-		}
-	}
-	return inQuoter
+	return curData[idx:], true
 }
 
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
+<<<<<<< HEAD
 func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
+=======
+func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
+>>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -462,15 +421,20 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
+<<<<<<< HEAD
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
 			if !isInQuoter {
 				inQuoter = true
 			}
+=======
+		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
+			inQuoter = !inQuoter
+>>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 			atFieldStart = false
 			continue
 		}
 		restLen := len(bs) - i - 1
-		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
+		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
 			// look ahead to see if it is end of line or field.
 			switch cmpTerm(restLen, bs[i+1:]) {
 			case lineTermType:
@@ -508,6 +472,7 @@ loop:
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
 func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
+<<<<<<< HEAD
 	startingLen := len(e.LinesInfo.Starting)
 	prevData, curData = e.getValidData(prevData, curData)
 	if prevData == nil && len(curData) < startingLen {
@@ -540,35 +505,38 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
 			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
+=======
+	if prevData != nil {
+		curData = append(prevData, curData...)
+	}
+	startLen := len(e.LinesInfo.Starting)
+	if startLen != 0 {
+		if len(curData) < startLen {
+			return nil, curData, false
+>>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 		}
-		if endIdx != -1 {
-			nextDataIdx := startingLen + endIdx + terminatedLen
-			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
+		var ok bool
+		curData, ok = e.getValidData(curData)
+		if !ok {
+			return nil, curData, false
 		}
-		// no terminated symbol
+	}
+	var endIdx int
+	if ignore {
+		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
+	} else {
+<<<<<<< HEAD
+		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
+=======
+		endIdx = e.indexOfTerminator(curData[startLen:])
+>>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
+	}
+
+	if endIdx == -1 {
 		return nil, curData, true
 	}
 
-	// terminated symbol in the curData
-	nextDataIdx := curStartIdx + endIdx + terminatedLen
-	if len(prevData) == 0 {
-		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
-	}
-
-	// terminated symbol in the curData
-	prevData = append(prevData, curData[:nextDataIdx]...)
-	if ignore {
-		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
-	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
-	}
-	if endIdx >= prevLen {
-		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
-	}
-
-	// terminated symbol in the middle of prevData and curData
-	lineLen := startingLen + endIdx + terminatedLen
-	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
+	return curData[startLen : startLen+endIdx], curData[startLen+endIdx+len(e.LinesInfo.Terminated):], true
 }
 
 // InsertData inserts data into specified table according to the specified format.
