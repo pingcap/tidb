@@ -1846,6 +1846,11 @@ error = '''
 Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
 '''
 
+["tikv:8141"]
+error = '''
+assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v
+'''
+
 ["tikv:8229"]
 error = '''
 TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction

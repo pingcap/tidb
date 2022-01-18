@@ -22,7 +22,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	stderrs "errors"
 	"fmt"
 	"runtime/pprof"
 	"runtime/trace"
@@ -46,11 +48,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-binlog"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -591,7 +596,11 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
 	}
 
-	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	if err != nil {
+		err = s.handleAssertionFailure(ctx, err)
+	}
+	return err
 }
 
 type cachedTableRenewLease struct {
@@ -675,6 +684,62 @@ func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 		}
 	}
 	return true
+}
+
+// handleAssertionFailure extracts the possible underlying assertionFailed error,
+// gets the corresponding MVCC history and logs it.
+// If it's not an assertion failure, returns the original error.
+func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
+	var assertionFailure *tikverr.ErrAssertionFailed
+	if !stderrs.As(err, &assertionFailure) {
+		return err
+	}
+	key := assertionFailure.Key
+	newErr := kv.ErrAssertionFailed.GenWithStackByArgs(
+		hex.EncodeToString(key), assertionFailure.Assertion.String(), assertionFailure.StartTs,
+		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
+	)
+
+	if s.GetSessionVars().EnableRedactLog {
+		return newErr
+	}
+
+	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+	// if it's a record key or an index key, decode it
+	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
+		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
+		tableID := tablecodec.DecodeTableID(key)
+		if table, ok := infoSchema.TableByID(tableID); ok {
+			if tablecodec.IsRecordKey(key) {
+				decodeFunc = consistency.DecodeRowMvccData(table.Meta())
+			} else {
+				tableInfo := table.Meta()
+				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+				if e != nil {
+					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
+					return err
+				}
+				var indexInfo *model.IndexInfo
+				for _, idx := range tableInfo.Indices {
+					if idx.ID == indexID {
+						indexInfo = idx
+						break
+					}
+				}
+				if indexInfo == nil {
+					return err
+				}
+				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
+			}
+		} else {
+			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+		}
+	}
+	if store, ok := s.store.(helper.Storage); ok {
+		content := consistency.GetMvccByKey(store, key, decodeFunc)
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+	}
+	return newErr
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {

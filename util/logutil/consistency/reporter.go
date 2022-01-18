@@ -46,12 +46,9 @@ var (
 	ErrAdminCheckInconsistentWithColInfo = dbterror.ClassExecutor.NewStd(errno.ErrDataInconsistentMismatchIndex)
 )
 
-func getMvccByKey(sctx sessionctx.Context, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})) string {
+// GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
+func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})) string {
 	if key == nil {
-		return ""
-	}
-	tikvStore, ok := sctx.GetStore().(helper.Storage)
-	if !ok {
 		return ""
 	}
 	h := helper.NewHelper(tikvStore)
@@ -103,68 +100,74 @@ type Reporter struct {
 	Sctx         sessionctx.Context
 }
 
-func (r *Reporter) decodeRowMvccData(_ kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
-	colMap := make(map[int64]*types.FieldType, 3)
-	for _, col := range r.Tbl.Columns {
-		colMap[col.ID] = &col.FieldType
-	}
-
-	if respValue.Info != nil {
-		var err error
-		datas := make(map[string]map[string]string)
-		for _, w := range respValue.Info.Writes {
-			if len(w.ShortValue) > 0 {
-				datas[strconv.FormatUint(w.StartTs, 10)], err = decodeMvccData(w.ShortValue, colMap, r.Tbl)
-			}
+// DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
+func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
+	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+		colMap := make(map[int64]*types.FieldType, 3)
+		for _, col := range tableInfo.Columns {
+			colMap[col.ID] = &col.FieldType
 		}
 
-		for _, v := range respValue.Info.Values {
-			if len(v.Value) > 0 {
-				datas[strconv.FormatUint(v.StartTs, 10)], err = decodeMvccData(v.Value, colMap, r.Tbl)
+		if respValue.Info != nil {
+			var err error
+			datas := make(map[string]map[string]string)
+			for _, w := range respValue.Info.Writes {
+				if len(w.ShortValue) > 0 {
+					datas[strconv.FormatUint(w.StartTs, 10)], err = decodeMvccRecordValue(w.ShortValue, colMap, tableInfo)
+				}
 			}
-		}
-		if len(datas) > 0 {
-			outMap["decoded"] = datas
-			if err != nil {
-				outMap["decode_error"] = err.Error()
+
+			for _, v := range respValue.Info.Values {
+				if len(v.Value) > 0 {
+					datas[strconv.FormatUint(v.StartTs, 10)], err = decodeMvccRecordValue(v.Value, colMap, tableInfo)
+				}
+			}
+			if len(datas) > 0 {
+				outMap["decoded"] = datas
+				if err != nil {
+					outMap["decode_error"] = err.Error()
+				}
 			}
 		}
 	}
 }
 
-func (r *Reporter) decodeIndexMvccData(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
-	if respValue.Info != nil {
-		var (
-			hd    kv.Handle
-			err   error
-			datas = make(map[string]map[string]string)
-		)
-		for _, w := range respValue.Info.Writes {
-			if len(w.ShortValue) > 0 {
-				hd, err = tablecodec.DecodeIndexHandle(key, w.ShortValue, len(r.Idx.Columns))
-				if err == nil {
-					datas[strconv.FormatUint(w.StartTs, 10)] = map[string]string{"handle": hd.String()}
+// DecodeIndexMvccData creates a closure that captures the indexInfo to be used a decode function in GetMvccByKey.
+func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
+	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+		if respValue.Info != nil {
+			var (
+				hd    kv.Handle
+				err   error
+				datas = make(map[string]map[string]string)
+			)
+			for _, w := range respValue.Info.Writes {
+				if len(w.ShortValue) > 0 {
+					hd, err = tablecodec.DecodeIndexHandle(key, w.ShortValue, len(indexInfo.Columns))
+					if err == nil {
+						datas[strconv.FormatUint(w.StartTs, 10)] = map[string]string{"handle": hd.String()}
+					}
 				}
 			}
-		}
-		for _, v := range respValue.Info.Values {
-			if len(v.Value) > 0 {
-				hd, err = tablecodec.DecodeIndexHandle(key, v.Value, len(r.Idx.Columns))
-				if err == nil {
-					datas[strconv.FormatUint(v.StartTs, 10)] = map[string]string{"handle": hd.String()}
+			for _, v := range respValue.Info.Values {
+				if len(v.Value) > 0 {
+					hd, err = tablecodec.DecodeIndexHandle(key, v.Value, len(indexInfo.Columns))
+					if err == nil {
+						datas[strconv.FormatUint(v.StartTs, 10)] = map[string]string{"handle": hd.String()}
+					}
 				}
 			}
-		}
-		if len(datas) > 0 {
-			outMap["decoded"] = datas
-			if err != nil {
-				outMap["decode_error"] = err.Error()
+			if len(datas) > 0 {
+				outMap["decoded"] = datas
+				if err != nil {
+					outMap["decode_error"] = err.Error()
+				}
 			}
 		}
 	}
 }
 
-func decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
+func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	record := make(map[string]string, len(tb.Columns))
 	for _, col := range tb.Columns {
@@ -201,13 +204,16 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.String("missing_handles", fmt.Sprint(missHd)),
 			zap.String("total_handles", fmt.Sprint(fullHd[:displayFullHdCnt])),
 		}
-		for i, hd := range missHd {
-			fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.HandleEncode(hd), r.decodeRowMvccData)))
+		store, ok := r.Sctx.GetStore().(helper.Storage)
+		if ok {
+			for i, hd := range missHd {
+				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl))))
+			}
+			for i := range missRowIdx {
+				fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), GetMvccByKey(store, r.IndexEncode(&missRowIdx[i]), DecodeIndexMvccData(r.Idx))))
+			}
 		}
-		for i := range missRowIdx {
-			fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.IndexEncode(&missRowIdx[i]), r.decodeIndexMvccData)))
-		}
-		fs = append(fs, zap.Stack("stack"))
+
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
 	}
 	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, idxCnt, tblCnt)
@@ -232,8 +238,11 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 			zap.Stringer("idxDatum", idxDat),
 			zap.Stringer("rowDatum", tblDat),
 		}
-		fs = append(fs, zap.String("row_mvcc", getMvccByKey(r.Sctx, r.HandleEncode(handle), r.decodeRowMvccData)))
-		fs = append(fs, zap.String("index_mvcc", getMvccByKey(r.Sctx, r.IndexEncode(idxRow), r.decodeIndexMvccData)))
+		store, ok := r.Sctx.GetStore().(helper.Storage)
+		if ok {
+			fs = append(fs, zap.String("row_mvcc", GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl))))
+			fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
+		}
 		fs = append(fs, zap.Error(err))
 		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
@@ -270,9 +279,12 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 			zap.Stringer("index", idxRow),
 			zap.Stringer("row", tblRow),
 		}
-		fs = append(fs, zap.String("row_mvcc", getMvccByKey(r.Sctx, r.HandleEncode(handle), r.decodeRowMvccData)))
-		if idxRow != nil {
-			fs = append(fs, zap.String("index_mvcc", getMvccByKey(r.Sctx, r.IndexEncode(idxRow), r.decodeIndexMvccData)))
+		store, ok := r.Sctx.GetStore().(helper.Storage)
+		if ok {
+			fs = append(fs, zap.String("row_mvcc", GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl))))
+			if idxRow != nil {
+				fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
+			}
 		}
 		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
