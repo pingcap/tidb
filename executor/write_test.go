@@ -843,7 +843,7 @@ func TestInsertSetWithDefault(t *testing.T) {
 	tk.MustExec("insert into t1 set a=default(b)+default(a);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("30 20"))
 	// With generated columns
-	tk.MustExec("create table t2 (a int default 10, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("create table t2 (a int default 10 primary key, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
 	tk.MustExec("insert into t2 set a=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
@@ -859,11 +859,48 @@ func TestInsertSetWithDefault(t *testing.T) {
 	tk.MustExec("insert into t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
+	// Looks like MySQL accepts this, but still the inserted value would be default(b) i.e. ignored
 	tk.MustGetErrCode("insert into t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
+	// Looks like MySQL accepts this, but inserted values are all NULL
 	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 set a=default(a), c=default(c)")
 	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b)")
+	// This fails most likely due only the generated column is updated -> no change -> duplicate key?
+	// Too odd to create a bug, better to have it documented by this test instead...
+	tk.MustGetErrCode("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b)", mysql.ErrDupEntry)
+	tk.MustGetErrCode("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(a)", mysql.ErrBadGeneratedColumn)
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("10 -10 -10", "3 -3 -3"))
 	tk.MustExec("drop table t1, t2")
+	// Issue 29926
+	tk.MustExec("create table t1 (a int not null auto_increment,primary key(a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@timestamp = 1637541064")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustExec("insert into t1 set a=default,t=default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@timestamp = 1637541082")
+	tk.MustExec("insert into t1 VALUES (default,default)")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"1 2021-11-22 08:31:04",
+		"2 2021-11-22 08:31:22"))
+	tk.MustExec("set @@timestamp = 1637541332")
+	tk.MustExec("insert into t1 set a=1,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("insert into t1 set a=2,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default(t)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"1 2021-11-22 08:35:32",
+		"2 2021-11-22 08:35:32"))
+	tk.MustExec(`DROP TABLE t1`)
+	tk.MustExec(`CREATE TABLE t1 (a int default 1 PRIMARY KEY, b int default 2)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (2,2), (3,3)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (3,2) ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustExec(`INSERT INTO t1 SET a = 2, b = 3 ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"2 1",
+		"3 1"))
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {
@@ -894,12 +931,18 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("3 -3 -3"))
 	tk.MustExec("insert into t2 values (3,default,default) on duplicate key update c=default, b=default, a=4;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
-	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 values (4,default,default) on duplicate key update b=default, a=5, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5 -5 -5"))
+	tk.MustGetErrCode("insert into t2 values (5,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 values (5,default,default) on duplicate key update a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 (a) values (1);")
+	tk.MustExec("insert into t2 values (1,default,default) on duplicate key update a=default(b), b=default(b);")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 (a) values (1);")
+	tk.MustGetErrCode("insert into t2 values (1,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 
 	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -1091,8 +1134,8 @@ func TestReplace(t *testing.T) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1", "3 1 -1 -1"))
 	tk.MustGetErrCode("replace t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrNoDefaultForField)
+	tk.MustGetErrCode("replace t2 set c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -4171,10 +4214,19 @@ func TestUpdate(t *testing.T) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "40 -40 -40"))
 	tk.MustExec("update t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+	tk.MustExec("update t2 set a=default(b), b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustGetErrCode("update t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("update t2 set a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+	tk.MustExec("update t2 set a=default(b), b=default(b)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
+	tk.MustExec("update t2 set a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Allowed in MySQL, but should probably not be allowed.
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(a)", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
