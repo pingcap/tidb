@@ -3552,3 +3552,23 @@ func TestRenameTables(t *testing.T) {
 
 	ddl.ExportTestRenameTables(t)
 }
+
+func (s *testIntegrationSuite1) TestDuplicatePartitionNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database DuplicatePartitionNames")
+	defer tk.MustExec("drop database DuplicatePartitionNames")
+	tk.MustExec("use DuplicatePartitionNames")
+
+	tk.MustExec("set @@tidb_enable_list_partition=on")
+	tk.MustExec("create table t1 (a int) partition by list (a) (partition p1 values in (0))")
+	tk.MustExec("insert into t1 values (0)")
+	tk.MustExec("alter table t1 truncate partition p1,p1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	//err := tk.ExecToErr("alter table t1 drop partition p1,p1")
+	//c.Assert(err, NotNil)
+	//c.Assert(err.Error(), Equals, "What?")
+	//tk.MustExec("alter table t1 add partition (partition p2 values in (1))")
+	//tk.MustExec("alter table t1 drop partition p1,p1")
+	//tk.MustQuery("Show create table t1").Check(testkit.Rows("what table?"))
+}

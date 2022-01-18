@@ -3460,19 +3460,25 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	pids := make([]int64, len(spec.PartitionNames))
+	pids := make([]int64, 0, len(spec.PartitionNames))
 	if spec.OnAllPartitions {
 		pids = make([]int64, len(meta.GetPartitionInfo().Definitions))
 		for i, def := range meta.GetPartitionInfo().Definitions {
 			pids[i] = def.ID
 		}
 	} else {
-		for i, name := range spec.PartitionNames {
+		// MySQL allows duplicate partition names in truncate partition
+		// so we filter them out through a hash
+		pidMap := make(map[int64]bool)
+		for _, name := range spec.PartitionNames {
 			pid, err := tables.FindPartitionByName(meta, name.L)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			pids[i] = pid
+			pidMap[pid] = true
+		}
+		for pid, _ := range pidMap {
+			pids = append(pids, pid)
 		}
 	}
 
