@@ -16,6 +16,7 @@ package domain_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/ddl"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ func SubTestDomainSession(t *testing.T) {
 	session.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
+	ddl.DisableTiFlashPoll(domain.DDL())
 	defer domain.Close()
 
 	// for NotifyUpdatePrivilege

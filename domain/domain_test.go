@@ -167,6 +167,7 @@ func SubTestDomain(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = dom.Store()
 	dd := dom.DDL()
+	ddl.DisableTiFlashPoll(dd)
 	require.NotNil(t, dd)
 	require.Equal(t, 80*time.Millisecond, dd.GetLease())
 
