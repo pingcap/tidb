@@ -75,11 +75,11 @@ func NewTiFlashManagementContext() *TiFlashManagementContext {
 
 var (
 	// PollTiFlashInterval is the interval between every pollTiFlashReplicaStatus call.
-	PollTiFlashInterval = 1 * time.Second
+	PollTiFlashInterval = 2 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
-	PullTiFlashPdTick = 60 * 5
+	PullTiFlashPdTick = 30 * 5
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
-	UpdateTiFlashStoreTick = 10
+	UpdateTiFlashStoreTick = 5
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
