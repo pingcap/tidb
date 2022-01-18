@@ -146,7 +146,7 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
-	// ErrWrongParitionName returns for wrong partition name.
+	// ErrWrongPartitionName returns for wrong partition name.
 	ErrWrongPartitionName = dbterror.ClassDDL.NewStd(mysql.ErrWrongPartitionName)
 	// ErrWrongUsage returns for wrong ddl syntax usage.
 	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
