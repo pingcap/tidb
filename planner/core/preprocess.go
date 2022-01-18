@@ -702,20 +702,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if !ddl.IsValidIdentifier(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if !ddl.IsValidIdentifier(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if !ddl.IsValidIdentifier(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
@@ -791,7 +791,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if !ddl.IsValidIdentifier(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -852,12 +852,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	vName := stmt.ViewName.Name.String()
-	if isIncorrectName(vName) {
+	if !ddl.IsValidIdentifier(vName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(vName)
 		return
 	}
 	for _, col := range stmt.Cols {
-		if isIncorrectName(col.String()) {
+		if !ddl.IsValidIdentifier(col.String()) {
 			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
@@ -910,7 +910,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
-		if isIncorrectName(t.Name.String()) {
+		if !ddl.IsValidIdentifier(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -941,7 +941,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 	for _, t := range tables {
-		if isIncorrectName(t.Name.String()) {
+		if !ddl.IsValidIdentifier(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -1014,7 +1014,7 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if !ddl.IsValidIdentifier(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1048,12 +1048,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
-	if isIncorrectName(oldTable) {
+	if !ddl.IsValidIdentifier(oldTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
-	if isIncorrectName(newTable) {
+	if !ddl.IsValidIdentifier(newTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
@@ -1078,7 +1078,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
-	if isIncorrectName(tName) {
+	if !ddl.IsValidIdentifier(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1086,7 +1086,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	for _, spec := range specs {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
-			if isIncorrectName(ntName) {
+			if !ddl.IsValidIdentifier(ntName) {
 				p.err = ddl.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
@@ -1113,7 +1113,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			}
 		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
 			statsName := spec.Statistics.StatsName
-			if isIncorrectName(statsName) {
+			if !ddl.IsValidIdentifier(statsName) {
 				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
 				p.err = ErrInternal.GenWithStack(msg)
 				return
@@ -1216,7 +1216,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
-	if isIncorrectName(cName) {
+	if !ddl.IsValidIdentifier(cName) {
 		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
@@ -1336,18 +1336,6 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 		}
 	}
 
-	return false
-}
-
-// isIncorrectName checks if the identifier is incorrect.
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
-func isIncorrectName(name string) bool {
-	if len(name) == 0 {
-		return true
-	}
-	if name[len(name)-1] == ' ' {
-		return true
-	}
 	return false
 }
 
@@ -1556,7 +1544,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
-	if isIncorrectName(sName) {
+	if !ddl.IsValidIdentifier(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}

@@ -3790,3 +3790,19 @@ func (s *testIntegrationSuite3) TestIssue29326(c *C) {
 	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select t1.id, t2.id from t1,t2 where t1.id=t2.id")
 	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
 }
+
+func (s *testIntegrationSuite3) TestInvalidPartitionNameWhenCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database invalidPartitionNames")
+	defer tk.MustExec("drop database invalidPartitionNames")
+	tk.MustExec("USE invalidPartitionNames")
+
+	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+}
