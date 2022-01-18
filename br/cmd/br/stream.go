@@ -144,12 +144,16 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
-	if cmdName == task.StreamStart {
+	switch cmdName {
+	case task.StreamStart:
 		if err := cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
+	case task.StreamRestore:
+		if err := cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
 	}
-
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore

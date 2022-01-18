@@ -150,6 +150,11 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
+func (rc *Client) GetDomain() *domain.Domain {
+	return rc.dom
+}
+
+
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -179,7 +184,6 @@ func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	externalStorage storage.ExternalStorage,
 	reader *metautil.MetaReader) error {
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
@@ -1216,7 +1220,6 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// TODO correct m.ResolvedTs type in proto
 			if m.ReslovedTs < int64(restoreTS) {
 				log.Debug("backup stream collect meta file", zap.String("file", path))
 				streamBackupMetaFiles = append(streamBackupMetaFiles, m)
@@ -1247,6 +1250,8 @@ func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Met
 	}
 	return streamBackupDataFiles, nil
 }
+
+
 
 func transferBoolToValue(enable bool) string {
 	if enable {

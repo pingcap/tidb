@@ -531,9 +531,10 @@ func NewMgr(ctx context.Context,
 // GetStorage gets the storage backend from the config.
 func GetStorage(
 	ctx context.Context,
+	storageName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -558,7 +559,7 @@ func ReadBackupMeta(
 	fileName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storage.ExternalStorage, *backuppb.BackupMeta, error) {
-	u, s, err := GetStorage(ctx, cfg)
+	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}

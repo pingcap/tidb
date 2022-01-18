@@ -17,6 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"sort"
 	"strings"
@@ -48,6 +49,7 @@ const (
 	flagStreamEndTS           = "end-ts"
 	flagGCSafePointTTS        = "gc-ttl"
 	flagStreamRestoreTS  = "restore-ts"
+	flagStreamFullBackupStorage = "full-backup-storage"
 )
 
 var (
@@ -72,9 +74,13 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 type StreamConfig struct {
 	// common part that all of stream commands need
 	Config
+
+	// FullBackupStorage is used to find the maps between table name and table id during restoration.
+	// if not specified. we cannot apply kv directly.
+	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 	TaskName string `json:"task-name" toml:"task-name"`
 
-	// startTs usually equals the tso of full-backup, but user can reset it
+	// StartTs usually equals the tso of full-backup, but user can reset it
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
@@ -97,6 +103,7 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	flags.String(flagStreamFullBackupStorage, "", "find the maps between table id and table name")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -108,6 +115,23 @@ func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
 		"The task name for backup stream log. If default, get status of all of tasks",
 	)
+}
+
+func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error {
+	tsString, err := flags.GetString(flagStreamRestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.FullBackupStorage, err = flags.GetString(flagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	if len(cfg.FullBackupStorage) == 0 {
+		return errors.New("must specify full backup storage.")
+	}
+	return nil
 }
 
 // ParseStreamStartFromFlags parse parameters for `stream start`
@@ -608,6 +632,16 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// get full backup meta to generate rewrite rules.
+	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rewrirteRuls, err := initRewriteRules(client, fullBackupTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
 	if err != nil {
@@ -619,3 +653,53 @@ func RunStreamRestore(
 	return nil
 }
 
+func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
+	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	err = backupMeta.Unmarshal(metaData)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	reader := metautil.NewMetaReader(backupMeta, s, nil)
+
+	// read full backup databases to get map[table]table.Info
+	databases, err := utils.LoadBackupTables(ctx, reader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := make(map[string]*metautil.Table, 0)
+	for _, db := range databases {
+		dbName := db.Info.Name.O
+		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+			dbName = name
+		}
+		for _, table := range db.Tables {
+			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+				continue
+			}
+			tables[utils.UniqueID(table.DB.Name.String(), table.Info.Name.String())] = table
+		}
+	}
+	return tables, nil
+
+}
+
+func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[string]*restore.RewriteRules, error) {
+	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
+	rules := make(map[string]*restore.RewriteRules)
+	for _, t := range tables {
+		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rules[utils.UniqueID(t.DB.Name.String(), t.Info.Name.String())] = restore.GetRewriteRules(newTableInfo, t.Info, 0)
+	}
+	return rules, nil
+}

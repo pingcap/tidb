@@ -259,6 +259,28 @@ func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
+func (importer *FileImporter) ImportKVFiles(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+) error {
+	log.Debug("import kv files", zap.Any("files", files))
+	var startKey, endKey []byte
+	for _, f := range files {
+		start, end, err := rewriteFileKeys(f, rewriteRules)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(startKey) == 0 || bytes.Compare(startKey, start) > 0 {
+			startKey = start
+		}
+		if bytes.Compare(endKey, end) < 0 {
+			endKey = end
+		}
+	}
+
+	return nil
+}
+
 // Import tries to import a file.
 // All rules must contain encoded keys.
 func (importer *FileImporter) Import(
