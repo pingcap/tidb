@@ -471,7 +471,7 @@ func Test_encodeKey(t *testing.T) {
 	require.Equal(t, "SP", key)
 }
 
-func TestRemoveInValidPlanRecord(t *testing.T) {
+func TestRemoveInvalidPlanRecord(t *testing.T) {
 	c1 := newCollecting()
 	rs := []struct {
 		sql  string
