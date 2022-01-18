@@ -58,8 +58,8 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
 	require.NotNil(t, otrace)
 	logicalList, physicalList, bests := getList(otrace)
-	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
 	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
+	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
 	require.True(t, checkList(bests, []string{"Projection_4", "Selection_5"}))
 }
 
