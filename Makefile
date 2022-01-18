@@ -126,25 +126,28 @@ devgotest: failpoint-enable
 	@$(FAILPOINT_DISABLE)
 
 ut: failpoint-enable tools/bin/ut
-	tools/bin/ut $(X);
-	@$(FAILPOINT_DISABLE)
-
-gotest: ut
-
-# gotest: failpoint-enable
-# 	@echo "Running in native mode."
-# 	@export log_level=info; export TZ='Asia/Shanghai'; \
-# 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-# 	@$(FAILPOINT_DISABLE)
-
-gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
-	@echo "Running gotest_in_verify_ci"
+	@echo "Running ut."
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) \
-	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
-	$(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	CGO_ENABLE=1 tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" $(X);
 	@$(FAILPOINT_DISABLE)
+
+gotest: failpoint-enable
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci: ut
+
+# gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
+# 	@echo "Running gotest_in_verify_ci"
+# 	@mkdir -p $(TEST_COVERAGE_DIR)
+# 	@export TZ='Asia/Shanghai'; \
+# 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) \
+# 	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+# 	$(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+# 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
 	@export log_level=debug; \

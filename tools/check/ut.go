@@ -27,6 +27,10 @@ import (
 	"sync"
 	"time"
 	"regexp"
+	"encoding/xml"
+
+	// "gotest.tools/gotestsum/log"
+	// "gotest.tools/gotestsum/testjson"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
@@ -58,7 +62,10 @@ ut run $package $test
 ut build
 
 // build a test package
-ut build xxx`
+ut build xxx
+
+// write the junitfile
+ut run --junitfile xxx`
 	fmt.Println(msg)
 	return true
 }
@@ -208,7 +215,7 @@ func cmdRun(args ...string) bool {
 			err := buildTestBinary(pkg)
 			if err != nil {
 				fmt.Println("build package error", pkg, err)
-				return
+				return false
 			}
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
@@ -223,7 +230,7 @@ func cmdRun(args ...string) bool {
 			tasks, err = listTestCases(pkg, tasks)
 			if err != nil {
 				fmt.Println("list test cases error", err)
-				return
+				return false
 			}
 		}
 	}
@@ -262,22 +269,34 @@ func cmdRun(args ...string) bool {
 	}
 	fmt.Println("building task finish...", len(tasks))
 
-	numactl := numactlExist()
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
 	var wg sync.WaitGroup
 	for i := 0; i < P; i++ {
-		works[i] = numa{fmt.Sprintf("%d", i), numactl, false}
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
 
-	// shuffle(tasks)
+	shuffle(tasks)
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+
+	if junitfile != "" {
+		out := collectTestResults(works)
+		f, err := os.Create(junitfile)
+		if err != nil {
+			fmt.Println("create junit file fail:", err)
+			return false
+		}
+		if err := write(f, out); err != nil {
+			fmt.Println("write junit file error:", err)
+			return false
+		}
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
@@ -286,7 +305,39 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
+func handleJUnitFileFlag() string {
+	var junitfile string
+	// Handle the --junitfile flag, remove it and set the variable.
+	tmp := os.Args[:0]
+	// Iter to the flag
+	var i int
+	for ; i<len(os.Args); i++ {
+		if os.Args[i] == "--junitfile" {
+			i++
+			break
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	// Handle the flag
+	if i < len(os.Args) {
+		junitfile = os.Args[i]
+		i++
+	}
+	// Iter the remain flags
+	for ; i<len(os.Args); i++ {
+		tmp = append(tmp, os.Args[i])
+	}
+
+	// os.Args is now the original flags with '--junitfile XXX' removed.
+	os.Args = tmp
+	return junitfile
+}
+
+var junitfile string
+
 func main() {
+	junitfile = handleJUnitFileFlag()
+
 	// Get the correct count of CPU if it's in docker.
 	P = runtime.GOMAXPROCS(0)
 	rand.Seed(time.Now().Unix())
@@ -364,64 +415,117 @@ func listPackages() ([]string, error) {
 }
 
 type numa struct {
-	cpu     string
-	numactl bool
 	Fail    bool
+	results []testResult
 }
 
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		start := time.Now()
 		res := n.runTestCase(t.pkg, t.test, t.old)
-		if res.err != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
-			io.Copy(os.Stderr, &res.output)
+		if res.Failure != nil {
+			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
 			n.Fail = true
 		}
+		n.results = append(n.results, res)
 	}
 }
 
 type testResult struct {
-	err    error
-	output bytes.Buffer
+	JUnitTestCase
+	d time.Duration
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
+func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+	res := testResult{
+		JUnitTestCase: JUnitTestCase{
+			Classname : pkg,
+			Name : fn,
+		},
+	}
+	
 	exe := "./" + testFileName(pkg)
 	var cmd *exec.Cmd
-	// if n.numactl {
-	// 	cmd = n.testCommandWithNumaCtl(exe, fn, old)
-	// } else {
-		cmd = n.testCommand(exe, fn, old)
-	// }
+	cmd = n.testCommand(exe, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
-	cmd.Stdout = &res.output
-	cmd.Stderr = &res.output
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
-		res.err = withTrace(err)
+		res.Failure = &JUnitFailure{
+			Message: "Failed",
+			Contents: buf.String(),
+		}
 	}
+	res.d = time.Since(start)
+	res.Time = formatDurationAsSeconds(res.d)
 	return res
 }
 
-func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
-	if old {
-		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			"numactl", "--physcpubind", n.cpu, "--",
-			exe,
-			// "-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+func collectTestResults(workers []numa) JUnitTestSuites {
+	version := goVersion()
+	// pkg => test cases
+	pkgs := make(map[string][]JUnitTestCase)
+	durations := make(map[string]time.Duration)
+
+	// The test result in workers are shuffled, so group by the packages here
+	for _, n := range workers {
+		for _, res := range n.results {
+			cases, ok :=  pkgs[res.Classname]
+			if !ok {
+				cases = make([]JUnitTestCase, 0, 10)
+			}
+			cases = append(cases, res.JUnitTestCase)
+			pkgs[res.Classname] = cases
+			durations[res.Classname] = durations[res.Classname] + res.d
+		}
 	}
 
-	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		"numactl", "--physcpubind", n.cpu, "--",
-		exe,
-		// "-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
+	suites := JUnitTestSuites{}
+	// Turn every package resuts to a suite.
+	for pkg, cases := range pkgs {
+		suite := JUnitTestSuite{
+			Tests: len(cases),
+			Failures: failureCases(cases),
+			Time: formatDurationAsSeconds(durations[pkg]),
+			Name: pkg,
+			Properties: packageProperties(version),
+			TestCases: cases,
+		}
+		suites.Suites = append(suites.Suites, suite)
+	}
+	return suites
 }
+
+func failureCases(input []JUnitTestCase) int {
+	sum := 0
+	for _, v := range input {
+		if v.Failure != nil {
+			sum++
+		}
+	}
+	return sum
+}
+
+// func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
+// 	if old {
+// 		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
+// 		return exec.Command(
+// 			"numactl", "--physcpubind", n.cpu, "--",
+// 			exe,
+// 			// "-test.timeout", "20s",
+// 			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+// 	}
+
+// 	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
+// 	return exec.Command(
+// 		"numactl", "--physcpubind", n.cpu, "--",
+// 		exe,
+// 		// "-test.timeout", "20s",
+// 		"-test.cpu", "1", "-test.run", fn)
+// }
 
 func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
 	if old {
@@ -470,13 +574,6 @@ func testBinaryExist(pkg string) (bool, error) {
 		}
 	}
 	return true, withTrace(err)
-}
-func numactlExist() bool {
-	find, err := exec.Command("which", "numactl").Output()
-	if err == nil && len(find) > 0 {
-		return true
-	}
-	return false
 }
 
 func testFileName(pkg string) string {
@@ -576,4 +673,156 @@ func withTrace(err error) error {
 	var stack [4096]byte
 	sz := runtime.Stack(stack[:], false)
 	return &errWithStack{err, stack[:sz]}
+}
+
+// func generate(exec *testjson.Execution, cfg Config) JUnitTestSuites {
+// 	cfg = configWithDefaults(cfg)
+// 	version := goVersion()
+// 	suites := JUnitTestSuites{}
+
+// 	for _, pkgname := range exec.Packages() {
+// 		pkg := exec.Package(pkgname)
+// 		junitpkg := JUnitTestSuite{
+// 			Name:       cfg.FormatTestSuiteName(pkgname),
+// 			Tests:      pkg.Total,
+// 			Time:       formatDurationAsSeconds(pkg.Elapsed()),
+// 			Properties: packageProperties(version),
+// 			TestCases:  packageTestCases(pkg, cfg.FormatTestCaseClassname),
+// 			Failures:   len(pkg.Failed),
+// 		}
+// 		suites.Suites = append(suites.Suites, junitpkg)
+// 	}
+// 	return suites
+// }
+
+func formatDurationAsSeconds(d time.Duration) string {
+	return fmt.Sprintf("%f", d.Seconds())
+}
+
+func packageProperties(goVersion string) []JUnitProperty {
+	return []JUnitProperty{
+		{Name: "go.version", Value: goVersion},
+	}
+}
+
+// goVersion returns the version as reported by the go binary in PATH. This
+// version will not be the same as runtime.Version, which is always the version
+// of go used to build the gotestsum binary.
+//
+// To skip the os/exec call set the GOVERSION environment variable to the
+// desired value.
+func goVersion() string {
+	if version, ok := os.LookupEnv("GOVERSION"); ok {
+		return version
+	}
+	cmd := exec.Command("go", "version")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
+}
+
+// func packageTestCases(pkg *testjson.Package, formatClassname FormatFunc) []JUnitTestCase {
+// 	cases := []JUnitTestCase{}
+
+// 	if pkg.TestMainFailed() {
+// 		jtc := newJUnitTestCase(testjson.TestCase{Test: "TestMain"}, formatClassname)
+// 		jtc.Failure = &JUnitFailure{
+// 			Message:  "Failed",
+// 			Contents: pkg.Output(0),
+// 		}
+// 		cases = append(cases, jtc)
+// 	}
+
+// 	for _, tc := range pkg.Failed {
+// 		jtc := newJUnitTestCase(tc, formatClassname)
+// 		jtc.Failure = &JUnitFailure{
+// 			Message:  "Failed",
+// 			Contents: strings.Join(pkg.OutputLines(tc), ""),
+// 		}
+// 		cases = append(cases, jtc)
+// 	}
+
+// 	for _, tc := range pkg.Skipped {
+// 		jtc := newJUnitTestCase(tc, formatClassname)
+// 		jtc.SkipMessage = &JUnitSkipMessage{
+// 			Message: strings.Join(pkg.OutputLines(tc), ""),
+// 		}
+// 		cases = append(cases, jtc)
+// 	}
+
+// 	for _, tc := range pkg.Passed {
+// 		jtc := newJUnitTestCase(tc, formatClassname)
+// 		cases = append(cases, jtc)
+// 	}
+// 	return cases
+// }
+
+// func newJUnitTestCase(tc testjson.TestCase, formatClassname FormatFunc) JUnitTestCase {
+// 	return JUnitTestCase{
+// 		Classname: formatClassname(tc.Package),
+// 		Name:      tc.Test.Name(),
+// 		Time:      formatDurationAsSeconds(tc.Elapsed),
+// 	}
+// }
+
+func write(out io.Writer, suites JUnitTestSuites) error {
+	doc, err := xml.MarshalIndent(suites, "", "\t")
+	if err != nil {
+		return err
+	}
+	_, err = out.Write([]byte(xml.Header))
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(doc)
+	return err
+}
+
+
+// JUnitTestSuites is a collection of JUnit test suites.
+type JUnitTestSuites struct {
+	XMLName xml.Name `xml:"testsuites"`
+	Suites  []JUnitTestSuite
+}
+
+// JUnitTestSuite is a single JUnit test suite which may contain many
+// testcases.
+type JUnitTestSuite struct {
+	XMLName    xml.Name        `xml:"testsuite"`
+	Tests      int             `xml:"tests,attr"`
+	Failures   int             `xml:"failures,attr"`
+	Time       string          `xml:"time,attr"`
+	Name       string          `xml:"name,attr"`
+	Properties []JUnitProperty `xml:"properties>property,omitempty"`
+	TestCases  []JUnitTestCase
+}
+
+// JUnitTestCase is a single test case with its result.
+type JUnitTestCase struct {
+	XMLName     xml.Name          `xml:"testcase"`
+	Classname   string            `xml:"classname,attr"`
+	Name        string            `xml:"name,attr"`
+	Time        string            `xml:"time,attr"`
+	SkipMessage *JUnitSkipMessage `xml:"skipped,omitempty"`
+	Failure     *JUnitFailure     `xml:"failure,omitempty"`
+}
+
+// JUnitSkipMessage contains the reason why a testcase was skipped.
+type JUnitSkipMessage struct {
+	Message string `xml:"message,attr"`
+}
+
+// JUnitProperty represents a key/value pair used to define properties.
+type JUnitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// JUnitFailure contains data related to a failed test.
+type JUnitFailure struct {
+	Message  string `xml:"message,attr"`
+	Type     string `xml:"type,attr"`
+	Contents string `xml:",chardata"`
 }
