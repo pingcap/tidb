@@ -31,18 +31,21 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
-	flagStreamTaskName = "taskName"
-	flagStreamStartTS  = "startTS"
-	flagStreamEndTS    = "endTS"
-	flagGCSafePointTTS = "gcTTL"
+	flagStreamTaskName        = "task-name"
+	flagStreamTaskNameDefault = "all" // used for get status for all of tasks.
+	flagStreamStartTS         = "start-ts"
+	flagStreamEndTS           = "end-ts"
+	flagGCSafePointTTS        = "gc-ttl"
 )
 
 var (
@@ -65,21 +68,20 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 type StreamConfig struct {
 	// common part that all of stream commands need
 	Config
-	taskName string
-
-	// this part only stream start includes
+	TaskName string `json:"task-name" toml:"task-name"`
 
 	// startTs usually equals the tso of full-backup, but user can reset it
-	startTS uint64
-	endTS   uint64
-	// safePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
-	safePointTTL int64
+	StartTS uint64 `json:"start-ts" toml:"start-ts"`
+	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
+	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
+	SafePointTTL int64 `json:"saft-point-ttl" toml:"saft-point-ttl"`
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
 func DefineStreamStartFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamStartTS, "", "start ts, usually equals last full backupTS, used for backup log.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	flags.String(flagStreamStartTS, "",
+		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
+			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
 	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
@@ -91,17 +93,20 @@ func DefineStreamCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, "", "The task name for backup stream log.")
 }
 
+func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
+	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
+		"The task name for backup stream log. If default, get status of all of tasks",
+	)
+}
+
 // ParseStreamStartFromFlags parse parameters for `stream start`
 func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	tsString, err := flags.GetString(flagStreamStartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(tsString) <= 0 {
-		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters startTS")
-	}
 
-	if cfg.startTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -110,16 +115,16 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.endTS, err = ParseTSString(tsString); err != nil {
+	if cfg.EndTS, err = ParseTSString(tsString); err != nil {
 		return errors.Trace(err)
 	}
 
-	if cfg.safePointTTL, err = flags.GetInt64(flagGCSafePointTTS); err != nil {
+	if cfg.SafePointTTL, err = flags.GetInt64(flagGCSafePointTTS); err != nil {
 		return errors.Trace(err)
 	}
 
-	if cfg.safePointTTL <= 0 {
-		cfg.safePointTTL = utils.DefaultStreamGCSafePointTTL
+	if cfg.SafePointTTL <= 0 {
+		cfg.SafePointTTL = utils.DefaultStreamGCSafePointTTL
 	}
 
 	return nil
@@ -132,12 +137,12 @@ func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	cfg.taskName, err = flags.GetString(flagStreamTaskName)
+	cfg.TaskName, err = flags.GetString(flagStreamTaskName)
 	if err != nil {
 		errors.Trace(err)
 	}
 
-	if len(cfg.taskName) <= 0 {
+	if len(cfg.TaskName) <= 0 {
 		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters taskName")
 	}
 	return nil
@@ -200,23 +205,27 @@ func (s *streamMgr) setLock(ctx context.Context) error {
 	return s.bc.SetLockFile(ctx)
 }
 
-// checkStartTS checks that startTS should be smaller than currentTS,
+// adjustAndCheckStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
-func (s *streamMgr) checkStartTS(ctx context.Context) error {
+func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	currentTS, err := s.getTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// set currentTS to startTS as a default value
+	if s.Cfg.StartTS == 0 {
+		s.Cfg.StartTS = currentTS
+	}
 
-	if currentTS <= s.Cfg.startTS || s.Cfg.endTS <= currentTS {
+	if currentTS < s.Cfg.StartTS || s.Cfg.EndTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, startTS %d should be smaller than currentTS %d",
-			s.Cfg.startTS, currentTS)
+			s.Cfg.StartTS, currentTS)
 	}
-	if s.Cfg.endTS <= currentTS {
+	if s.Cfg.EndTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, endTS %d should be larger than currentTS %d",
-			s.Cfg.endTS, currentTS)
+			s.Cfg.EndTS, currentTS)
 	}
 
 	return nil
@@ -225,19 +234,19 @@ func (s *streamMgr) checkStartTS(ctx context.Context) error {
 // setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
 // and set startTS as a serverSafePoint to PD
 func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
-	if err := s.checkStartTS(ctx); err != nil {
+	if err := s.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.Cfg.startTS)
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.Cfg.StartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),
-		TTL:      s.Cfg.safePointTTL,
-		BackupTS: s.Cfg.startTS,
+		TTL:      s.Cfg.SafePointTTL,
+		BackupTS: s.Cfg.StartTS,
 	}
 	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
@@ -261,7 +270,7 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
 		s.Cfg.TableFilter,
-		s.Cfg.startTS,
+		s.Cfg.StartTS,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -319,20 +328,18 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	if err := streamMgr.setLock(ctx); err != nil {
+	if err := streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err := streamMgr.setGCSafePoint(ctx); err != nil {
+	if err := streamMgr.setLock(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
 	ranges, err := streamMgr.buildObserveRanges(ctx)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// nothing to backup
-	if len(ranges) == 0 {
+	} else if len(ranges) == 0 {
+		// nothing to backup
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to observe, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -342,21 +349,27 @@ func RunStreamStart(
 	ti := stream.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     streamMgr.bc.GetStorageBackend(),
-			StartTs:     cfg.startTS,
-			EndTs:       cfg.endTS,
-			Name:        cfg.taskName,
+			StartTs:     cfg.StartTS,
+			EndTs:       cfg.EndTS,
+			Name:        cfg.TaskName,
 			TableFilter: cfg.FilterStr,
 		},
 		Ranges:  ranges,
 		Pausing: false,
 	}
-
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	// It supports single stream log task current
+	count, err := cli.GetTaskCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	} else if count > 0 {
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
+	}
+
 	if err := cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
-
-	log.Info("put stream task", ti.ZapTaskInfo()...)
+	summary.Log(cmdName, ti.ZapTaskInfo()...)
 	return nil
 }
 
@@ -387,17 +400,17 @@ func RunStreamStop(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.taskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = cli.DeleteTask(ctx, cfg.taskName)
+	err = cli.DeleteTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Info("stop stream task", zap.String("taskName", cfg.taskName))
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -428,15 +441,16 @@ func RunStreamPause(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.taskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = cli.PauseTask(ctx, cfg.taskName)
+	err = cli.PauseTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -467,15 +481,16 @@ func RunStreamResume(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.taskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = cli.ResumeTask(ctx, cfg.taskName)
+	err = cli.ResumeTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -505,12 +520,27 @@ func RunStreamStatus(
 	defer streamMgr.close()
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
-	// to add backoff
-	task, err := cli.GetTask(ctx, cfg.taskName)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
-	log.Info("stream task status: ", logutil.StreamBackupTaskInfo(&task.Info))
+	// to add backoff
+	if flagStreamTaskNameDefault == cfg.TaskName {
+		// get status about all of tasks
+		tasks, err := cli.GetAllTasks(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		fields := make([]zapcore.Field, 0, len(tasks))
+		for _, task := range tasks {
+			fields = append(fields, logutil.StreamBackupTaskInfo(&task.Info))
+		}
+		summary.Log(cmdName, fields...)
+	} else {
+		// get status about TaskName
+		task, err := cli.GetTask(ctx, cfg.TaskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		summary.Log(cmdName, logutil.StreamBackupTaskInfo(&task.Info))
+	}
 	return nil
 }

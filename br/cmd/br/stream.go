@@ -118,7 +118,7 @@ func newStreamStatusComamnd() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamCommonFlags(command.Flags())
+	task.DefineStreamStatusCommonFlags(command.Flags())
 	return command
 }
 

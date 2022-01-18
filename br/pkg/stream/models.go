@@ -29,6 +29,12 @@ var (
 	taskNameRe = regexp.MustCompile(`^[0-9a-zA-Z_]+$`)
 )
 
+// PrefixOfTask is the prefix of all task
+// It would be `<prefix>/info/`
+func PrefixOfTask() string {
+	return path.Join(streamKeyPrefix, taskInfoPath) + "/"
+}
+
 // TaskOf returns the path of tasks.
 // Normally it would be <prefix>/info/<task-name(string)> -> <task(protobuf)>
 func TaskOf(name string) string {

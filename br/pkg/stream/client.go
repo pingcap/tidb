@@ -106,6 +106,34 @@ func (c *MetaDataClient) GetTask(ctx context.Context, taskName string) (*Task, e
 	return task, nil
 }
 
+// GetAllTasks get all of tasks from metadata storage.
+func (c *MetaDataClient) GetAllTasks(ctx context.Context) ([]Task, error) {
+	scanner := scanEtcdPrefix(c.Client, PrefixOfTask())
+	kvs, err := scanner.AllPages(ctx, 1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	} else if len(kvs) == 0 {
+		return nil, nil
+	}
+
+	tasks := make([]Task, len(kvs))
+	for idx, kv := range kvs {
+		err = proto.Unmarshal(kv.Value, &tasks[idx].Info)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tasks[idx].cli = c
+	}
+	return tasks, nil
+}
+
+// GetTaskCount get the count of tasks from metadata storage.
+func (c *MetaDataClient) GetTaskCount(ctx context.Context) (int, error) {
+	scanner := scanEtcdPrefix(c.Client, PrefixOfTask())
+	kvs, err := scanner.AllPages(ctx, 1)
+	return len(kvs), errors.Trace(err)
+}
+
 // Task presents a remote "task" object.
 // returned by a query of task.
 // Associated to the client created it, hence be able to fetch remote fields like `ranges`.
