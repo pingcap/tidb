@@ -282,18 +282,18 @@ if [ -z "$COLLATION_DISABLE" ] || [ "$COLLATION_DISABLE" = 'true' ]; then
     if [ $record -eq 1 ]; then
         if [ "$record_case" = 'all' ]; then
             echo "record all collation cases"
-            $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=true
+            $explain_test -port "$port" -status "$status" --collation-disable=true --record --log-level=error
         else
             echo "record result for case: \"$record_case\""
-            $explain_test -port "$port" -status "$status" --record $record_case --log-level=error --collation-disable=true
+            $explain_test -port "$port" -status "$status" --collation-disable=true --record $record_case --log-level=error
         fi
     elif [ $create -eq 1 ]; then
         if [ "$create_case" = 'all' ]; then
             echo "create all collation cases"
-            $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=true
+            $explain_test -port "$port" -status "$status" --collation-disable=true --create --log-level=error
         else
             echo "create result for case: \"$create_case\""
-            $explain_test -port "$port" -status "$status" --create $create_case --log-level=error --collation-disable=true
+            $explain_test -port "$port" -status "$status" --collation-disable=true --create $create_case --log-level=error
         fi
     else
         if [ -z "$tests" ]; then
@@ -301,7 +301,7 @@ if [ -z "$COLLATION_DISABLE" ] || [ "$COLLATION_DISABLE" = 'true' ]; then
         else
             echo "run explain test cases: $tests"
         fi
-        $explain_test -port "$port" -status "$status" --log-level=error $tests --collation-disable=true
+        $explain_test -port "$port" -status "$status" --log-level=error --collation-disable=true $tests
     fi
 fi
 

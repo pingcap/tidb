@@ -119,6 +119,7 @@ type StatementContext struct {
 			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
 		*/
 		records uint64
+		deleted uint64
 		updated uint64
 		copied  uint64
 		touched uint64
@@ -423,6 +424,20 @@ func (sc *StatementContext) AddRecordRows(rows uint64) {
 	sc.mu.records += rows
 }
 
+// DeletedRows is used to generate info message
+func (sc *StatementContext) DeletedRows() uint64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.deleted
+}
+
+// AddDeletedRows adds record rows.
+func (sc *StatementContext) AddDeletedRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.deleted += rows
+}
+
 // UpdatedRows is used to generate info message
 func (sc *StatementContext) UpdatedRows() uint64 {
 	sc.mu.Lock()
@@ -607,6 +622,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.affectedRows = 0
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
+	sc.mu.deleted = 0
 	sc.mu.updated = 0
 	sc.mu.copied = 0
 	sc.mu.touched = 0

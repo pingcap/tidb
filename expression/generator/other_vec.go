@@ -279,6 +279,7 @@ package expression
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
@@ -329,7 +330,7 @@ func (g inGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprint(randNum)
+		return strconv.FormatInt(randNum, 10)
 	}
 	return randNum
 }

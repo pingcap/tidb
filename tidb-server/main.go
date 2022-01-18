@@ -181,6 +181,7 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	setupLog()
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
@@ -193,7 +194,6 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()

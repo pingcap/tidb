@@ -1006,6 +1006,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
 
 	// case for direct opts

@@ -417,6 +417,12 @@ const (
 	// Deprecated: It is removed and do not use it again
 	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
 
+	// TiDBPlacementMode is used to control the mode for placement
+	TiDBPlacementMode = "tidb_placement_mode"
+
+	// TiDBEnableDirectPlacement is used to control whether the direct placement should be enabled
+	TiDBEnableDirectPlacement = "tidb_enable_direct_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -733,6 +739,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount            = 1024
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
+	DefTiDBPlacementMode                  = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
@@ -793,6 +800,13 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableStmtSummary              = true
+	DefTiDBStmtSummaryInternalQuery       = false
+	DefTiDBStmtSummaryRefreshInterval     = 1800
+	DefTiDBStmtSummaryHistorySize         = 24
+	DefTiDBStmtSummaryMaxStmtCount        = 3000
+	DefTiDBStmtSummaryMaxSQLLength        = 4096
+	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
@@ -820,7 +834,6 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
