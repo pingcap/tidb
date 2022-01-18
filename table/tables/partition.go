@@ -911,11 +911,11 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 	}
 
 	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
-	colIDs := make([]int64, len(partitionCols))
+	colIDs := make([]int64, 0, len(partitionCols))
 	for _, col := range partitionCols {
 		colIDs = append(colIDs, col.ID)
 	}
-	colNames := make([]model.CIStr, len(partitionCols))
+	colNames := make([]model.CIStr, 0, len(partitionCols))
 	for _, colID := range colIDs {
 		for _, col := range t.Cols() {
 			if col.ID == colID {
