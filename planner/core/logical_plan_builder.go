@@ -4796,16 +4796,10 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK, updatePartitionCol bool
 		var partitionColumnNames []model.CIStr
-
-		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
-			if len(pi.Columns) > 0 {
-				partitionColumnNames = pi.Columns
-			} else {
-				if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
-					partitionColumnNames = pt.GetPartitionColumnNames()
-				}
-			}
+		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
+			partitionColumnNames = pt.GetPartitionColumnNames()
 		}
+
 		for i, col := range tbl.WritableCols() {
 			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
