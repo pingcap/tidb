@@ -4,6 +4,7 @@
     "cases": [
       "set @@tidb_enforce_mpp=1",
       "explain select *, row_number() over () FROM employee -- 1. empty partition",
+      "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
       "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
       "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
       "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 4. with sort key",

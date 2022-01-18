@@ -2267,8 +2267,12 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) fl
 }
 
 func (p *PhysicalWindow) attach2Task(tasks ...task) task {
-	if mppTask, ok := tasks[0].(*mppTask); ok && p.storeTp == kv.TiFlash {
-		return attachPlan2Task(p, mppTask)
+	if mpp, ok := tasks[0].(*mppTask); ok && p.storeTp == kv.TiFlash {
+		if len(p.PartitionBy) == 0 {
+			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
+			mpp = mpp.enforceExchangerImpl(prop)
+		}
+		return attachPlan2Task(p, mpp)
 	}
 	t := tasks[0].convertToRootTask(p.ctx)
 	p.cost = t.cost()

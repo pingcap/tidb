@@ -101,5 +101,6 @@ func (s *testWindowPushDownSuite) TestWindowPushDownPlans(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+		c.Assert(len(output[i].Warn), Equals, 0)
 	}
 }

@@ -10,10 +10,12 @@
       {
         "SQL": "explain select *, row_number() over () FROM employee -- 1. empty partition",
         "Plan": [
-          "TableReader_12 10000.00 root  data:ExchangeSender_11",
-          "└─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_14 10000.00 root  data:ExchangeSender_13",
+          "└─ExchangeSender_13 10000.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
-          "    └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
+          "      └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
