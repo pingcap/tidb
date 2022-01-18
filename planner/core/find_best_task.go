@@ -330,7 +330,7 @@ func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.Plan
 	candidateInfo.Children = append(candidateInfo.Children, childPhysicalPlanTrace)
 }
 
-func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PlanTrace {
+func (op *physicalOptimizeOp) appendCandidate(logicalPlan LogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PlanTrace {
 	if op == nil || op.tracer == nil {
 		return nil
 	}
@@ -338,7 +338,10 @@ func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, phys
 	name := tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())
 	traceInfo := op.tracer.State[name][prop]
 	if traceInfo == nil {
-		return nil
+		logutil.BgLogger().Info("appendCandidate newTraceInfo",
+			zap.String("logicalPlan", tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())),
+			zap.String("physicalPlan", tracing.CodecPlanName(physicalPlan.TP(), physicalPlan.ID())))
+		traceInfo = op.buildPhysicalOptimizeTraceInfo(logicalPlan, prop)
 	}
 	traceInfo.Candidates = append(traceInfo.Candidates, PhysicalPlanTrace)
 	return PhysicalPlanTrace
@@ -415,9 +418,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	if opt != nil {
-		opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
-	}
+	opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
 	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
