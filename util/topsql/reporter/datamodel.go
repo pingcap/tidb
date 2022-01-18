@@ -497,7 +497,7 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
-// removeInValidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
 func (c *collecting) removeInvalidPlanRecord() {
 	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
 	for _, v := range c.records {
@@ -535,7 +535,7 @@ func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
 
-	c.removeInValidPlanRecord()
+	c.removeInvalidPlanRecord()
 
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {

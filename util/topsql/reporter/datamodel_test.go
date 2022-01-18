@@ -494,7 +494,7 @@ func TestRemoveInValidPlanRecord(t *testing.T) {
 		}
 	}
 
-	c1.removeInValidPlanRecord()
+	c1.removeInvalidPlanRecord()
 
 	result := []struct {
 		sql  string
