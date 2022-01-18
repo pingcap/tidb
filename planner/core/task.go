@@ -745,7 +745,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
-		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nlTask = nlTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
@@ -757,7 +757,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if rChanged {
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
-		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nrTask = nrTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
@@ -2118,7 +2118,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		partialAgg.SetCost(mpp.cost())
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-		newMpp := mpp.enforceExchangerImpl(prop)
+		newMpp := mpp.enforceExchanger(prop)
 		if newMpp.invalid() {
 			return newMpp
 		}
@@ -2158,8 +2158,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
-		newMpp := mpp.enforceExchangerImpl(prop)
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.CollectType}
+		newMpp := mpp.enforceExchanger(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2351,6 +2351,8 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 		return false
 	case property.BroadcastType:
 		return true
+	case property.CollectType:
+		return t.partTp != property.CollectType
 	default:
 		if t.partTp != property.HashType {
 			return true
@@ -2390,7 +2392,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),
+		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)

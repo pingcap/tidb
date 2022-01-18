@@ -17,6 +17,8 @@ package property
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -51,7 +53,23 @@ const (
 	BroadcastType
 	// HashType requires current task to shuffle its data according to some columns.
 	HashType
+	// CollectType requires all the task pass the data to one node (tidb/tiflash).
+	CollectType
 )
+
+func (t MPPPartitionType) ToExchangeType() tipb.ExchangeType {
+	switch t {
+	case BroadcastType:
+		return tipb.ExchangeType_Broadcast
+	case HashType:
+		return tipb.ExchangeType_Hash
+	case CollectType:
+		return tipb.ExchangeType_PassThrough
+	default:
+		log.Warn("generate an exchange with any partition type, which is illegal.")
+		return tipb.ExchangeType_PassThrough
+	}
+}
 
 // MPPPartitionColumn is the column that will be used in MPP Hash Exchange
 type MPPPartitionColumn struct {
