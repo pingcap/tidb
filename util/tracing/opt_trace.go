@@ -170,7 +170,6 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 // we need to record the state of each candidate's child node, namely Children.
 type PhysicalOptimizeTraceInfo struct {
 	Property   string       `json:"property"`
-	BestTask   *PlanTrace   `json:"best"`
 	Candidates []*PlanTrace `json:"candidates"`
 }
 
@@ -225,14 +224,8 @@ func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
 	sCandidates := make([]*CandidatePlanTrace, 0)
 	dCandidates := make([]*CandidatePlanTrace, 0)
 	bestKeys := map[string]struct{}{}
-	for _, v := range tracer.State {
-		for _, tasksInfo := range v {
-			if tasksInfo.BestTask == nil {
-				continue
-			}
-			bestKey := CodecPlanName(tasksInfo.BestTask.TP, tasksInfo.BestTask.ID)
-			bestKeys[bestKey] = struct{}{}
-		}
+	for _, node := range tracer.Final {
+		bestKeys[CodecPlanName(node.TP, node.ID)] = struct{}{}
 	}
 	for logicalKey, tasksInfo := range tracer.State {
 		for _, taskInfo := range tasksInfo {

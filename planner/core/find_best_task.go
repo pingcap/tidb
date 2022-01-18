@@ -330,17 +330,6 @@ func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.Plan
 	candidateInfo.Children = append(candidateInfo.Children, childPhysicalPlanTrace)
 }
 
-func (op *physicalOptimizeOp) setBest(lp LogicalPlan, pp PhysicalPlan, prop string) {
-	if op == nil || op.tracer == nil || pp == nil {
-		return
-	}
-	traceInfo := op.tracer.State[fmt.Sprintf("%v_%v", lp.TP(), lp.ID())][prop]
-	if traceInfo == nil {
-		return
-	}
-	traceInfo.BestTask = &tracing.PlanTrace{ID: pp.ID(), TP: pp.TP(), Cost: pp.Cost(), ExplainInfo: pp.ExplainInfo()}
-}
-
 func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PlanTrace {
 	if op == nil || op.tracer == nil {
 		return nil
@@ -452,9 +441,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 END:
 	p.storeTask(prop, bestTask)
-	if opt != nil {
-		opt.setBest(p.self, bestTask.plan(), prop.String())
-	}
 	return bestTask, cntPlan, nil
 }
 
