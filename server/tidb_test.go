@@ -139,6 +139,8 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	cleanFn := func() {
 		cleanup()
 		cpuprofile.StopCPUProfiler()
+		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
 	}
 	return ts, cleanFn
 }
