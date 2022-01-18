@@ -2872,6 +2872,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	isView := false
 	isSequence := false
 	switch show.Tp {
+	case ast.ShowColumns:
+		var extractor ShowColumnsTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			show.Pattern = nil
+		}
+	}
+
+	switch show.Tp {
 	case ast.ShowTables, ast.ShowTableStatus:
 		if p.DBName == "" {
 			return nil, ErrNoDB
