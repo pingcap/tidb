@@ -444,6 +444,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashDropPartition(c *C) {
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash")
 	tk.MustExec("alter table ddltiflash drop partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable * 5)
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash")

@@ -327,9 +327,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:        ctx,
-		ddlCtx:     ddlCtx,
-		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
+		ctx:               ctx,
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: true,
 	}
 
 	return d
