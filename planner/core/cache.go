@@ -172,6 +172,11 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
 			return false
 		}
+		// When the type is decimal, we should compare the Flen and Decimal.
+		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
+		if tpEqual && s[i].Tp == mysql.TypeNewDecimal && !(s[i].Flen >= tps[i].Flen && s[i].Decimal >= tps[i].Decimal) {
+			return false
+		}
 	}
 	return true
 }

@@ -90,11 +90,6 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
-		// set length and decimal to unspecified if arguments depend on parameters
-		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		return
-	}
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
 		if !isMultiply {

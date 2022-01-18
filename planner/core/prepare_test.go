@@ -1733,7 +1733,33 @@ func (s *testPlanSerialSuite) TestIssue29565(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustExec(`set @a=5408499810319315618, @b=-9999999999999999999999999999999999999999999999999999999`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-9999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=7309027171262036496, @b=-9798213896406520625`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func (s *testPlanSerialSuite) TestIssue31730(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_S_MULTI_37;`)
+	tk.MustExec(`CREATE TABLE PK_S_MULTI_37 (COL1 decimal(55,0) NOT NULL, COL2 decimal(55,0) NOT NULL,PRIMARY KEY (COL1, COL2) /*T![clustered_index] NONCLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into PK_S_MULTI_37 values(-9999999999999999999999999999999999999999999999, 1);`)
+	tk.MustExec(`prepare stmt from 'SELECT SUM(COL1+?), col2 FROM PK_S_MULTI_37 GROUP BY col2';`)
+	tk.MustExec(`set @a=1;`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("-9999999999999999999999999999999999999999999998 1"))
 }
 
 func (s *testPlanSerialSuite) TestIssue28828(c *C) {
