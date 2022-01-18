@@ -543,11 +543,11 @@ type dupTask struct {
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
-	var tasks []dupTask
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tasks := make([]dupTask, 0, len(keyRanges))
 	for _, kr := range keyRanges {
 		tableID := tablecodec.DecodeTableID(kr.StartKey)
 		tasks = append(tasks, dupTask{
@@ -587,7 +587,7 @@ func (m *DuplicateManager) splitLocalDupTaskByKeys(
 		return nil, errors.Trace(err)
 	}
 	ranges := splitRangeBySizeProps(Range{start: task.StartKey, end: task.EndKey}, sizeProps, sizeLimit, keysLimit)
-	var newDupTasks []dupTask
+	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
 			KeyRange: tidbkv.KeyRange{
