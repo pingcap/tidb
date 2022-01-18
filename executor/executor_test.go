@@ -593,6 +593,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
 	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
@@ -2360,8 +2361,8 @@ func (s *testSuiteP2) TestTableScan(c *C) {
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")
-	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
-	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil)
 	tk.MustExec("use information_schema")
 	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
 	result.Check(testkit.Rows(rowStr1))

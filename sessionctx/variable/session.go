@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -748,6 +747,9 @@ type SessionVars struct {
 	//   ignore: Ignore all placement settings in ddl operations
 	PlacementMode string
 
+	// EnableDirectPlacement is used to control whether the direct placement should be enabled
+	EnableDirectPlacement bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -997,13 +999,6 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
-	// StmtStats is used to count various indicators of each SQL in this session
-	// at each point in time. These data will be periodically taken away by the
-	// background goroutine. The background goroutine will continue to aggregate
-	// all the local data in each session, and finally report them to the remote
-	// regularly.
-	StmtStats *stmtstats.StatementStats
-
 	// ReadConsistency indicates the read consistency requirement.
 	ReadConsistency ReadConsistencyLevel
 
@@ -1248,7 +1243,6 @@ func NewSessionVars() *SessionVars {
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		Rng:                         utilMath.NewWithTime(),
-		StmtStats:                   stmtstats.CreateStatementStats(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1301,11 +1295,9 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	var enableChunkRPC string
+	enableChunkRPC := "0"
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
-	} else {
-		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
@@ -2193,7 +2185,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				vStr = "pseudo"
 			} else {
 				vStr = strconv.FormatUint(v, 10)
-
 			}
 			if firstComma {
 				buf.WriteString("," + k + ":" + vStr)

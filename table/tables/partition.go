@@ -964,7 +964,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
-					valueMsg = fmt.Sprintf("%d", val)
+					valueMsg = strconv.FormatInt(val, 10)
 				}
 			}
 		} else {
