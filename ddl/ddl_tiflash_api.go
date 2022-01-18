@@ -412,29 +412,30 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 func (d *ddl) PollTiFlashRoutine() {
 	pollTiflashContext := NewTiFlashManagementContext()
 	for {
-		if d.sessPool == nil {
-			logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
-			return
-		}
-		failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
-			failpoint.Continue()
-		})
-		sctx, err := d.sessPool.get()
-		if err == nil {
-			if d.ownerManager.IsOwner() {
-				_, err := d.pollTiFlashReplicaStatus(sctx, pollTiflashContext)
-				if err != nil {
-					logutil.BgLogger().Warn("pollTiFlashReplicaStatus returns error", zap.Error(err))
+		if d.IsTiFlashPollEnabled() {
+			if d.sessPool == nil {
+				logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
+				return
+			}
+			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
+				failpoint.Continue()
+			})
+			sctx, err := d.sessPool.get()
+			if err == nil {
+				if d.ownerManager.IsOwner() {
+					_, err := d.pollTiFlashReplicaStatus(sctx, pollTiflashContext)
+					if err != nil {
+						logutil.BgLogger().Warn("pollTiFlashReplicaStatus returns error", zap.Error(err))
+					}
 				}
-			}
-			d.sessPool.put(sctx)
-		} else {
-			if sctx != nil {
 				d.sessPool.put(sctx)
+			} else {
+				if sctx != nil {
+					d.sessPool.put(sctx)
+				}
+				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}
-			logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 		}
-
 		select {
 		case <-d.ctx.Done():
 			return
