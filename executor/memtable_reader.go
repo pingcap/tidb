@@ -271,7 +271,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -349,7 +349,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -565,7 +565,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
-	var results []chan logStreamResult
+	var results []chan logStreamResult // nolint: prealloc
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address

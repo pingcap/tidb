@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
@@ -83,8 +82,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	require.NoError(t, err)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -1762,6 +1759,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			found++
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
+			require.Equal(t, uint64(ExecCountPerSQL), item.DurationCount, sqlStr)
 			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
 			require.True(t, item.SumDurationNs < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
 			if strings.HasPrefix(sqlStr, "set global") {

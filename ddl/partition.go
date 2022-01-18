@@ -194,6 +194,10 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
 
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
@@ -442,14 +446,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 
 	if err != nil {
 		return nil, err
-	}
-
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return partitions, nil

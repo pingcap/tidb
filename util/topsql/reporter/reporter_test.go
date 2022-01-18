@@ -397,7 +397,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	for i := 0; i < 7; i++ {
 		chs = append(chs, make(chan *ReportData, 1))
 	}
-	var dss []DataSink
+	dss := make([]DataSink, 0, len(chs))
 	for _, ch := range chs {
 		dss = append(dss, newMockDataSink(ch))
 	}
@@ -475,13 +475,14 @@ func TestMultipleDataSinks(t *testing.T) {
 }
 
 func TestReporterWorker(t *testing.T) {
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
 
 	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	r.Start()
 	defer r.Close()
 
-	ds := newMockDataSink2()
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
 	err := r.Register(ds)
 	assert.NoError(t, err)
 
@@ -503,12 +504,16 @@ func TestReporterWorker(t *testing.T) {
 		},
 	})
 
-	time.Sleep(3 * time.Second)
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
 
-	assert.Len(t, ds.data, 1)
-	assert.Len(t, ds.data[0].DataRecords, 1)
-	assert.Equal(t, []byte("S1"), ds.data[0].DataRecords[0].SqlDigest)
-	assert.Equal(t, []byte("P1"), ds.data[0].DataRecords[0].PlanDigest)
+	assert.Len(t, data.DataRecords, 1)
+	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {

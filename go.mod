@@ -48,18 +48,18 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
-	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
+	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20211207042851-78a55fb8e69c
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/sysutil v0.0.0-20211208032423-041a72e5860d
+	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20211227115224-a06a85f9d2a5
+	github.com/pingcap/tipb v0.0.0-20220107024056-3b91949a18a7
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
-	github.com/shirou/gopsutil v3.21.3+incompatible
+	github.com/shirou/gopsutil/v3 v3.21.12
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/soheilhy/cmux v0.1.4

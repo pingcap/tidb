@@ -527,8 +527,6 @@ func TestStmtSummary(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-	mustExec(t, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	writeStmtSummaryVars(se)
 
 	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
@@ -771,13 +769,12 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err = getBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExec(t, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
 			row := req.GetRow(0)
 			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
-			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(1))
 		}()
 	}
 }

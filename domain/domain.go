@@ -1109,7 +1109,9 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
 				do.bindHandle.DropInvalidBindRecord()
-				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+				// Get Global
+				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
+				if err == nil && variable.TiDBOptOn(optVal) {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
@@ -1403,6 +1405,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
+		dumpColStatsUsageTicker.Stop()
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()

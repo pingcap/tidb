@@ -2607,58 +2607,6 @@ func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }
 
-func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
-	store, clean := newStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-
-	defer func() {
-		require.True(t, tk.Session().Auth(&auth.UserIdentity{
-			Username: "root",
-			Hostname: "localhost",
-		}, nil, nil))
-		tk.MustExec(`DROP SCHEMA IF EXISTS placment_rule_db`)
-		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_scheam`)
-		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_table`)
-	}()
-	tk.MustExec("CREATE DATABASE placement_rule_db")
-	tk.MustExec("USE placement_rule_db")
-	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
-	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-	tk.MustExec("CREATE USER placement_rule_user_schema")
-	tk.MustExec("CREATE USER placement_rule_user_table")
-	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_schema",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows())
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_table",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "root",
-		Hostname: "localhost",
-	}, nil, nil))
-	tk.MustExec("GRANT SELECT ON placement_rule_db.* TO placement_rule_user_schema")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_schema",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-}
-
 func TestGrantCreateTmpTables(t *testing.T) {
 	store, clean := newStore(t)
 	defer clean()
@@ -2923,7 +2871,9 @@ func TestIssue28675(t *testing.T) {
 	tk.MustExec("grant select on test.v to test_user")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
 	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("1"))
 	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
+	tk.MustQuery("select privileges from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("select,update"))
 	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
 	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
 }

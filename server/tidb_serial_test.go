@@ -20,10 +20,10 @@ import (
 	"context"
 	"crypto/x509"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
-	"path/filepath"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"

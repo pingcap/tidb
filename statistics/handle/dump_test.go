@@ -17,7 +17,6 @@ package handle_test
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
@@ -100,12 +99,10 @@ func TestConversion(t *testing.T) {
 	requireTableEqual(t, loadTbl, tbl)
 
 	cleanStats(tk, dom)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		require.Nil(t, h.Update(is))
-		wg.Done()
-	}()
+	})
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	wg.Wait()
 	require.NoError(t, err)

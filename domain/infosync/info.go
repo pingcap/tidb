@@ -16,7 +16,6 @@ package infosync
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -423,30 +422,6 @@ func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) 
 		return
 	}
 	return util2.InternalHTTPClient().Do(req)
-}
-
-// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
-func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (bool, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return false, err
-	}
-
-	if is.etcdCli == nil {
-		return false, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return false, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
-	if err == nil && res != nil {
-		return string(res) == "true\n", nil
-	}
-	return false, err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.

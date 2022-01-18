@@ -338,7 +338,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 func EraseLastSemicolon(stmt ast.StmtNode) {
 	sql := stmt.Text()
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
-		stmt.SetText(sql[:len(sql)-1])
+		stmt.SetText(nil, sql[:len(sql)-1])
 	}
 }
 
@@ -1688,6 +1688,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.LastSnapshotTS = ts
 			p.IsStaleness = true
 		}
+	case readTS == 0 && node == nil && readStaleness == 0:
+		// If both readTS and node is empty while the readStaleness is empty,
+		// setting p.ReadReplicaScope is necessary to verify the txn scope later
+		// because we may be in a local txn without using the Stale Read.
+		p.ReadReplicaScope = scope
 	}
 
 	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp

@@ -15,10 +15,10 @@
 package executor_test
 
 import (
-	"syscall"
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/config"

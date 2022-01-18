@@ -18,57 +18,30 @@ import (
 	"context"
 	"regexp"
 	"sort"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&extractorSuite{})
-
-type extractorSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *extractorSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	c.Assert(store, NotNil)
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	c.Assert(dom, NotNil)
-
-	s.store = store
-	s.dom = dom
-}
-
-func (s *extractorSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
-	builder, _ := plannercore.NewPlanBuilder().Init(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), &hint.BlockHintProcessor{})
 	plan, err := builder.Build(ctx, stmt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
@@ -80,9 +53,12 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	return logicalMemTable
 }
 
-func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestClusterConfigTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	parser := parser.New()
 	var cases = []struct {
@@ -236,25 +212,28 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
-		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 	}
 }
 
-func timestamp(c *C, s string) int64 {
-	t, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
-	c.Assert(err, IsNil)
-	return t.UnixNano() / int64(time.Millisecond)
+func timestamp(t *testing.T, s string) int64 {
+	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
+	require.NoError(t, err)
+	return tt.UnixNano() / int64(time.Millisecond)
 }
 
-func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestClusterLogTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	parser := parser.New()
 	var cases = []struct {
@@ -414,77 +393,77 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
+			endTime:   timestamp(t, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and time<='2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-11 10:10:10"),
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
+			endTime:   timestamp(t, "2019-10-11 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
-			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime: timestamp(t, "2019-10-10 10:10:10") + 1,
+			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
+			endTime:   timestamp(t, "2019-10-11 10:10:10") - 1,
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where time>='2019-10-12 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
-			startTime:   timestamp(c, "2019-10-12 10:10:10"),
-			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime:   timestamp(t, "2019-10-12 10:10:10"),
+			endTime:     timestamp(t, "2019-10-11 10:10:10") - 1,
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-12 10:10:10"),
+			startTime: timestamp(t, "2019-10-12 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-13 10:10:10"),
-			endTime:   timestamp(c, "2019-10-13 10:10:10"),
+			startTime: timestamp(t, "2019-10-13 10:10:10"),
+			endTime:   timestamp(t, "2019-10-13 10:10:10"),
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where time<='2019-10-10 10:10:10' and time='2019-10-13 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
 			instances:   set.NewStringSet(),
-			startTime:   timestamp(c, "2019-10-13 10:10:10"),
-			endTime:     timestamp(c, "2019-10-10 10:10:10"),
+			startTime:   timestamp(t, "2019-10-13 10:10:10"),
+			endTime:     timestamp(t, "2019-10-10 10:10:10"),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10:10:10' and time<='2019-10-13 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
+			endTime:   timestamp(t, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and message like '%a%'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			startTime: timestamp(t, "2019-10-10 10:10:10"),
 			patterns:  []string{".*a.*"},
 		},
 		{
@@ -531,34 +510,37 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
-		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		require.EqualValues(t, ca.nodeTypes, clusterConfigExtractor.NodeTypes, "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.instances, clusterConfigExtractor.Instances, "SQL: %v", ca.sql)
+		require.EqualValues(t, ca.skipRequest, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 		if ca.startTime > 0 {
-			c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
+			require.Equal(t, ca.startTime, clusterConfigExtractor.StartTime, "SQL: %v", ca.sql)
 		}
 		if ca.endTime > 0 {
-			c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
+			require.Equal(t, ca.endTime, clusterConfigExtractor.EndTime, "SQL: %v", ca.sql)
 		}
-		c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns, Commentf("SQL: %v", ca.sql))
+		require.EqualValues(t, ca.patterns, clusterConfigExtractor.Patterns, "SQL: %v", ca.sql)
 		if len(ca.level) > 0 {
-			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.level, clusterConfigExtractor.LogLevels, "SQL: %v", ca.sql)
 		}
 	}
 }
 
-func (s *extractorSuite) TestMetricTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestMetricTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-	parseTime := func(c *C, s string) time.Time {
-		t, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
-		c.Assert(err, IsNil)
-		return t
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	parseTime := func(t *testing.T, s string) time.Time {
+		tt, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
+		require.NoError(t, err)
+		return tt
 	}
 
 	parser := parser.New()
@@ -607,33 +589,33 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 				"sql_type": set.NewStringSet("Update"),
 			},
-			startTime: parseTime(c, "2019-10-10 10:10:10"),
-			endTime:   parseTime(c, "2019-10-10 10:10:10"),
+			startTime: parseTime(t, "2019-10-10 10:10:10"),
+			endTime:   parseTime(t, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from metrics_schema.tidb_query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
-			startTime: parseTime(c, "2019-10-10 10:10:10.001"),
-			endTime:   parseTime(c, "2019-10-11 10:10:09.999"),
+			startTime: parseTime(t, "2019-10-10 10:10:10.001"),
+			endTime:   parseTime(t, "2019-10-11 10:10:09.999"),
 		},
 		{
 			sql:       "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
-			startTime: parseTime(c, "2019-10-10 10:10:10"),
-			endTime:   parseTime(c, "2019-10-10 10:20:10"),
+			startTime: parseTime(t, "2019-10-10 10:10:10"),
+			endTime:   parseTime(t, "2019-10-10 10:20:10"),
 		},
 		{
 			sql:         "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
 			promQL:      "",
-			startTime:   parseTime(c, "2019-10-10 10:10:10"),
-			endTime:     parseTime(c, "2019-10-09 10:10:10"),
+			startTime:   parseTime(t, "2019-10-10 10:10:10"),
+			endTime:     parseTime(t, "2019-10-09 10:10:10"),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from metrics_schema.tidb_query_duration where time<='2019-10-09 10:10:10'",
 			promQL:    "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
-			startTime: parseTime(c, "2019-10-09 10:00:10"),
-			endTime:   parseTime(c, "2019-10-09 10:10:10"),
+			startTime: parseTime(t, "2019-10-09 10:00:10"),
+			endTime:   parseTime(t, "2019-10-09 10:10:10"),
 		},
 		{
 			sql: "select * from metrics_schema.tidb_query_duration where quantile=0.9 or quantile=0.8",
@@ -649,34 +631,37 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
 		if len(ca.labelConditions) > 0 {
-			c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.labelConditions, metricTableExtractor.LabelConditions, "SQL: %v", ca.sql)
 		}
-		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		require.EqualValues(t, ca.skipRequest, metricTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 		if len(metricTableExtractor.Quantiles) > 0 {
-			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
+			require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
 		}
 		if !ca.skipRequest {
 			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
-			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
-			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
+			require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())
 			if ca.startTime.Unix() > 0 {
-				c.Assert(metricTableExtractor.StartTime, DeepEquals, ca.startTime, Commentf("SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime))
+				require.EqualValues(t, ca.startTime, metricTableExtractor.StartTime, "SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime)
 			}
 			if ca.endTime.Unix() > 0 {
-				c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime))
+				require.EqualValues(t, ca.endTime, metricTableExtractor.EndTime, "SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime)
 			}
 		}
 	}
 }
 
-func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestMetricsSummaryTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	var cases = []struct {
 		sql         string
@@ -758,23 +743,26 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 	for _, ca := range cases {
 		sort.Float64s(ca.quantiles)
 
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
 		if len(ca.quantiles) > 0 {
-			c.Assert(extractor.Quantiles, DeepEquals, ca.quantiles, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.quantiles, extractor.Quantiles, "SQL: %v", ca.sql)
 		}
 		if len(ca.names) > 0 {
-			c.Assert(extractor.MetricsNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.names, extractor.MetricsNames, "SQL: %v", ca.sql)
 		}
-		c.Assert(extractor.SkipRequest, Equals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		require.Equal(t, ca.skipRequest, extractor.SkipRequest, "SQL: %v", ca.sql)
 	}
 }
 
-func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestInspectionResultTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	var cases = []struct {
 		sql            string
@@ -897,23 +885,26 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
 		if len(ca.rules) > 0 {
-			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
 		}
 		if len(ca.items) > 0 {
-			c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.items, clusterConfigExtractor.Items, "SQL: %v", ca.sql)
 		}
-		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+		require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
 	}
 }
 
-func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestInspectionSummaryTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	var cases = []struct {
 		sql            string
@@ -996,23 +987,26 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
 		if len(ca.rules) > 0 {
-			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.rules, clusterConfigExtractor.Rules, "SQL: %v", ca.sql)
 		}
 		if len(ca.names) > 0 {
-			c.Assert(clusterConfigExtractor.MetricNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.names, clusterConfigExtractor.MetricNames, "SQL: %v", ca.sql)
 		}
-		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+		require.Equal(t, ca.skipInspection, clusterConfigExtractor.SkipInspection, "SQL: %v", ca.sql)
 	}
 }
 
-func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestInspectionRuleTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	var cases = []struct {
 		sql  string
@@ -1037,20 +1031,23 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
 		if len(ca.tps) > 0 {
-			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.tps, clusterConfigExtractor.Types, "SQL: %v", ca.sql)
 		}
-		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
+		require.Equal(t, ca.skip, clusterConfigExtractor.SkipRequest, "SQL: %v", ca.sql)
 	}
 }
 
-func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 
 	var cases = []struct {
@@ -1072,40 +1069,40 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10"),
-			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-10 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<='2019-10-11 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10"),
-			endTime:        timestamp(c, "2019-10-11 10:10:10"),
+			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-11 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>'2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10") + 1,
-			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime:      timestamp(t, "2019-10-10 10:10:10") + 1,
+			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10"),
-			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-12 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime:      timestamp(c, "2019-10-12 10:10:10"),
-			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime:      timestamp(t, "2019-10-12 10:10:10"),
+			endTime:        timestamp(t, "2019-10-11 10:10:10") - 1,
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
@@ -1113,30 +1110,30 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			startTime:      timestamp(t, "2019-10-10 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10'",
-			startTime:      timestamp(c, "2019-10-12 10:10:10"),
+			startTime:      timestamp(t, "2019-10-12 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10' and update_time='2019-10-13 10:10:10'",
-			startTime:      timestamp(c, "2019-10-13 10:10:10"),
-			endTime:        timestamp(c, "2019-10-13 10:10:10"),
+			startTime:      timestamp(t, "2019-10-13 10:10:10"),
+			endTime:        timestamp(t, "2019-10-13 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time<='2019-10-10 10:10:10' and update_time='2019-10-13 10:10:10'",
-			startTime:      timestamp(c, "2019-10-13 10:10:10"),
-			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			startTime:      timestamp(t, "2019-10-13 10:10:10"),
+			endTime:        timestamp(t, "2019-10-10 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
@@ -1144,8 +1141,8 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10' and update_time<='2019-10-13 10:10:10'",
-			startTime:      timestamp(c, "2019-10-10 10:10:10"),
-			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			startTime:      timestamp(t, "2019-10-10 10:10:10"),
+			endTime:        timestamp(t, "2019-10-10 10:10:10"),
 			isLearners:     []bool{false, true},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
@@ -1389,41 +1386,44 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil, Commentf("SQL: %v", ca.sql))
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
 
 		hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
 		if ca.startTime > 0 {
-			c.Assert(hotRegionsHistoryExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
+			require.Equal(t, ca.startTime, hotRegionsHistoryExtractor.StartTime, "SQL: %v", ca.sql)
 		}
 		if ca.endTime > 0 {
-			c.Assert(hotRegionsHistoryExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
+			require.Equal(t, ca.endTime, hotRegionsHistoryExtractor.EndTime, "SQL: %v", ca.sql)
 		}
-		c.Assert(hotRegionsHistoryExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		require.EqualValues(t, ca.skipRequest, hotRegionsHistoryExtractor.SkipRequest, "SQL: %v", ca.sql)
 		if len(ca.isLearners) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.IsLearners, DeepEquals, ca.isLearners, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.isLearners, hotRegionsHistoryExtractor.IsLearners, "SQL: %v", ca.sql)
 		}
 		if len(ca.isLeaders) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.IsLeaders, DeepEquals, ca.isLeaders, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.isLeaders, hotRegionsHistoryExtractor.IsLeaders, "SQL: %v", ca.sql)
 		}
 		if ca.hotRegionTypes.Count() > 0 {
-			c.Assert(hotRegionsHistoryExtractor.HotRegionTypes, DeepEquals, ca.hotRegionTypes, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.hotRegionTypes, hotRegionsHistoryExtractor.HotRegionTypes, "SQL: %v", ca.sql)
 		}
 		if len(ca.regionIDs) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.regionIDs, hotRegionsHistoryExtractor.RegionIDs, "SQL: %v", ca.sql)
 		}
 		if len(ca.storeIDs) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.storeIDs, hotRegionsHistoryExtractor.StoreIDs, "SQL: %v", ca.sql)
 		}
 		if len(ca.peerIDs) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.PeerIDs, DeepEquals, ca.peerIDs, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.peerIDs, hotRegionsHistoryExtractor.PeerIDs, "SQL: %v", ca.sql)
 		}
 	}
 }
 
-func (s *extractorSuite) TestTikvRegionPeersExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
+func TestTikvRegionPeersExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	var cases = []struct {
 		sql                 string
@@ -1502,8 +1502,8 @@ func (s *extractorSuite) TestTikvRegionPeersExtractor(c *C) {
 			skipRequest: true,
 		},
 		{
-			sql: `select * from information_schema.tikv_region_peers 
-								where region_id=100 and region_id in (100,101) 
+			sql: `select * from information_schema.tikv_region_peers
+								where region_id=100 and region_id in (100,101)
 								and store_id=200 and store_id in (201,202)`,
 			skipRequest: true,
 		},
@@ -1512,43 +1512,158 @@ func (s *extractorSuite) TestTikvRegionPeersExtractor(c *C) {
 			regionIDs: []uint64{101},
 		},
 		{
-			sql: `select * from information_schema.tikv_region_peers 
-							where region_id in (100,101) 
-							and region_id in (101,102) 
-							and store_id in (200,201) 
+			sql: `select * from information_schema.tikv_region_peers
+							where region_id in (100,101)
+							and region_id in (101,102)
+							and store_id in (200,201)
 							and store_id in (201,202)`,
 			regionIDs: []uint64{101},
 			storeIDs:  []uint64{201},
 		},
 		{
-			sql: `select * from information_schema.tikv_region_peers 
-							where region_id in (100,101) 
-							and region_id in (100,102) 
-							and region_id in (102,103) 
+			sql: `select * from information_schema.tikv_region_peers
+							where region_id in (100,101)
+							and region_id in (100,102)
+							and region_id in (102,103)
 							and region_id in (103,104)`,
 			skipRequest: true,
 		},
 		// Test columns that is not extracted by TikvRegionPeersExtractor
 		{
-			sql: `select * from information_schema.tikv_region_peers 
-							where peer_id=100 
-							and is_learner=0 
-							and is_leader=1 
-							and status='NORMAL' 
+			sql: `select * from information_schema.tikv_region_peers
+							where peer_id=100
+							and is_learner=0
+							and is_leader=1
+							and status='NORMAL'
 							and down_seconds=1000`,
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		tikvRegionPeersExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionPeersExtractor)
 		if len(ca.regionIDs) > 0 {
-			c.Assert(tikvRegionPeersExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.regionIDs, tikvRegionPeersExtractor.RegionIDs, "SQL: %v", ca.sql)
 		}
 		if len(ca.storeIDs) > 0 {
-			c.Assert(tikvRegionPeersExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
+			require.EqualValues(t, ca.storeIDs, tikvRegionPeersExtractor.StoreIDs, "SQL: %v", ca.sql)
 		}
 	}
+}
+
+func TestColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                string
+		columnName         set.StringSet
+		tableSchema        set.StringSet
+		tableName          set.StringSet
+		columnNamePattern  []string
+		tableSchemaPattern []string
+		tableNamePattern   []string
+		skipRequest        bool
+	}{
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.COLUMNS where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from INFORMATION_SCHEMA.COLUMNS where table_name='TEST';`,
+			tableName: set.NewStringSet("test"),
+		},
+		{
+			sql:        "select * from information_schema.COLUMNS where table_name in ('TEST','t') and column_name in ('A','b')",
+			columnName: set.NewStringSet("a", "b"),
+			tableName:  set.NewStringSet("test", "t"),
+		},
+		{
+			sql:       `select * from information_schema.COLUMNS where table_name='a' and table_name in ('a', 'B');`,
+			tableName: set.NewStringSet("a"),
+		},
+		{
+			sql:         `select * from information_schema.COLUMNS where table_name='a' and table_name='B';`,
+			skipRequest: true,
+		},
+		{
+			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
+			tableNamePattern: []string{"(?i)T.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
+			columnNamePattern: []string{"(?i)T.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
+			columnNamePattern: []string{"(?i)i.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
+			columnNamePattern: []string{"(?i)abc.*|def.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
+			columnNamePattern: []string{"(?i)abc.*", "(?i).*def"},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColumnName.Count())
+		if ca.columnName.Count() > 0 && columnsTableExtractor.ColumnName.Count() > 0 {
+			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColumnName, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.TableSchema.Count())
+		if ca.tableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.TableName.Count())
+		if ca.tableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
+			require.EqualValues(t, ca.tableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.TableNamePatterns))
+		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.TableNamePatterns) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.TableNamePatterns, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.ColumnNamePatterns))
+		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.ColumnNamePatterns) > 0 {
+			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.ColumnNamePatterns, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.TableSchemaPatterns))
+		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		}
+	}
+}
+
+func TestPredicateQuery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, abclmn int);")
+
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'I%' or column_name like '%D')").Check(testkit.Rows("id"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%lmn')").Check(testkit.Rows("abclmn"))
 }
