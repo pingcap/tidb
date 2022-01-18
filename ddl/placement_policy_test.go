@@ -1017,7 +1017,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */",
 	))
 
-	db, ok := s.dom.InfoSchema().(infoschema.InfoSchema).SchemaByName(model.NewCIStr("db2"))
+	db, ok := s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef.ID, Equals, policy1.ID)
 	c.Assert(db.DirectPlacementOpts, IsNil)
@@ -1027,7 +1027,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p2` */",
 	))
 
-	db, ok = s.dom.InfoSchema().(infoschema.InfoSchema).SchemaByName(model.NewCIStr("db2"))
+	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef.ID, Equals, policy2.ID)
 	c.Assert(db.DirectPlacementOpts, IsNil)
@@ -1038,7 +1038,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
-	db, ok = s.dom.InfoSchema().(infoschema.InfoSchema).SchemaByName(model.NewCIStr("db2"))
+	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef, IsNil)
 	c.Assert(db.DirectPlacementOpts, IsNil)
