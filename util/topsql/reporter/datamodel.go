@@ -498,7 +498,7 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 }
 
 // removeInValidPlanRecord remove "" plan if there are only 1 valid plan in the record.
-func (c *collecting) removeInValidPlanRecord() {
+func (c *collecting) removeInvalidPlanRecord() {
 	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
 	for _, v := range c.records {
 		k := string(v.sqlDigest)
