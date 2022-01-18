@@ -46,13 +46,15 @@ LINUX     := "Linux"
 MAC       := "Darwin"
 
 PACKAGE_LIST  := go list ./...
-PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
+PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGES_TIDB_TESTS ?= $$($(PACKAGE_LIST_TIDB_TESTS))
+PACKAGES_TIDB_TESTS_WITHOUT_BR ?= $$($(PACKAGE_LIST_TIDB_TESTS) | grep -v "br")
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 PACKAGE_DIRECTORIES_TIDB_TESTS := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||'
+PACKAGE_DIRECTORIES_TIDB_TESTS_WITHOUT_BR := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||' | grep -v "br"
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
-FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) -name "*.go")
+FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS_WITHOUT_BR)) -name "*.go")
 
 UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
