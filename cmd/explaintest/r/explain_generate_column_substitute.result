@@ -1,3 +1,4 @@
+set names utf8mb4;
 use test;
 drop table if exists t;
 create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
@@ -414,8 +415,7 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(Column#6)->Column#4
 └─IndexReader	1.00	root		index:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#6
-    └─Selection	8000.00	cop[tikv]		like(md5(cast(test.tbl1.s, var_string(20))), "02e74f10e0327ad868d138f2b4fdd6f%", 92)
-      └─IndexFullScan	10000.00	cop[tikv]	table:tbl1, index:expression_index(md5(`s`))	keep order:false, stats:pseudo
+    └─IndexRangeScan	250.00	cop[tikv]	table:tbl1, index:expression_index(md5(`s`))	range:["02e74f10e0327ad868d138f2b4fdd6f","02e74f10e0327ad868d138f2b4fdd6g"), keep order:false, stats:pseudo
 select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
 count(*)
 64
