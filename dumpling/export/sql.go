@@ -297,7 +297,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
 	var policyList []string
 	var policy string
-	const query = "select distinct policy_name from information_schema.placement_rules where policy_name is not null;"
+	const query = "select distinct policy_name from information_schema.placement_policies where policy_name is not null;"
 	rows, err := db.QueryContext(context.Background(), query)
 	if err != nil {
 		return policyList, errors.Annotatef(err, "sql: %s", query)
