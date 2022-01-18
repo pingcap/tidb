@@ -83,7 +83,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(ctx, rows, e.addRecord)
+		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
 		if err != nil {
 			return err
 		}
