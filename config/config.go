@@ -229,11 +229,9 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
-	var osUID string
+	osUID := ""
 	currentUser, err := user.Current()
-	if err != nil {
-		osUID = ""
-	} else {
+	if err == nil {
 		osUID = currentUser.Uid
 	}
 	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
