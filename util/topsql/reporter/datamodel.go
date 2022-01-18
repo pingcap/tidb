@@ -498,6 +498,7 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 }
 
 // removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
 func (c *collecting) removeInvalidPlanRecord() {
 	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
 	for _, v := range c.records {
