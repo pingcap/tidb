@@ -746,7 +746,7 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBIsDDLOwnerSig.
+// evalInt evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {

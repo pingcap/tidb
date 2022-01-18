@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -65,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -312,7 +312,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		req.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
+		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
 		if e.errs[i] != nil {
 			req.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
@@ -471,6 +471,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if job.BinlogInfo.MultipleTableInfos != nil {
+			tablenames := new(strings.Builder)
+			for i, affect := range job.BinlogInfo.MultipleTableInfos {
+				if i > 0 {
+					fmt.Fprintf(tablenames, ",")
+				}
+				fmt.Fprintf(tablenames, "%s", affect.Name.L)
+			}
+			tableName = tablenames.String()
 		}
 		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
 			schemaName = job.BinlogInfo.DBInfo.Name.L
@@ -1718,7 +1728,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			return err
 		}
@@ -1730,8 +1740,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+		}
+		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
+			if s.LockInfo == nil {
+				sc.WeakConsistency = isWeakConsistencyRead(ctx, execStmt)
+			}
 		}
 	}
 	// execute missed stmtID uses empty sql
@@ -1779,6 +1794,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InCreateOrAlterStmt = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
+		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
+		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
@@ -1806,6 +1823,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1829,6 +1847,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
+	sc.SkipUTF8Check = vars.SkipUTF8Check
+	sc.SkipASCIICheck = vars.SkipASCIICheck
+	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
@@ -1910,7 +1931,21 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && variable.TopSQLEnabled() {
+	if snapshot != nil && topsqlstate.TopSQLEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
+}
+
+// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
+// the number of SQL executions of each TiKV.
+func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
+	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
+}
+
+func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
+		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
 }

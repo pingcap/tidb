@@ -124,7 +124,7 @@ Sort	2.94	root		tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus
   └─HashAgg	2.94	root		group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(tpch.lineitem.l_returnflag)->tpch.lineitem.l_returnflag, funcs:firstrow(tpch.lineitem.l_linestatus)->tpch.lineitem.l_linestatus
     └─TableReader	2.94	root		data:HashAgg
       └─HashAgg	2.94	cop[tikv]		group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(tpch.lineitem.l_quantity)->Column#26, funcs:sum(tpch.lineitem.l_extendedprice)->Column#27, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)))->Column#28, funcs:sum(mul(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), plus(1, tpch.lineitem.l_tax)))->Column#29, funcs:count(tpch.lineitem.l_quantity)->Column#30, funcs:sum(tpch.lineitem.l_quantity)->Column#31, funcs:count(tpch.lineitem.l_extendedprice)->Column#32, funcs:sum(tpch.lineitem.l_extendedprice)->Column#33, funcs:count(tpch.lineitem.l_discount)->Column#34, funcs:sum(tpch.lineitem.l_discount)->Column#35, funcs:count(1)->Column#36
-        └─Selection	293795345.00	cop[tikv]		le(tpch.lineitem.l_shipdate, 1998-08-15)
+        └─Selection	293795345.00	cop[tikv]		le(tpch.lineitem.l_shipdate, 1998-08-15 00:00:00.000000)
           └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q2 Minimum Cost Supplier Query
@@ -300,7 +300,7 @@ Sort	1.00	root		tpch.orders.o_orderpriority
   └─HashAgg	1.00	root		group by:tpch.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch.orders.o_orderpriority)->tpch.orders.o_orderpriority
     └─IndexHashJoin	2340750.00	root		semi join, inner:IndexLookUp, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
       ├─TableReader(Build)	2925937.50	root		data:Selection
-      │ └─Selection	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01)
+      │ └─Selection	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01 00:00:00.000000)
       │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
       └─IndexLookUp(Probe)	4.05	root		
         ├─IndexRangeScan(Build)	5.06	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
@@ -353,7 +353,7 @@ Sort	5.00	root		Column#49:desc
           │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
           └─HashJoin(Probe)	11822812.50	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
             ├─TableReader(Build)	11822812.50	root		data:Selection
-            │ └─Selection	11822812.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01)
+            │ └─Selection	11822812.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000)
             │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
             └─HashJoin(Probe)	61163763.01	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
               ├─HashJoin(Build)	100000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
@@ -392,7 +392,7 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#20)->Column#18
 └─TableReader	1.00	root		data:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:sum(mul(tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount))->Column#20
-    └─Selection	3713857.91	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01)
+    └─Selection	3713857.91	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q7 Volume Shipping Query
@@ -669,7 +669,7 @@ Projection	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#39,
         └─IndexHashJoin	12222016.17	root		inner join, inner:IndexLookUp, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
           ├─HashJoin(Build)	3017307.69	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
           │ ├─TableReader(Build)	3017307.69	root		data:Selection
-          │ │ └─Selection	3017307.69	cop[tikv]		ge(tpch.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1993-11-01)
+          │ │ └─Selection	3017307.69	cop[tikv]		ge(tpch.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1993-11-01 00:00:00.000000)
           │ │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
           │ └─HashJoin(Probe)	7500000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.customer.c_nationkey)]
           │   ├─TableReader(Build)	25.00	root		data:TableFullScan
@@ -773,11 +773,11 @@ id	estRows	task	access object	operator info
 Sort	1.00	root		tpch.lineitem.l_shipmode
 └─Projection	1.00	root		tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg	1.00	root		group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
-    └─Projection	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
+    └─Projection	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
       └─Projection	10023369.01	root		tpch.orders.o_orderpriority, tpch.lineitem.l_shipmode
         └─IndexJoin	10023369.01	root		inner join, inner:TableReader, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey, equal cond:eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)
           ├─TableReader(Build)	10023369.01	root		data:Selection
-          │ └─Selection	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
+          │ └─Selection	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
           │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
           └─TableReader(Probe)	1.00	root		data:TableRangeScan
             └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
@@ -848,7 +848,7 @@ Projection	1.00	root		div(mul(100.00, Column#27), Column#28)->Column#29
   └─Projection	4121984.49	root		case(like(tpch.part.p_type, PROMO%, 92), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), 0)->Column#31, mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#32
     └─IndexJoin	4121984.49	root		inner join, inner:TableReader, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey, equal cond:eq(tpch.lineitem.l_partkey, tpch.part.p_partkey)
       ├─TableReader(Build)	4121984.49	root		data:Selection
-      │ └─Selection	4121984.49	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01)
+      │ └─Selection	4121984.49	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01 00:00:00.000000)
       │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
       └─TableReader(Probe)	1.00	root		data:TableRangeScan
         └─TableRangeScan	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:false
@@ -1170,7 +1170,7 @@ Sort	20000.00	root		tpch.supplier.s_name
           │   ├─IndexRangeScan(Build)	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
           │   └─TableRowIDScan(Probe)	4.02	cop[tikv]	table:partsupp	keep order:false
           └─TableReader(Probe)	44189356.65	root		data:Selection
-            └─Selection	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
+            └─Selection	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000)
               └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
@@ -1294,14 +1294,13 @@ cntrycode
 order by
 cntrycode;
 id	estRows	task	access object	operator info
-Sort	1.00	root		Column#27
-└─Projection	1.00	root		Column#27, Column#28, Column#29
-  └─HashAgg	1.00	root		group by:Column#33, funcs:count(1)->Column#28, funcs:sum(Column#31)->Column#29, funcs:firstrow(Column#32)->Column#27
-    └─Projection	0.00	root		tpch.customer.c_acctbal, substring(tpch.customer.c_phone, 1, 2)->Column#32, substring(tpch.customer.c_phone, 1, 2)->Column#33
+Sort	1.00	root		Column#31
+└─Projection	1.00	root		Column#31, Column#32, Column#33
+  └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
+    └─Projection	0.00	root		tpch.customer.c_acctbal, substring(tpch.customer.c_phone, 1, 2)->Column#36, substring(tpch.customer.c_phone, 1, 2)->Column#37
       └─HashJoin	0.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         ├─TableReader(Build)	75000000.00	root		data:TableFullScan
         │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─Selection(Probe)	0.00	root		in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-          └─TableReader	0.00	root		data:Selection
-            └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL)
-              └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+        └─TableReader(Probe)	0.00	root		data:Selection
+          └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+            └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false

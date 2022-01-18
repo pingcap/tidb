@@ -1914,7 +1914,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 	for _, id := range physicalTableIDs {
 		bundles = append(bundles, placement.NewBundle(id))
 	}
-	return infosync.PutRuleBundles(context.TODO(), bundles)
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {

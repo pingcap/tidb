@@ -88,6 +88,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, nil
 	}
 
+	// notice: addingDefinitions is empty when job is in state model.StateNone
 	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(t, job)
 	if err != nil {
 		return ver, err
@@ -117,30 +118,31 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		// modify placement settings
-		for _, def := range addingDefinitions {
-			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
-				return ver, errors.Trace(err)
-			}
-		}
-
-		bundles, err := alterTablePartitionBundles(t, tblInfo, addingDefinitions)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		// modify placement settings
+		for _, def := range tblInfo.Partition.AddingDefinitions {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
+		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
@@ -184,6 +186,17 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
+
+	// tblInfo do not include added partitions, so we should add them first
+	tblInfo = tblInfo.Clone()
+	p := *tblInfo.Partition
+	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
+	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	tblInfo.Partition = &p
+
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
@@ -433,14 +446,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 
 	if err != nil {
 		return nil, err
-	}
-
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return partitions, nil
@@ -1040,7 +1045,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
-		err = infosync.PutRuleBundles(context.TODO(), rollbackBundles)
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1208,7 +1213,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Trace(err)
 	}
 
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1412,7 +1417,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
+	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
@@ -1549,7 +1554,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

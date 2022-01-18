@@ -15,13 +15,16 @@
 package tables_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,7 +144,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on TableCache."))
 	}
 	assertSelect()
 
@@ -184,7 +187,7 @@ func TestCacheCondition(t *testing.T) {
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	tk.MustExec("delete from t2  where id = 2")
+	tk.MustExec("delete from t2 where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
@@ -212,34 +215,38 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 
 	tk.MustExec("alter table write_tmp1 cache")
 	// Read and add read lock
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001",
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001",
 		"3 113 1003"))
 	// read lock should valid
-	for i := 0; i < 10; i++ {
-		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
+	var i int
+	for i = 0; i < 10; i++ {
+		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
 			break
 		}
+		// Wait for the cache to be loaded.
+		time.Sleep(50 * time.Millisecond)
 	}
+	require.True(t, i < 10)
+
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
 	// write lock exists
-	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
+	require.False(t, tk.HasPlan("select * from write_tmp1", "UnionScan"))
 	// wait write lock expire and check cache can be used again
-	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
-		tk.MustExec("select *from write_tmp1")
+	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
+		tk.MustExec("select * from write_tmp1")
 	}
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
-		tk.MustExec("select *from write_tmp1")
+	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
+		tk.MustExec("select * from write_tmp1")
 	}
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	doneCh := make(chan struct{}, 1)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -247,25 +254,29 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk1.MustExec("create table complex_cache (id int primary key auto_increment, u int unique, v int)")
 	tk1.MustExec("insert into complex_cache values" + "(5, 105, 1005), (7, 117, 1007), (9, 109, 1009)")
 	tk1.MustExec("alter table complex_cache cache")
-	tk1.MustExec("begin")
-	tk1.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-
-	go func() {
-		tk2.MustExec("begin")
-		tk2.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-		var i int
-		for i = 0; i < 10; i++ {
-			time.Sleep(100 * time.Millisecond)
-			if tk2.HasPlan("select *from complex_cache where id > 7", "UnionScan") {
-				break
-			}
+	tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+	var i int
+	for i = 0; i < 100; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+			break
 		}
-		require.True(t, i < 10)
-		tk2.MustExec("commit")
-		doneCh <- struct{}{}
-	}()
-	<-doneCh
-	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
+	}
+	require.True(t, i < 10)
+
+	tk1.MustExec("begin")
+	tk2.MustExec("begin")
+	tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+	for i = 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk2.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+			break
+		}
+	}
+	require.True(t, i < 10)
+	tk2.MustExec("commit")
+
+	tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan")
 	tk1.MustExec("commit")
 }
 
@@ -285,10 +296,18 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustExec("insert into aba values (1, 1)")
 	tk1.MustExec("alter table aba cache")
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+	cacheUsed := false
+	for i := 0; i < 100; i++ {
+		if tk1.HasPlan("select * from aba", "UnionScan") {
+			cacheUsed = true
+			break
+		}
+	}
+	require.True(t, cacheUsed)
 
 	// Begin, read from cache.
 	tk1.MustExec("begin")
-	cacheUsed := false
+	cacheUsed = false
 	for i := 0; i < 100; i++ {
 		if tk1.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true
@@ -301,7 +320,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	for i := 0; i < 50; i++ {
+	cacheUsed = false
+	for i := 0; i < 100; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if tk2.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true
@@ -406,12 +426,28 @@ func TestRenewLease(t *testing.T) {
 	require.NoError(t, err)
 	var i int
 	tk.MustExec("select * from cache_renew_t")
-	_, oldLease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
+
+	tk1 := testkit.NewTestKit(t, store)
+	remote := tables.NewStateRemote(tk1.Session())
+	var leaseBefore uint64
+	for i = 0; i < 20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
+		require.NoError(t, err)
+		if lockType == tables.CachedTableLockRead {
+			leaseBefore = lease
+			break
+		}
+	}
+	require.True(t, i < 20)
+
 	for i = 0; i < 20; i++ {
 		time.Sleep(200 * time.Millisecond)
 		tk.MustExec("select * from cache_renew_t")
-		_, lease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
-		if lease != oldLease {
+		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
+		require.NoError(t, err)
+		require.Equal(t, lockType, tables.CachedTableLockRead)
+		if leaseBefore != lease {
 			break
 		}
 	}
@@ -423,7 +459,13 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	se := tk.Session()
+
+	// This line is a hack, if auth user string is "", the statement summary is skipped,
+	// so it's added to make the later code been covered.
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")
 	tk.MustExec("alter table wait_tb1 cache")
@@ -436,6 +478,55 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 		}
 	}
 	require.True(t, i < 10)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into wait_tb1 values(1)")
 	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
+
+	tk.MustQuery("select DIGEST_TEXT from INFORMATION_SCHEMA.STATEMENTS_SUMMARY where MAX_BACKOFF_TIME > 0 or MAX_WAIT_TIME > 0").Check(testkit.Rows("insert into `wait_tb1` values ( ? )"))
+}
+
+func TestTableCacheLeaseVariable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Check default value.
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("3"))
+
+	// Check a valid value.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 1;")
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("1"))
+
+	// Check a invalid value, the valid range is [2, 10]
+	tk.MustExec("set @@global.tidb_table_cache_lease = 111;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_table_cache_lease value: '111'"))
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("10"))
+
+	// Change to a non-default value and verify the behaviour.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 2;")
+
+	tk.MustExec("drop table if exists test_lease_variable;")
+	tk.MustExec(`create table test_lease_variable(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_lease_variable(c0, c1, c2) values (1, null, 'green');`)
+	tk.MustExec(`alter table test_lease_variable cache;`)
+
+	tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
+	cached := false
+	for i := 0; i < 20; i++ {
+		if tk.HasPlan("select * from test_lease_variable", "UnionScan") {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	start := time.Now()
+	tk.MustExec("update test_lease_variable set c0 = 2")
+	duration := time.Since(start)
+
+	// The lease is 2s, check how long the write operation takes.
+	require.True(t, duration > time.Second)
+	require.True(t, duration < 3*time.Second)
 }

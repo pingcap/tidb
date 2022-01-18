@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -241,7 +242,28 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return ec, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
+		// We should only aggregate the `then expression`,
+		// case ... when ... expression will be rewritten to:
+		// args:  eq scalar func(args: value, condition1), result1,
+		//        eq scalar func(args: value, condition2), result2,
+		//        ...
+		//        else clause
+		// Or
+		// args:  condition1, result1,
+		//        condition2, result2,
+		//        ...
+		//        else clause
+		// so, arguments with odd index are the `then expression`.
+		if argTps[1] == types.ETString {
+			fieldArgs := make([]Expression, 0)
+			for i := 1; i < len(args); i += 2 {
+				fieldArgs = append(fieldArgs, args[i])
+			}
+			if len(args)%2 == 1 {
+				fieldArgs = append(fieldArgs, args[len(args)-1])
+			}
+			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
+		}
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
@@ -296,6 +318,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
+	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
@@ -311,7 +334,10 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if err != nil {
 				return false
 			}
-			if !isNull && !isValidString(str, ec.Charset) {
+			if isNull {
+				continue
+			}
+			if !enc.IsValid(hack.Slice(str)) {
 				return false
 			}
 		} else {
@@ -322,25 +348,6 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 	}
 
 	return true
-}
-
-// isValidString check if str can convert to dstChs charset without data loss.
-func isValidString(str string, dstChs string) bool {
-	switch dstChs {
-	case charset.CharsetASCII:
-		return charset.StringValidatorASCII{}.Validate(str) == -1
-	case charset.CharsetLatin1:
-		// For backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
-		return true
-	case charset.CharsetUTF8, charset.CharsetUTF8MB4:
-		// String in tidb is actually use utf8mb4 encoding.
-		return true
-	case charset.CharsetBinary:
-		// Convert to binary is always safe.
-		return true
-	default:
-		return charset.StringValidatorOther{Charset: dstChs}.Validate(str) == -1
-	}
 }
 
 // inferCollation infers collation, charset, coercibility and check the legitimacy.

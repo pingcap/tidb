@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -226,7 +227,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		return
 	}
 	if ds.statisticTable == nil {
-		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.physicalTableID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
@@ -253,7 +254,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	}
 	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx, nodes)
 	}
 	return stats
 }
@@ -409,9 +410,20 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
-	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
-	// If there is an index path, we current do not consider `IndexMergePath`.
+	// Use allConds instread of pushedDownConds,
+	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
+	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
+	indexMergeConds := make([]expression.Expression, 0, len(ds.allConds))
+	for _, expr := range ds.allConds {
+		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
+	}
+
+	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	// We current do not consider `IndexMergePath`:
+	// 1. If there is an index path.
+	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
 	needConsiderIndexMerge := true
 	if len(ds.indexMergeHints) == 0 {
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -420,24 +432,45 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				break
 			}
 		}
+		if needConsiderIndexMerge {
+			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
+			warnings := stmtCtx.GetWarnings()
+			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+			stmtCtx.SetWarnings(warnings)
+			if len(remaining) != 0 {
+				needConsiderIndexMerge = false
+			}
+		}
 	}
 
-	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
+	readFromTableCache := stmtCtx.ReadFromTableCache
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
-		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
+		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
 		}
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		var msg string
+		if !isPossibleIdxMerge {
+			msg = "No available filter or available index."
+		} else if !sessionAndStmtPermission {
+			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
+		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
+			msg = "Cannot use IndexMerge on temporary table."
+		} else if readFromTableCache {
+			msg = "Cannot use IndexMerge on TableCache."
+		}
+		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
+		stmtCtx.AppendWarning(errors.Errorf(msg))
+		logutil.BgLogger().Debug(msg)
 	}
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
+func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
-	err := ds.generateIndexMergeOrPaths()
+	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
@@ -448,12 +481,22 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable."))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().
+	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
+		for _, path := range ds.possibleAccessPaths {
+			if minRowCount < path.CountAfterAccess {
+				minRowCount = path.CountAfterAccess
+			}
+		}
+		if ds.stats.RowCount > minRowCount {
+			ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
+		}
 	}
 	return nil
 }
@@ -510,9 +553,9 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-func (ds *DataSource) generateIndexMergeOrPaths() error {
+func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.possibleAccessPaths)
-	for i, cond := range ds.pushedDownConds {
+	for i, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
@@ -548,7 +591,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
 			if possiblePath == nil {
 				return nil
 			}
@@ -686,16 +729,29 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
+	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
-			break
+			addCurrentFilter = true
 		}
+		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+			path.IndexFilters = nil
+		}
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			path.TableFilters = nil
+		}
+	}
+	if addCurrentFilter {
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
 }

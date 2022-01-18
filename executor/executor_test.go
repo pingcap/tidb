@@ -24,6 +24,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,8 +82,10 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -205,8 +209,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
-	c.Assert(err, IsNil)
 	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
@@ -326,6 +328,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -590,6 +593,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
 	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
@@ -615,7 +619,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 ")
-	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition policy")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition placement")
 
 	tk.MustExec("alter table tt1 cache")
 	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table cache")
@@ -2357,8 +2361,8 @@ func (s *testSuiteP2) TestTableScan(c *C) {
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")
-	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
-	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil)
 	tk.MustExec("use information_schema")
 	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
 	result.Check(testkit.Rows(rowStr1))
@@ -3434,16 +3438,6 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 
 type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
-}
-
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
 }
 
 type testSuiteWithCliBase struct {
@@ -5732,7 +5726,31 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
+		"latin1 Latin1 latin1_bin 1",
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+	))
+	tk.MustQuery("show collation").Check(testkit.Rows(
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"ascii_bin ascii 65 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"gbk_bin gbk 87 Yes Yes 1",
+	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
+}
+
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5786,6 +5804,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
 
 	tk.MustExec("create database test_gbk charset gbk;")
 	tk.MustExec("use test_gbk")
@@ -5797,6 +5816,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5819,6 +5840,21 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 	tk.MustGetErrCode("select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;", mysql.ErrCantAggregate2collations)
 	tk.MustGetErrCode("select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
 	tk.MustGetErrCode("select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
+}
+
+func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, primary key (a(2)));")
+	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, unique index idx_a(a(2)));")
+	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
 }
 
 func (s *testSerialSuite2) TestIssue23567(c *C) {
@@ -6602,16 +6638,14 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`)
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			tk1 := testkit.NewTestKitWithInit(c, s.store)
 			for i := 0; i < 5; i++ {
 				tk1.MustExec("select * from t")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -7120,6 +7154,18 @@ func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2"))
 	tk.MustExec("insert into t2 set a = 3, b = 5, c = b")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2", "3 5 5"))
+
+	// issue #30626
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	// TODO: should insert success and get (81,1) from the table
+	err := tk.ExecToErr("insert into t values ( 81, ( select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` ) );")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
+	err = tk.ExecToErr("insert into t set a = 81, b =  (select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` );")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
+
 }
 
 func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
@@ -8031,12 +8077,12 @@ func (s *testSuite) TestIssue13953(c *C) {
 }
 
 func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
 	SQLs := []string{
 		`select YEAR(0000-00-00), YEAR("0000-00-00")`,
 		`select MONTH(0000-00-00), MONTH("0000-00-00")`,
-		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
 		`select DAYOFMONTH(0000-00-00), DAYOFMONTH("0000-00-00")`,
-		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
 		`select QUARTER(0000-00-00), QUARTER("0000-00-00")`,
 		`select EXTRACT(DAY FROM 0000-00-00), EXTRACT(DAY FROM "0000-00-00")`,
 		`select EXTRACT(MONTH FROM 0000-00-00), EXTRACT(MONTH FROM "0000-00-00")`,
@@ -8044,12 +8090,48 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 		`select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00")`,
 		`select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00")`,
 	}
-	tk := testkit.NewTestKit(c, s.store)
-
 	for _, t := range SQLs {
-		fmt.Println(t)
 		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	}
+
+	SQLs = []string{
+		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
+		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v1 datetime, v2 datetime(3))")
+	tk.MustExec("insert ignore into t values(0,0)")
+
+	SQLs = []string{
+		`select YEAR(v1), YEAR(v2) from t`,
+		`select MONTH(v1), MONTH(v2) from t`,
+		`select DAYOFMONTH(v1), DAYOFMONTH(v2) from t`,
+		`select QUARTER(v1), QUARTER(v2) from t`,
+		`select EXTRACT(DAY FROM v1), EXTRACT(DAY FROM v2) from t`,
+		`select EXTRACT(MONTH FROM v1), EXTRACT(MONTH FROM v2) from t`,
+		`select EXTRACT(YEAR FROM v1), EXTRACT(YEAR FROM v2) from t`,
+		`select EXTRACT(WEEK FROM v1), EXTRACT(WEEK FROM v2) from t`,
+		`select EXTRACT(QUARTER FROM v1), EXTRACT(QUARTER FROM v2) from t`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("0 0"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	}
+
+	SQLs = []string{
+		`select DAYOFWEEK(v1), DAYOFWEEK(v2) from t`,
+		`select DAYOFYEAR(v1), DAYOFYEAR(v2) from t`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
 	}
 }
 
@@ -8719,7 +8801,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.EnableTopSQL()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
@@ -9406,6 +9488,19 @@ func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
 	}
 }
 
+func (s *testSuiteWithData) TestDropColWithPrimaryKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
+	tk.MustExec("set global tidb_enable_change_multi_schema = off")
+	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
+	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
+	tk.MustExec("set global tidb_enable_change_multi_schema = on")
+	tk.MustExec("alter table t drop column c3")
+}
+
 func (s *testSuiteP1) TestIssue28935(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
@@ -9431,6 +9526,7 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -9486,4 +9582,308 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 			tk.MustExec(sql)
 		}()
 	}
+}
+
+func (s *testSerialSuite) TestIssue30289(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	fpName := "github.com/pingcap/tidb/executor/issue30289"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+	c.Assert(err.Error(), Matches, "issue30289 build return error")
+}
+
+func (s *testSerialSuite) TestIssue29498(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (t3 TIME(3), d DATE, t TIME);")
+	tk.MustExec("INSERT INTO t1 VALUES ('00:00:00.567', '2002-01-01', '00:00:02');")
+
+	res := tk.MustQuery("SELECT CONCAT(IFNULL(t3, d)) AS col1 FROM t1;")
+	row := res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
+	res = tk.MustQuery("SELECT IFNULL(t3, d) AS col1 FROM t1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
+	res = tk.MustQuery("SELECT CONCAT(IFNULL(t, d)) AS col1 FROM t1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
+	c.Assert(row[len(row)-8:], Equals, "00:00:02")
+
+	res = tk.MustQuery("SELECT IFNULL(t, d) AS col1 FROM t1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
+	c.Assert(row[len(row)-8:], Equals, "00:00:02")
+
+	res = tk.MustQuery("SELECT CONCAT(xx) FROM (SELECT t3 AS xx FROM t1 UNION SELECT d FROM t1) x ORDER BY -xx LIMIT 1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
+	res = tk.MustQuery("SELECT CONCAT(CASE WHEN d IS NOT NULL THEN t3 ELSE d END) AS col1 FROM t1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+}
+
+// Test invoke Close without invoking Open before for each operators.
+func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
+	defer testleak.AfterTest(c)()
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	// To enable the shuffleExec operator.
+	_, err = se.Execute(context.Background(), "set @@tidb_merge_join_concurrency=4")
+	c.Assert(err, IsNil)
+
+	var opsNeedsCovered = []plannercore.PhysicalPlan{
+		&plannercore.PhysicalHashJoin{},
+		&plannercore.PhysicalMergeJoin{},
+		&plannercore.PhysicalIndexJoin{},
+		&plannercore.PhysicalIndexHashJoin{},
+		&plannercore.PhysicalTableReader{},
+		&plannercore.PhysicalIndexReader{},
+		&plannercore.PhysicalIndexLookUpReader{},
+		&plannercore.PhysicalIndexMergeReader{},
+		&plannercore.PhysicalApply{},
+		&plannercore.PhysicalHashAgg{},
+		&plannercore.PhysicalStreamAgg{},
+		&plannercore.PhysicalLimit{},
+		&plannercore.PhysicalSort{},
+		&plannercore.PhysicalTopN{},
+		&plannercore.PhysicalCTE{},
+		&plannercore.PhysicalCTETable{},
+		&plannercore.PhysicalMaxOneRow{},
+		&plannercore.PhysicalProjection{},
+		&plannercore.PhysicalSelection{},
+		&plannercore.PhysicalTableDual{},
+		&plannercore.PhysicalWindow{},
+		&plannercore.PhysicalShuffle{},
+		&plannercore.PhysicalUnionAll{},
+	}
+	executorBuilder := executor.NewMockExecutorBuilderForTest(se, is, nil, math.MaxUint64, false, "global")
+
+	var opsNeedsCoveredMask uint64 = 1<<len(opsNeedsCovered) - 1
+	opsAlreadyCoveredMask := uint64(0)
+	for i, tc := range []string{
+		"select /*+ hash_join(t1)*/ * from t t1 join t t2 on t1.a = t2.a",
+		"select /*+ merge_join(t1)*/ * from t t1 join t t2 on t1.f = t2.f",
+		"select t.f from t use index(f)",
+		"select /*+ inl_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",
+		"select /*+ inl_hash_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",
+		"SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t",
+		"select /*+ hash_agg() */ count(f) from t group by a",
+		"select /*+ stream_agg() */ count(f) from t group by a",
+		"select * from t order by a, f",
+		"select * from t order by a, f limit 1",
+		"select * from t limit 1",
+		"select (select t1.a from t t1 where t1.a > t2.a) as a from t t2;",
+		"select a + 1 from t",
+		"select count(*) a from t having a > 1",
+		"select * from t where a = 1.1",
+		"with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 0) select * from cte1",
+		"select /*+use_index_merge(t, c_d_e, f)*/ * from t where c < 1 or f > 2",
+		"select sum(f) over (partition by f) from t",
+		"select /*+ merge_join(t1)*/ * from t t1 join t t2 on t1.d = t2.d",
+		"select a from t union all select a from t",
+	} {
+		comment := Commentf("case:%v sql:%s", i, tc)
+		c.Assert(err, IsNil, comment)
+		stmt, err := s.ParseOneStmt(tc, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = se.NewTxn(context.Background())
+		c.Assert(err, IsNil, comment)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
+		c.Assert(err, IsNil, comment)
+		// This for loop level traverses the plan tree to get which operators are covered.
+		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
+			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
+			for _, ch := range child {
+				found := false
+				for k, t := range opsNeedsCovered {
+					if reflect.TypeOf(t) == reflect.TypeOf(ch) {
+						opsAlreadyCoveredMask |= 1 << k
+						found = true
+						break
+					}
+				}
+				c.Assert(found, IsTrue, Commentf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
+				switch x := ch.(type) {
+				case *plannercore.PhysicalCTE:
+					newChild = append(newChild, x.RecurPlan)
+					newChild = append(newChild, x.SeedPlan)
+					continue
+				case *plannercore.PhysicalShuffle:
+					newChild = append(newChild, x.DataSources...)
+					newChild = append(newChild, x.Tails...)
+					continue
+				}
+				newChild = append(newChild, ch.Children()...)
+			}
+			child = newChild
+		}
+
+		e := executorBuilder.Build(p)
+
+		func() {
+			defer func() {
+				r := recover()
+				buf := make([]byte, 4096)
+				stackSize := runtime.Stack(buf, false)
+				buf = buf[:stackSize]
+				c.Assert(r, IsNil, Commentf("case: %v\n sql: %s\n error stack: %v", i, tc, string(buf)))
+			}()
+			c.Assert(e.Close(), IsNil, comment)
+		}()
+	}
+	// The following code is used to make sure all the operators registered
+	// in opsNeedsCoveredMask are covered.
+	commentBuf := strings.Builder{}
+	if opsAlreadyCoveredMask != opsNeedsCoveredMask {
+		for i := range opsNeedsCovered {
+			if opsAlreadyCoveredMask&(1<<i) != 1<<i {
+				commentBuf.WriteString(fmt.Sprintf(" %v", reflect.TypeOf(opsNeedsCovered[i])))
+			}
+		}
+	}
+	c.Assert(opsAlreadyCoveredMask, Equals, opsNeedsCoveredMask, Commentf("these operators are not covered %s", commentBuf.String()))
+}
+
+func (s *testSerialSuite) TestIssue30971(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("create table t2 (id int, c int);")
+
+	testCases := []struct {
+		sql    string
+		fields int
+	}{
+		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
+		{"select * from t1 union select 1 from t1", 1},
+		{"select c from t2 union select * from t1", 1},
+		{"select * from t1", 1},
+		{"select * from t2 where c in (select * from t1)", 2},
+		{"insert into t1 values (?)", 0},
+		{"update t1 set id = ?", 0},
+	}
+	for _, test := range testCases {
+		_, _, fields, err := tk.Se.PrepareStmt(test.sql)
+		c.Assert(err, IsNil)
+		c.Assert(fields, HasLen, test.fields)
+	}
+}
+
+func (s *testSerialSuite) TestIndexJoin31494(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int(11) default null, b int(11) default null, key(b));")
+	insertStr := "insert into t1 values(1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
+	insertStr = "insert into t2 values(1, 1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
+	// This bug will be reproduced in 10 times.
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
+}
+
+// Details at https://github.com/pingcap/tidb/issues/31038
+func (s *testSerialSuite) TestFix31038(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = false
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t123")
+	tk.MustExec("create table t123 (id int);")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
+	tk.MustQuery("select * from t123;")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
+}
+
+func (s *testSerialSuite) TestFix31537(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE trade (
+  t_id bigint(16) NOT NULL AUTO_INCREMENT,
+  t_dts datetime NOT NULL,
+  t_st_id char(4) NOT NULL,
+  t_tt_id char(3) NOT NULL,
+  t_is_cash tinyint(1) NOT NULL,
+  t_s_symb char(15) NOT NULL,
+  t_qty mediumint(7) NOT NULL,
+  t_bid_price decimal(8,2) NOT NULL,
+  t_ca_id bigint(12) NOT NULL,
+  t_exec_name varchar(49) NOT NULL,
+  t_trade_price decimal(8,2) DEFAULT NULL,
+  t_chrg decimal(10,2) NOT NULL,
+  t_comm decimal(10,2) NOT NULL,
+  t_tax decimal(10,2) NOT NULL,
+  t_lifo tinyint(1) NOT NULL,
+  PRIMARY KEY (t_id) /*T![clustered_index] CLUSTERED */,
+  KEY i_t_ca_id_dts (t_ca_id,t_dts),
+  KEY i_t_s_symb_dts (t_s_symb,t_dts),
+  CONSTRAINT fk_trade_st FOREIGN KEY (t_st_id) REFERENCES status_type (st_id),
+  CONSTRAINT fk_trade_tt FOREIGN KEY (t_tt_id) REFERENCES trade_type (tt_id),
+  CONSTRAINT fk_trade_s FOREIGN KEY (t_s_symb) REFERENCES security (s_symb),
+  CONSTRAINT fk_trade_ca FOREIGN KEY (t_ca_id) REFERENCES customer_account (ca_id)
+) ;`)
+	tk.MustExec(`CREATE TABLE trade_history (
+  th_t_id bigint(16) NOT NULL,
+  th_dts datetime NOT NULL,
+  th_st_id char(4) NOT NULL,
+  PRIMARY KEY (th_t_id,th_st_id) /*T![clustered_index] NONCLUSTERED */,
+  KEY i_th_t_id_dts (th_t_id,th_dts),
+  CONSTRAINT fk_trade_history_t FOREIGN KEY (th_t_id) REFERENCES trade (t_id),
+  CONSTRAINT fk_trade_history_st FOREIGN KEY (th_st_id) REFERENCES status_type (st_id)
+);
+`)
+	tk.MustExec(`CREATE TABLE status_type (
+  st_id char(4) NOT NULL,
+  st_name char(10) NOT NULL,
+  PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
+);`)
+	tk.MustQuery(`trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;`)
 }

@@ -238,10 +238,18 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
+	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
+}
+
+// ClientSendOption wraps options during Client Send
+type ClientSendOption struct {
+	SessionMemTracker          *memory.Tracker
+	EnabledRateLimitAction     bool
+	EventCb                    trxevents.EventCallback
+	EnableCollectExecutionInfo bool
 }
 
 // ReqTypes.

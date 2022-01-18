@@ -50,7 +50,6 @@ import (
 const dbName = "test"
 
 func TestCheckDBPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -80,7 +79,6 @@ func TestCheckDBPrivilege(t *testing.T) {
 }
 
 func TestCheckPointGetDBPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -100,7 +98,6 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 }
 
 func TestIssue22946(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -127,7 +124,6 @@ func TestIssue22946(t *testing.T) {
 }
 
 func TestCheckTablePrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -164,7 +160,6 @@ func TestCheckTablePrivilege(t *testing.T) {
 }
 
 func TestCheckViewPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -187,7 +182,6 @@ func TestCheckViewPrivilege(t *testing.T) {
 }
 
 func TestCheckPrivilegeWithRoles(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -222,7 +216,6 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 }
 
 func TestShowGrants(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -278,7 +271,7 @@ func TestShowGrants(t *testing.T) {
 	require.Len(t, gs, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	mustExec(t, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -287,7 +280,17 @@ func TestShowGrants(t *testing.T) {
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Add another db privilege to the same db and test again.
+	mustExec(t, se, `GRANT Delete ON test1.* TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
+		`GRANT DELETE,INDEX ON test1.* TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	mustExec(t, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -296,7 +299,7 @@ func TestShowGrants(t *testing.T) {
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add table scope privileges
 	mustExec(t, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
@@ -307,13 +310,33 @@ func TestShowGrants(t *testing.T) {
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Revoke the db privilege of `test` and test again. See issue #30855.
+	mustExec(t, se, `REVOKE SELECT ON test.* FROM 'show'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
+		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Add another table privilege and test again.
+	mustExec(t, se, `GRANT Select ON test.test TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
+		`GRANT SELECT,UPDATE ON test.test TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Expected behavior: Usage still exists after revoking all privileges
 	mustExec(t, se, `REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost'`)
-	mustExec(t, se, `REVOKE Select on test.* FROM 'show'@'localhost'`)
 	mustExec(t, se, `REVOKE ALL ON test1.* FROM 'show'@'localhost'`)
-	mustExec(t, se, `REVOKE UPDATE on test.test FROM 'show'@'localhost'`)
+	mustExec(t, se, `REVOKE UPDATE, SELECT on test.test FROM 'show'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
 	require.Len(t, gs, 1)
@@ -377,7 +400,6 @@ func TestShowGrants(t *testing.T) {
 // identity from mysql.user. In TiDB we now use the identity from mysql.user in error messages
 // for consistency.
 func TestErrorMessage(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -402,7 +424,6 @@ func TestErrorMessage(t *testing.T) {
 }
 
 func TestShowColumnGrants(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -418,7 +439,6 @@ func TestShowColumnGrants(t *testing.T) {
 }
 
 func TestDropTablePrivileges(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -446,7 +466,6 @@ func TestDropTablePrivileges(t *testing.T) {
 }
 
 func TestSetPasswdStmt(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -567,7 +586,6 @@ func TestAlterUserStmt(t *testing.T) {
 }
 
 func TestSelectViewSecurity(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -594,7 +612,6 @@ func TestSelectViewSecurity(t *testing.T) {
 }
 
 func TestShowViewPriv(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -691,7 +708,6 @@ func TestShowViewPriv(t *testing.T) {
 }
 
 func TestRoleAdminSecurity(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -714,7 +730,6 @@ func TestRoleAdminSecurity(t *testing.T) {
 }
 
 func TestCheckCertBasedAuth(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -951,7 +966,6 @@ func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x5
 }
 
 func TestCheckAuthenticate(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -994,7 +1008,6 @@ func TestCheckAuthenticate(t *testing.T) {
 }
 
 func TestUseDB(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1041,7 +1054,6 @@ func TestUseDB(t *testing.T) {
 }
 
 func TestRevokePrivileges(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1069,7 +1081,6 @@ func TestRevokePrivileges(t *testing.T) {
 }
 
 func TestSetGlobal(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -1086,7 +1097,6 @@ func TestSetGlobal(t *testing.T) {
 }
 
 func TestCreateDropUser(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1115,7 +1125,6 @@ func TestCreateDropUser(t *testing.T) {
 }
 
 func TestConfigPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1142,7 +1151,6 @@ func TestConfigPrivilege(t *testing.T) {
 }
 
 func TestShowCreateTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1161,7 +1169,6 @@ func TestShowCreateTable(t *testing.T) {
 }
 
 func TestReplaceAndInsertOnDuplicate(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1204,7 +1211,6 @@ func TestReplaceAndInsertOnDuplicate(t *testing.T) {
 }
 
 func TestAnalyzeTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1245,7 +1251,6 @@ func TestAnalyzeTable(t *testing.T) {
 }
 
 func TestSystemSchema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1283,7 +1288,6 @@ func TestSystemSchema(t *testing.T) {
 }
 
 func TestPerformanceSchema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1318,7 +1322,6 @@ func TestPerformanceSchema(t *testing.T) {
 }
 
 func TestMetricsSchema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1430,7 +1433,6 @@ func TestMetricsSchema(t *testing.T) {
 }
 
 func TestAdminCommand(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1453,7 +1455,6 @@ func TestAdminCommand(t *testing.T) {
 }
 
 func TestTableNotExistNoPermissions(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1502,7 +1503,6 @@ func TestTableNotExistNoPermissions(t *testing.T) {
 }
 
 func TestLoadDataPrivilege(t *testing.T) {
-	t.Parallel()
 	// Create file.
 	path := "/tmp/load_data_priv.csv"
 	fp, err := os.Create(path)
@@ -1524,20 +1524,28 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `CREATE USER 'test_load'@'localhost';`)
 	mustExec(t, se, `CREATE TABLE t_load(a int)`)
+
 	mustExec(t, se, `GRANT SELECT on *.* to 'test_load'@'localhost'`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.NoError(t, err)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
+	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' REPLACE INTO TABLE t_load")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
 func TestSelectIntoNoPermissions(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1550,7 +1558,6 @@ func TestSelectIntoNoPermissions(t *testing.T) {
 }
 
 func TestGetEncodedPassword(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1561,7 +1568,6 @@ func TestGetEncodedPassword(t *testing.T) {
 }
 
 func TestAuthHost(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1583,7 +1589,6 @@ func TestAuthHost(t *testing.T) {
 }
 
 func TestDefaultRoles(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1608,7 +1613,6 @@ func TestDefaultRoles(t *testing.T) {
 }
 
 func TestUserTableConsistency(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1638,7 +1642,6 @@ func TestUserTableConsistency(t *testing.T) {
 }
 
 func TestFieldList(t *testing.T) { // Issue #14237 List fields RPC
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1681,7 +1684,6 @@ func newSession(t *testing.T, store kv.Storage, dbName string) session.Session {
 }
 
 func TestDynamicPrivs(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1728,7 +1730,6 @@ func TestDynamicPrivs(t *testing.T) {
 }
 
 func TestDynamicGrantOption(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1818,7 +1819,6 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 }
 
 func TestClusterConfigInfoschema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1906,7 +1906,6 @@ func TestSecurityEnhancedModeStatusVars(t *testing.T) {
 	// So we can only test that the dynamic privilege is grantable.
 	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
 	// and verify if it appears.
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1963,7 +1962,6 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 }
 
 func TestRenameUser(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2075,7 +2073,6 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func TestViewDefiner(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2153,7 +2150,6 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 }
 
 func TestDynamicPrivsRegistration(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2196,7 +2192,6 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 func TestInfoSchemaUserPrivileges(t *testing.T) {
 	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
 	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2255,7 +2250,6 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
 func TestGrantOptionAndRevoke(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2333,7 +2327,6 @@ func tearDownTest(t *testing.T, store kv.Storage, dbName string) {
 }
 
 func TestGrantReferences(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2359,7 +2352,6 @@ func TestGrantReferences(t *testing.T) {
 }
 
 func TestDashboardClientDynamicPriv(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2404,8 +2396,6 @@ func TestDashboardClientDynamicPriv(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/27213
 func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2494,7 +2484,6 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 }
 
 func TestGrantLockTables(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2519,8 +2508,6 @@ func TestGrantLockTables(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/27560
 func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2558,21 +2545,19 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
-
 }
 
 func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2631,62 +2616,7 @@ func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }
 
-func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
-	t.Parallel()
-	store, clean := newStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-
-	defer func() {
-		require.True(t, tk.Session().Auth(&auth.UserIdentity{
-			Username: "root",
-			Hostname: "localhost",
-		}, nil, nil))
-		tk.MustExec(`DROP SCHEMA IF EXISTS placment_rule_db`)
-		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_scheam`)
-		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_table`)
-	}()
-	tk.MustExec("CREATE DATABASE placement_rule_db")
-	tk.MustExec("USE placement_rule_db")
-	tk.Session().GetSessionVars().EnableAlterPlacement = true
-	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
-	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-	tk.MustExec("CREATE USER placement_rule_user_schema")
-	tk.MustExec("CREATE USER placement_rule_user_table")
-	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_schema",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows())
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_table",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "root",
-		Hostname: "localhost",
-	}, nil, nil))
-	tk.MustExec("GRANT SELECT ON placement_rule_db.* TO placement_rule_user_schema")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "placement_rule_user_schema",
-		Hostname: "somehost",
-	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
-}
-
 func TestGrantCreateTmpTables(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2711,7 +2641,6 @@ func TestGrantCreateTmpTables(t *testing.T) {
 }
 
 func TestCreateTmpTablesPriv(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2869,7 +2798,6 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 }
 
 func TestRevokeSecondSyntax(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2886,7 +2814,6 @@ func TestRevokeSecondSyntax(t *testing.T) {
 }
 
 func TestGrantEvent(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2910,7 +2837,6 @@ func TestGrantEvent(t *testing.T) {
 }
 
 func TestGrantRoutine(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2936,7 +2862,6 @@ func TestGrantRoutine(t *testing.T) {
 }
 
 func TestIssue28675(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2955,7 +2880,9 @@ func TestIssue28675(t *testing.T) {
 	tk.MustExec("grant select on test.v to test_user")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
 	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("1"))
 	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
+	tk.MustQuery("select privileges from information_schema.columns where table_schema='Test' and table_name='V'").Check(testkit.Rows("select,update"))
 	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
 	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
 }
@@ -3002,7 +2929,6 @@ func TestSkipGrantTable(t *testing.T) {
 }
 
 func TestIssue29823(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 

@@ -23,7 +23,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -33,8 +33,6 @@ func TestMain(m *testing.M) {
 
 // TestDomainSerial handles tests in serial
 func TestDomainSerial(t *testing.T) {
-	t.Parallel()
-
 	// these tests should run in serial for failpoint is global
 	t.Run("info", SubTestInfo)
 	t.Run("domain", SubTestDomain)

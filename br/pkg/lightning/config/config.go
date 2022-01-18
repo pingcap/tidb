@@ -70,7 +70,6 @@ const (
 	ErrorOnDup = "error"
 
 	defaultDistSQLScanConcurrency     = 15
-	distSQLScanConcurrencyPerStore    = 4
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
@@ -88,20 +87,16 @@ const (
 	//
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
-	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize              = 512 * units.MiB
-	defaultLocalWriterMemCacheSize         = 128 * units.MiB
-
-	maxRetryTimes           = 4
-	defaultRetryBackoffTime = 100 * time.Millisecond
-	pdStores                = "/pd/api/v1/stores"
+	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
+	defaultEngineMemCacheSize      = 512 * units.MiB
+	defaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -342,6 +337,10 @@ type MaxError struct {
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case int64:
+		// ignore val that is smaller than 0
+		if val < 0 {
+			val = 0
+		}
 		cfg.Syntax.Store(0)
 		cfg.Charset.Store(math.MaxInt64)
 		cfg.Type.Store(val)
@@ -527,6 +526,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -950,9 +950,7 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 
 	switch {
 	case os.IsNotExist(err):
-		// the sorted-kv-dir does not exist, meaning we will create it automatically.
-		// so we extract the storage size from its parent directory.
-		storageSizeDir = filepath.Dir(storageSizeDir)
+		return nil
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
 			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)

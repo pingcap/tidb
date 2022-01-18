@@ -58,7 +58,6 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {
-	t.Parallel()
 	var input, output []string
 	indexMergeSuiteData.GetTestCases(t, &input, &output)
 	ctx := context.TODO()

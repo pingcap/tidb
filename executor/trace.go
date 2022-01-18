@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -58,8 +59,10 @@ type TraceExec struct {
 
 	builder *executorBuilder
 	format  string
+
 	// optimizerTrace indicates 'trace plan statement'
-	optimizerTrace bool
+	optimizerTrace       bool
+	optimizerTraceTarget string
 }
 
 // Next executes real query and collects span later.
@@ -81,6 +84,9 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}()
 
 	if e.optimizerTrace {
+		if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+			return e.nextOptimizerCEPlanTrace(ctx, e.ctx, req)
+		}
 		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 	}
 
@@ -90,6 +96,34 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return e.nextRowJSON(ctx, se, req)
 	}
+}
+
+func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizerCETrace
+	stmtCtx.EnableOptimizerCETrace = true
+	defer func() {
+		stmtCtx.EnableOptimizerCETrace = origin
+	}()
+
+	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
+	}
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	res := []byte(writer.String())
+
+	req.AppendBytes(0, res)
+	e.exhausted = true
+	return nil
 }
 
 func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
@@ -122,10 +156,17 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	if err != nil {
 		return err
 	}
-	res, err := json.Marshal(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	res := []byte(writer.String())
+
 	_, err = traceZW.Write(res)
 	if err != nil {
 		return errors.AddStack(err)

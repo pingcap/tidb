@@ -17,33 +17,23 @@ package tables_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
-// CreateMetaLockForCachedTable initializes the cached table meta lock information.
-func createMetaLockForCachedTable(h session.Session) error {
-	createTable := "CREATE TABLE IF NOT EXISTS `mysql`.`table_cache_meta` (" +
-		"`tid` int(11) NOT NULL DEFAULT 0," +
-		"`lock_type` enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE'," +
-		"`lease` bigint(20) NOT NULL DEFAULT 0," +
-		"`oldReadLease` bigint(20) NOT NULL DEFAULT 0," +
-		"PRIMARY KEY (`tid`))"
-	_, err := h.ExecuteInternal(context.Background(), createTable)
-	return err
-}
-
-// InitRow add a new record into the cached table meta lock table.
+// initRow add a new record into the cached table meta lock table.
 func initRow(ctx context.Context, exec session.Session, tid int) error {
 	_, err := exec.ExecuteInternal(ctx, "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", tid)
 	return err
 }
 
 func TestStateRemote(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -52,9 +42,6 @@ func TestStateRemote(t *testing.T) {
 
 	ctx := context.Background()
 	h := tables.NewStateRemote(se)
-	err := createMetaLockForCachedTable(se)
-	require.NoError(t, err)
-	require.Equal(t, tables.CachedTableLockNone, tables.CachedTableLockType(0))
 
 	// Check the initial value.
 	require.NoError(t, initRow(ctx, se, 5))
@@ -64,65 +51,79 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lockType.String(), "NONE")
 	require.Equal(t, lease, uint64(0))
 
+	ts, err := se.GetStore().GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: kv.GlobalTxnScope})
+	require.NoError(t, err)
+	physicalTime := oracle.GetTimeFromTS(ts)
+	leaseVal := oracle.GoTimeToTS(physicalTime.Add(200 * time.Millisecond))
+
 	// Check read lock.
-	succ, err := h.LockForRead(ctx, 5, 1234, 1234)
+	succ, err := h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1234))
+	require.Equal(t, lease, leaseVal)
 
 	// LockForRead when read lock is hold.
 	// This operation equals to renew lease.
-	succ, err = h.LockForRead(ctx, 5, 1235, 1235)
+	succ, err = h.LockForRead(ctx, 5, leaseVal+1)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1235))
+	require.Equal(t, lease, leaseVal+1)
 
 	// Renew read lock lease operation.
-	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(400 * time.Millisecond))
+	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1264))
+	require.Equal(t, lease, leaseVal)
 
 	// Check write lock.
-	require.NoError(t, h.LockForWrite(ctx, 5, 2234, 2234))
+	writeLease, err := h.LockForWrite(ctx, 5, 3*time.Second)
+	require.NoError(t, err)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
-	require.Equal(t, lease, uint64(2234))
+	require.Equal(t, writeLease, lease)
+	require.Greater(t, writeLease, leaseVal)
 
 	// Lock for write again
-	require.NoError(t, h.LockForWrite(ctx, 5, 3234, 3234))
-	lockType, lease, err = h.Load(ctx, 5)
+	writeLease, err = h.LockForWrite(ctx, 5, 3*time.Second)
+	require.NoError(t, err)
+	lockType, _, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
-	require.Equal(t, lease, uint64(3234))
 
 	// Renew read lock lease should fail when the write lock is hold.
-	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
+	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.False(t, succ)
 
 	// Acquire read lock should also fail when the write lock is hold.
-	succ, err = h.LockForRead(ctx, 5, 1264, 1264)
+	succ, err = h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.False(t, succ)
 
-	// But clear orphan write lock should success.
-	succ, err = h.LockForRead(ctx, 5, 4234, 4234)
+	// Renew write lease.
+	succ, err = h.RenewLease(ctx, 5, writeLease+1, tables.RenewWriteLease)
 	require.NoError(t, err)
 	require.True(t, succ)
+
+	lockType, lease, err = h.Load(ctx, 5)
+	require.NoError(t, err)
+	require.Equal(t, lockType, tables.CachedTableLockWrite)
+	require.Equal(t, lockType.String(), "WRITE")
+	require.Equal(t, lease, writeLease+1)
 }

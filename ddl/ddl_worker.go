@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
@@ -229,7 +230,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
 	jobListKey := meta.DefaultJobListKey
-	if !admin.MayNeedBackfill(curJob.Type) {
+	if !mayNeedReorg(curJob) {
 		jobListKey = meta.AddIndexJobListKey
 	}
 	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
@@ -294,7 +295,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 			jobListKey := meta.DefaultJobListKey
-			if admin.MayNeedBackfill(job.Type) {
+			if mayNeedReorg(job) {
 				jobListKey = meta.AddIndexJobListKey
 			}
 			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
@@ -411,8 +412,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
-	if job.Type == model.ActionRecoverTable {
+
+	switch job.Type {
+	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, job)
+	case model.ActionCreateTables:
+		if job.IsCancelled() {
+			// it may be too large that it can not be added to the history queue, too
+			// delete its arguments
+			job.Args = nil
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -477,7 +486,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 }
 
 func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
-	if !variable.TopSQLEnabled() || job == nil {
+	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
 
@@ -620,6 +629,10 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
+	// Don't sync 'alter table cache|nocache' to other tools.
+	// It's internal to the current cluster.
+	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
+		return true
 	}
 
 	return false
@@ -754,6 +767,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
+	case model.ActionCreateTables:
+		ver, err = onCreateTables(d, t, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
@@ -838,8 +853,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(d, t, job)
-	case model.ActionAlterTablePartitionPolicy:
-		ver, err = onAlterTablePartitionOptions(d, t, job)
+	case model.ActionAlterTablePartitionPlacement:
+		ver, err = onAlterTablePartitionPlacement(t, job)
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionAlterCacheTable:
@@ -978,6 +993,21 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		SchemaID: job.SchemaID,
 	}
 	switch job.Type {
+	case model.ActionCreateTables:
+		tableInfos := []*model.TableInfo{}
+		err = job.DecodeArgs(&tableInfos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
+		for i := range tableInfos {
+			diff.AffectedOpts[i] = &model.AffectedOption{
+				SchemaID:    job.SchemaID,
+				OldSchemaID: job.SchemaID,
+				TableID:     tableInfos[i].ID,
+				OldTableID:  tableInfos[i].ID,
+			}
+		}
 	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
