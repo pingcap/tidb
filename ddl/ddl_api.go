@@ -3477,8 +3477,10 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 			}
 			pidMap[pid] = true
 		}
+		i := 0
 		for pid := range pidMap {
-			pids = append(pids, pid)
+			pids[i] = pid
+			i++
 		}
 	}
 
