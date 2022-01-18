@@ -57,6 +57,7 @@ const (
 	CollectType
 )
 
+// ToExchangeType generates ExchangeType from MPPPartitionType
 func (t MPPPartitionType) ToExchangeType() tipb.ExchangeType {
 	switch t {
 	case BroadcastType:

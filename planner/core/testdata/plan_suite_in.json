@@ -746,5 +746,18 @@
     "cases": [
         "select * from t where t.a < 3 and t.a < 3"
     ]
+  },
+  {
+    "name": "TestMPPCollectType",
+    "cases": [
+      // test normal aggregation, MPP2Phase.
+      "select count(*) from employee group by deptid+1",
+      // test normal aggregation, MPPScalar.
+      "select count(distinct deptid) a from employee",
+      // test normal join, Broadcast.
+      "select * from employee join employee e1 using(deptid)",
+      // test redundant collect exchange can be eliminated.
+      "select count(distinct a) from (select count(distinct deptid) a from employee) x"
+    ]
   }
 ]

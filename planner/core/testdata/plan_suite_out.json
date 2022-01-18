@@ -2677,5 +2677,68 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMPPCollectType",
+    "Cases": [
+      {
+        "SQL": "select count(*) from employee group by deptid+1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#5",
+          "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: N/A]",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#14, funcs:count(1)->Column#13",
+          "            └─Projection 10000.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#14",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(distinct deptid) a from employee",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee join employee e1 using(deptid)",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12487.50 cop[tiflash]  test.employee.deptid, test.employee.empid, test.employee.salary, test.employee.empid, test.employee.salary",
+          "    └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "      │     └─TableFullScan 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 cop[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#6",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct Column#5)->Column#6",
+          "      └─HashAgg 1.00 batchCop[tiflash]  group by:Column#5, ",
+          "        └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "          └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "            └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "              └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "                └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
