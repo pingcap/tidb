@@ -13354,6 +13354,28 @@ KillStmt:
 			TiDBExtension: $1.(bool),
 		}
 	}
+|	KillOrKillTiDB stringLit
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID:  getUint64FromNUM($2),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "CONNECTION" stringLit
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID:  getUint64FromNUM($3),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "QUERY" stringLit
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID:  getUint64FromNUM($3),
+			Query:         true,
+			TiDBExtension: $1.(bool),
+		}
+	}
 
 KillOrKillTiDB:
 	"KILL"

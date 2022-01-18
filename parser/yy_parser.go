@@ -88,6 +88,7 @@ type Parser struct {
 	explicitCharset       bool
 	strictDoubleFieldType bool
 
+	// cache
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
@@ -209,6 +210,7 @@ func ParseErrorWith(errstr string, lineno int) error {
 	return fmt.Errorf("near '%-.80s' at line %d", errstr, lineno)
 }
 
+// setLastSelectFieldText
 // The select statement is not at the end of the whole statement, if the last
 // field text was set from its offset to the end of the src string, update
 // the last field text.
@@ -299,6 +301,7 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 	return floatLit
 }
 
+// toHex
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func toHex(l yyLexer, lval *yySymType, str string) int {
 	h, err := ast.NewHexLiteral(str)
@@ -310,6 +313,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 	return hexLit
 }
 
+// toBit
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func toBit(l yyLexer, lval *yySymType, str string) int {
 	b, err := ast.NewBitLiteral(str)
@@ -327,6 +331,12 @@ func getUint64FromNUM(num interface{}) uint64 {
 		return uint64(v)
 	case uint64:
 		return v
+	case string:
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0
+		}
+		return uint64(n)
 	}
 	return 0
 }

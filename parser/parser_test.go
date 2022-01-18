@@ -4990,6 +4990,13 @@ func TestSessionManage(t *testing.T) {
 		{"show full processlist", true, "SHOW FULL PROCESSLIST"},
 		{"shutdown", true, "SHUTDOWN"},
 		{"restart", true, "RESTART"},
+		{"kill '23123'", true, "KILL 23123"},
+		{"kill connection '23123'", true, "KILL 23123"},
+		{"kill query '23123'", true, "KILL QUERY 23123"},
+		{"kill tidb '23123'", true, "KILL TIDB 23123"},
+		{"kill tidb connection '23123'", true, "KILL TIDB 23123"},
+		{"kill tidb query '23123'", true, "KILL TIDB QUERY 23123"},
+		{"kill 'asd'", true, "KILL 0"},
 	}
 	RunTest(t, table, false)
 }
@@ -5638,6 +5645,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 	return inNode, true
 }
 
+// TestVisitFrameBound
 // For issue #51
 // See https://github.com/pingcap/parser/pull/51 for details
 func TestVisitFrameBound(t *testing.T) {
@@ -5684,6 +5692,7 @@ func TestFieldText(t *testing.T) {
 	}
 }
 
+// TestQuotedSystemVariables
 // See https://github.com/pingcap/parser/issue/94
 func TestQuotedSystemVariables(t *testing.T) {
 	p := parser.New()
@@ -5745,6 +5754,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 	}
 }
 
+// TestQuotedVariableColumnName
 // See https://github.com/pingcap/parser/issue/95
 func TestQuotedVariableColumnName(t *testing.T) {
 	p := parser.New()
@@ -5960,6 +5970,7 @@ func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+// TestIndexAdviseStmt
 // For index advisor
 func TestIndexAdviseStmt(t *testing.T) {
 	table := []testCase{
@@ -6020,6 +6031,7 @@ func TestIndexAdviseStmt(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+// TestBRIE
 // For BRIE
 func TestBRIE(t *testing.T) {
 	table := []testCase{
@@ -6205,6 +6217,7 @@ func TestHighNotPrecedenceMode(t *testing.T) {
 	require.Equal(t, "SELECT !1 BETWEEN -5 AND 5", restoreSQL)
 }
 
+// TestCTE
 // For CTE
 func TestCTE(t *testing.T) {
 	table := []testCase{
@@ -6246,6 +6259,7 @@ func TestAsOfClause(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+// TestPartitionKeyAlgorithm
 // For `PARTITION BY [LINEAR] KEY ALGORITHM` syntax
 func TestPartitionKeyAlgorithm(t *testing.T) {
 	table := []testCase{
@@ -6258,6 +6272,7 @@ func TestPartitionKeyAlgorithm(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+// TestHelp
 // server side help syntax
 func TestHelp(t *testing.T) {
 	table := []testCase{
@@ -6309,6 +6324,7 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 	}
 }
 
+// TestCTEBindings
 // For CTE bindings.
 func TestCTEBindings(t *testing.T) {
 	table := []testCase{
