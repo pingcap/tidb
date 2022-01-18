@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 )
@@ -80,6 +81,39 @@ func Test_aggregator_run_close(t *testing.T) {
 	a.close()
 	wg.Wait()
 	assert.True(t, a.closed())
+}
+
+func Test_aggregator_disable_aggregate(t *testing.T) {
+	total := StatementStatsMap{}
+	a := newAggregator()
+	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		total.Merge(data)
+	}))
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		a.run()
+		wg.Done()
+	}()
+
+	stats := &StatementStats{
+		data: StatementStatsMap{
+			SQLPlanDigest{SQLDigest: BinaryDigest("")}: &StatementStatsItem{},
+		},
+		finished: atomic.NewBool(false),
+	}
+	state.DisableTopSQL()
+	a.register(stats)
+	time.Sleep(1500 * time.Millisecond)
+	assert.Empty(t, total)
+	state.EnableTopSQL()
+	time.Sleep(1500 * time.Millisecond)
+	assert.Len(t, total, 1)
+	state.DisableTopSQL()
+
+	a.close()
+	wg.Wait()
 }
 
 type mockCollector struct {

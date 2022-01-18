@@ -174,21 +174,6 @@ func TestRangeProperties(t *testing.T) {
 	require.Equal(t, cases[len(cases)-1].key, props[len(props)-1].Key)
 	require.Len(t, props, 7)
 
-	a := props.get([]byte("a"))
-	require.Equal(t, uint64(1), a.Size)
-	e := props.get([]byte("e"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance+5), e.Size)
-	i := props.get([]byte("i"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance/8*17+9), i.Size)
-	k := props.get([]byte("k"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance/8*25+11), k.Size)
-	m := props.get([]byte("m"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance+11), m.Keys)
-	n := props.get([]byte("n"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance*2+11), n.Keys)
-	o := props.get([]byte("o"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance*2+12), o.Keys)
-
 	props2 := rangeProperties([]rangeProperty{
 		{[]byte("b"), rangeOffsets{defaultPropSizeIndexDistance + 10, defaultPropKeysIndexDistance / 2}},
 		{[]byte("h"), rangeOffsets{defaultPropSizeIndexDistance * 3 / 2, defaultPropKeysIndexDistance * 3 / 2}},

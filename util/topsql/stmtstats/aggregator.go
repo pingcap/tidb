@@ -19,8 +19,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/atomic"
 )
+
+const maxStmtStatsSize = 1000000
 
 // globalAggregator is global *aggregator.
 var globalAggregator = newAggregator()
@@ -31,6 +34,7 @@ var globalAggregator = newAggregator()
 type aggregator struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
+	statsLen   atomic.Uint32
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
 	running    *atomic.Bool
@@ -55,7 +59,9 @@ func (m *aggregator) run() {
 		case <-m.ctx.Done():
 			return
 		case <-tick.C:
-			m.aggregate()
+			if state.TopSQLEnabled() {
+				m.aggregate()
+			}
 		}
 	}
 }
@@ -83,6 +89,10 @@ func (m *aggregator) aggregate() {
 // register binds StatementStats to aggregator.
 // register is thread-safe.
 func (m *aggregator) register(stats *StatementStats) {
+	if m.statsLen.Load() > maxStmtStatsSize {
+		return
+	}
+	m.statsLen.Inc()
 	m.statsSet.Store(stats, struct{}{})
 }
 
@@ -90,6 +100,7 @@ func (m *aggregator) register(stats *StatementStats) {
 // unregister is thread-safe.
 func (m *aggregator) unregister(stats *StatementStats) {
 	m.statsSet.Delete(stats)
+	m.statsLen.Dec()
 }
 
 // registerCollector binds a Collector to aggregator.

@@ -743,8 +743,13 @@ type SessionVars struct {
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
-	// EnablePlacementChecks indicates whether a user can check validation of placement.
-	EnablePlacementChecks bool
+	// PlacementMode the placement mode we use
+	//   strict: Check placement settings strictly in ddl operations
+	//   ignore: Ignore all placement settings in ddl operations
+	PlacementMode string
+
+	// EnableDirectPlacement is used to control whether the direct placement should be enabled
+	EnableDirectPlacement bool
 
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
@@ -1079,6 +1084,13 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+const (
+	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
+	PlacementModeStrict string = "STRICT"
+	// PlacementModeIgnore indicates ignore all placement operations in ddl
+	PlacementModeIgnore string = "IGNORE"
+)
+
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 
@@ -1238,7 +1250,6 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StmtStats:                   stmtstats.CreateStatementStats(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
@@ -1293,11 +1304,9 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	var enableChunkRPC string
+	enableChunkRPC := "0"
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
-	} else {
-		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
@@ -2185,7 +2194,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				vStr = "pseudo"
 			} else {
 				vStr = strconv.FormatUint(v, 10)
-
 			}
 			if firstComma {
 				buf.WriteString("," + k + ":" + vStr)

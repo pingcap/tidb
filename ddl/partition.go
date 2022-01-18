@@ -444,14 +444,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		return nil, err
 	}
 
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return partitions, nil
 }
 

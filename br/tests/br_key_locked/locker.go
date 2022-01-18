@@ -28,6 +28,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -343,7 +344,7 @@ func randStr() string {
 	length := rand.Intn(128)
 	res := ""
 	for i := 0; i < length; i++ {
-		res += fmt.Sprint(rand.Intn(10))
+		res += strconv.Itoa(rand.Intn(10))
 	}
 	return res
 }

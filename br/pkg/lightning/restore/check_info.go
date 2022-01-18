@@ -806,8 +806,6 @@ outer:
 
 			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = tableCSVCount
-				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}

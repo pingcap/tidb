@@ -3267,7 +3267,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
-		columnName.SetText(column.Name.O)
+		columnName.SetText(nil, column.Name.O)
 
 		idx, err := expression.FindFieldName(mockPlan.OutputNames(), columnName)
 		if err != nil {

@@ -87,8 +87,6 @@ func (cc *CharsetConvertor) initEncoder() error {
 	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 }
 
-var utf8RuneErrorStr = string(utf8.RuneError)
-
 // Decode does the charset conversion work from sourceCharacterSet to utf8mb4.
 // It will return a string as the conversion result whose length may be less or greater
 // than the original string `src`.

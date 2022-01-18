@@ -101,11 +101,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Decimal" }}
 		val := arg0[i].Compare(&arg1[i])
 {{- end }}
-		if val {{ .compare.Operator }} 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val {{ .compare.Operator }} 0)
 	}
 	return nil
 }
