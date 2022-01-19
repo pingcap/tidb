@@ -48,6 +48,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StateQueueing means the job is in the initial state of add partition.
+	StateQueueing
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -70,8 +72,10 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
-	default:
+	case StateQueueing:
 		return "queueing"
+	default:
+		return "none"
 	}
 }
 

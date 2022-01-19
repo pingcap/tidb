@@ -110,7 +110,7 @@ func IsJobRollbackable(job *model.Job) bool {
 			return false
 		}
 	case model.ActionAddTablePartition:
-		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly || job.SchemaState == model.StateQueueing
 	case model.ActionDropColumn, model.ActionDropColumns, model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
@@ -118,7 +118,7 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
-		return job.SchemaState == model.StateNone
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateQueueing
 	}
 	return true
 }

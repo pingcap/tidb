@@ -301,6 +301,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
+			job.SchemaState = model.StateQueueing
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
@@ -594,6 +595,10 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
+			}
+
+			if job.SchemaState == model.StateQueueing {
+				job.SchemaState = model.StateNone
 			}
 
 			// only general ddls allowed to be executed when TiKV is disk full.
