@@ -192,7 +192,7 @@ type ddl struct {
 	workers           map[workerType]*worker
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
-	enableTiFlashPoll atomicutil.Bool
+	enableTiFlashPoll *atomicutil.Bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -331,7 +331,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ctx:               ctx,
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll: true,
+		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
 
 	return d
