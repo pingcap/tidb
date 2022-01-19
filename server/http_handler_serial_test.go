@@ -281,7 +281,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Set GC safe point and enable GC.
 	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	resp, err := ts.fetchStatus("/tiflash/replica")
+	resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var data []tableFlashReplicaInfo
@@ -298,7 +298,7 @@ func TestTiFlashReplica(t *testing.T) {
 	dbt.MustExec("use tidb")
 	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -309,7 +309,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
 	require.Equal(t, false, data[0].Available)
 
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err := io.ReadAll(resp.Body)
@@ -320,7 +320,7 @@ func TestTiFlashReplica(t *testing.T) {
 	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err = io.ReadAll(resp.Body)
@@ -328,7 +328,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "", string(body))
 
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -342,7 +342,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Should not take effect.
 	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 	checkFunc := func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
+		resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
@@ -369,7 +369,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Test for partition table.
 	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
 	dbt.MustExec("alter table test set tiflash replica 0;")
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -387,10 +387,10 @@ func TestTiFlashReplica(t *testing.T) {
 
 	// Mock for partition 1 replica was available.
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -403,16 +403,16 @@ func TestTiFlashReplica(t *testing.T) {
 
 	// Mock for partition 0,2 replica was available.
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	err = resp.Body.Close()
 	require.NoError(t, err)
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	checkFunc = func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
+		resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
