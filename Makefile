@@ -129,14 +129,14 @@ ut: failpoint-enable tools/bin/ut
 	@echo "Running ut."
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLE=1 tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" $(X);
+	CGO_ENABLE=1 tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-gotest: failpoint-enable
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
+# gotest: failpoint-enable
+# 	@echo "Running in native mode."
+# 	@export log_level=info; export TZ='Asia/Shanghai'; \
+# 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+# 	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci: ut
 

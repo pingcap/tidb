@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -28,9 +29,6 @@ import (
 	"time"
 	"regexp"
 	"encoding/xml"
-
-	// "gotest.tools/gotestsum/log"
-	// "gotest.tools/gotestsum/testjson"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
@@ -210,8 +208,6 @@ func cmdRun(args ...string) bool {
 			if !re.MatchString(pkg) {
 				continue
 			}
-			fmt.Println("add package ====", pkg)
-			
 			err := buildTestBinary(pkg)
 			if err != nil {
 				fmt.Println("build package error", pkg, err)
@@ -296,6 +292,9 @@ func cmdRun(args ...string) bool {
 			return false
 		}
 	}
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
 
 	for _, work := range works {
 		if work.Fail {
@@ -305,14 +304,14 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
-func handleJUnitFileFlag() string {
-	var junitfile string
+func handleFlags(flag string) string {
+	var res string
 	// Handle the --junitfile flag, remove it and set the variable.
 	tmp := os.Args[:0]
 	// Iter to the flag
 	var i int
 	for ; i<len(os.Args); i++ {
-		if os.Args[i] == "--junitfile" {
+		if os.Args[i] == flag {
 			i++
 			break
 		}
@@ -320,7 +319,7 @@ func handleJUnitFileFlag() string {
 	}
 	// Handle the flag
 	if i < len(os.Args) {
-		junitfile = os.Args[i]
+		res = os.Args[i]
 		i++
 	}
 	// Iter the remain flags
@@ -330,13 +329,25 @@ func handleJUnitFileFlag() string {
 
 	// os.Args is now the original flags with '--junitfile XXX' removed.
 	os.Args = tmp
-	return junitfile
+	return res
 }
 
 var junitfile string
+var coverprofile string
+var coverFileTempDir string
 
 func main() {
-	junitfile = handleJUnitFileFlag()
+	junitfile = handleFlags("--junitfile")
+	coverprofile = handleFlags("--coverprofile")
+	if coverprofile != "" {
+		var err error
+		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
+		if err != nil {
+			fmt.Println("create temp dir fail", coverFileTempDir)
+			os.Exit(1)
+		}
+		defer os.Remove(coverFileTempDir)
+	}
 
 	// Get the correct count of CPU if it's in docker.
 	P = runtime.GOMAXPROCS(0)
@@ -425,6 +436,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 		res := n.runTestCase(t.pkg, t.test, t.old)
 		if res.Failure != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
+			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -444,9 +456,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 		},
 	}
 	
-	exe := "./" + testFileName(pkg)
-	var cmd *exec.Cmd
-	cmd = n.testCommand(exe, fn, old)
+	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	var buf bytes.Buffer
@@ -499,6 +509,44 @@ func collectTestResults(workers []numa) JUnitTestSuites {
 	return suites
 }
 
+func collectCoverProfileFile() {
+	// Combine all the cover file of single test function into a whole.
+	files, err := os.ReadDir(coverFileTempDir)
+	if err != nil {
+		fmt.Println("collect cover file error:", err)
+		os.Exit(-1)
+	}
+
+	w, err := os.Create(coverprofile)
+	if err != nil {
+		fmt.Println("create cover file error:", err)
+		os.Exit(-1)
+	}
+	defer w.Close()
+	w.WriteString("mode: set\n")
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+		if err != nil {
+			fmt.Println("open temp cover file error:", err)
+			os.Exit(-1)
+		}
+		defer f.Close()
+
+		r := bufio.NewReader(f)
+		line, _, err := r.ReadLine()
+		if err != nil|| string(line) != "mode: set" {
+			continue
+		}
+
+		io.Copy(w, r)
+	}
+}
+
 func failureCases(input []JUnitTestCase) int {
 	sum := 0
 	for _, v := range input {
@@ -509,38 +557,25 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-// func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
-// 	if old {
-// 		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-// 		return exec.Command(
-// 			"numactl", "--physcpubind", n.cpu, "--",
-// 			exe,
-// 			// "-test.timeout", "20s",
-// 			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
-// 	}
-
-// 	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
-// 	return exec.Command(
-// 		"numactl", "--physcpubind", n.cpu, "--",
-// 		exe,
-// 		// "-test.timeout", "20s",
-// 		"-test.cpu", "1", "-test.run", fn)
-// }
-
-func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+	args := make([]string, 0, 10)
+	exe := "./" + testFileName(pkg)
+	if coverprofile != "" {
+		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
+		tmpFile := path.Join(coverFileTempDir, fileName)
+		args = append(args, "-test.coverprofile", tmpFile)
+	}
+	args = append(args, "-test.cpu", "1")
+	// args = append(args, []string{"-test.timeout", "20s"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			exe,
-			// "-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
+	} else {
+		// session.test -test.run TestClusteredPrefixColum
+		args = append(args, "-test.run", fn)
 	}
 
-	// session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		exe,
-		// "-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
+	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
@@ -555,7 +590,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
+	} else {
+		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -563,7 +603,6 @@ func buildTestBinary(pkg string) error {
 		return withTrace(err)
 	}
 	return nil
-
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -675,26 +714,6 @@ func withTrace(err error) error {
 	return &errWithStack{err, stack[:sz]}
 }
 
-// func generate(exec *testjson.Execution, cfg Config) JUnitTestSuites {
-// 	cfg = configWithDefaults(cfg)
-// 	version := goVersion()
-// 	suites := JUnitTestSuites{}
-
-// 	for _, pkgname := range exec.Packages() {
-// 		pkg := exec.Package(pkgname)
-// 		junitpkg := JUnitTestSuite{
-// 			Name:       cfg.FormatTestSuiteName(pkgname),
-// 			Tests:      pkg.Total,
-// 			Time:       formatDurationAsSeconds(pkg.Elapsed()),
-// 			Properties: packageProperties(version),
-// 			TestCases:  packageTestCases(pkg, cfg.FormatTestCaseClassname),
-// 			Failures:   len(pkg.Failed),
-// 		}
-// 		suites.Suites = append(suites.Suites, junitpkg)
-// 	}
-// 	return suites
-// }
-
 func formatDurationAsSeconds(d time.Duration) string {
 	return fmt.Sprintf("%f", d.Seconds())
 }
@@ -723,50 +742,6 @@ func goVersion() string {
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
 }
 
-// func packageTestCases(pkg *testjson.Package, formatClassname FormatFunc) []JUnitTestCase {
-// 	cases := []JUnitTestCase{}
-
-// 	if pkg.TestMainFailed() {
-// 		jtc := newJUnitTestCase(testjson.TestCase{Test: "TestMain"}, formatClassname)
-// 		jtc.Failure = &JUnitFailure{
-// 			Message:  "Failed",
-// 			Contents: pkg.Output(0),
-// 		}
-// 		cases = append(cases, jtc)
-// 	}
-
-// 	for _, tc := range pkg.Failed {
-// 		jtc := newJUnitTestCase(tc, formatClassname)
-// 		jtc.Failure = &JUnitFailure{
-// 			Message:  "Failed",
-// 			Contents: strings.Join(pkg.OutputLines(tc), ""),
-// 		}
-// 		cases = append(cases, jtc)
-// 	}
-
-// 	for _, tc := range pkg.Skipped {
-// 		jtc := newJUnitTestCase(tc, formatClassname)
-// 		jtc.SkipMessage = &JUnitSkipMessage{
-// 			Message: strings.Join(pkg.OutputLines(tc), ""),
-// 		}
-// 		cases = append(cases, jtc)
-// 	}
-
-// 	for _, tc := range pkg.Passed {
-// 		jtc := newJUnitTestCase(tc, formatClassname)
-// 		cases = append(cases, jtc)
-// 	}
-// 	return cases
-// }
-
-// func newJUnitTestCase(tc testjson.TestCase, formatClassname FormatFunc) JUnitTestCase {
-// 	return JUnitTestCase{
-// 		Classname: formatClassname(tc.Package),
-// 		Name:      tc.Test.Name(),
-// 		Time:      formatDurationAsSeconds(tc.Elapsed),
-// 	}
-// }
-
 func write(out io.Writer, suites JUnitTestSuites) error {
 	doc, err := xml.MarshalIndent(suites, "", "\t")
 	if err != nil {
@@ -779,7 +754,6 @@ func write(out io.Writer, suites JUnitTestSuites) error {
 	_, err = out.Write(doc)
 	return err
 }
-
 
 // JUnitTestSuites is a collection of JUnit test suites.
 type JUnitTestSuites struct {
