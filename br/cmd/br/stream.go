@@ -136,7 +136,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	return command
 }
 
-
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
 	if err := cfg.ParseCommonFromFlags(command.Flags()); err != nil {

@@ -32,6 +32,14 @@ var (
 	quoteRegexp     = regexp.MustCompile("`(?:[^`]|``)*`")
 )
 
+// ApplyedFile has two types for now.
+// 1. SST file used by full backup/restore.
+// 2. KV file used by pitr restore.
+type ApplyedFile interface {
+	GetStartKey() []byte
+	GetEndKey() []byte
+}
+
 // GetRewriteRules returns the rewrite rule of the new table and the old table.
 func GetRewriteRules(
 	newTable, oldTable *model.TableInfo, newTimeStamp uint64,
@@ -365,7 +373,7 @@ func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_ss
 	return rule
 }
 
-func rewriteFileKeys(file *backuppb.File, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule

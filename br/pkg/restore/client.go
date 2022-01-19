@@ -154,7 +154,6 @@ func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
 
-
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -599,8 +598,8 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	return files[:idx], files[idx:]
 }
 
-// RestoreFiles tries to restore the files.
-func (rc *Client) RestoreFiles(
+// RestoreSSTFiles tries to restore the files.
+func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
@@ -618,7 +617,7 @@ func (rc *Client) RestoreFiles(
 	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreFiles", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -641,7 +640,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher)
 			})
 	}
 
@@ -682,7 +681,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -1220,7 +1219,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if m.ReslovedTs < int64(restoreTS) {
+			if m.ReslovedTs < restoreTS {
 				log.Debug("backup stream collect meta file", zap.String("file", path))
 				streamBackupMetaFiles = append(streamBackupMetaFiles, m)
 			} else {
@@ -1239,8 +1238,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Metadata, restoreTS uint64) ([]*backuppb.DataFileInfo, error) {
 	streamBackupDataFiles := make([]*backuppb.DataFileInfo, 0)
 	for _, m := range metas {
-		// TODO m.File => m.Files
-		for _, d := range m.File {
+		for _, d := range m.Files {
 			if d.MinTs > restoreTS {
 				continue
 			}
@@ -1251,7 +1249,50 @@ func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Met
 	return streamBackupDataFiles, nil
 }
 
+func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRules, files []*backuppb.DataFileInfo) error {
+	var err error
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		if err == nil {
+			log.Info("Restore KV files", zap.Duration("take", elapsed))
+			summary.CollectSuccessUnit("files", len(files), elapsed)
+		}
+	}()
 
+	log.Debug("start to restore files", zap.Int("files", len(files)))
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, file := range files {
+		filesReplica := file
+		// get rewrite rule from table id
+		rule := rules[filesReplica.TableId]
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				fileStart := time.Now()
+				defer func() {
+					log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+				}()
+				return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
+			})
+	}
+
+	if err := eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error(
+			"restore files failed",
+			zap.Error(err),
+		)
+		return errors.Trace(err)
+	}
+	return nil
+}
 
 func transferBoolToValue(enable bool) string {
 	if enable {

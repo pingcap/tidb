@@ -43,30 +43,30 @@ import (
 )
 
 const (
-	flagStreamTaskName        = "task-name"
-	flagStreamTaskNameDefault = "all" // used for get status for all of tasks.
-	flagStreamStartTS         = "start-ts"
-	flagStreamEndTS           = "end-ts"
-	flagGCSafePointTTS        = "gc-ttl"
-	flagStreamRestoreTS  = "restore-ts"
+	flagStreamTaskName          = "task-name"
+	flagStreamTaskNameDefault   = "all" // used for get status for all of tasks.
+	flagStreamStartTS           = "start-ts"
+	flagStreamEndTS             = "end-ts"
+	flagGCSafePointTTS          = "gc-ttl"
+	flagStreamRestoreTS         = "restore-ts"
 	flagStreamFullBackupStorage = "full-backup-storage"
 )
 
 var (
-	StreamStart  = "stream start"
-	StreamStop   = "stream stop"
-	StreamPause  = "stream pause"
-	StreamResume = "stream resume"
-	StreamStatus = "stream status"
+	StreamStart   = "stream start"
+	StreamStop    = "stream stop"
+	StreamPause   = "stream pause"
+	StreamResume  = "stream resume"
+	StreamStatus  = "stream status"
 	StreamRestore = "stream restore"
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
-	StreamStart:  RunStreamStart,
-	StreamStop:   RunStreamStop,
-	StreamPause:  RunStreamPause,
-	StreamResume: RunStreamResume,
-	StreamStatus: RunStreamStatus,
+	StreamStart:   RunStreamStart,
+	StreamStop:    RunStreamStop,
+	StreamPause:   RunStreamPause,
+	StreamResume:  RunStreamResume,
+	StreamStatus:  RunStreamStatus,
 	StreamRestore: RunStreamRestore,
 }
 
@@ -78,14 +78,14 @@ type StreamConfig struct {
 	// FullBackupStorage is used to find the maps between table name and table id during restoration.
 	// if not specified. we cannot apply kv directly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
-	TaskName string `json:"task-name" toml:"task-name"`
+	TaskName          string `json:"task-name" toml:"task-name"`
 
 	// StartTs usually equals the tso of full-backup, but user can reset it
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
-	SafePointTTL int64 `json:"safe-point-ttl" toml:"safe-point-ttl"`
-	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	SafePointTTL int64  `json:"safe-point-ttl" toml:"safe-point-ttl"`
+	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
@@ -650,6 +650,8 @@ func RunStreamRestore(
 	// read data file by given ts.
 	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 
+	client.RestoreKVFiles(ctx, rewrirteRuls, datas)
+
 	return nil
 }
 
@@ -691,15 +693,15 @@ func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *St
 
 }
 
-func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[string]*restore.RewriteRules, error) {
+func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
-	rules := make(map[string]*restore.RewriteRules)
+	rules := make(map[int64]*restore.RewriteRules)
 	for _, t := range tables {
 		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rules[utils.UniqueID(t.DB.Name.String(), t.Info.Name.String())] = restore.GetRewriteRules(newTableInfo, t.Info, 0)
+		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0)
 	}
 	return rules, nil
 }
