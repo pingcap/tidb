@@ -109,18 +109,13 @@ func TestIssue31174(t *testing.T) {
 	tk.MustExec("create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);")
 	tk.MustExec("insert into t values('`?');")
 	// The 'like' condition can not be used to construct the range.
-	tk.MustQuery("explain format = 'brief' select * from t where a like '`%';").Check(testkit.Rows(""+
-		"TableReader 8000.00 root  data:Selection",
-		"└─Selection 8000.00 cop[tikv]  like(test.t.a, \"`%\", 92)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.HasPlan("select * from t where a like '`%';", "TableFullScan")
 	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(4) collate binary primary key /*T![clustered_index] clustered */);")
 	tk.MustExec("insert into t values('`?');")
-	tk.MustQuery("explain format = 'brief' select * from t where a like '`%';").Check(testkit.Rows(""+
-		"TableReader 250.00 root  data:TableRangeScan",
-		"└─TableRangeScan 250.00 cop[tikv] table:t range:[0x60,0x61), keep order:false, stats:pseudo"))
+	tk.HasPlan("select * from t where a like '`%';", "TableRangeScan")
 	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?\x00\x00"))
 }
 
