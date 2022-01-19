@@ -1180,6 +1180,15 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// If ctx is cancelled, `Next` may return empty result when the actual data is not empty. To avoid producing
+		// false-positive error logs that cause confusion, exit in this case.
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
