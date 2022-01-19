@@ -86,7 +86,7 @@ func nextInt64Value(column *column, min int64, max int64) int64 {
 }
 
 func intToDecimalString(intValue int64, decimal int) string {
-	data := fmt.Sprintf("%d", intValue)
+	data := strconv.FormatInt(intValue, 10)
 
 	// add leading zero
 	if len(data) < decimal {

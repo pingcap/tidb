@@ -132,6 +132,14 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			}
 		}
 
+		if tblInfo.TiFlashReplica != nil {
+			// Must set placement rule, and make sure it succeeds.
+			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); err != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+		}
+
 		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -166,6 +174,12 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			}
 		}
 
+		// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
+		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+			for _, d := range partInfo.Definitions {
+				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
+			}
+		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
@@ -193,6 +207,10 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
+
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
@@ -319,6 +337,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
+			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
+				tiflashPeerAtLeastOne = v.(bool)
+			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
 			if tiflashPeerAtLeastOne {
@@ -442,14 +463,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 
 	if err != nil {
 		return nil, err
-	}
-
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return partitions, nil
@@ -1197,6 +1210,15 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels)
+		failpoint.Inject("FailTiFlashTruncatePartition", func() {
+			e = errors.New("enforced error")
+		})
+		if e != nil {
+			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
+			job.State = model.JobStateCancelled
+			return ver, e
+		}
 		tblInfo.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
 		for _, oldID := range oldIDs {

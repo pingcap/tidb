@@ -189,47 +189,31 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(variable.TiDBOptOn(sVal))
 	case variable.TiDBStmtSummaryInternalQuery:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(variable.TiDBOptOn(sVal))
 	case variable.TiDBStmtSummaryRefreshInterval:
-		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(variable.TidbOptInt64(sVal, variable.DefTiDBStmtSummaryRefreshInterval))
 	case variable.TiDBStmtSummaryHistorySize:
-		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryHistorySize))
 	case variable.TiDBStmtSummaryMaxStmtCount:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxStmtCount)))
 	case variable.TiDBStmtSummaryMaxSQLLength:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
-	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(sVal, false)
-	case variable.TiDBTopSQLPrecisionSeconds:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.PrecisionSeconds.Store(val)
-	case variable.TiDBTopSQLMaxStatementCount:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxSQLLength))
+	case variable.TiDBTopSQLMaxTimeSeriesCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
 		topsqlstate.GlobalState.MaxStatementCount.Store(val)
-	case variable.TiDBTopSQLMaxCollect:
+	case variable.TiDBTopSQLMaxMetaCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
 		topsqlstate.GlobalState.MaxCollect.Store(val)
-	case variable.TiDBTopSQLReportIntervalSeconds:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.ReportIntervalSeconds.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
