@@ -142,6 +142,9 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 	}
 	// Fix decimal for int and string.
 	resultEvalType := resultFieldType.EvalType()
+	if types.IsTypeNumeric(resultFieldType.Tp) {
+		resultFieldType.Flag |= mysql.BinaryFlag
+	}
 	if resultEvalType == types.ETInt {
 		resultFieldType.Decimal = 0
 		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
