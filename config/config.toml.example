@@ -10,10 +10,10 @@ advertise-address = ""
 port = 4000
 
 # Registered store name, [tikv, mocktikv, unistore]
-store = "tikv"
+store = "unistore"
 
 # TiDB storage path.
-path = "127.0.0.1:2379"
+path = "/tmp/tidb"
 
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
@@ -78,7 +78,7 @@ max-index-length = 3072
 index-limit = 64
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
-enable-table-lock = true
+enable-table-lock = false
 
 # delay-clean-table-lock is used to control the time (Milliseconds) of delay before unlock the table in the abnormal situation.
 delay-clean-table-lock = 0

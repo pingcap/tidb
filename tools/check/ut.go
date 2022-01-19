@@ -171,6 +171,7 @@ func cmdRun(args ...string) bool {
 	tasks := make([]task, 0, 5000)
 	// run all tests
 	if len(args) == 0 {
+		start := time.Now()
 		for _, pkg := range pkgs {
 			fmt.Println("handling package", pkg)
 			err := buildTestBinary(pkg)
@@ -195,6 +196,7 @@ func cmdRun(args ...string) bool {
 				return false
 			}
 		}
+		fmt.Println("build all packages takes", time.Since(start))
 	}
 
 	// run tests for packages
@@ -274,11 +276,14 @@ func cmdRun(args ...string) bool {
 	}
 
 	shuffle(tasks)
+
+	start := time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+	fmt.Println("run all tasks takes", time.Since(start))
 
 	if junitfile != "" {
 		out := collectTestResults(works)
