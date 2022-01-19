@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut building_test_binary
 
 default: server buildsucc
 
@@ -125,7 +125,11 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-ut: failpoint-enable tools/bin/ut
+build_test_binary: tools/bin/xprog
+	@echo "building test binary"
+	$(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR) > /dev/null
+
+ut: failpoint-enable build_test_binary tools/bin/ut
 	@echo "Running ut."
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
@@ -426,3 +430,6 @@ dumpling_bins:
 
 tools/bin/gotestsum: tools/check/go.mod
 	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+tools/bin/xprog: tools/check/xprog.go
+	cd tools/check && $(GO) build -o ../bin/xprog xprog.go

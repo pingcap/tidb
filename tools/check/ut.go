@@ -174,11 +174,11 @@ func cmdRun(args ...string) bool {
 		start := time.Now()
 		for _, pkg := range pkgs {
 			fmt.Println("handling package", pkg)
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
+			// err := buildTestBinary(pkg)
+			// if err != nil {
+			// 	fmt.Println("build package error", pkg, err)
+			// 	return false
+			// }
 
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
