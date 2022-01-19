@@ -138,7 +138,7 @@ func TestRestrainDropColumnWithIndexX(t *testing.T) {
 	timeIn8 := tk.MustQuery("select b from t").Rows()[0][0]
 	// change timezone
 	tk.MustExec(`set time_zone = '+00:00'`)
-	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`insert into t set b=now()`)
 	timeIn0 := tk.MustQuery("select b from t").Rows()[0][0]
 	require.True(t, timeIn8 != timeIn0)
 	datumTimeIn8, err := expression.GetTimeValue(tk.Session(), timeIn8, mysql.TypeTimestamp, 0)
@@ -167,21 +167,9 @@ func TestRestrainDropColumnWithIndexX(t *testing.T) {
 	logutil.BgLogger().Warn("xxx*************************************** 010")
 	tk.MustExec(`alter table t add column b timestamp as (a+1) virtual;`)
 	logutil.BgLogger().Warn("xxx*************************************** 011")
-	timeIn8 = tk.MustQuery("select b from t").Rows()[0][0]
 	// change timezone
 	tk.MustExec(`set time_zone = '+05:00'`)
 	tk.MustExec(`insert into t set a=now()`)
-	timeIn0 = tk.MustQuery("select b from t").Rows()[0][0]
-	require.True(t, timeIn8 != timeIn0)
-	datumTimeIn8, err = expression.GetTimeValue(tk.Session(), timeIn8, mysql.TypeTimestamp, 0)
-	require.Nil(t, err)
-	tIn8To0 = datumTimeIn8.GetMysqlTime()
-	timeZoneIn8, err = time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
-	err = tIn8To0.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
-	require.True(t, timeIn0 == tIn8To0.String())
-
 	logutil.BgLogger().Warn("xxx*************************************** 02")
 	tk.MustExec(`alter table t add index(b);`)
 	logutil.BgLogger().Warn("xxx*************************************** 03")

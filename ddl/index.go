@@ -1176,7 +1176,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 
 			// Decode one row, generate records of this row.
-			err := w.updateRowDecoder(handle, recordKey)
+			err := w.updateRowDecoder(handle, rawRow)
 			if err != nil {
 				return false, err
 			}

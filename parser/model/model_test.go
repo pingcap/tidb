@@ -443,3 +443,30 @@ func TestPlacementSettingsString(t *testing.T) {
 	}
 	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
+
+func TestLocation(t *testing.T) {
+	// test offset = 0
+	loc := &LocationInfo{}
+	nLoc, err := loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// test loc.location != nil
+	loc.Name = "Asia/Shanghai"
+	nLoc, err = loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// timezone +05:00
+	loc1 := &LocationInfo{Name: "UTC", Offset: 18000}
+	loc1Byte, err := json.Marshal(loc1)
+	require.NoError(t, err)
+	loc2 := &LocationInfo{}
+	err = json.Unmarshal(loc1Byte, loc2)
+	require.NoError(t, err)
+	require.Equal(t, loc2.Offset, loc1.Offset)
+	require.Equal(t, loc2.Name, loc1.Name)
+	nLoc, err = loc2.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	location := time.FixedZone("UTC", loc1.Offset)
+	require.Equal(t, nLoc, location)
+}

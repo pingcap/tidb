@@ -607,17 +607,14 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
-			// TODO: skip set the timezone, it will cause data inconsistency when add index, since some reorg place using the timeUtil.SystemLocation() to do the time conversion. (need a more systemic plan)
+			// It is set to SystemLocation to be compatible with nil LocationInfo.
 			*sessCtx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
-			// sessCtx.GetSessionVars().TimeZone = timeutil.SystemLocation()
-			// sessCtx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
 			if reorgInfo.ReorgMeta.LocationInfo != nil {
 				tz, err := reorgInfo.ReorgMeta.LocationInfo.GetLocation()
 				if err != nil {
 					return errors.Trace(err)
 				}
 				*sessCtx.GetSessionVars().TimeZone = *tz
-				// sessCtx.GetSessionVars().StmtCtx.TimeZone = sessCtx.GetSessionVars().TimeZone
 				logutil.BgLogger().Warn("xxxx-------------------------------------****************************************************************",
 					zap.String("stmtC timezone", sessCtx.GetSessionVars().StmtCtx.TimeZone.String()),
 					zap.String("seC timezone", sessCtx.GetSessionVars().TimeZone.String()))

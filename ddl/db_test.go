@@ -7614,6 +7614,7 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		{"set time_zone = '-08:00'", "", "UTC", -28800, nil},
 		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
 		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
+		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
 		{"set time_zone = 'GMT'", "GMT", "GMT", 0, nil},
 		{"set time_zone = 'EST'", "EST", "EST", 0, nil},
 	}
