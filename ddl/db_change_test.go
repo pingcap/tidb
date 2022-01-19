@@ -43,10 +43,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -900,14 +898,6 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
-
-	sysTZ := s.se.GetSessionVars().StmtCtx.TimeZone
-	n0 := time.Now().In(time.UTC)
-	n := time.Now().In(timeutil.SystemLocation())
-	n1 := time.Now().In(sysTZ)
-	n2 := time.Now().In(se.GetSessionVars().StmtCtx.TimeZone)
-	str := fmt.Sprintf("xxxz---------------------------------time tz:%v, utiltz:%v, systz1:%v, systz2:%v", n0, n, n1, n2)
-	logutil.BgLogger().Warn(str)
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(c, s.store)

@@ -573,7 +573,6 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Loc
 
 // Unflatten converts a raw datum to a column datum.
 func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
-	logutil.BgLogger().Warn("xxxU 0 --------------------------------- ")
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -594,10 +593,8 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxxU 0 --------------------------------- time :%v", t))
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
-			logutil.BgLogger().Warn(fmt.Sprintf("xxxU 1 --------------------------------- time :%v", t))
 			if err != nil {
 				return datum, errors.Trace(err)
 			}

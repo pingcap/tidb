@@ -15,7 +15,6 @@
 package rowcodec
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Encoder is used to encode a row.
@@ -171,10 +169,8 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := d.GetMysqlTime()
-		logutil.BgLogger().Warn(fmt.Sprintf("xxxE 0 --------------------------------- time :%v", t))
 		if t.Type() == mysql.TypeTimestamp && sc != nil && sc.TimeZone != time.UTC {
 			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
-			logutil.BgLogger().Warn(fmt.Sprintf("xxxE 1 --------------------------------- time :%v", t))
 			if err != nil {
 				return
 			}

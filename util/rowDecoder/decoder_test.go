@@ -80,13 +80,9 @@ func TestRowDecoder(t *testing.T) {
 
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
 	require.Nil(t, err)
-	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
-	require.Nil(t, err)
-	err = time3.ConvertTimeZone(timeZoneIn8, time.UTC)
 	require.Nil(t, err)
 	t3 := types.NewTimeDatum(time3)
 

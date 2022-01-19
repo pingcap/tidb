@@ -537,6 +537,19 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 	return decodeColMap, nil
 }
 
+func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
+	// It is set to SystemLocation to be compatible with nil LocationInfo.
+	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
+	if info.ReorgMeta.LocationInfo != nil {
+		tz, err := info.ReorgMeta.LocationInfo.GetLocation()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		*sctx.GetSessionVars().TimeZone = *tz
+	}
+	return nil
+}
+
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
@@ -607,17 +620,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
-			// It is set to SystemLocation to be compatible with nil LocationInfo.
-			*sessCtx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
-			if reorgInfo.ReorgMeta.LocationInfo != nil {
-				tz, err := reorgInfo.ReorgMeta.LocationInfo.GetLocation()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				*sessCtx.GetSessionVars().TimeZone = *tz
-				logutil.BgLogger().Warn("xxxx-------------------------------------****************************************************************",
-					zap.String("stmtC timezone", sessCtx.GetSessionVars().StmtCtx.TimeZone.String()),
-					zap.String("seC timezone", sessCtx.GetSessionVars().TimeZone.String()))
+			if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
+				return errors.Trace(err)
 			}
 
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()

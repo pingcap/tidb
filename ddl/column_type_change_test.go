@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -2357,33 +2356,55 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	str := fmt.Sprintf("tz:%v, ctxTZ:%v", tk.Se.GetSessionVars().TimeZone.String(), tk.Se.GetSessionVars().StmtCtx.TimeZone)
-	logutil.BgLogger().Warn("xxx000============================" + str)
-
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
 	tk.MustExec("insert into t values();")
-	logutil.BgLogger().Warn("xxx*************************************** 0")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
-	logutil.BgLogger().Warn("xxx*************************************** 1")
 	tk.MustExec("alter table t modify column c1 bigint;")
-	logutil.BgLogger().Warn("xxx*************************************** 2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
-
-	str = fmt.Sprintf("tz:%v, ctxTZ:%v", tk.Se.GetSessionVars().TimeZone.String(), tk.Se.GetSessionVars().StmtCtx.TimeZone)
-	logutil.BgLogger().Warn("xxx111============================" + str)
 	tk.MustExec("alter table t modify c1 timestamp")
 	tk.MustExec("set @@session.time_zone=UTC")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 17:05:08"))
-	tk.MustExec("set @@session.time_zone='Asia/Shanghai'")
 
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec(`set time_zone = '+00:00'`)
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
 	tk.MustExec("insert into t values();")
-	logutil.BgLogger().Warn("xxx*************************************** 0")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
-	logutil.BgLogger().Warn("xxx*************************************** 1")
 	tk.MustExec("alter table t modify column c1 bigint;")
-	logutil.BgLogger().Warn("xxx*************************************** 2")
+	tk.MustExec("alter table t add index idx1(id, c1);")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone='+5:00'")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 12:05:08"))
+	tk.MustExec("admin check table t")
+	// test the timezone of "default" and "system"
+	// The current session.time_zone is '-8:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone= default")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='SYSTEM'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("admin check table t")
 }

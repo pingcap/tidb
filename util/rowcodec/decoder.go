@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 // decoder contains base util for decode row.
@@ -101,7 +100,6 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, row map[int64]t
 
 func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (types.Datum, error) {
 	var d types.Datum
-	logutil.BgLogger().Warn(fmt.Sprintf("xxxDD 01 --------------------------------- id:%v, ft:%s", col.ID, col.Ft))
 	switch col.Ft.Tp {
 	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
 		if mysql.HasUnsignedFlag(col.Ft.Flag) {
@@ -141,10 +139,8 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		if err != nil {
 			return d, err
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxxDD 00 --------------------------------- id:%v, time :%v, tz:%v", col.ID, t, decoder.loc.String()))
 		if col.Ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, decoder.loc)
-			logutil.BgLogger().Warn(fmt.Sprintf("xxxDD 11 --------------------------------- id:%v time :%v", col.ID, t))
 			if err != nil {
 				return d, err
 			}

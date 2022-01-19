@@ -187,8 +187,6 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 	sort.Ints(keys)
 	for _, id := range keys {
 		col := rd.colMap[int64(ids[id])]
-		logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 0 --------------------------------- str:%v, val:%v, default:%v, gen expr:%v",
-			col.Col.Name, row[col.Col.ID], col.Col.OriginDefaultValue, col.GenExpr))
 		if col.GenExpr == nil {
 			continue
 		}
@@ -202,20 +200,7 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 			return nil, err
 		}
 
-		// if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
-		// 	t := val.GetMysqlTime()
-		// 	logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 1 --------------------------------- time :%v, tz:%v", t, sysLoc))
-		// 	if t.Type() == mysql.TypeTimestamp {
-		// 		err := t.ConvertTimeZone(sysLoc, time.UTC)
-		// 		logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 2 --------------------------------- time :%v", t))
-		// 		if err != nil {
-		// 			return nil, err
-		// 		}
-		// 		val.SetMysqlTime(t)
-		// 	}
-		// }
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
-
 		row[int64(ids[id])] = val
 	}
 	// return the existed and evaluated column map here.

@@ -1335,9 +1335,6 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
-	timeStr := time.Now().In(sysTZ)
-	str := fmt.Sprintf("xxx0---------------------------------time tz:%v, old val:%v, new val:%v, now:%v", sysTZ, w.rowMap[w.oldColInfo.ID], w.rowMap[w.newColInfo.ID], timeStr)
-	logutil.BgLogger().Warn(str)
 
 	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
 		// The column is already added by update or insert statement, skip it.
@@ -1380,10 +1377,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
-	logutil.BgLogger().Warn(str)
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, sysTZ, w.rowMap)
-	str = fmt.Sprintf("xxx1---------------------------------time tz val:%v", w.rowMap[w.newColInfo.ID])
-	logutil.BgLogger().Warn(str)
 	if err != nil {
 		return errors.Trace(err)
 	}
