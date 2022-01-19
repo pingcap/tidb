@@ -1100,19 +1100,9 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 
-	// TODO: seems there is a bug in fail-point when inject a fail-point in a function closure
-	// after fail-point fix this bug, we should move this fail-point into eg.GO
-	// See: https://github.com/pingcap/failpoint/issues/70
-	var mockErr error
-	failpoint.Inject("CheckTableEmptyFailed", func() {
-		mockErr = errors.New("mock error")
-	})
 	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for tblName := range ch {
-				if mockErr != nil {
-					return mockErr
-				}
 				// skip tables that have checkpoint
 				if rc.cfg.Checkpoint.Enable {
 					_, err := rc.checkpointsDB.Get(gCtx, tblName)
@@ -1167,6 +1157,9 @@ loop:
 }
 
 func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName string) (bool, error) {
+	failpoint.Inject("CheckTableEmptyFailed", func() {
+		failpoint.Return(false, errors.New("mock error"))
+	})
 	query := "select 1 from " + tableName + " limit 1"
 	exec := common.SQLWithRetry{
 		DB:     db,

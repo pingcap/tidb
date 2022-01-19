@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/pingcap/tidb/errno"
 	"os"
 	"path/filepath"
 
@@ -476,6 +477,9 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	c.Assert(err, IsNil)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
+	// test auto retry retryable error
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnError(mysql.NewErr(errno.ErrPDServerTimeout))
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
@@ -553,7 +557,6 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	// test check tables not stuck but return the right error
 	err = rc.checkTableEmpty(ctx)
 	c.Assert(err, ErrorMatches, ".*check table contains data failed: mock error.*")
-
 }
 
 func (s *checkInfoSuite) TestLocalResource(c *C) {
