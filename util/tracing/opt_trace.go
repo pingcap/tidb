@@ -24,7 +24,7 @@ type PlanTrace struct {
 	ChildrenID []int        `json:"childrenID"`
 	Cost       float64      `json:"cost"`
 	Selected   bool         `json:"selected"`
-
+	ProperType string       `json:"property"`
 	// ExplainInfo should be implemented by each implemented LogicalPlan
 	ExplainInfo string `json:"info"`
 }
@@ -179,7 +179,7 @@ type PhysicalOptimizeTracer struct {
 	Final               []*PlanTrace          `json:"final"`
 	SelectedCandidates  []*CandidatePlanTrace `json:"selected_candidates"`
 	DiscardedCandidates []*CandidatePlanTrace `json:"discarded_candidates"`
-	// (logical plan) -> property -> physical plan candidates
+	// (logical plan) -> property hashCode -> physical plan candidates
 	State map[string]map[string]*PhysicalOptimizeTraceInfo `json:"-"`
 }
 
@@ -192,17 +192,15 @@ func (tracer *PhysicalOptimizeTracer) RecordFinalPlanTrace(root *PlanTrace) {
 // CandidatePlanTrace indicates info for candidate
 type CandidatePlanTrace struct {
 	*PlanTrace
-	Property           string `json:"property"`
 	MappingLogicalPlan string `json:"mapping"`
 }
 
-func newCandidatePlanTrace(trace *PlanTrace, logicalPlanKey, property string, bestKey map[string]struct{}) *CandidatePlanTrace {
+func newCandidatePlanTrace(trace *PlanTrace, logicalPlanKey string, bestKey map[string]struct{}) *CandidatePlanTrace {
 	selected := false
 	if _, ok := bestKey[CodecPlanName(trace.TP, trace.ID)]; ok {
 		selected = true
 	}
 	c := &CandidatePlanTrace{
-		Property:           property,
 		MappingLogicalPlan: logicalPlanKey,
 	}
 	c.PlanTrace = trace
@@ -230,7 +228,7 @@ func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
 	for logicalKey, tasksInfo := range tracer.State {
 		for _, taskInfo := range tasksInfo {
 			for _, candidate := range taskInfo.Candidates {
-				c := newCandidatePlanTrace(candidate, logicalKey, taskInfo.Property, bestKeys)
+				c := newCandidatePlanTrace(candidate, logicalKey, bestKeys)
 				if c.Selected {
 					sCandidates = append(sCandidates, c)
 				} else {
