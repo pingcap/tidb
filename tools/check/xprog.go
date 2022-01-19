@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 	"os"
 	"strings"
 	"bufio"
@@ -54,7 +53,6 @@ func main() {
 
 	err = os.Rename(testBinaryPath, newName)
 	if err != nil {
-		time.Sleep(time.Hour)
 		os.Exit(-1)
 	}
 }
