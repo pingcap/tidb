@@ -485,18 +485,16 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
 	var bundles []*placement.Bundle
-	if tblInfo.PlacementPolicyRef != nil || tblInfo.DirectPlacementOpts != nil {
+	if tblInfo.PlacementPolicyRef != nil {
 		tblInfo.PlacementPolicyRef = nil
-		tblInfo.DirectPlacementOpts = nil
 		bundles = append(bundles, placement.NewBundle(tblInfo.ID))
 	}
 
 	if tblInfo.Partition != nil {
 		for i := range tblInfo.Partition.Definitions {
 			par := &tblInfo.Partition.Definitions[i]
-			if par.PlacementPolicyRef != nil || par.DirectPlacementOpts != nil {
+			if par.PlacementPolicyRef != nil {
 				par.PlacementPolicyRef = nil
-				par.DirectPlacementOpts = nil
 				bundles = append(bundles, placement.NewBundle(par.ID))
 			}
 		}
@@ -661,7 +659,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		for i := range oldPartitionIDs {
 			newDef := &newDefs[i]
 			newID := newDef.ID
-			if newDef.PlacementPolicyRef != nil || newDef.DirectPlacementOpts != nil {
+			if newDef.PlacementPolicyRef != nil {
 				oldIDs = append(oldIDs, oldPartitionIDs[i])
 				newIDs = append(newIDs, newID)
 			}
@@ -1405,8 +1403,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	policyRefInfo := &model.PolicyRefInfo{}
-	placementSettings := &model.PlacementSettings{}
-	err = job.DecodeArgs(&partitionID, &policyRefInfo, &placementSettings)
+	err = job.DecodeArgs(&partitionID, &policyRefInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1428,8 +1425,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 	for i := range definitions {
 		if partitionID == definitions[i].ID {
 			def := &definitions[i]
-			oldPartitionEnablesPlacement = def.PlacementPolicyRef != nil || def.DirectPlacementOpts != nil
-			def.DirectPlacementOpts = placementSettings
+			oldPartitionEnablesPlacement = def.PlacementPolicyRef != nil
 			def.PlacementPolicyRef = policyRefInfo
 			partitionDef = &definitions[i]
 			break
@@ -1476,8 +1472,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 
 func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	policyRefInfo := &model.PolicyRefInfo{}
-	placementSettings := &model.PlacementSettings{}
-	err = job.DecodeArgs(&policyRefInfo, &placementSettings)
+	err = job.DecodeArgs(&policyRefInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1497,10 +1492,8 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return 0, errors.Trace(err)
 	}
 
-	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil || tblInfo.DirectPlacementOpts != nil
+	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil
 	tblInfo.PlacementPolicyRef = policyRefInfo
-	tblInfo.DirectPlacementOpts = placementSettings
-
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
