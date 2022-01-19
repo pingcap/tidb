@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -191,7 +192,7 @@ type ddl struct {
 	workers           map[workerType]*worker
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
-	enableTiFlashPoll bool
+	enableTiFlashPoll atomicutil.Bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -229,20 +230,20 @@ func (dc *ddlCtx) isOwner() bool {
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d interface{}) {
 	if dd, ok := d.(*ddl); ok {
-		dd.enableTiFlashPoll = true
+		dd.enableTiFlashPoll.Store(true)
 	}
 }
 
 // DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func DisableTiFlashPoll(d interface{}) {
 	if dd, ok := d.(*ddl); ok {
-		dd.enableTiFlashPoll = false
+		dd.enableTiFlashPoll.Store(false)
 	}
 }
 
 // IsTiFlashPollEnabled reveals enableTiFlashPoll
 func (d *ddl) IsTiFlashPollEnabled() bool {
-	return d.enableTiFlashPoll
+	return d.enableTiFlashPoll.Load()
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
