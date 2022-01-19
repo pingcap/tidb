@@ -207,7 +207,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
-	childProps := make([]*property.PhysicalProperty, 0, len(p.children))
+	childProps := make(map[task]*property.PhysicalProperty)
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
@@ -231,7 +231,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 				break
 			}
 			childTasks = append(childTasks, childTask)
-			childProps = append(childProps, childProp)
+			childProps[childTask] = childProp
 		}
 
 		// This check makes sure that there is no invalid child task.
@@ -281,8 +281,11 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		c := opt.appendCandidate(p, curTask.plan(), prop)
 		if c != nil {
-			for k, childTask := range childTasks {
-				opt.appendChildToCandidate(c, childTask.plan(), childProps[k])
+			for _, childTask := range childTasks {
+				if childTask == nil {
+					continue
+				}
+				opt.appendChildToCandidate(c, childTask.plan(), childProps[childTask])
 			}
 		}
 		// Get the most efficient one.
@@ -358,9 +361,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
-		if p.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
-			logutil.BgLogger().Info("getTask", zap.String("bestTask pp", tracing.CodecPlanName(bestTask.plan().TP(), bestTask.plan().ID())))
-		}
 		planCounter.Dec(1)
 		return bestTask, 1, nil
 	}
