@@ -774,6 +774,11 @@ func (rc *Client) RestoreRaw(
 			logutil.Key("startKey", startKey),
 			logutil.Key("endKey", endKey),
 			zap.Duration("take", elapsed))
+
+		for _, f := range files {
+			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		}
 	}()
 	errCh := make(chan error, len(files))
 	eg, ectx := errgroup.WithContext(ctx)
