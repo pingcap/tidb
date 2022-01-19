@@ -591,3 +591,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
+
+func (s *tiflashDDLTestSuite) TestMultiReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_tiflash")
+	tk.MustExec("alter database ddltiflash set tiflash replica 1")
+}

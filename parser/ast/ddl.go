@@ -73,6 +73,7 @@ const (
 	DatabaseOptionCharset
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
+	DatabaseSetTiFlashReplica
 	DatabaseOptionPlacementPrimaryRegion       = DatabaseOptionType(PlacementOptionPrimaryRegion)
 	DatabaseOptionPlacementRegions             = DatabaseOptionType(PlacementOptionRegions)
 	DatabaseOptionPlacementFollowerCount       = DatabaseOptionType(PlacementOptionFollowerCount)
@@ -92,6 +93,7 @@ type DatabaseOption struct {
 	Tp        DatabaseOptionType
 	Value     string
 	UintValue uint64
+	TiFlashReplica *TiFlashReplicaSpec
 }
 
 // Restore implements Node interface.
