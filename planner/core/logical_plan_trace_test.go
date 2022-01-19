@@ -23,61 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testPlanSuite) TestLogicalOptimizeWithTraceEnabled(c *C) {
-	sql := "select * from t where a in (1,2)"
-	defer testleak.AfterTest(c)()
-	tt := []struct {
-		flags []uint64
-		steps int
-	}{
-		{
-			flags: []uint64{
-				flagEliminateAgg,
-				flagPushDownAgg},
-			steps: 2,
-		},
-		{
-			flags: []uint64{
-				flagEliminateAgg,
-				flagPushDownAgg,
-				flagPrunColumns,
-				flagBuildKeyInfo,
-			},
-			steps: 4,
-		},
-		{
-			flags: []uint64{},
-			steps: 0,
-		},
-	}
-
-	for i, tc := range tt {
-		comment := Commentf("case:%v sql:%s", i, sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
-		sctx := MockContext()
-		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
-		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
-		ctx := context.TODO()
-		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
-		flag := uint64(0)
-		for _, f := range tc.flags {
-			flag = flag | f
-		}
-		p, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		_, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
-		c.Assert(otrace, NotNil)
-		c.Assert(len(otrace.Steps), Equals, tc.steps)
-	}
-}
-
 func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 	defer testleak.AfterTest(c)()
 	tt := []struct {
