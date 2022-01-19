@@ -196,15 +196,16 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 	}
 
 	// check whether the region is healthy and report.
+	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
 	for _, peer := range regionInfo.PendingPeers {
-		log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
 	}
 	for _, peer := range regionInfo.DownPeers {
-		log.Warn("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
 	}
 	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
 	// (or once there is a peer down, we may get stuck at waiting region get ready.)
-	return len(regionInfo.PendingPeers) == 0, nil
+	return true, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
