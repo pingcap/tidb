@@ -257,7 +257,7 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, [
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 		partNames = append(partNames, one.Name.L)
-		if one.PlacementPolicyRef != nil || one.DirectPlacementOpts != nil {
+		if one.PlacementPolicyRef != nil {
 			rollbackBundles = append(rollbackBundles, placement.NewBundle(one.ID))
 		}
 	}
@@ -477,19 +477,6 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	// when policy x is altered.
 	for _, opt := range options {
 		switch opt.Tp {
-		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
-			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
-			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
-			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
-			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
-			ast.TableOptionPlacementVoterConstraints:
-			if partition.DirectPlacementOpts == nil {
-				partition.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
-			if err != nil {
-				return err
-			}
 		case ast.TableOptionPlacementPolicy:
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
