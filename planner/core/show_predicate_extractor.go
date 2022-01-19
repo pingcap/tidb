@@ -85,7 +85,7 @@ func (e *ShowColumnsTableExtractor) explainInfo() string {
 	}
 
 	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("feild_pattern:[%s], ", e.FieldPatterns))
+		r.WriteString(fmt.Sprintf("field_pattern:[%s], ", e.FieldPatterns))
 	}
 
 	// remove the last ", " in the message info
