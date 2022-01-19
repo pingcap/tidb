@@ -7035,3 +7035,52 @@ func TestIssue29708(t *testing.T) {
 		{"b"},
 	})
 }
+
+func TestIssue29497(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// Origin Test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("DROP TABLE IF EXISTS t;\nCREATE TABLE t (i1 INT,\nd1 DOUBLE,\ne2 DECIMAL(5,2));\nINSERT INTO t VALUES ( 6,    6.0,  10.0/3),\n( null, 9.0,  10.0/3),\n( 1,    null, 10.0/3),\n( 2,    2.0,  null  );\nSELECT * FROM t;\n\nSELECT IFNULL(e2,i1) nullif_c,\nIF(e2 IS NULL,i1,e2) if_c,\nSUM(d1) FROM t\nGROUP BY e2,i1 ORDER BY nullif_c, SUM(d1);")
+	tk.MustQuery("SELECT IFNULL(e2,i1) nullif_c,\nIF(e2 IS NULL,i1,e2) if_c,\nSUM(d1) FROM t\nGROUP BY e2,i1 ORDER BY nullif_c, SUM(d1);").
+		Check(testkit.Rows("2.00 2.00 2", "3.33 3.33 <nil>", "3.33 3.33 6", "3.33 3.33 9"))
+
+	// Type Test
+	type testCase struct {
+		fieldType1  string
+		fieldType2  string
+		value1      string
+		value2      string
+		resultLine1 string
+		resultLine2 string
+	}
+	tc := []testCase{
+		{"decimal(4,2)", "int",
+			"22.22", "1",
+			"22.22 22.22", "1.00 1.00"},
+		{"decimal(4,2)", "decimal(7,3)",
+			"22.22", "333.333",
+			"22.220 22.220", "333.333 333.333"},
+		{"datetime(4)", "datetime(5)",
+			"\"2020-10-10 10:10:10.1010\"", "\"2020-10-10 10:10:10.10101\"",
+			"2020-10-10 10:10:10.10100 2020-10-10 10:10:10.10100", "2020-10-10 10:10:10.10101 2020-10-10 10:10:10.10101"},
+		{"timestamp(4)", "timestamp(5)",
+			"\"2020-10-10 10:10:10.1010\"", "\"2020-10-10 10:10:10.10101\"",
+			"2020-10-10 10:10:10.10100 2020-10-10 10:10:10.10100", "2020-10-10 10:10:10.10101 2020-10-10 10:10:10.10101"},
+		{"time(4)", "time(5)",
+			"\"10:10:10.1010\"", "\"10:10:10.10101\"",
+			"10:10:10.10100 10:10:10.10100", "10:10:10.10101 10:10:10.10101"},
+	}
+	for _, c := range tc {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t(a %s, b %s);", c.fieldType1, c.fieldType2))
+		tk.MustExec(fmt.Sprintf("insert into t values(%s, null);", c.value1))
+		tk.MustExec(fmt.Sprintf("insert into t values(null, %s);", c.value2))
+		tk.MustQuery("select ifnull(a,b), if(a is not null, a, b) from t;").Check(
+			testkit.Rows(c.resultLine1, c.resultLine2))
+	}
+}

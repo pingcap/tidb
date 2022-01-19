@@ -533,7 +533,19 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+	var bf baseBuiltinFunc
+	switch evalTps {
+	case types.ETDecimal, types.ETDatetime, types.ETTimestamp:
+		// For the type that stores the fsp in the data, it is necessary to ensure that they have same decimal with retTp.
+		for i := 1; i <= 2; i++ {
+			if !args[i].GetType().Equal(retTp) {
+				args[i] = BuildCastFunction(ctx, args[i], retTp)
+			}
+		}
+		bf, err = newBaseBuiltinFunc(ctx, c.funcName, args, evalTps)
+	default:
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +744,19 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	var bf baseBuiltinFunc
+	switch evalTps {
+	case types.ETDecimal, types.ETDatetime, types.ETTimestamp:
+		// For the type that stores the fsp in the data, it is necessary to ensure that they have same decimal with retTp.
+		for i := range args {
+			if !args[i].GetType().Equal(retTp) {
+				args[i] = BuildCastFunction(ctx, args[i], retTp)
+			}
+		}
+		bf, err = newBaseBuiltinFunc(ctx, c.funcName, args, evalTps)
+	default:
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	}
 	if err != nil {
 		return nil, err
 	}
