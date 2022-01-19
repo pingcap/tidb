@@ -541,6 +541,19 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	err = rc.checkTableEmpty(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed", `return`)
+	c.Assert(err, IsNil)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed")
+	}()
+
+	// restrict the concurrency to ensure there are more tables than workers
+	rc.cfg.App.RegionConcurrency = 1
+	// test check tables not stuck but return the right error
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, ErrorMatches, ".*check table contains data failed: mock error.*")
+
 }
 
 func (s *checkInfoSuite) TestLocalResource(c *C) {

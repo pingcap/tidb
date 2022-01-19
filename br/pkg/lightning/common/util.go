@@ -119,8 +119,8 @@ outside:
 		switch {
 		case err == nil:
 			return nil
-		// do not retry NotFound error
-		case errors.IsNotFound(err):
+		// do not retry NotFound error or ErrNoRows
+		case errors.IsNotFound(err), errors.ErrorEqual(err, sql.ErrNoRows):
 			break outside
 		case utils.IsRetryableError(err):
 			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
