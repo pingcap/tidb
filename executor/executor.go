@@ -1705,7 +1705,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
-	sc.LogicalOptimizeTrace = nil
+	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
