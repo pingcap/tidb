@@ -363,7 +363,7 @@ func TestListPolicyNames(t *testing.T) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
 		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
 			AddRow("policy_x"))
 	policies, err := ListAllPlacementPolicyNames(conn)
@@ -372,8 +372,8 @@ func TestListPolicyNames(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// some old tidb version doesn't support placement rules returns error
-	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_rules' doesn't exist"}
-	mock.ExpectExec("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_policies' doesn't exist"}
+	mock.ExpectExec("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
 		WillReturnError(expectedErr)
 	policies, err = ListAllPlacementPolicyNames(conn)
 	if mysqlErr, ok := err.(*mysql.MySQLError); ok {

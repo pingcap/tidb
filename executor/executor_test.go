@@ -593,16 +593,27 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
+	defer func() {
+		tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
+		tk.MustExec("drop placement policy if exists x")
+		tk.MustExec("drop placement policy if exists y")
+	}()
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/29915
+	tk.MustExec("create placement policy x followers=4;")
+	tk.MustExec("create placement policy y " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2")
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
-	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
-	tk.MustExec("drop table if exists t, t1;")
+
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("create table t1 (a int);")
 
-	// Test for issue: https://github.com/pingcap/tidb/issues/29915
-	tk.MustExec("drop placement policy if exists x;")
-	tk.MustExec("create placement policy x followers=4;")
 	tk.MustExec("alter table t placement policy x;")
 	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table placement")
 
@@ -614,10 +625,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 		"PARTITION p1 VALUES LESS THAN (11)," +
 		"PARTITION p2 VALUES LESS THAN (16)," +
 		"PARTITION p3 VALUES LESS THAN (21));")
-	tk.MustExec("alter table tt2 partition p0 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 ")
+	tk.MustExec("alter table tt2 partition p0 placement policy y")
 	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition placement")
 
 	tk.MustExec("alter table tt1 cache")
@@ -2360,8 +2368,8 @@ func (s *testSuiteP2) TestTableScan(c *C) {
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")
-	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
-	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil, nil)
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil, nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil, nil)
 	tk.MustExec("use information_schema")
 	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
 	result.Check(testkit.Rows(rowStr1))
