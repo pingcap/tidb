@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	atomicutil "go.uber.org/atomic"
 )
 
 // SchemaChecker is used for checking schema-validity.
@@ -40,7 +41,7 @@ var (
 	// SchemaOutOfDateRetryInterval is the backoff time before retrying.
 	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
 	// SchemaOutOfDateRetryTimes is the max retry count when the schema is out of date.
-	SchemaOutOfDateRetryTimes = int32(10)
+	SchemaOutOfDateRetryTimes = atomicutil.NewInt32(10)
 )
 
 // NewSchemaChecker creates a new schema checker.
@@ -60,7 +61,7 @@ func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, e
 // CheckBySchemaVer checks if the schema version valid or not at txnTS.
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
-	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
+	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
 		relatedChange, CheckResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs)
 		switch CheckResult {
