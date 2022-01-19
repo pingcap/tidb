@@ -323,13 +323,13 @@ func SubTestDomain(t *testing.T) {
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
 	originalRetryTime := SchemaOutOfDateRetryTimes.Load()
-	originalRetryInterval := SchemaOutOfDateRetryInterval
+	originalRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	// Make sure it will retry one time and doesn't take a long time.
 	SchemaOutOfDateRetryTimes.Store(1)
-	SchemaOutOfDateRetryInterval = int64(time.Millisecond * 1)
+	SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
 	defer func() {
 		SchemaOutOfDateRetryTimes.Store(originalRetryTime)
-		SchemaOutOfDateRetryInterval = originalRetryInterval
+		SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 	dom.SchemaValidator.Stop()
 	_, err = schemaChecker.Check(uint64(123456))

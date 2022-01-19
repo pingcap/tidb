@@ -2163,10 +2163,10 @@ func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
 
 func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	domain.SchemaOutOfDateRetryTimes.Store(3)
-	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	domain.SchemaOutOfDateRetryInterval.Store(20 * time.Millisecond)
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes.Store(10)
-		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		domain.SchemaOutOfDateRetryInterval.Store(500 * time.Millisecond)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)

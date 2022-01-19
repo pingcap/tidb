@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
@@ -39,7 +38,7 @@ func (i intSchemaVer) SchemaMetaVersion() int64 {
 
 var (
 	// SchemaOutOfDateRetryInterval is the backoff time before retrying.
-	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
+	SchemaOutOfDateRetryInterval = atomicutil.NewDuration(500 * time.Millisecond)
 	// SchemaOutOfDateRetryTimes is the max retry count when the schema is out of date.
 	SchemaOutOfDateRetryTimes = atomicutil.NewInt32(10)
 )
@@ -60,7 +59,7 @@ func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, e
 
 // CheckBySchemaVer checks if the schema version valid or not at txnTS.
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
-	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
+	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
 		relatedChange, CheckResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs)
@@ -71,7 +70,7 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return relatedChange, ErrInfoSchemaChanged
 		case ResultUnknown:
-			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
+			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 
 	}

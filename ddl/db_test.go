@@ -6869,7 +6869,7 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
 	domain.SchemaOutOfDateRetryTimes.Store(50)
 }
 
