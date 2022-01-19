@@ -518,9 +518,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var fieldPatternsRegexp *regexp.Regexp
-	var FieldFilterEnable bool
-	var fieldFilter string
+	var (
+		fieldPatternsRegexp *regexp.Regexp
+		FieldFilterEnable   bool
+		fieldFilter         string
+	)
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
 		if extractor.FieldPatterns != "" {
