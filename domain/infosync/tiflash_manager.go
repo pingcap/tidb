@@ -351,7 +351,7 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFla
 	return result, nil
 }
 
-// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule.
+// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
@@ -424,6 +424,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	if m.tiflash == nil {
 		return errors.New("MockTiFlash is not accessible")
 	}
+	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }
