@@ -747,9 +747,6 @@ type SessionVars struct {
 	//   ignore: Ignore all placement settings in ddl operations
 	PlacementMode string
 
-	// EnableDirectPlacement is used to control whether the direct placement should be enabled
-	EnableDirectPlacement bool
-
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
