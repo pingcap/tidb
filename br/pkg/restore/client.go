@@ -1272,7 +1272,14 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 	for _, file := range files {
 		filesReplica := file
 		// get rewrite rule from table id
-		rule := rules[filesReplica.TableId]
+		rule, ok := rules[filesReplica.TableId]
+		if !ok {
+			// TODO handle new created table
+			// For this version we do not handle new created table after full backup.
+			// in next version we will perform rewrite and restore meta key to restore new created tables.
+			// so we can simply skip the file that doesn't have the rule here.
+			continue
+		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				fileStart := time.Now()

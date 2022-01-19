@@ -637,7 +637,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rewrirteRuls, err := initRewriteRules(client, fullBackupTables)
+	rewriteRules, err := initRewriteRules(client, fullBackupTables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -650,9 +650,8 @@ func RunStreamRestore(
 	// read data file by given ts.
 	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 
-	client.RestoreKVFiles(ctx, rewrirteRuls, datas)
-
-	return nil
+	// perform restore kv files
+	return client.RestoreKVFiles(ctx, rewriteRules, datas)
 }
 
 func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
