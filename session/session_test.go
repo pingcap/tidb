@@ -2162,11 +2162,13 @@ func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
+	originalRetryTime := domain.SchemaOutOfDateRetryTimes.Load()
+	originalRetryInterval := domain.SchemaOutOfDateRetryInterval.Load()
 	domain.SchemaOutOfDateRetryTimes.Store(3)
 	domain.SchemaOutOfDateRetryInterval.Store(20 * time.Millisecond)
 	defer func() {
-		domain.SchemaOutOfDateRetryTimes.Store(10)
-		domain.SchemaOutOfDateRetryInterval.Store(500 * time.Millisecond)
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTime)
+		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
