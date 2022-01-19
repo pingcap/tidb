@@ -413,8 +413,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency = 1")
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	// Should not panic.
 	tk.MustExec("analyze table t")
@@ -564,7 +564,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (id int, v int, primary key(id), index k(v))")
 	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t1 index k")
 	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
 	tk.MustExec("set @@tidb_analyze_version=default")
@@ -574,8 +574,8 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	func() {
 		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
 		tk.MustExec("drop stats t1")
-		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-		tk.MustExec("set @@tidb_analyze_version=1")
+		tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
+		tk.MustExec("set @@tidb_analyze_version = 1")
 		tk.MustExec("analyze table t1 index k")
 		c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 1)
 	}()
@@ -860,7 +860,7 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
 
 	// Version2 is tested in TestStatsVer2.
-	tk.MustExec("set@@tidb_analyze_version=1")
+	tk.MustExec("set@@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t1, t2, t3")
 
 	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
@@ -910,6 +910,8 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	for i := 1; i < 4; i++ {
 		tk.MustExec("insert into t values (?)", i)
 	}
+	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_analyze_version").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")
@@ -939,7 +941,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
