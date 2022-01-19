@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -2159,31 +2158,12 @@ func TestLoadDataEscape(t *testing.T) {
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
+		// data broken at escape character.
+		{[]byte("1\ta string\\"), []byte("\n1\n"), []string{"1|a string\n1"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataWithLongContent(t *testing.T) {
-	e := &executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
-		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
-	}
-	tests := []struct {
-		content       string
-		inQuoter      bool
-		expectedIndex int
-	}{
-		{"123,123\n123,123", false, 7},
-		{"123123\\n123123", false, -1},
-		{"123123\n123123", true, -1},
-		{"123123\n123123\"\n", true, 14},
-	}
-
-	for _, tt := range tests {
-		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
-	}
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
