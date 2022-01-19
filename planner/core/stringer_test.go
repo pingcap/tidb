@@ -38,7 +38,7 @@ func TestPlanStringer(t *testing.T) {
 	}{
 		{
 			sql:  "show columns from t like 'a'",
-			plan: "Show(feild:[a])",
+			plan: "Show(field:[a])",
 		},
 		{
 			sql:  "show columns from t like 'a%'",
@@ -54,7 +54,7 @@ func TestPlanStringer(t *testing.T) {
 		},
 		{
 			sql:  "desc t a",
-			plan: "Show(feild:[a])",
+			plan: "Show(field:[a])",
 		},
 	}
 	parser := parser.New()

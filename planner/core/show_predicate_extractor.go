@@ -54,6 +54,7 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 		pattern := show.Pattern
 		switch pattern.Pattern.(type) {
 		case *driver.ValueExpr:
+			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
 			if !collate.NewCollationEnabled() && stringutil.IsExactMatch(patTypes) {
@@ -64,10 +65,12 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
 			return true
 		case *ast.ColumnNameExpr:
+			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
 			e.Field = pattern.Pattern.(*ast.ColumnNameExpr).Name.Name.L
 			return true
 		}
 	} else if show.Column != nil && show.Column.Name.L != "" {
+		// it is used in `DESCRIBE t COLUMN`.
 		e.Field = show.Column.Name.L
 		return true
 	}
@@ -78,7 +81,7 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 func (e *ShowColumnsTableExtractor) explainInfo() string {
 	r := new(bytes.Buffer)
 	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("feild:[%s], ", e.Field))
+		r.WriteString(fmt.Sprintf("field:[%s], ", e.Field))
 	}
 
 	if len(e.FieldPatterns) > 0 {
