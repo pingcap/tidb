@@ -250,45 +250,18 @@ PARTITION BY RANGE (c) (
 
 func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_direct_placement=1")
-	tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 	defer func() {
-		tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 		tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 		tk.MustExec("drop placement policy if exists PolicySchemaTest")
 		tk.MustExec("drop placement policy if exists PolicyTableTest")
 	}()
-
-	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz,nl" FOLLOWERS=3`)
-	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
-
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicyTableTest LEADER_CONSTRAINTS = "[+region=tl]" FOLLOWER_CONSTRAINTS="[+region=tf]" FOLLOWERS=2 LEARNER_CONSTRAINTS="[+region=tle]" LEARNERS=1`)
 	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicySchemaTest%'").Check(testkit.Rows("POLICY PolicySchemaTest LEADER_CONSTRAINTS=\"[+region=nl]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=se]\" LEARNERS=4 LEARNER_CONSTRAINTS=\"[+region=be]\" NULL"))
 	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicyTableTest%'").Check(testkit.Rows("POLICY PolicyTableTest LEADER_CONSTRAINTS=\"[+region=tl]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+region=tf]\" LEARNERS=1 LEARNER_CONSTRAINTS=\"[+region=tle]\" NULL"))
 	tk.MustExec("CREATE SCHEMA SchemaPolicyPlacementTest PLACEMENT POLICY = `PolicySchemaTest`")
 	tk.MustQuery("SHOW CREATE SCHEMA SCHEMAPOLICYPLACEMENTTEST").Check(testkit.Rows("SchemaPolicyPlacementTest CREATE DATABASE `SchemaPolicyPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`PolicySchemaTest` */"))
-
-	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
-	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
-		"UseSchemaDefault CREATE TABLE `UseSchemaDefault` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
-	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.schemata WHERE SCHEMA_NAME='SchemaDirectPlacementTest'").Check(testkit.Rows(`def SchemaDirectPlacementTest utf8mb4 utf8mb4_bin <nil>`))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaDirectPlacementTest' AND TABLE_NAME = 'UseSchemaDefault'").Check(testkit.Rows(`def SchemaDirectPlacementTest UseSchemaDefault <nil>`))
-
-	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se" REGIONS="se"`)
-
-	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
-		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" */"))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaDirectPlacementTest' AND TABLE_NAME = 'UseDirectPlacement'").Check(testkit.Rows("def SchemaDirectPlacementTest UseDirectPlacement <nil>"))
 
 	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
 	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
@@ -310,17 +283,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaPolicyPlacementTest' AND TABLE_NAME = 'UsePolicy'").Check(testkit.Rows(`def SchemaPolicyPlacementTest UsePolicy PolicyTableTest`))
 
 	is := s.dom.InfoSchema()
-
-	db, ok := is.SchemaByName(model.NewCIStr("SchemaDirectPlacementTest"))
-	c.Assert(ok, IsTrue)
-	c.Assert(db.PlacementPolicyRef, IsNil)
-	c.Assert(db.DirectPlacementOpts, NotNil)
-	c.Assert(db.DirectPlacementOpts.PrimaryRegion, Matches, "nl")
-	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz,nl")
-	c.Assert(db.DirectPlacementOpts.Followers, Equals, uint64(3))
-	c.Assert(db.DirectPlacementOpts.Learners, Equals, uint64(0))
-
-	db, ok = is.SchemaByName(model.NewCIStr("SchemaPolicyPlacementTest"))
+	db, ok := is.SchemaByName(model.NewCIStr("SchemaPolicyPlacementTest"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef, NotNil)
 	c.Assert(db.DirectPlacementOpts, IsNil)
@@ -329,7 +292,6 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 
 func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
 	tk.MustExec("use TestAlterDB")
@@ -382,60 +344,34 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 
 	// Reset Test
 	tk.MustExec("drop database if exists TestAlterDB;")
-	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("create database TestAlterDB PLACEMENT POLICY alter_x;")
 	tk.MustExec("use TestAlterDB")
 
-	// DirectOption Test
-	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\";")
-	// Test for information_schema.schemata
-	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin <nil>`))
-	// Test for Show Create Database
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
-	))
 	// Test for Alter Placement Rule affect table created.
 	tk.MustExec("create table t3(a int);")
 	tk.MustQuery(`show create table t3`).Check(testutil.RowsWithSep("|",
 		"t3 CREATE TABLE `t3` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
 	))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='TestAlterDB' AND TABLE_NAME = 't3'").Check(testkit.Rows("def TestAlterDB t3 <nil>"))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='TestAlterDB' AND TABLE_NAME = 't3'").Check(testkit.Rows(`def TestAlterDB t3 alter_x`))
+
 	// Test for override default option
-	tk.MustExec("create table t4(a int) PLACEMENT POLICY=\"alter_x\";")
+	tk.MustExec("create table t4(a int) PLACEMENT POLICY=\"alter_y\";")
 	tk.MustQuery(`show create table t4`).Check(testutil.RowsWithSep("|",
 		"t4 CREATE TABLE `t4` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+			"/*T![placement] PLACEMENT POLICY=`alter_y` */",
 	))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='TestAlterDB' AND TABLE_NAME = 't4'").Check(testkit.Rows(`def TestAlterDB t4 alter_x`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='TestAlterDB' AND TABLE_NAME = 't4'").Check(testkit.Rows(`def TestAlterDB t4 alter_y`))
 
-	// Hybrid Test
-	// Test for alter both policy and  direct options.
+	// Test alter to another policy
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_y`;")
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
-	))
-	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x` FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
-	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`alter_y` PRIMARY_REGION=\"se\" FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
-	))
-	// Test for change direct options to policy.
-	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x`;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
-	))
-	// Test for change policy to direct options.
-	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\" ;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+			"/*T![placement] PLACEMENT POLICY=`alter_y` */",
 	))
 }
 
@@ -716,7 +652,6 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	}()
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists tp")
 
@@ -732,13 +667,7 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 
 	err := tk.ExecToErr("alter table tp placement policy p1")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
-	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2'")
-	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
-	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
-	err = tk.ExecToErr("alter table tp partition p0 primary_region='r2' regions='r2'")
-	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
-	err = tk.ExecToErr("alter table tp add partition(partition p2 VALUES LESS THAN (10000) placement policy p1)")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
@@ -779,7 +708,7 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tk.MustExec("drop table tp")
-	tk.MustExec(`CREATE TABLE tp (id INT) primary_region='r2' regions='r2' PARTITION BY RANGE (id) (
+	tk.MustExec(`CREATE TABLE tp (id INT) PLACEMENT POLICY p1 PARTITION BY RANGE (id) (
 	   PARTITION p0 VALUES LESS THAN (100),
 	   PARTITION p1 VALUES LESS THAN (1000)
 	)`)
@@ -788,14 +717,14 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tk.MustExec("drop table tp")
 	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100)  primary_region='r3' regions='r3',
+        PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY p1,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
@@ -805,40 +734,6 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
-}
-
-func (s *testDBSuite6) TestEnableDirectPlacement(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop database if exists db1")
-	tk.MustExec("drop table if exists tp")
-	tk.MustExec("drop placement policy if exists p1")
-	defer func() {
-		tk.MustExec("drop database if exists db1")
-		tk.MustExec("drop table if exists tp")
-		tk.MustExec("drop placement policy if exists p1")
-	}()
-	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
-	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) placement policy p1,
-        PARTITION p1 VALUES LESS THAN (1000)
-	)`)
-	tk.MustExec("create database db1 placement policy p1")
-
-	errorSQLs := []string{
-		"create database db2 followers=1",
-		"alter database db1 followers=1",
-		"create table t(a int) followers=1",
-		"alter table tp followers=1",
-		"alter table tp partition p0 followers=1",
-		"alter table tp add partition(partition p2 values less than(10000) followers=1)",
-	}
-
-	for _, sql := range errorSQLs {
-		err := tk.ExecToErr(sql)
-		c.Assert(err.Error(), Equals, "Direct placement is disabled")
-	}
 }
