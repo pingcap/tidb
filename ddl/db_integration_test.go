@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -2793,4 +2794,68 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create temporary table t (id int)")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
+}
+
+func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	clearSQL := "drop table if exists tb, tb2, temp, temp1"
+	tk.MustExec(clearSQL)
+	defer tk.MustExec(clearSQL)
+	// two normal table test.tb, test.tb2
+	tk.MustExec("create table tb(id int)")
+	tk.MustExec("create table tb2(id int)")
+	// two global temporary table test.temp, test.temp1
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
+	tk.MustExec("create global temporary table temp1(id int) on commit delete rows")
+
+	// testing for drop table which is not global temporary
+	err := tk.ExecToErr("drop global temporary table tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop global temporary table test.tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop global temporary table tb, temp")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop global temporary table temp, tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop global temporary table xxx")
+	c.Assert(infoschema.ErrTableDropExists.Equal(err), IsTrue)
+
+	// testing for drop table if exists which is not global temporary
+	err = tk.ExecToErr("drop global temporary table if exists tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	tk.MustExec("drop global temporary table if exists xxx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.xxx'"))
+	err = tk.ExecToErr("drop global temporary table if exists xxx,tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop global temporary table if exists test.tb")
+	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
+
+	// testing for drop global temporary table successfully
+	tk.MustExec("drop global temporary table temp")
+	err = tk.ExecToErr("select * from temp")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop global temporary table test.temp1")
+	err = tk.ExecToErr("select * from temp2")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+
+	tk.MustExec("create global temporary table temp (id int) on commit delete rows")
+	tk.MustExec("create global temporary table temp1 (id int) on commit delete rows")
+
+	tk.MustExec("drop global temporary table temp, temp1")
+	err = tk.ExecToErr("select * from temp")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+	err = tk.ExecToErr("select * from temp1")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+
+	tk.MustExec("create global temporary table temp (id int) on commit delete rows")
+	tk.MustExec("create global temporary table temp1 (id int) on commit delete rows")
+
+	tk.MustExec("drop global temporary table if exists temp")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	err = tk.ExecToErr("select * from temp")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }

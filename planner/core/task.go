@@ -769,7 +769,25 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lCost := lTask.cost()
 	rCost := rTask.cost()
 
-	outerTask := tasks[1-p.InnerChildIdx].(*mppTask)
+	// outer task is the task that will pass its MPPPartitionType to the join result
+	// for broadcast inner join, it should be the non-broadcast side, since broadcast side is always the build side, so
+	// just use the probe side is ok.
+	// for hash inner join, both side is ok, by default, we use the probe side
+	// for outer join, it should always be the outer side of the join
+	// for semi join, it should be the left side(the same as left out join)
+	outerTaskIndex := 1 - p.InnerChildIdx
+	if p.JoinType != InnerJoin {
+		if p.JoinType == RightOuterJoin {
+			outerTaskIndex = 1
+		} else {
+			outerTaskIndex = 0
+		}
+	}
+	// can not use the task from tasks because it maybe updated.
+	outerTask := lTask
+	if outerTaskIndex == 1 {
+		outerTask = rTask
+	}
 	task := &mppTask{
 		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 		p:        p,
@@ -849,7 +867,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	NDV := getCardinality(innerKeys, innerSchema, innerStats)
+	NDV := getColsNDV(innerKeys, innerSchema, innerStats)
 	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }
@@ -1401,37 +1419,50 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
+	ret := true
+	reason := ""
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
-			return false
+			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
+			ret = false
+			break
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
+			ret = false
+			break
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
+			ret = false
+			break
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because AggFunc `" + aggFunc.Name + "` is not supported now.")
-			return false
-		}
-		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
-			if sc.InExplainStmt {
-				storageName := storeType.Name()
-				if storeType == kv.UnSpecified {
-					storageName = "storage layer"
-				}
-				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
-			}
-			return false
-		}
-		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
-			return false
+			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
+			ret = false
+			break
 		}
 	}
-	if expression.ContainVirtualColumn(groupByItems) {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because groupByItems contain virtual column, which is not supported now.")
-		return false
+	if ret && expression.ContainVirtualColumn(groupByItems) {
+		reason = "groupByItems contain virtual columns, which is not supported now"
+		ret = false
 	}
-	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
+	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+		reason = "groupByItems contain unsupported exprs"
+		ret = false
+	}
+
+	if !ret && sc.InExplainStmt {
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+	}
+	return ret
 }
 
 // AggInfo stores the information of an Aggregation.

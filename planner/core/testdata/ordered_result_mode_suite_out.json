@@ -399,12 +399,11 @@
       },
       {
         "Plan": [
-          "Projection_10 10000.00 root  Column#8, Column#7",
-          "└─Sort_11 10000.00 root  test.t1.a, Column#7, Column#8",
-          "  └─Window_13 10000.00 root  row_number()->Column#8 over(partition by test.t1.a rows between current row and current row)",
-          "    └─Window_14 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#7 over(partition by test.t1.a)",
-          "      └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "        └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "Projection_8 10000.00 root  Column#6",
+          "└─Sort_9 10000.00 root  test.t1.b, test.t1.a, Column#6",
+          "  └─Window_11 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#6 over(partition by test.t1.a)",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {
@@ -418,12 +417,12 @@
       },
       {
         "Plan": [
-          "Sort_9 6400.00 root  Column#5, Column#6, Column#7",
-          "└─Selection_11 6400.00 root  lt(Column#6, 20)",
-          "  └─HashAgg_16 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
-          "    └─TableReader_17 8000.00 root  data:HashAgg_12",
-          "      └─HashAgg_12 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
-          "        └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Selection_8 6400.00 root  lt(Column#6, 20)",
+          "└─Sort_9 8000.00 root  Column#5, Column#6, Column#7",
+          "  └─HashAgg_15 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
+          "    └─TableReader_16 8000.00 root  data:HashAgg_11",
+          "      └─HashAgg_11 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
+          "        └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

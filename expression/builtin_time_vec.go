@@ -712,15 +712,15 @@ func (b *builtinLastDaySig) vecEvalTime(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		if times[i].InvalidZero() {
+		tm := times[i]
+		year, month := tm.Year(), tm.Month()
+		if tm.Month() == 0 || (tm.Day() == 0 && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 			continue
 		}
-		tm := times[i]
-		year, month := tm.Year(), tm.Month()
 		lastDay := types.GetLastDay(year, month)
 		times[i] = types.NewTime(types.FromDate(year, month, lastDay, 0, 0, 0, 0), mysql.TypeDate, types.DefaultFsp)
 	}

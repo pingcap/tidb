@@ -310,6 +310,10 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
+	// TiFlash even though the failed TiFlash node has been recovered.
+	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
+
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
@@ -656,6 +660,7 @@ const (
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = true
 	DefTiDBEnforceMPPExecution         = false
+	DefTiDBMPPStoreFailTTL             = "60s"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2

@@ -440,6 +440,9 @@ strategy = "range"
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
+# The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
+deadlock-history-capacity = 10
+
 [stmt-summary]
 # enable statement summary.
 enable = true

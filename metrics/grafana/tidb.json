@@ -6657,7 +6657,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type))",
+              "expr": "sum(rate(tidb_distsql_copr_cache_count{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",

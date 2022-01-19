@@ -362,4 +362,8 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table temp", false, nil)
 	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
+	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
+	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test2.temp2, tb", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
 }

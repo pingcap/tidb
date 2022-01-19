@@ -213,6 +213,17 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	c.Assert(len(rows), Equals, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
 	c.Assert(len(rows), Equals, 1)
+
+	// Test https://github.com/pingcap/tidb/issues/27349.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int, b int, unique key idx(a)) partition by range (a) (
+        partition p0 values less than (0),
+        partition p1 values less than (10),
+        partition p2 values less than (30),
+        partition p3 values less than (maxvalue));`)
+	tk.MustExec("insert into t values (2, 2), (31, 31), (12, 12);")
+	tk.MustQuery("select _tidb_rowid from t tablesample regions() order by _tidb_rowid;").
+		Check(testkit.Rows("1", "2", "3")) // The order of _tidb_rowid should be correct.
 }
 
 func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {

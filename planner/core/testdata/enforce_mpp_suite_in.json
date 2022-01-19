@@ -50,7 +50,7 @@
     "cases": [
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
       "set @@tidb_partition_prune_mode=static;",
-      "EXPLAIN SELECT count(*) from t where a=1; -- 12. static partition prune",
+      "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
       "set @@tidb_partition_prune_mode=dynamic;"
 
     ]
@@ -60,8 +60,30 @@
     "cases": [
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
       "cmd: enable-new-collation",
-      "EXPLAIN SELECT count(*) from t group by b; -- 13. new collation FIXME",
-      "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 13. new collation FIXME"
+      "EXPLAIN SELECT count(*) from t group by b; -- 1. new collation FIXME",
+      "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME"
+    ]
+  },
+  {
+    "name": "TestEnforceMPPWarning4",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1; -- test joins",
+      "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
+      "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
+      "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+      "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
+      "set @@tidb_opt_broadcast_cartesian_join = 0",
+      "EXPLAIN SELECT * from t join s; -- 5. cartesian without broadcast join",
+      "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 1",
+      "EXPLAIN SELECT * from t join s; -- 6. cartesian without broadcast join",
+      "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1",
+      "EXPLAIN SELECT * from t join s; -- can use mpp",
+      "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2",
+      "EXPLAIN SELECT * from t join s; -- can use mpp FIXME: maybe not, see github.com/pingcap/tidb/issues/26243",
+      "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
+      "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
+      "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+      "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
     ]
   }
 ]

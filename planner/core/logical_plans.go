@@ -395,6 +395,9 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// having selection can't be pushed down, because it must above the aggregation.
+	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1195,8 +1198,9 @@ type CTEClass struct {
 	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
-	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
-	cteTask task
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
@@ -1212,12 +1216,14 @@ type LogicalCTE struct {
 
 	cte       *CTEClass
 	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
+	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
 }

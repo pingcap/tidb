@@ -148,22 +148,22 @@
       {
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
-          "HashAgg_24 1.00 33.60 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_26 1.00 0.00 root  data:ExchangeSender_25",
-          "  └─ExchangeSender_25 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "      └─Selection_23 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
-          "        └─TableFullScan_22 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_25 1.00 33.60 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader_27 1.00 0.00 root  data:ExchangeSender_26",
+          "  └─ExchangeSender_26 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_10 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "      └─Selection_24 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_23 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
         "Plan": [
-          "StreamAgg_18 1.00 485.00 root  funcs:count(Column#6)->Column#4",
-          "└─IndexReader_19 1.00 32.88 root  index:StreamAgg_10",
-          "  └─StreamAgg_10 1.00 35.88 cop[tikv]  funcs:count(1)->Column#6",
-          "    └─IndexRangeScan_17 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_19 1.00 485.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader_20 1.00 32.88 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 35.88 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan_18 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
@@ -172,12 +172,12 @@
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
         "Plan": [
-          "HashAgg_21 1.00 33.60 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_23 1.00 0.00 root  data:ExchangeSender_22",
-          "  └─ExchangeSender_22 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
-          "        └─TableFullScan_19 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_22 1.00 33.60 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader_24 1.00 0.00 root  data:ExchangeSender_23",
+          "  └─ExchangeSender_23 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_10 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "      └─Selection_21 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_20 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -250,10 +250,10 @@
       {
         "SQL": "explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
         "Plan": [
-          "StreamAgg_18 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
-          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
+          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
@@ -267,19 +267,20 @@
           "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:idx(a) keep order:true, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because operator `Window` is not supported now.",
           "MPP mode may be blocked because operator `Window` is not supported now."
         ]
       },
       {
         "SQL": "EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
         "Plan": [
-          "HashJoin_35 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_55(Build) 9990.00 root  data:Selection_54",
-          "│ └─Selection_54 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_53 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_49(Probe) 9990.00 root  data:Selection_48",
-          "  └─Selection_48 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "    └─TableFullScan_47 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_36 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_56(Build) 9990.00 root  data:Selection_55",
+          "│ └─Selection_55 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_54 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_50(Probe) 9990.00 root  data:Selection_49",
+          "  └─Selection_49 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "    └─TableFullScan_48 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now."
@@ -288,65 +289,87 @@
       {
         "SQL": "EXPLAIN SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
         "Plan": [
-          "StreamAgg_10 1.00 root  funcs:count(test.t.b)->Column#5",
-          "└─IndexLookUp_41 10.00 root  ",
-          "  ├─IndexRangeScan_39(Build) 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_40(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "StreamAgg_11 1.00 root  funcs:count(test.t.b)->Column#5",
+          "└─IndexLookUp_42 10.00 root  ",
+          "  ├─IndexRangeScan_40(Build) 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_41(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now.",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now.",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now.",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now."
+          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
         "Plan": [
-          "HashAgg_5 8000.00 root  group by:test.t.b, funcs:count(1)->Column#5",
-          "└─Projection_11 10000.00 root  test.t.b",
-          "  └─TableReader_10 10000.00 root  data:TableFullScan_9",
-          "    └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_6 8000.00 root  group by:test.t.b, funcs:count(1)->Column#5",
+          "└─Projection_12 10000.00 root  test.t.b",
+          "  └─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because groupByItems contain virtual column, which is not supported now.",
-          "MPP mode may be blocked because groupByItems contain virtual column, which is not supported now."
+          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT group_concat(a) from t; -- 9. agg func not supported",
         "Plan": [
-          "HashAgg_5 1.00 root  funcs:group_concat(Column#6 separator \",\")->Column#5",
-          "└─Projection_30 10000.00 root  cast(test.t.a, var_string(20))->Column#6",
-          "  └─TableReader_13 10000.00 root  data:TableFullScan_11",
-          "    └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_6 1.00 root  funcs:group_concat(Column#6 separator \",\")->Column#5",
+          "└─Projection_31 10000.00 root  cast(test.t.a, var_string(20))->Column#6",
+          "  └─TableReader_14 10000.00 root  data:TableFullScan_12",
+          "    └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now.",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now.",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now."
+          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
+          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
+          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
+          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
         "Plan": [
-          "HashAgg_5 8000.00 root  group by:Column#7, funcs:count(Column#6)->Column#5",
-          "└─Projection_18 10000.00 root  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#7",
-          "  └─TableReader_11 10000.00 root  data:TableFullScan_9",
-          "    └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_6 8000.00 root  group by:Column#7, funcs:count(Column#6)->Column#5",
+          "└─Projection_19 10000.00 root  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#7",
+          "  └─TableReader_12 10000.00 root  data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash"
+          "MPP mode may be blocked because groupByItems contain unsupported exprs",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "MPP mode may be blocked because groupByItems contain unsupported exprs",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "MPP mode may be blocked because groupByItems contain unsupported exprs",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
-          "HashAgg_6 1.00 root  funcs:count(test.t.a)->Column#5",
-          "└─Selection_16 10000.00 root  eq(test.t.c, 00:00:01.000000)",
-          "  └─TableReader_15 10000.00 root  data:TableFullScan_14",
-          "    └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_7 1.00 root  funcs:count(test.t.a)->Column#5",
+          "└─Selection_17 10000.00 root  eq(test.t.c, 00:00:01.000000)",
+          "  └─TableReader_16 10000.00 root  data:TableFullScan_15",
+          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expr 'test.t.c' can not be pushed to TiFlash because it contains Duration type",
@@ -372,13 +395,13 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 12. static partition prune",
+        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
-          "StreamAgg_31 1.00 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_32 1.00 root  data:StreamAgg_12",
-          "  └─StreamAgg_12 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "    └─Selection_30 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan_29 10000.00 batchCop[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
+          "StreamAgg_32 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader_33 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "    └─Selection_31 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+          "      └─TableFullScan_30 10000.00 batchCop[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because table `t`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`."
@@ -405,33 +428,226 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 13. new collation FIXME",
+        "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 1. new collation FIXME",
         "Plan": [
-          "HashAgg_23 8000.00 root  group by:test.t.b, funcs:count(Column#7)->Column#4",
-          "└─TableReader_25 8000.00 root  data:ExchangeSender_24",
-          "  └─ExchangeSender_24 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_10 8000.00 batchCop[tiflash]  group by:test.t.b, funcs:count(1)->Column#7",
-          "      └─TableFullScan_20 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_24 8000.00 root  group by:test.t.b, funcs:count(Column#7)->Column#4",
+          "└─TableReader_26 8000.00 root  data:ExchangeSender_25",
+          "  └─ExchangeSender_25 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_11 8000.00 batchCop[tiflash]  group by:test.t.b, funcs:count(1)->Column#7",
+          "      └─TableFullScan_21 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.",
           "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.",
           "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now."
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 13. new collation FIXME",
+        "SQL": "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME",
         "Plan": [
-          "TableReader_18 12487.50 root  data:ExchangeSender_17",
-          "└─ExchangeSender_17 12487.50 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_8 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "    ├─ExchangeReceiver_14(Build) 9990.00 cop[tiflash]  ",
-          "    │ └─ExchangeSender_13 9990.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Selection_12 9990.00 cop[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan_11 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
-          "    └─Selection_16(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.b))",
-          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+          "TableReader_34 12487.50 root  data:ExchangeSender_33",
+          "└─ExchangeSender_33 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "    ├─ExchangeReceiver_15(Build) 9990.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_14 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection_13 9990.00 cop[tiflash]  not(isnull(test.t.b))",
+          "    │     └─TableFullScan_12 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    └─Selection_17(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.b))",
+          "      └─TableFullScan_16 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestEnforceMPPWarning4",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1; -- test joins",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
+        "Plan": [
+          "MergeJoin_8 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+          "│ └─TableFullScan_18 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
+        "Plan": [
+          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_33(Build) 10000.00 root  data:TableFullScan_32",
+          "│ └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 1.00 root  data:TableRangeScan_12",
+          "  └─TableRangeScan_12 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+        "Plan": [
+          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
+          "│ └─TableFullScan_31 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_12(Probe) 1.00 root  data:TableRangeScan_11",
+          "  └─TableRangeScan_11 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
+        "Plan": [
+          "HashJoin_29 12500.00 root  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "├─TableReader_38(Build) 10000.00 root  data:TableFullScan_37",
+          "│ └─TableFullScan_37 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 10000.00 root  data:TableFullScan_33",
+          "  └─TableFullScan_33 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_broadcast_cartesian_join = 0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian without broadcast join",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian without broadcast join",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
+        "Plan": [
+          "TableReader_27 100000000.00 root  data:ExchangeSender_26",
+          "└─ExchangeSender_26 100000000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_25 100000000.00 cop[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_13(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_12 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_14(Probe) 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp FIXME: maybe not, see github.com/pingcap/tidb/issues/26243",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
+        "Plan": [
+          "Projection_7 8000.00 root  test.t.a",
+          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
+          "  └─MergeJoin_10 10000.00 root  left outer semi join, left key:test.t.a, right key:test.t.a",
+          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
+          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because join type `left outer semi join` is not supported now.",
+          "MPP mode may be blocked because join type `left outer semi join` is not supported now."
+        ]
+      },
+      {
+        "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+        "Plan": [
+          "Projection_7 8000.00 root  test.t.a",
+          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
+          "  └─MergeJoin_10 10000.00 root  anti left outer semi join, left key:test.t.a, right key:test.t.a",
+          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
+          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now.",
+          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now."
+        ]
+      },
+      {
+        "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
+        "Plan": [
+          "MergeJoin_10 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:[lt(test.t.a, 1)]",
+          "├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "│ └─TableFullScan_29 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "  └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
+          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information."
+        ]
       }
     ]
   }

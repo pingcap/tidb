@@ -15,6 +15,7 @@ package ranger
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -143,12 +144,22 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 			return false
 		}
 		if patternStr[i] == '%' {
+			// We currently do not support using `enum like 'xxx%'` to build range
+			// see https://github.com/pingcap/tidb/issues/27130 for more details
+			if scalar.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+				return false
+			}
 			if i != len(patternStr)-1 {
 				c.shouldReserve = true
 			}
 			break
 		}
 		if patternStr[i] == '_' {
+			// We currently do not support using `enum like 'xxx_'` to build range
+			// see https://github.com/pingcap/tidb/issues/27130 for more details
+			if scalar.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+				return false
+			}
 			c.shouldReserve = true
 			break
 		}

@@ -746,6 +746,55 @@ func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
+	tk.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("create table t3(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("insert into t1 values(1,1,1),(2,2,2)")
+	tk.MustExec("insert into t2 values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)")
+	tk.MustExec("insert into t3 values(1,1,1)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" || tblInfo.Name.L == "t3" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestJoinNotSupportedByTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3150,7 +3199,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 
@@ -3190,7 +3239,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 
 	// Create virtual tiflash replica info.
@@ -3207,7 +3256,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -3900,4 +3949,141 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(t1a int, t1b int, t1c int)")
+	tk.MustExec("create table t2(t2a int, t2b int, t2c int)")
+	tk.MustExec("create table t3(t3a int, t3b int, t3c int)")
+	tk.MustExec(`
+		with inv as
+		(select t1a , t3a, sum(t2c)
+			from t1, t2, t3
+			where t2a = t1a
+				and t2b = t3b
+				and t3c = 1998
+			group by t1a, t3a)
+		select inv1.t1a, inv2.t3a
+		from inv inv1, inv inv2
+		where inv1.t1a = inv2.t1a
+			and inv1.t3a = 4
+			and inv2.t3a = 4+1`)
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
+	tk.MustExec("create table tn (id int primary key);")
+	tk.MustExec("insert into tp values(1),(2);")
+	tk.MustExec("insert into tn values(1),(2);")
+	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue26559(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a timestamp, b datetime);")
+	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
+	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue27797(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27797")
+	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
+		"partition by range columns(d) (" +
+		"partition p0 values less than (20)," +
+		"partition p1 values less than(40)," +
+		"partition p2 values less than(60));")
+	tk.MustExec("insert into t27797 values(1,1,1,1), (2,2,2,2), (22,22,22,22), (44,44,44,44);")
+	tk.MustExec("set sql_mode='';")
+	result := tk.MustQuery("select count(*) from (select a, b from t27797 where d > 1 and d < 60 and b > 0 group by b, c) tt;")
+	result.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop table if exists IDT_HP24172")
+	tk.MustExec("CREATE TABLE `IDT_HP24172` ( " +
+		"`COL1` mediumint(16) DEFAULT NULL, " +
+		"`COL2` varchar(20) DEFAULT NULL, " +
+		"`COL4` datetime DEFAULT NULL, " +
+		"`COL3` bigint(20) DEFAULT NULL, " +
+		"`COL5` float DEFAULT NULL, " +
+		"KEY `UM_COL` (`COL1`,`COL3`) " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH( `COL1`+`COL3` ) " +
+		"PARTITIONS 8;")
+	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
+	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
+	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestGroupBySetVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (2), (3), (4), (5), (6);")
+	rows := tk.MustQuery("select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;")
+	rows.Check(testkit.Rows("0 2", "1 2", "2 2"))
+
+	tk.MustExec("create table ta(a int, b int);")
+	tk.MustExec("set sql_mode='';")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		res := tk.MustQuery("explain format = 'brief' " + tt)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssues27130(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));")
+	tk.MustQuery(`explain format='brief' select * from t1 where a like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t1.a, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format='brief' select * from t1 where b like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t1.b, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));")
+	tk.MustQuery(`explain format='brief' select * from t2 where a like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format='brief' select * from t2 where a like "A%" and b like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92), like(test.t2.b, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));")
+	tk.MustQuery(`explain format='brief' select * from t3 where a = 1 and b like "A%"`).Check(testkit.Rows(
+		"IndexReader 8.00 root  index:Selection",
+		"└─Selection 8.00 cop[tikv]  like(test.t3.b, \"A%\", 92)",
+		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
+	))
 }

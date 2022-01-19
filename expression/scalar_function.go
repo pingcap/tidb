@@ -362,7 +362,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
-			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
 		} else {
 			res = str
 		}

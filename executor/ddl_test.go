@@ -31,6 +31,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -290,6 +291,10 @@ func (s *testSuite6) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// Refer https://github.com/pingcap/tidb/issues/25876
+	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
+	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
 func (s *testSuite6) TestViewRecursion(c *C) {

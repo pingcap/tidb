@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -1642,6 +1641,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
+	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.table,
@@ -1973,30 +1978,20 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 }
 
 func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
-	if p.cte.cteTask != nil {
-		// Already built it.
-		return p.cte.cteTask, 1, nil
-	}
-	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
-	if err != nil {
-		return nil, 1, err
-	}
-
-	var rp PhysicalPlan
-	if p.cte.recursivePartLogicalPlan != nil {
-		rp, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-		if err != nil {
-			return nil, 1, err
-		}
-	}
-
-	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	// The physical plan has been build when derive stats.
+	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
-	p.cte.cteTask = t
+	cst := p.cte.seedPartPhysicalPlan.Cost()
+	if p.cte.recursivePartPhysicalPlan != nil {
+		cst += p.cte.recursivePartPhysicalPlan.Cost()
+	}
+	t = &rootTask{pcte, cst, false}
+	if prop.CanAddEnforcer {
+		t = enforceProperty(prop, t, p.basePlan.ctx)
+	}
 	return t, 1, nil
 }
 

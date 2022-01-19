@@ -2172,39 +2172,43 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 }
 
 // ExtractDurationNum extracts duration value number from duration unit and format.
-func ExtractDurationNum(d *Duration, unit string) (int64, error) {
+func ExtractDurationNum(d *Duration, unit string) (res int64, err error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return int64(d.MicroSecond()), nil
+		res = int64(d.MicroSecond())
 	case "SECOND":
-		return int64(d.Second()), nil
+		res = int64(d.Second())
 	case "MINUTE":
-		return int64(d.Minute()), nil
+		res = int64(d.Minute())
 	case "HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	case "SECOND_MICROSECOND":
-		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_MICROSECOND":
-		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_SECOND":
-		return int64(d.Minute()*100 + d.Second()), nil
+		res = int64(d.Minute()*100 + d.Second())
 	case "HOUR_MICROSECOND":
-		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "HOUR_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "HOUR_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_MICROSECOND":
-		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond())
 	case "DAY_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "DAY_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
+	if d.Duration < 0 {
+		res = -res
+	}
+	return res, nil
 }
 
 // parseSingleTimeValue parse the format according the given unit. If we set strictCheck true, we'll check whether
@@ -2849,18 +2853,18 @@ func skipWhiteSpace(input string) string {
 }
 
 var monthAbbrev = map[string]gotime.Month{
-	"Jan": gotime.January,
-	"Feb": gotime.February,
-	"Mar": gotime.March,
-	"Apr": gotime.April,
-	"May": gotime.May,
-	"Jun": gotime.June,
-	"Jul": gotime.July,
-	"Aug": gotime.August,
-	"Sep": gotime.September,
-	"Oct": gotime.October,
-	"Nov": gotime.November,
-	"Dec": gotime.December,
+	"jan": gotime.January,
+	"feb": gotime.February,
+	"mar": gotime.March,
+	"apr": gotime.April,
+	"may": gotime.May,
+	"jun": gotime.June,
+	"jul": gotime.July,
+	"aug": gotime.August,
+	"sep": gotime.September,
+	"oct": gotime.October,
+	"nov": gotime.November,
+	"dec": gotime.December,
 }
 
 type dateFormatParser func(t *CoreTime, date string, ctx map[string]int) (remain string, succ bool)
@@ -2980,76 +2984,150 @@ func minutesNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool
 	return input[length:], true
 }
 
-const time12HourLen = len("hh:mm:ssAM")
+type parseState int32
+
+const (
+	parseStateNormal    parseState = 1
+	parseStateFail      parseState = 2
+	parseStateEndOfLine parseState = 3
+)
+
+func parseSep(input string) (string, parseState) {
+	input = skipWhiteSpace(input)
+	if len(input) == 0 {
+		return input, parseStateEndOfLine
+	}
+	if input[0] != ':' {
+		return input, parseStateFail
+	}
+	if input = skipWhiteSpace(input[1:]); len(input) == 0 {
+		return input, parseStateEndOfLine
+	}
+	return input, parseStateNormal
+}
 
 func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	// hh:mm:ss AM
-	if len(input) < time12HourLen {
-		return input, false
-	}
-	hour, succ := parseDigits(input, 2)
-	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
-		return input, false
-	}
-	// 12:34:56 AM -> 00:34:56
-	if hour == 12 {
-		hour = 0
-	}
-
-	minute, succ := parseDigits(input[3:], 2)
-	if !succ || minute > 59 || input[5] != ':' {
-		return input, false
-	}
-
-	second, succ := parseDigits(input[6:], 2)
-	if !succ || second > 59 {
-		return input, false
-	}
-
-	remain := skipWhiteSpace(input[8:])
-	switch {
-	case strings.HasPrefix(remain, "AM"):
+	tryParse := func(input string) (string, parseState) {
+		var state parseState
+		// hh:mm:ss AM
+		/// Note that we should update `t` as soon as possible, or we
+		/// can not get correct result for incomplete input like "12:13"
+		/// that is shorter than "hh:mm:ss"
+		result := oneOrTwoDigitRegex.FindString(input) // 1..12
+		length := len(result)
+		hour, succ := parseDigits(input, length)
+		if !succ || hour > 12 || hour == 0 {
+			return input, parseStateFail
+		}
+		// Handle special case: 12:34:56 AM -> 00:34:56
+		// For PM, we will add 12 it later
+		if hour == 12 {
+			hour = 0
+		}
 		t.setHour(uint8(hour))
-		remain = strings.TrimPrefix(remain, "AM")
-	case strings.HasPrefix(remain, "PM"):
-		t.setHour(uint8(hour + 12))
-		remain = strings.TrimPrefix(remain, "PM")
-	default:
-		return input, false
+
+		// ':'
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
+			return input, state
+		}
+
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		minute, succ := parseDigits(input, length)
+		if !succ || minute > 59 {
+			return input, parseStateFail
+		}
+		t.setMinute(uint8(minute))
+
+		// ':'
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
+			return input, state
+		}
+
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		second, succ := parseDigits(input, length)
+		if !succ || second > 59 {
+			return input, parseStateFail
+		}
+		t.setSecond(uint8(second))
+
+		input = skipWhiteSpace(input[length:])
+		if len(input) == 0 {
+			// No "AM"/"PM" suffix, it is ok
+			return input, parseStateEndOfLine
+		} else if len(input) < 2 {
+			// some broken char, fail
+			return input, parseStateFail
+		}
+
+		switch {
+		case hasCaseInsensitivePrefix(input, "AM"):
+			t.setHour(uint8(hour))
+		case hasCaseInsensitivePrefix(input, "PM"):
+			t.setHour(uint8(hour + 12))
+		default:
+			return input, parseStateFail
+		}
+
+		return input[2:], parseStateNormal
 	}
 
-	t.setMinute(uint8(minute))
-	t.setSecond(uint8(second))
+	remain, state := tryParse(input)
+	if state == parseStateFail {
+		return input, false
+	}
 	return remain, true
 }
 
-const time24HourLen = len("hh:mm:ss")
-
 func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	// hh:mm:ss
-	if len(input) < time24HourLen {
-		return input, false
+	tryParse := func(input string) (string, parseState) {
+		// hh:mm:ss
+		/// Note that we should update `t` as soon as possible, or we
+		/// can not get correct result for incomplete input like "12:13"
+		/// that is shorter than "hh:mm:ss"
+		var state parseState
+		result := oneOrTwoDigitRegex.FindString(input) // 0..23
+		length := len(result)
+		hour, succ := parseDigits(input, length)
+		if !succ || hour > 23 {
+			return input, parseStateFail
+		}
+		t.setHour(uint8(hour))
+
+		// ':'
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
+			return input, state
+		}
+
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		minute, succ := parseDigits(input, length)
+		if !succ || minute > 59 {
+			return input, parseStateFail
+		}
+		t.setMinute(uint8(minute))
+
+		// ':'
+		if input, state = parseSep(input[length:]); state != parseStateNormal {
+			return input, state
+		}
+
+		result = oneOrTwoDigitRegex.FindString(input) // 0..59
+		length = len(result)
+		second, succ := parseDigits(input, length)
+		if !succ || second > 59 {
+			return input, parseStateFail
+		}
+		t.setSecond(uint8(second))
+		return input[length:], parseStateNormal
 	}
 
-	hour, succ := parseDigits(input, 2)
-	if !succ || hour > 23 || input[2] != ':' {
+	remain, state := tryParse(input)
+	if state == parseStateFail {
 		return input, false
 	}
-
-	minute, succ := parseDigits(input[3:], 2)
-	if !succ || minute > 59 || input[5] != ':' {
-		return input, false
-	}
-
-	second, succ := parseDigits(input[6:], 2)
-	if !succ || second > 59 {
-		return input, false
-	}
-
-	t.setHour(uint8(hour))
-	t.setMinute(uint8(minute))
-	t.setSecond(uint8(second))
-	return input[8:], true
+	return remain, true
 }
 
 const (
@@ -3183,7 +3261,7 @@ func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string
 
 func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
-		monthName := input[:3]
+		monthName := strings.ToLower(input[:3])
 		if month, ok := monthAbbrev[monthName]; ok {
 			t.setMonth(uint8(month))
 			return input[len(monthName):], true
@@ -3192,9 +3270,16 @@ func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bo
 	return input, false
 }
 
+func hasCaseInsensitivePrefix(input, prefix string) bool {
+	if len(input) < len(prefix) {
+		return false
+	}
+	return strings.EqualFold(input[:len(prefix)], prefix)
+}
+
 func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
-		if strings.HasPrefix(input, month) {
+		if hasCaseInsensitivePrefix(input, month) {
 			t.setMonth(uint8(i + 1))
 			return input[len(month):], true
 		}

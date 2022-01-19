@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // MPPClient servers MPP requests.
@@ -55,14 +57,14 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, true)
+	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -150,7 +152,12 @@ func (m *mppIterator) run(ctx context.Context) {
 		m.mu.Unlock()
 		m.wg.Add(1)
 		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
-		go m.handleDispatchReq(ctx, bo, task)
+		go func(mppTask *kv.MPPDispatchRequest) {
+			defer func() {
+				m.wg.Done()
+			}()
+			m.handleDispatchReq(ctx, bo, mppTask)
+		}(task)
 	}
 	m.wg.Wait()
 	close(m.respChan)
@@ -174,9 +181,6 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
 func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
-	defer func() {
-		m.wg.Done()
-	}()
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
@@ -210,27 +214,40 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
 	var err error
+	var retry bool
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
-		rpcResp, _, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
-			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
+			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(derr.ErrTiFlashServerTimeout)
-			return
+			err = derr.ErrTiFlashServerTimeout
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
+		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+			retry = false
+		} else if err != nil {
+			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
+				retry = true
+			}
+		}
+	}
+
+	if retry {
+		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+		m.handleDispatchReq(ctx, bo, req)
+		return
 	}
 
 	if err != nil {
-		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
+		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		// we return timeout to trigger tikv's fallback
 		m.sendError(derr.ErrTiFlashServerTimeout)
 		return
@@ -239,7 +256,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
 
 	if realResp.Error != nil {
-		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", realResp.Error.Msg))
+		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", realResp.Error.Msg), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
@@ -314,7 +331,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
-		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
+		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		// we return timeout to trigger tikv's fallback
 		m.sendError(derr.ErrTiFlashServerTimeout)
 		return
@@ -343,9 +360,9 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
-					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
+					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 				} else {
-					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
+					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 				}
 			}
 			m.sendError(derr.ErrTiFlashServerTimeout)
