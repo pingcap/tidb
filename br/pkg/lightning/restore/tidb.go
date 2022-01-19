@@ -272,10 +272,10 @@ func LoadSchemaInfo(
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo
