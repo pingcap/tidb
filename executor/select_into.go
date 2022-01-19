@@ -52,7 +52,8 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 		return errors.New("unsupported SelectInto type")
 	}
 
-	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640)
+	// MySQL-compatible behavior: allow files to be group-readable
+	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // # nosec G302
 	if err != nil {
 		return errors.Trace(err)
 	}
