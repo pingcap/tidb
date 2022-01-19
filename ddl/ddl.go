@@ -188,9 +188,10 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers     map[workerType]*worker
-	sessPool    *sessionPool
-	delRangeMgr delRangeManager
+	workers           map[workerType]*worker
+	sessPool          *sessionPool
+	delRangeMgr       delRangeManager
+	enableTiFlashPoll bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -223,6 +224,25 @@ func (dc *ddlCtx) isOwner() bool {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
 	return isOwner
+}
+
+// EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func EnableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll = true
+	}
+}
+
+// DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func DisableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll = false
+	}
+}
+
+// IsTiFlashPollEnabled reveals enableTiFlashPoll
+func (d *ddl) IsTiFlashPollEnabled() bool {
+	return d.enableTiFlashPoll
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
@@ -307,9 +327,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:        ctx,
-		ddlCtx:     ddlCtx,
-		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
+		ctx:               ctx,
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: true,
 	}
 
 	return d
@@ -382,6 +403,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+
+	// Start some background routine to manage TiFlash replica.
+	go d.PollTiFlashRoutine()
+
 	return nil
 }
 
