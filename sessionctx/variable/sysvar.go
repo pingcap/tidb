@@ -1057,11 +1057,11 @@ var defaultSysVars = []*SysVar{
 		s.CTEMaxRecursionDepth = TidbOptInt(val, DefCTEMaxRecursionDepth)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(TiDBOptOn(val))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), nil
+		return BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool, ReadOnly: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.FoundInPlanCache = TiDBOptOn(val)
