@@ -1063,7 +1063,7 @@ func (h *logHook) checkLogCount(t *testing.T, expected int) {
 		logsStr[i], err = h.encode(&item)
 		require.NoError(t, err)
 	}
-	// Check the length of strings, so that in case the test fails, the error message
+	// Check the length of strings, so that in case the test fails, the error message will be printed.
 	require.Len(t, logsStr, expected)
 }
 
