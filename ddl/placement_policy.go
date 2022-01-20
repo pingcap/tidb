@@ -383,13 +383,13 @@ func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.
 }
 
 func tableHasPlacementSettings(tblInfo *model.TableInfo) bool {
-	if tblInfo.DirectPlacementOpts != nil || tblInfo.PlacementPolicyRef != nil {
+	if tblInfo.PlacementPolicyRef != nil {
 		return true
 	}
 
 	if tblInfo.Partition != nil {
 		for _, def := range tblInfo.Partition.Definitions {
-			if def.DirectPlacementOpts != nil || def.PlacementPolicyRef != nil {
+			if def.PlacementPolicyRef != nil {
 				return true
 			}
 		}
