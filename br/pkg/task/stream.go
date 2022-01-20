@@ -290,7 +290,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 }
 
 func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
-	p, l, err := s.mgr.PdController.GetPDClient().GetTS(ctx)
+	p, l, err := s.mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -595,15 +595,15 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, false)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer mgr.Close()
+	defer streamMgr.close()
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg)
+	client, err := restore.NewRestoreClient(g, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), streamMgr.mgr.GetTLSConfig(), keepaliveCfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -629,6 +629,17 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	currentTs, err := streamMgr.getTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = currentTs
+	}
+	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
 	if err != nil {
@@ -643,6 +654,9 @@ func RunStreamRestore(
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(metas) == 0 {
+		return errors.New("nothing to restore.")
 	}
 	// read data file by given ts.
 	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
