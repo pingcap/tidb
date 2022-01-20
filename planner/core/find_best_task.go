@@ -156,7 +156,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter 
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
-	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
+	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
 	planCounter.Dec(1)
 	return &rootTask{p: pShow}, 1, nil
