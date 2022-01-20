@@ -1127,6 +1127,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 		}
+		RestrictedReadOnly.Store(on)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
@@ -1142,10 +1143,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(val))
+		VarTiDBSuperReadOnly.Store(TiDBOptOn(val))
 		return nil
-	}
-},
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
