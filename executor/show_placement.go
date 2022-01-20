@@ -374,29 +374,14 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 }
 
 func (e *ShowExec) getDBPlacement(dbInfo *model.DBInfo) (*model.PlacementSettings, error) {
-	placement := dbInfo.DirectPlacementOpts
-	if placement != nil {
-		return placement, nil
-	}
-
 	return e.getPolicyPlacement(dbInfo.PlacementPolicyRef)
 }
 
 func (e *ShowExec) getTablePlacement(tblInfo *model.TableInfo) (*model.PlacementSettings, error) {
-	placement := tblInfo.DirectPlacementOpts
-	if placement != nil {
-		return placement, nil
-	}
-
 	return e.getPolicyPlacement(tblInfo.PlacementPolicyRef)
 }
 
 func (e *ShowExec) getPartitionPlacement(tblPlacement *model.PlacementSettings, partition *model.PartitionDefinition) (*model.PlacementSettings, error) {
-	placement := partition.DirectPlacementOpts
-	if placement != nil {
-		return placement, nil
-	}
-
 	placement, err := e.getPolicyPlacement(partition.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
