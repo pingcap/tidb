@@ -425,12 +425,6 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
-func (tiflash *MockTiFlash) QueryPdRuleLen() int {
-	tiflash.Lock()
-	defer tiflash.Unlock()
-	return len(tiflash.GlobalTiFlashPlacementRules)
-}
-
 // Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
 	// Compute startKey
@@ -468,6 +462,7 @@ func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, cou
 	return true
 }
 
+// CheckPlacementRule find if a given rule precisely matches already set rules.
 func (tiflash *MockTiFlash) CheckPlacementRule(rule placement.TiFlashRule) bool {
 	tiflash.Lock()
 	defer tiflash.Unlock()
@@ -479,6 +474,7 @@ func (tiflash *MockTiFlash) CheckPlacementRule(rule placement.TiFlashRule) bool 
 	return false
 }
 
+// GetPlacementRule find a rule by name.
 func (tiflash *MockTiFlash) GetPlacementRule(ruleName string) (*placement.TiFlashRule, bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
@@ -490,18 +486,21 @@ func (tiflash *MockTiFlash) GetPlacementRule(ruleName string) (*placement.TiFlas
 	}
 }
 
+// CleanPlacementRules cleans all placement rules.
 func (tiflash *MockTiFlash) CleanPlacementRules() {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	tiflash.GlobalTiFlashPlacementRules = make(map[string]placement.TiFlashRule)
 }
 
+// PlacementRulesLen gets length of all currently set placement rules.
 func (tiflash *MockTiFlash) PlacementRulesLen() int {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	return len(tiflash.GlobalTiFlashPlacementRules)
 }
 
+// GetTableSyncStatus returns table sync status by given tableID.
 func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableInfo, bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
@@ -513,6 +512,7 @@ func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableIn
 	}
 }
 
+// PdSwitch controls if pd is enabled.
 func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
