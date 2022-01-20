@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1414,10 +1415,8 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 
 	var err1 error
 	var err2 error
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		var rss []sqlexec.RecordSet
 		rss, err1 = se.Execute(context.Background(), sql1)
 		if err1 == nil && len(rss) > 0 {
@@ -1425,9 +1424,8 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 				c.Assert(rs.Close(), IsNil)
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		var rss []sqlexec.RecordSet
 		rss, err2 = se1.Execute(context.Background(), sql2)
@@ -1436,7 +1434,7 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 				c.Assert(rs.Close(), IsNil)
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 	f(c, err1, err2)
@@ -1466,19 +1464,16 @@ func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
 
 	var err1 error
 	var err2 error
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		// Mock for table tiflash replica was available.
 		err1 = domain.GetDomain(se).DDL().UpdateTableReplicaInfo(se, t1.Meta().ID, true)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		// Mock for table tiflash replica was available.
 		err2 = domain.GetDomain(se1).DDL().UpdateTableReplicaInfo(se1, t1.Meta().ID, true)
-	}()
+	})
 	wg.Wait()
 	c.Assert(err1, IsNil)
 	c.Assert(err2.Error(), Equals, "[ddl:-1]the replica available status of table t1 is already updated")
@@ -1496,7 +1491,7 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	c.Assert(err, IsNil)
 
 	var err2, err3 error
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
@@ -1511,17 +1506,12 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	originalCallback := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		_, err2 = se.Execute(context.Background(), sql)
-	}()
-
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		_, err3 = se1.Execute(context.Background(), sql)
-	}()
+	})
 	wg.Wait()
 	c.Assert(err2, IsNil)
 	c.Assert(err3, IsNil)
@@ -1667,26 +1657,21 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		se.SetConnectionID(firstConnID)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
 		// Sleep a while to make sure the connection 2 break out the first for loop in OnGetInfoSchemaExported, otherwise atomic.LoadInt32(&sessionCnt) == 2 will be false forever.
 		time.Sleep(100 * time.Millisecond)
 		atomic.StoreInt32(&sessionCnt, finishedCnt)
-	}()
-	go func() {
-		defer wg.Done()
-
+	})
+	wg.Run(func() {
 		se1.SetConnectionID(2)
 		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
 		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
-	}()
+	})
 
 	wg.Wait()
 

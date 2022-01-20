@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -31,11 +32,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -1160,21 +1163,28 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testColumnSuite) TestModifyColumn(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
+func TestModifyColumn(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
 	d, err := testNewDDLAndStart(
 		context.Background(),
-		WithStore(s.store),
+		WithStore(store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+
+	require.NoError(t, err)
 	ctx := testNewContext(d)
 
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
+		err = store.Close()
+		require.NoError(t, err)
 	}()
+
 	tests := []struct {
 		origin string
 		to     string
@@ -1203,29 +1213,29 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := s.colDefStrToFieldType(c, tt.origin)
-		ftB := s.colDefStrToFieldType(c, tt.to)
+		ftA := colDefStrToFieldType(t, tt.origin)
+		ftB := colDefStrToFieldType(t, tt.to)
 		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
-			c.Assert(tt.err, IsNil, Commentf("origin:%v, to:%v", tt.origin, tt.to))
+			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
-			c.Assert(err.Error(), Equals, tt.err.Error())
+			require.EqualError(t, err, tt.err.Error())
 		}
 	}
 }
 
-func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return &col.FieldType
 }
 
-func (s *testColumnSuite) TestFieldCase(c *C) {
+func TestFieldCase(t *testing.T) {
 	var fields = []string{"field", "Field"}
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
@@ -1234,7 +1244,7 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 	}
 	err := checkDuplicateColumn(colObjects)
-	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }
 
 func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {

@@ -616,7 +616,9 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
+	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Also it's good for performance.
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err

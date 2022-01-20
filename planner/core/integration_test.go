@@ -1764,6 +1764,25 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue31261(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_MULTI_COL_5177`)
+	tk.MustExec(`	CREATE TABLE PK_MULTI_COL_5177 (
+		COL1 binary(10) NOT NULL,
+		COL2 varbinary(10) NOT NULL,
+		COL3 smallint(45) NOT NULL,
+		PRIMARY KEY (COL1(5),COL2,COL3),
+		UNIQUE KEY UIDXM (COL1(5),COL2),
+		UNIQUE KEY UIDX (COL2),
+		KEY IDX3 (COL3),
+		KEY IDXM (COL3,COL2))`)
+	tk.MustExec(`insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1)`)
+	c.Assert(len(tk.MustQuery(`select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82)`).Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery(`select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82`).Rows()), Equals, 1)
+}
+
 func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2928,8 +2947,11 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
 	tk.MustExec("insert into tt(x) values (1)")
 	tk.MustExec("update tt set x=2, z = default")
+	tk.MustExec("update tt set x=2, z = default(z)")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
 
+	tk.MustGetErrMsg("update tt set x=2, z = default(x)",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt set z = 123",
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt as ss set z = 123",
@@ -5175,4 +5197,80 @@ func (s *testIntegrationSuite) TestIssue20510(c *C) {
 		"3 1 <nil> <nil>",
 		"4 2 <nil> <nil>",
 	))
+}
+
+func (s *testIntegrationSuite) TestIssue31035(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 longtext, c2 decimal(37, 4), unique key(c1(10)), unique key(c2));")
+	tk.MustExec("insert into t1 values('眐', -962541614831459.7458);")
+	tk.MustQuery("select * from t1 order by c2 + 10;").Check(testkit.Rows("眐 -962541614831459.7458"))
+}
+
+// TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
+// Close https://github.com/pingcap/tidb/issues/31096
+func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1(a int, b int, c int);")
+	testKit.MustExec("insert into t1 value(10,10,10)")
+	for i := 0; i < 7; i++ {
+		testKit.MustExec("insert into t1 select * from t1")
+	}
+	testKit.MustExec("insert into t1 value(1,1,1)")
+	testKit.MustExec("analyze table t1")
+
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where null or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or false or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustExec("drop table if exists t1")
+}
+
+func (s *testIntegrationSuite) TestIssue31202(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31202(a int primary key, b int);")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+	tk.MustExec("drop table if exists t31202")
 }

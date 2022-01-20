@@ -449,7 +449,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: PerformanceSchema, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "myisam_recover_options", Value: Off},
-	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384"},
+	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384", Type: TypeUnsigned, MinValue: 1024, MaxValue: 1048576},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_row_image", Value: "FULL"},
 	{Scope: ScopeNone, Name: "innodb_locks_unsafe_for_binlog", Value: "0"},
 	{Scope: ScopeSession, Name: "rbr_exec_mode", Value: ""},

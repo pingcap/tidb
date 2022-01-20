@@ -806,8 +806,6 @@ outer:
 
 			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = tableCSVCount
-				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
@@ -959,13 +957,18 @@ func (rc *Controller) sampleDataFromTable(
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -998,7 +1001,7 @@ func (rc *Controller) sampleDataFromTable(
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -1009,7 +1012,7 @@ func (rc *Controller) sampleDataFromTable(
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
@@ -1026,7 +1029,6 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)

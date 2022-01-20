@@ -736,11 +736,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSignForInteger()
 		}
-	case mysql.TypeFloat, mysql.TypeDouble:
-		switch newCol.Tp {
-		case mysql.TypeFloat, mysql.TypeDouble:
-			return needTruncationOrToggleSign()
-		}
+		// conversion between float and double needs reorganization, see issue #31372
 	}
 
 	return true
@@ -996,7 +992,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(context.Background(), valStr)
+				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), true, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1262,7 +1258,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        sqlMode,
@@ -1707,7 +1703,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		}
 	}
 	buf.WriteString(" limit 1")
-	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(ctx, buf.String(), paramsList...)
+	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, true, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver"
@@ -108,12 +108,10 @@ func TestSyncerSimple(t *testing.T) {
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
 
 	// for watchCh
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+	var wg util.WaitGroupWrapper
 	currentVer := int64(123)
 	var checkErr string
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
 			if len(resp.Events) < 1 {
@@ -125,7 +123,7 @@ func TestSyncerSimple(t *testing.T) {
 			checkErr = "get update version failed"
 			return
 		}
-	}()
+	})
 
 	// for update latestSchemaVersion
 	require.NoError(t, d.SchemaSyncer().OwnerUpdateGlobalVersion(ctx, currentVer))

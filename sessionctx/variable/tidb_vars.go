@@ -414,7 +414,11 @@ const (
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
 	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	// Deprecated: It is removed and do not use it again
 	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
+	// TiDBPlacementMode is used to control the mode for placement
+	TiDBPlacementMode = "tidb_placement_mode"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
@@ -575,17 +579,12 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
-	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
+	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
 
-	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
-	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
+	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
 
-	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
-	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
-
-	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
-	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
@@ -606,6 +605,9 @@ const (
 
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
+	// TiDBTableCacheLease indicates the read lock lease of a cached table.
+	TiDBTableCacheLease = "tidb_table_cache_lease"
 
 	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
 	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
@@ -729,7 +731,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount            = 1024
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
-	DefTiDBEnableAlterPlacement           = false
+	DefTiDBPlacementMode                  = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
@@ -790,7 +792,15 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableStmtSummary              = true
+	DefTiDBStmtSummaryInternalQuery       = false
+	DefTiDBStmtSummaryRefreshInterval     = 1800
+	DefTiDBStmtSummaryHistorySize         = 24
+	DefTiDBStmtSummaryMaxStmtCount        = 3000
+	DefTiDBStmtSummaryMaxSQLLength        = 4096
+	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
+	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
@@ -816,7 +826,6 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
@@ -824,6 +833,7 @@ var (
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
