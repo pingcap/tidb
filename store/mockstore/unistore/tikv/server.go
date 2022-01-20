@@ -643,6 +643,13 @@ func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest
 
 func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64, handler *cophandler.MPPTaskHandler) error {
 	var reqCtx *requestCtx
+	if len(req.TableRegions) > 0 {
+		// Simple unistore logic for PartitionTableScan.
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
+
 	if len(req.Regions) > 0 {
 		kvContext := &kvrpcpb.Context{
 			RegionId:    req.Regions[0].RegionId,
