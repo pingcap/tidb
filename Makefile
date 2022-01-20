@@ -125,17 +125,16 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-build_test_binary: tools/bin/xprog
+build_test_binary: tools/bin/xprog failpoint-enable
 	@echo "building test binary"
-	$(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || true
-	@cat "/tmp/xxx.log"
+	@export TZ='Asia/Shanghai'; \
+	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
-ut: failpoint-enable build_test_binary tools/bin/ut
+ut: tools/bin/ut build_test_binary
 	@echo "Running ut."
 	@mkdir -p $(TEST_COVERAGE_DIR)
-	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLE=1 tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" $(X) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 
 # gotest: failpoint-enable
 # 	@echo "Running in native mode."

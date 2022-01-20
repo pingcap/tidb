@@ -169,9 +169,9 @@ func cmdRun(args ...string) bool {
 		return false
 	}
 	tasks := make([]task, 0, 5000)
+	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		start := time.Now()
 		for _, pkg := range pkgs {
 			fmt.Println("handling package", pkg)
 			// err := buildTestBinary(pkg)
@@ -196,7 +196,6 @@ func cmdRun(args ...string) bool {
 				return false
 			}
 		}
-		fmt.Println("build all packages takes", time.Since(start))
 	}
 
 	// run tests for packages
@@ -210,11 +209,11 @@ func cmdRun(args ...string) bool {
 			if !re.MatchString(pkg) {
 				continue
 			}
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
+			// err := buildTestBinary(pkg)
+			// if err != nil {
+			// 	fmt.Println("build package error", pkg, err)
+			// 	return false
+			// }
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
 				fmt.Println("check test binary existance error", err)
@@ -236,11 +235,11 @@ func cmdRun(args ...string) bool {
 	// run a single test
 	if len(args) == 2 {
 		pkg := args[0]
-		err := buildTestBinary(pkg)
-		if err != nil {
-			fmt.Println("build package error", pkg, err)
-			return false
-		}
+		// err := buildTestBinary(pkg)
+		// if err != nil {
+		// 	fmt.Println("build package error", pkg, err)
+		// 	return false
+		// }
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
 			fmt.Println("check test binary existance error", err)
@@ -265,7 +264,7 @@ func cmdRun(args ...string) bool {
 		}
 		tasks = tmp
 	}
-	fmt.Println("building task finish...", len(tasks))
+	fmt.Println("building task finish, count=", len(tasks), "takes=", time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
@@ -277,7 +276,7 @@ func cmdRun(args ...string) bool {
 
 	shuffle(tasks)
 
-	start := time.Now()
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
