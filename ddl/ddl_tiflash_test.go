@@ -537,10 +537,41 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 }
 
 func TestSetPlacementRuleFail(t *testing.T) {
-
 	s := tiflashDDLTestSuite{}
+
+	var err error
+
+	ddl.PollTiFlashInterval.Store(1000 * time.Millisecond)
+	ddl.PullTiFlashPdTick.Store(60)
+	s.tiflash = infosync.NewMockTiFlash()
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < 2 {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+			s.cluster = mockCluster
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
 	tk := testkit2.NewTestKit(t, s.store)
-	s.SetUpSuite()
+
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+
+	s.dom, err = session.BootstrapSession(s.store)
+
+	infosync.SetMockTiFlash(s.tiflash)
+	s.dom.SetStatsUpdating(true)
+
+	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
