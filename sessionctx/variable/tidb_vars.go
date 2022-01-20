@@ -797,7 +797,6 @@ var (
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
-<<<<<<< HEAD
 	TopSQLVariable                        = TopSQL{
 		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
@@ -809,18 +808,7 @@ var (
 	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
-=======
-	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
->>>>>>> 1a146fabd... variables: add constraints on tidb_super_read_only when tidb_restricted_read_only is turned on (#31746)
 )
 
 // TopSQL is the variable for control top sql feature.
