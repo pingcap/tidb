@@ -286,7 +286,6 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	db, ok := is.SchemaByName(model.NewCIStr("SchemaPolicyPlacementTest"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef, NotNil)
-	c.Assert(db.DirectPlacementOpts, IsNil)
 	c.Assert(db.PlacementPolicyRef.Name.O, Equals, "PolicySchemaTest")
 }
 
