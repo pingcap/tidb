@@ -650,6 +650,7 @@ func RunStreamRestore(
 	// read data file by given ts.
 	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 
+	// TODO split put and delete files
 	// perform restore kv files
 	return client.RestoreKVFiles(ctx, rewriteRules, datas)
 }

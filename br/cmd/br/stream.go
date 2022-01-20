@@ -126,10 +126,10 @@ func newStreamStatusCommand() *cobra.Command {
 func newStreamRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "restore",
-		Short: "restore a stream task",
+		Short: "restore a stream backups",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return streamCommand(command, task.StreamStatus)
+			return streamCommand(command, task.StreamRestore)
 		},
 	}
 	task.DefineStreamRestoreFlags(command.Flags())
