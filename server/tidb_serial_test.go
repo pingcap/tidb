@@ -131,30 +131,23 @@ func TestTLSBasic(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	// Generate valid TLS certificates.
-	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
+	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSBasic")
 	require.NoError(t, err)
-	serverCert, _, err := generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
-	require.NoError(t, err)
-	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
-	require.NoError(t, err)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
-	require.NoError(t, err)
+	defer os.RemoveAll(dir)
 
-	defer func() {
-		err := os.Remove("/tmp/ca-key.pem")
-		require.NoError(t, err)
-		err = os.Remove("/tmp/ca-cert.pem")
-		require.NoError(t, err)
-		err = os.Remove("/tmp/server-key.pem")
-		require.NoError(t, err)
-		err = os.Remove("/tmp/server-cert.pem")
-		require.NoError(t, err)
-		err = os.Remove("/tmp/client-key.pem")
-		require.NoError(t, err)
-		err = os.Remove("/tmp/client-cert.pem")
-		require.NoError(t, err)
-	}()
+	fileName := func(file string) string {
+		return filepath.Join(dir, file)
+	}
+
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, fileName("ca-key.pem"), fileName("ca-cert.pem"))
+	require.NoError(t, err)
+	serverCert, _, err := generateCert(1, "tidb-server", caCert, caKey, fileName("server-key.pem"), fileName("server-cert.pem"))
+	require.NoError(t, err)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, fileName("client-key.pem"), fileName("client-cert.pem"))
+	require.NoError(t, err)
+	err = registerTLSConfig("client-certificate", fileName("ca-cert.pem"), fileName("client-cert.pem"), fileName("client-key.pem"), "tidb-server", true)
+	require.NoError(t, err)
 
 	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
 	connOverrider := func(config *mysql.Config) {
@@ -165,8 +158,8 @@ func TestTLSBasic(t *testing.T) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
-		SSLCert: "/tmp/server-cert.pem",
-		SSLKey:  "/tmp/server-key.pem",
+		SSLCert: fileName("server-cert.pem"),
+		SSLKey:  fileName("server-key.pem"),
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)

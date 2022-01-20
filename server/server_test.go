@@ -444,7 +444,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Ser
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
+		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		require.NoError(t, rows.Close())

@@ -128,7 +128,7 @@ devgotest: failpoint-enable
 build_test_binary: tools/bin/xprog failpoint-enable
 	@echo "building test binary"
 	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
+	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off --count=0 $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 ut: tools/bin/ut build_test_binary
