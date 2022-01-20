@@ -653,7 +653,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
