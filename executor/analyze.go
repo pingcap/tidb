@@ -292,7 +292,6 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
 	}
 	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-
 		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
 	}
 	return nil
