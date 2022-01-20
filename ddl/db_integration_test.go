@@ -143,6 +143,48 @@ func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk.MustGetErrCode("create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default '0000-00-00 00');", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default 0);", errno.ErrInvalidDefault)
+	defer tk.MustExec(`drop table if exists test_zero_date`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows("0000-00-00 00:00:00 0"))
+	tk.MustExec(`update test_zero_date set a = '2001-01-01 11:11:11' where a = 0`)
+	tk.MustExec(`replace into test_zero_date values (0)`)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustExec(`update test_zero_date set a = 0 where a = '2001-01-01 11:11:11'`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrCode(`insert into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`replace into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`update test_zero_date set a = 0 where a = 0`, errno.ErrTruncatedWrongValue)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows())
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("set session sql_mode=''")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustGetErrCode("create table test_zero_date (a timestamp default 0)", errno.ErrInvalidDefault)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
 }
 
 func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
@@ -821,7 +863,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a char(10)) charset latin1 collate latin1_bin")
 
-	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnknownCharacterSet)
+	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
 
 	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;", errno.ErrUnknownCollation)
@@ -1537,7 +1579,7 @@ func (s *testSerialDBSuite1) TestCreateSecondaryIndexInCluster(c *C) {
 	tk.MustExec("use test")
 
 	// test create table with non-unique key
-	tk.MustGetErrCode(`
+	tk.MustExec(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
   c02 varchar(255) NOT NULL,
@@ -1547,7 +1589,8 @@ CREATE TABLE t (
   c06 varchar(255) DEFAULT NULL,
   PRIMARY KEY (c01,c02,c03) clustered,
   KEY c04 (c04)
-)`, errno.ErrTooLongKey)
+)`)
+	tk.MustExec("drop table t")
 
 	// test create long clustered primary key.
 	tk.MustGetErrCode(`
@@ -1587,7 +1630,7 @@ CREATE TABLE t (
   PRIMARY KEY (c01,c02) clustered
 )`)
 	tk.MustExec("create index idx1 on t(c03)")
-	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("create index idx2 on t(c03, c04)")
 	tk.MustExec("create unique index uk2 on t(c03, c04)")
 	tk.MustExec("drop table t")
 
@@ -1606,9 +1649,9 @@ CREATE TABLE t (
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
-	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c10 varchar(600) default null")
 	tk.MustExec("alter table t modify c06 varchar(600) default null")
-	tk.MustGetErrCode("alter table t modify c01 varchar(510)", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c01 varchar(510)")
 	tk.MustExec("create table t2 like t")
 }
 
@@ -3072,23 +3115,14 @@ func (s *testSerialDBSuite) TestPlacementOnTemporaryTable(c *C) {
 	defer tk.MustExec("drop placement policy x")
 
 	// Cannot create temporary table with placement options
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement2 (id int) followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement2 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create temporary table tplacement2 (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	// Cannot alter temporary table with placement options
 	tk.MustExec("create global temporary table tplacement1 (id int) on commit delete rows")
 	defer tk.MustExec("drop table tplacement1")
-	tk.MustGetErrCode("alter table tplacement1 followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("alter table tplacement1  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("alter table tplacement1  placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	tk.MustExec("create temporary table tplacement2 (id int)")
-	tk.MustGetErrCode("alter table tplacement2 followers=4", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table tplacement2  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table tplacement2  placement policy='x'", errno.ErrUnsupportedDDLOperation)
 
 	// Temporary table will not inherit placement from db
@@ -3618,6 +3652,22 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		// Unexpected, test fail.
 		c.Fail()
 	}
+}
+
+// See https://github.com/pingcap/tidb/issues/29327
+func (s *testIntegrationSuite3) TestEnumDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func (s *testIntegrationSuite3) TestIssue29326(c *C) {

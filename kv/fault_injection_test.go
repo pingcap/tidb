@@ -26,8 +26,6 @@ import (
 )
 
 func TestFaultInjectionBasic(t *testing.T) {
-	t.Parallel()
-
 	var cfg InjectionConfig
 	err1 := errors.New("foo")
 	cfg.SetGetError(err1)

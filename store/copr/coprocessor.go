@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/metrics"
@@ -69,14 +70,20 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+	eventCb := option.EventCb
+	enabledRateLimitAction := option.EnabledRateLimitAction
+	sessionMemTracker := option.SessionMemTracker
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars)
+		return c.sendBatch(ctx, req, vars, option)
+	}
+	if req.Streaming && req.Paging {
+		return copErrorResponse{errors.New("streaming and paging are both on")}
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
@@ -115,6 +122,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
 			capacity = it.concurrency * 2
 		}
+		// in streaming or paging request, a request will be returned in multi batches,
+		// enlarge the channel size to avoid the request blocked by buffer full.
+		if req.Streaming || req.Paging {
+			if capacity < 2048 {
+				capacity = 2048
+			}
+		}
 		it.respChan = make(chan *copResponse, capacity)
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
@@ -126,7 +140,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx, enabledRateLimitAction)
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
 	return it
 }
 
@@ -140,7 +154,9 @@ type copTask struct {
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
 
-	eventCb trxevents.EventCallback
+	eventCb    trxevents.EventCallback
+	paging     bool
+	pagingSize uint64
 }
 
 func (r *copTask) String() string {
@@ -168,6 +184,14 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Channel buffer is 2 for handling region split.
+	// In a common case, two region split tasks will not be blocked.
+	chanSize := 2
+	// in streaming or paging request, a request will be returned in multi batches,
+	// enlarge the channel size to avoid the request blocked by buffer full.
+	if req.Streaming || req.Paging {
+		chanSize = 128
+	}
 
 	var tasks []*copTask
 	for _, loc := range locs {
@@ -176,15 +200,21 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		rLen := loc.Ranges.Len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			// If this is a paging request, we set the paging size to minPagingSize,
+			// the size will grow every round.
+			pagingSize := uint64(0)
+			if req.Paging {
+				pagingSize = paging.MinPagingSize
+			}
 			tasks = append(tasks, &copTask{
-				region: loc.Location.Region,
-				ranges: loc.Ranges.Slice(i, nextI),
-				// Channel buffer is 2 for handling region split.
-				// In a common case, two region split tasks will not be blocked.
-				respChan:  make(chan *copResponse, 2),
-				cmdType:   cmdType,
-				storeType: req.StoreType,
-				eventCb:   eventCb,
+				region:     loc.Location.Region,
+				ranges:     loc.Ranges.Slice(i, nextI),
+				respChan:   make(chan *copResponse, chanSize),
+				cmdType:    cmdType,
+				storeType:  req.StoreType,
+				eventCb:    eventCb,
+				paging:     req.Paging,
+				pagingSize: pagingSize,
 			})
 			i = nextI
 		}
@@ -268,7 +298,8 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
-	resolvedLocks util.TSSet
+	resolvedLocks  util.TSSet
+	committedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
 }
@@ -288,7 +319,8 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	actionOnExceed *rateLimitAction
+	actionOnExceed             *rateLimitAction
+	enableCollectExecutionInfo bool
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -386,35 +418,31 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			worker.sendToRespCh(finCopResp, worker.respChan, false)
 		}
 		close(task.respChan)
-		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+		if worker.finished() {
 			return
-		}
-		select {
-		case <-worker.finishCh:
-			return
-		default:
 		}
 	}
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			taskCh:          taskCh,
-			wg:              &it.wg,
-			store:           it.store,
-			req:             it.req,
-			respChan:        it.respChan,
-			finishCh:        it.finishCh,
-			vars:            it.vars,
-			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, false),
-			memTracker:      it.memTracker,
-			replicaReadSeed: it.replicaReadSeed,
-			actionOnExceed:  it.actionOnExceed,
+			taskCh:                     taskCh,
+			wg:                         &it.wg,
+			store:                      it.store,
+			req:                        it.req,
+			respChan:                   it.respChan,
+			finishCh:                   it.finishCh,
+			vars:                       it.vars,
+			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+			memTracker:                 it.memTracker,
+			replicaReadSeed:            it.replicaReadSeed,
+			actionOnExceed:             it.actionOnExceed,
+			enableCollectExecutionInfo: enableCollectExecutionInfo,
 		}
 		go worker.run(ctx)
 	}
@@ -648,11 +676,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
-		// test whether the ctx is cancelled
-		if vars := bo.GetVars(); vars != nil && vars.Killed != nil && atomic.LoadUint32(vars.Killed) == 1 {
-			return
+		if worker.finished() {
+			break
 		}
-
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -674,19 +700,21 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	copReq := coprocessor.Request{
-		Tp:        worker.req.Tp,
-		StartTs:   worker.req.StartTs,
-		Data:      worker.req.Data,
-		Ranges:    task.ranges.ToPBRanges(),
-		SchemaVer: worker.req.SchemaVar,
+		Tp:         worker.req.Tp,
+		StartTs:    worker.req.StartTs,
+		Data:       worker.req.Data,
+		Ranges:     task.ranges.ToPBRanges(),
+		SchemaVer:  worker.req.SchemaVar,
+		PagingSize: task.pagingSize,
 	}
 
-	var cacheKey []byte = nil
-	var cacheValue *coprCacheValue = nil
+	var cacheKey []byte
+	var cacheValue *coprCacheValue
 
+	// TODO: cache paging copr
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.cmdType == tikvrpc.CmdCop && !task.paging && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(&copReq)
 		if err == nil {
 			cacheKey = cKey
@@ -706,14 +734,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel:   isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:         priorityToPB(worker.req.Priority),
-		NotFillCache:     worker.req.NotFillCache,
-		RecordTimeStat:   true,
-		RecordScanStat:   true,
-		TaskId:           worker.req.TaskID,
-		ResourceGroupTag: worker.req.ResourceGroupTag,
+		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:       priorityToPB(worker.req.Priority),
+		NotFillCache:   worker.req.NotFillCache,
+		RecordTimeStat: true,
+		RecordScanStat: true,
+		TaskId:         worker.req.TaskID,
 	})
+	if worker.req.ResourceGroupTagger != nil {
+		worker.req.ResourceGroupTagger(req)
+	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
 	if worker.kvclient.Stats == nil {
@@ -749,6 +779,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
+	}
+
+	if worker.req.Paging {
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, costTime)
 	}
 
 	// Handles the response for non-streaming copTask.
@@ -860,12 +894,36 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return worker.buildCopTasksFromRemain(bo, lastRange, task)
+			task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
+			return []*copTask{task}, nil
 		}
 		if resp.Range != nil {
 			lastRange = resp.Range
 		}
 	}
+}
+
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
+	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, nil, nil, task, ch, nil, costTime)
+	if err != nil || len(remainedTasks) != 0 {
+		// If there is region error or lock error, keep the paging size and retry.
+		for _, remainedTask := range remainedTasks {
+			remainedTask.pagingSize = task.pagingSize
+		}
+		return remainedTasks, errors.Trace(err)
+	}
+	pagingRange := resp.pbResp.Range
+	// only paging requests need to calculate the next ranges
+	if pagingRange == nil {
+		return nil, errors.New("lastRange in paging should not be nil")
+	}
+	// calculate next ranges and grow the paging size
+	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
+	if task.ranges.Len() == 0 {
+		return nil, nil
+	}
+	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
+	return []*copTask{task}, nil
 }
 
 // handleCopResponse checks coprocessor Response for region split and lock,
@@ -907,7 +965,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				return nil, errors.Trace(err)
 			}
 		}
-		return worker.buildCopTasksFromRemain(bo, lastRange, task)
+		if worker.req.Streaming {
+			task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
+		}
+		return []*copTask{task}, nil
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -924,46 +985,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	if resp.detail == nil {
-		resp.detail = new(CopRuntimeStats)
-	}
-	resp.detail.Stats = worker.kvclient.Stats
-	worker.kvclient.Stats = nil
-	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		resp.detail.CalleeAddress = rpcCtx.Addr
-	}
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
-	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
-		// Take values in `ExecDetailsV2` first.
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
-		}
-	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
-			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
-			}
-		}
-	}
-	resp.detail.ScanDetail = sd
-	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -992,6 +1015,58 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+	defer func() {
+		worker.kvclient.Stats = nil
+	}()
+	if !worker.enableCollectExecutionInfo {
+		return
+	}
+	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("shouldn't reachable")
+		}
+	})
+	if resp.detail == nil {
+		resp.detail = new(CopRuntimeStats)
+	}
+	resp.detail.Stats = worker.kvclient.Stats
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	}
+	if rpcCtx != nil {
+		resp.detail.CalleeAddress = rpcCtx.Addr
+	}
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
+	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		// Take values in `ExecDetailsV2` first.
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			sd.MergeFromScanDetailV2(scanDetailV2)
+		}
+	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+			if scanDetail.Write != nil {
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
+			}
+		}
+	}
+	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 }
 
 // CopRuntimeStats contains execution detail information.
@@ -1035,28 +1110,54 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	return nil
 }
 
-func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
-	remainedRanges := task.ranges
-	if worker.req.Streaming && lastRange != nil {
-		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
-	}
-	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
-}
-
-// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
+// calculateRetry splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)
 // split:      [s1   -->   s2)
-// In normal scan order, all data before s1 is consumed, so the remain ranges should be [s1 --> r2) [r3 --> r4)
-// In reverse scan order, all data after s2 is consumed, so the remain ranges should be [r1 --> r2) [r3 --> s2)
-func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+// In normal scan order, all data before s1 is consumed, so the retry ranges should be [s1 --> r2) [r3 --> r4)
+// In reverse scan order, all data after s2 is consumed, so the retry ranges should be [r1 --> r2) [r3 --> s2)
+func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+	if split == nil {
+		return ranges
+	}
 	if desc {
 		left, _ := ranges.Split(split.End)
 		return left
 	}
 	_, right := ranges.Split(split.Start)
 	return right
+}
+
+// calculateRemain calculates the remain ranges to be processed, it's used in streaming and paging API.
+// For example:
+// ranges: [r1 --> r2) [r3 --> r4)
+// split:      [s1   -->   s2)
+// In normal scan order, all data before s2 is consumed, so the remained ranges should be [s2 --> r4)
+// In reverse scan order, all data after s1 is consumed, so the remained ranges should be [r1 --> s1)
+func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+	if split == nil {
+		return ranges
+	}
+	if desc {
+		left, _ := ranges.Split(split.Start)
+		return left
+	}
+	_, right := ranges.Split(split.End)
+	return right
+}
+
+// finished checks the flags and finished channel, it tells whether the worker is finished.
+func (worker *copIteratorWorker) finished() bool {
+	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+		return true
+	}
+	select {
+	case <-worker.finishCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (it *copIterator) Close() error {

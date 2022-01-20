@@ -1,0 +1,131 @@
+create database collation_check_use_collation;
+use collation_check_use_collation;
+CREATE TABLE `t` (
+`a` char(10) DEFAULT NULL
+);
+CREATE TABLE `t1` (
+`a` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL
+);
+insert into t values ("A");
+insert into t1 values ("a");
+select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
+a_col
+select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
+a_col
+drop table if exists t;
+create table t(a enum('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+a	b
+a	b
+drop table if exists t;
+create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+insert into t values ("B", "b");
+Error 1265: Data truncated for column 'a' at row 1
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+a	b
+b	c
+select * from t where 1 in (a);
+a	b
+select * from t where 2 in (a);
+a	b
+b	c
+select * from t where 1 in (a, 0);
+a	b
+select * from t where a between 1 and 2;
+a	b
+b	c
+select * from t where a between 1 and "a";
+a	b
+select * from t where a between "a" and "b";
+a	b
+b	c
+select * from t where 2 between a and "c";
+a	b
+select * from t where 2 between a and 3;
+a	b
+b	c
+select * from t where "b" between a and a;
+a	b
+b	c
+select * from t where "b" collate utf8mb4_bin between a and a;
+a	b
+b	c
+select * from t where "b" between a and 3;
+a	b
+drop table if exists t;
+create table t(a set('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+a	b
+a	b
+drop table if exists t;
+create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+insert into t values ("B", "b");
+Error 1265: Data truncated for column 'a' at row 1
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+a	b
+b	c
+select * from t where 1 in (a);
+a	b
+select * from t where 2 in (a);
+a	b
+b	c
+select * from t where 1 in (a, 0);
+a	b
+select * from t where a between 1 and 2;
+a	b
+b	c
+select * from t where a between 1 and "a";
+a	b
+select * from t where a between "a" and "b";
+a	b
+b	c
+select * from t where 2 between a and "c";
+a	b
+select * from t where 2 between a and 3;
+a	b
+b	c
+select * from t where "b" between a and a;
+a	b
+b	c
+select * from t where "b" collate utf8mb4_bin between a and a;
+a	b
+b	c
+select * from t where "b" between a and 3;
+a	b
+drop table if exists tbl_2;
+create table tbl_2 ( col_20 bigint not null , col_21 smallint not null , col_22 decimal(24,10) default null , col_23 tinyint default 71 not null , col_24 bigint not null , col_25 tinyint default 18 , col_26 varchar(330) collate utf8_bin not null , col_27 char(77) collate                    utf8mb4_unicode_ci , col_28 char(46) collate utf8_general_ci not null , col_29 smallint unsigned not null , primary key idx_13 ( col_27(5) ) , key idx_14 ( col_24 ) , unique key idx_15 ( col_23,col_21,col_28,col_29,col_24 ) ) collate utf8_bin ;
+insert ignore into tbl_2 values ( 5888267793391993829,5371,94.63,-109,5728076076919247337,89,'WUicqUTgdGJcjbC','SapBPqczTWWSN','xUSwH',49462 );
+select col_25 from tbl_2 where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
+col_25
+select col_25 from tbl_2 use index(primary) where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
+col_25
+use test

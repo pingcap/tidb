@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/israce"
@@ -208,6 +208,36 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec("insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
 	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
+
+	// Test issue 28078.
+	// Use different types of columns so that there's likely to be error if the types mismatches.
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(id int, a1 timestamp, a2 varchar(10), a3 float, unique(id))")
+	tk.MustExec("create table b(id int, b1 time, b2 varchar(10), b3 int)")
+	tk.MustExec("insert into a values (1, '2022-01-04 07:02:04', 'a', 1.1), (2, '2022-01-04 07:02:05', 'b', 2.2)")
+	tk.MustExec("insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20)")
+	tk.MustExec("insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>"))
+	tk.MustExec("insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>",
+		"4/<nil>/<nil>/<nil>"))
+	tk.MustExec("insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>",
+		"4/<nil>/<nil>/<nil>",
+		"<nil>/<nil>/x/1.2",
+		"<nil>/<nil>/x/1.2"))
 
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
@@ -1005,11 +1035,10 @@ func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Run(func() {
 			tk := testkit.NewTestKitWithInit(c, s.store)
 			for j := 0; j < 10; j++ {
 				k := strconv.Itoa(idx*100 + j)
@@ -1032,7 +1061,7 @@ func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
 					last = v
 				}
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 }
@@ -1715,11 +1744,9 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 
 	threads := 8
 	loops := 1
-	wg := sync.WaitGroup{}
-	wg.Add(threads)
+	var wg util.WaitGroupWrapper
 
 	insertFunc := func() {
-		defer wg.Done()
 		newTk := testkit.NewTestKitWithInit(c, s.store)
 		newTk.MustExec("begin")
 		for i := 0; i < loops; i++ {
@@ -1732,7 +1759,7 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	}
 
 	for i := 0; i < threads; i++ {
-		go insertFunc()
+		wg.Run(insertFunc)
 	}
 	wg.Wait()
 }
@@ -1819,4 +1846,19 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
+}
+
+// https://github.com/pingcap/tidb/issues/29483.
+func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists replace_auto_id;")
+	tk.MustExec("create database replace_auto_id;")
+	tk.MustExec(`use replace_auto_id;`)
+
+	tk.MustExec("SET sql_mode='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a tinyint not null auto_increment primary key, b char(20));")
+	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
+	// Note that this error is different from MySQL's duplicated primary key error.
+	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }

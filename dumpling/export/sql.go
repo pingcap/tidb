@@ -92,6 +92,21 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
+// ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
+// returns (createPoilicySQL, error)
+func ShowCreatePlacementPolicy(db *sql.Conn, policy string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`", escapeString(policy))
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return oneRow[1], nil
+}
+
 // ShowCreateView constructs the create view SQL for a specified view
 // returns (createFakeTableSQL, createViewSQL, error)
 func ShowCreateView(db *sql.Conn, database, view string) (createFakeTableSQL string, createRealViewSQL string, err error) {
@@ -279,6 +294,25 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
+	var policyList []string
+	var policy string
+	const query = "select distinct policy_name from information_schema.placement_policies where policy_name is not null;"
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		return policyList, errors.Annotatef(err, "sql: %s", query)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&policy)
+		if err != nil {
+			return policyList, errors.Trace(err)
+		}
+		policyList = append(policyList, policy)
+	}
+	return policyList, errors.Annotatef(rows.Err(), "sql: %s", query)
+}
+
 // SelectVersion gets the version information from the database server
 func SelectVersion(db *sql.DB) (string, error) {
 	var versionInfo string
@@ -353,11 +387,11 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasI
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
+		if strings.Contains(errMsg, strconv.Itoa(errBadFieldCode)) {
 			return false, nil
 		}
 		return false, errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
@@ -688,6 +722,19 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 		// In most production cases TiDB has TiKV
 		return true, errors.Annotatef(err, "sql: %s", query)
 	}
+	return count > 0, nil
+}
+
+// CheckIfSeqExists use sql to check whether sequence exists
+func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+	var count int
+	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&count)
+	if err != nil {
+		return false, errors.Annotatef(err, "sql: %s", query)
+	}
+
 	return count > 0, nil
 }
 
@@ -1352,4 +1399,47 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 		return nil
 	})
 	return regionsInfo, err
+}
+
+// GetCharsetAndDefaultCollation gets charset and default collation map.
+func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
+	charsetAndDefaultCollation := make(map[string]string)
+	query := "SHOW CHARACTER SET"
+
+	// Show an example.
+	/*
+		mysql> SHOW CHARACTER SET;
+		+----------+---------------------------------+---------------------+--------+
+		| Charset  | Description                     | Default collation   | Maxlen |
+		+----------+---------------------------------+---------------------+--------+
+		| armscii8 | ARMSCII-8 Armenian              | armscii8_general_ci |      1 |
+		| ascii    | US ASCII                        | ascii_general_ci    |      1 |
+		| big5     | Big5 Traditional Chinese        | big5_chinese_ci     |      2 |
+		| binary   | Binary pseudo charset           | binary              |      1 |
+		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
+		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
+	*/
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var charset, description, collation string
+		var maxlen int
+		if scanErr := rows.Scan(&charset, &description, &collation, &maxlen); scanErr != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	if rows.Err() != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	return charsetAndDefaultCollation, err
 }

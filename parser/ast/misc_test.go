@@ -43,7 +43,6 @@ func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func TestMiscVisitorCover(t *testing.T) {
-	t.Parallel()
 	valueExpr := ast.NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []ast.Node{
 		&ast.AdminStmt{},
@@ -86,7 +85,6 @@ func TestMiscVisitorCover(t *testing.T) {
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
-	t.Parallel()
 	sql := `
 create table t (c1 smallint unsigned, c2 int unsigned);
 alter table t add column a smallint unsigned after b;
@@ -112,7 +110,6 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 }
 
 func TestDMLVistorCover(t *testing.T) {
-	t.Parallel()
 	sql := `delete from somelog where user = 'jcole' order by timestamp_column limit 1;
 delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
 select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
@@ -133,7 +130,6 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 
 // test Change Pump or drainer status sql parser
 func TestChangeStmt(t *testing.T) {
-	t.Parallel()
 	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
 change drainer to node_state='paused' for node_id '127.0.0.1:8249';
 shutdown;`
@@ -148,7 +144,6 @@ shutdown;`
 }
 
 func TestSensitiveStatement(t *testing.T) {
-	t.Parallel()
 	positive := []ast.StmtNode{
 		&ast.SetPwdStmt{},
 		&ast.CreateUserStmt{},
@@ -180,7 +175,6 @@ func TestSensitiveStatement(t *testing.T) {
 }
 
 func TestUserSpec(t *testing.T) {
-	t.Parallel()
 	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
 	u := ast.UserSpec{
 		User: &auth.UserIdentity{
@@ -212,7 +206,6 @@ func TestUserSpec(t *testing.T) {
 }
 
 func TestTableOptimizerHintRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"USE_INDEX(t1 c1)", "USE_INDEX(`t1` `c1`)"},
 		{"USE_INDEX(test.t1 c1)", "USE_INDEX(`test`.`t1` `c1`)"},
@@ -288,7 +281,6 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 }
 
 func TestChangeStmtRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
 		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
@@ -300,7 +292,6 @@ func TestChangeStmtRestore(t *testing.T) {
 }
 
 func TestBRIESecureText(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		input   string
 		secured string

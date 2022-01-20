@@ -20,8 +20,6 @@ import (
 )
 
 func TestDecodeEscapedUnicode(t *testing.T) {
-	t.Parallel()
-
 	in := "597d"
 	r, size, err := decodeEscapedUnicode([]byte(in))
 	require.NoError(t, err)

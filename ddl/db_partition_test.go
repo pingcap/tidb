@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
@@ -224,7 +226,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( TO_SECONDS(`a`) ) (\n  PARTITION `p0` VALUES LESS THAN (63240134400),\n  PARTITION `p1` VALUES LESS THAN (63271756800)\n)"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (TO_SECONDS(`a`))\n(PARTITION `p0` VALUES LESS THAN (63240134400),\n PARTITION `p1` VALUES LESS THAN (63271756800))"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -3522,4 +3524,31 @@ func (s *testSerialDBSuite1) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C
 	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete")
+}
+
+func TestDropAndTruncatePartition(t *testing.T) {
+	// Useless, but is required to initialize the global infoSync
+	// Otherwise this test throw a "infoSyncer is not initialized" error
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestDropAndTruncatePartition(t)
+}
+
+func TestTable(t *testing.T) {
+	// Useless, but is required to initialize the global infoSync
+	// Otherwise this test throw a "infoSyncer is not initialized" error
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestTable(t)
+}
+
+func TestRenameTables(t *testing.T) {
+	// Useless, but is required to initialize the global infoSync
+	// Otherwise this test throw a "infoSyncer is not initialized" error
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestRenameTables(t)
 }

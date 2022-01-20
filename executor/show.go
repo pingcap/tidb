@@ -19,7 +19,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -196,6 +195,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowHistogramsInFlight:
+		e.fetchShowHistogramsInFlight()
+		return nil
 	case ast.ShowColumnStatsUsage:
 		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
@@ -339,7 +341,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM information_schema.engines`)
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -470,7 +472,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT
 		table_name, engine, version, row_format, table_rows,
 		avg_row_length, data_length, max_data_length, index_length,
 		data_free, auto_increment, create_time, update_time, check_time,
@@ -972,7 +974,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
@@ -1074,8 +1076,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
 	}
 
-	// add direct placement info here
-	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		// This is not meant to be understand by other components, so it's not written as /*T![cached] */
+		// For all external components, cached table is just a normal table.
+		fmt.Fprintf(buf, " /* CACHED ON */")
+	}
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
@@ -1210,83 +1216,58 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
-	if directPlacementOpts == nil {
-		return
-	}
-	opts := reflect.ValueOf(*directPlacementOpts)
-	typeOpts := opts.Type()
-	fmt.Fprintf(buf, " /*T![placement]")
-	for i := 0; i < opts.NumField(); i++ {
-		if !opts.Field(i).IsZero() {
-			v := opts.Field(i).Interface()
-			switch v.(type) {
-			case string:
-				fmt.Fprintf(buf, ` %s="%s"`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
-			case uint64:
-				fmt.Fprintf(buf, " %s=%d", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
-			}
-		}
-	}
-	fmt.Fprintf(buf, " */")
-}
-
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
 	}
+	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
+	// include the /*!50100 or /*!50500 comments for TiDB.
+	// This also solves the issue with comments within comments that would happen for
+	// PLACEMENT POLICY options.
 	if partitionInfo.Type == model.PartitionTypeHash {
-		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
-		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
-		return
+		defaultPartitionDefinitions := true
+		for i, def := range partitionInfo.Definitions {
+			if def.Name.O != fmt.Sprintf("p%d", i) {
+				defaultPartitionDefinitions = false
+				break
+			}
+			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
+				defaultPartitionDefinitions = false
+				break
+			}
+		}
+
+		if defaultPartitionDefinitions {
+			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			return
+		}
 	}
-	// this if statement takes care of range columns case
-	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
-		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
+	// this if statement takes care of lists/range columns case
+	if partitionInfo.Columns != nil {
+		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// Notice that MySQL uses two spaces between LIST and COLUMNS...
+		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		for i, col := range partitionInfo.Columns {
-			buf.WriteString(col.L)
+			buf.WriteString(stringutil.Escape(col.O, sqlMode))
 			if i < len(partitionInfo.Columns)-1 {
 				buf.WriteString(",")
 			}
 		}
-		buf.WriteString(") (\n")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		if len(partitionInfo.Columns) == 0 {
-			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
-		} else {
-			colsName := ""
-			for _, col := range partitionInfo.Columns {
-				if len(colsName) > 0 {
-					colsName += ","
-				}
-				colsName += col.L
-			}
-			fmt.Fprintf(buf, "\nPARTITION BY LIST COLUMNS(%s) (\n", colsName)
-		}
+		buf.WriteString(")\n(")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	if partitionInfo.Type == model.PartitionTypeRange {
-		for i, def := range partitionInfo.Definitions {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-			if def.DirectPlacementOpts != nil {
-				// add direct placement info here
-				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
-			}
-			if def.PlacementPolicyRef != nil {
-				// add placement ref info here
-				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-			}
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+
+	for i, def := range partitionInfo.Definitions {
+		if i > 0 {
+			fmt.Fprintf(buf, ",\n ")
 		}
-		buf.WriteString(")")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		for i, def := range partitionInfo.Definitions {
+		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
+		// PartitionTypeHash does not have any VALUES definition
+		if partitionInfo.Type == model.PartitionTypeRange {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+		} else if partitionInfo.Type == model.PartitionTypeList {
 			values := bytes.NewBuffer(nil)
 			for j, inValues := range def.InValues {
 				if j > 0 {
@@ -1300,23 +1281,17 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 					values.WriteString(strings.Join(inValues, ","))
 				}
 			}
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
-			if def.DirectPlacementOpts != nil {
-				// add direct placement info here
-				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
-			}
-			if def.PlacementPolicyRef != nil {
-				// add placement ref info here
-				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-			}
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 		}
-		buf.WriteString(")")
+		if len(def.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+		}
+		if def.PlacementPolicyRef != nil {
+			// add placement ref info here
+			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
 	}
+	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
@@ -1353,10 +1328,6 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
-	}
-	if dbInfo.DirectPlacementOpts != nil {
-		// add direct placement info here
-		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
 	}
 	return nil
 }
@@ -1436,7 +1407,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1456,7 +1427,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authplugin = rows[0].GetString(0)
 	}
 
-	stmt, err = exec.ParseWithParams(ctx, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	stmt, err = exec.ParseWithParams(ctx, true, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}

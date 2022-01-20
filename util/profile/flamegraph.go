@@ -78,21 +78,6 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 	}
 }
 
-// collectFuncUsage collect the value by given function name
-func (n *flamegraphNode) collectFuncUsage(name string) int64 {
-	if n.name == name {
-		return n.cumValue
-	}
-	if len(n.children) == 0 {
-		return 0
-	}
-	var usage int64 = 0
-	for _, child := range n.children {
-		usage = child.collectFuncUsage(name) + usage
-	}
-	return usage
-}
-
 type flamegraphNodeWithLocation struct {
 	*flamegraphNode
 	locID uint64

@@ -5,7 +5,6 @@ package metautil
 import (
 	"context"
 	"crypto/sha256"
-	"regexp"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -25,8 +24,6 @@ func checksum(m *backuppb.MetaFile) []byte {
 }
 
 func TestWalkMetaFileEmpty(t *testing.T) {
-	t.Parallel()
-
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
 	cipher := backuppb.CipherInfo{
@@ -47,8 +44,6 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 }
 
 func TestWalkMetaFileLeaf(t *testing.T) {
-	t.Parallel()
-
 	leaf := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
@@ -65,8 +60,6 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 }
 
 func TestWalkMetaFileInvalid(t *testing.T) {
-	t.Parallel()
-
 	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
@@ -87,12 +80,11 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
 	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 
-	require.Regexp(t, regexp.MustCompile(".*ErrInvalidMetaFile.*"), err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ErrInvalidMetaFile")
 }
 
 func TestWalkMetaFile(t *testing.T) {
-	t.Parallel()
-
 	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
@@ -161,8 +153,6 @@ type encryptTest struct {
 }
 
 func TestEncryptAndDecrypt(t *testing.T) {
-	t.Parallel()
-
 	originalData := []byte("pingcap")
 	testCases := []encryptTest{
 		{

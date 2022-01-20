@@ -16,19 +16,17 @@ package session
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
-	t.Parallel()
-
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
@@ -39,27 +37,24 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	count := 200
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {
-		stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
+		stmt, err := se.ParseWithParams(context.Background(), true, "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	var wg sync.WaitGroup
-	wg.Add(count)
+	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
-		go func(se *session, stmt ast.StmtNode) {
-			_, _, err := se.ExecRestrictedStmt(context.Background(), stmt)
+		s := stmts[i]
+		wg.Run(func() {
+			_, _, err := se.ExecRestrictedStmt(context.Background(), s)
 			require.NoError(t, err)
-			wg.Done()
-		}(se, stmts[i])
+		})
 	}
 	wg.Wait()
 }
 
 func TestParseErrorWarn(t *testing.T) {
-	t.Parallel()
-
 	ctx := core.MockContext()
 
 	nodes, err := Parse(ctx, "select /*+ adf */ 1")
@@ -72,8 +67,6 @@ func TestParseErrorWarn(t *testing.T) {
 }
 
 func TestKeysNeedLock(t *testing.T) {
-	t.Parallel()
-
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	uniqueValue := make([]byte, 8)

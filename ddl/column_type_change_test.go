@@ -797,7 +797,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varchar(30)")
 	tk.MustExec("alter table t modify b varchar(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// binary
 	reset(tk)
@@ -837,7 +837,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 blob")
 	tk.MustExec("alter table t modify f64 blob")
 	tk.MustExec("alter table t modify b blob")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// text
 	reset(tk)
@@ -850,7 +850,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 text")
 	tk.MustExec("alter table t modify f64 text")
 	tk.MustExec("alter table t modify b text")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// enum
 	reset(tk)
@@ -1200,7 +1200,8 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 				i json,
 				ui json,
 				f64 json,
-				str json
+				str json,
+				nul json
 			)
 		`)
 	}
@@ -1208,13 +1209,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	// To numeric data types.
 	// tinyint
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj tinyint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
 	tk.MustGetErrCode("alter table t modify arr tinyint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil tinyint")
+	tk.MustGetErrCode("alter table t modify nil tinyint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t tinyint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1224,17 +1225,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustGetErrCode("alter table t modify f64 tinyint", mysql.ErrDataOutOfRange)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str tinyint", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 1 0 -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul tinyint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// int
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj int", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
 	tk.MustGetErrCode("alter table t modify arr int", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil int")
+	tk.MustGetErrCode("alter table t modify nil int", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t int")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1244,17 +1246,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 int")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str int", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 1 0 -22 22 323232323 \"json string\""))
+	tk.MustExec("alter table t modify nul int")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
 	// bigint
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj bigint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
 	tk.MustGetErrCode("alter table t modify arr bigint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil bigint")
+	tk.MustGetErrCode("alter table t modify nil bigint", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t bigint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1264,17 +1267,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 bigint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str bigint", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 1 0 -22 22 323232323 \"json string\""))
+	tk.MustExec("alter table t modify nul bigint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
 	// unsigned bigint
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj bigint unsigned", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
 	tk.MustGetErrCode("alter table t modify arr bigint unsigned", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil bigint unsigned")
+	tk.MustGetErrCode("alter table t modify nil bigint unsigned", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t bigint unsigned")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1285,11 +1289,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 bigint unsigned")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str bigint unsigned", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 1 0 -22 22 323232323 \"json string\""))
+	tk.MustExec("alter table t modify nul bigint unsigned")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
 	// bit
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustGetErrCode("alter table t modify obj bit", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify arr bit", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify nil bit", mysql.ErrUnsupportedDDLOperation)
@@ -1299,17 +1304,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustGetErrCode("alter table t modify ui bit", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 bit", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify str bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustGetErrCode("alter table t modify nul bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// decimal
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column obj at row 1".
 	tk.MustGetErrCode("alter table t modify obj decimal(20, 10)", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column arr at row 1".
 	tk.MustGetErrCode("alter table t modify arr decimal(20, 10)", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column nil at row 1".
-	tk.MustExec("alter table t modify nil decimal(20, 10)")
+	tk.MustGetErrCode("alter table t modify nil decimal(20, 10)", mysql.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify t decimal(20, 10)")
 	tk.MustExec("alter table t modify f decimal(20, 10)")
 	tk.MustExec("alter table t modify i decimal(20, 10)")
@@ -1317,17 +1323,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 decimal(20, 10)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1".
 	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrBadNumber)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0.0000000000 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\""))
+	tk.MustExec("alter table t modify nul decimal(20, 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\" <nil>"))
 
 	// double
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj double", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'arr' at row 1".
 	tk.MustGetErrCode("alter table t modify arr double", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil double")
+	tk.MustGetErrCode("alter table t modify nil double", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 't' at row 1".
 	tk.MustExec("alter table t modify t double")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'f' at row 1".
@@ -1337,12 +1344,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 double")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str double", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 1 0 -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul double")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// To string data types.
 	// char
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj char(20)")
 	tk.MustExec("alter table t modify arr char(20)")
 	tk.MustExec("alter table t modify nil char(20)")
@@ -1352,11 +1360,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui char(20)")
 	tk.MustExec("alter table t modify f64 char(20)")
 	tk.MustExec("alter table t modify str char(20)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nil char(20)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// varchar
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj varchar(20)")
 	tk.MustExec("alter table t modify arr varchar(20)")
 	tk.MustExec("alter table t modify nil varchar(20)")
@@ -1366,11 +1375,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui varchar(20)")
 	tk.MustExec("alter table t modify f64 varchar(20)")
 	tk.MustExec("alter table t modify str varchar(20)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul varchar(20)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// binary
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj binary(20)")
 	tk.MustExec("alter table t modify arr binary(20)")
 	tk.MustExec("alter table t modify nil binary(20)")
@@ -1380,6 +1390,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui binary(20)")
 	tk.MustExec("alter table t modify f64 binary(20)")
 	tk.MustExec("alter table t modify str binary(20)")
+	tk.MustExec("alter table t modify nul binary(20)")
 	tk.MustQuery("select * from t").Check(testkit.Rows(
 		"{\"obj\": 100}\x00\x00\x00\x00\x00\x00\x00\x00 " +
 			"[-1, 0, 1]\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 " +
@@ -1389,10 +1400,10 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 			"-22\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 " +
 			"22\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 " +
 			"323232323.32323235\x00\x00 " +
-			"\"json string\"\x00\x00\x00\x00\x00\x00\x00"))
+			"\"json string\"\x00\x00\x00\x00\x00\x00\x00 <nil>"))
 	// varbinary
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj varbinary(20)")
 	tk.MustExec("alter table t modify arr varbinary(20)")
 	tk.MustExec("alter table t modify nil varbinary(20)")
@@ -1402,11 +1413,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui varbinary(20)")
 	tk.MustExec("alter table t modify f64 varbinary(20)")
 	tk.MustExec("alter table t modify str varbinary(20)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul varbinary(20)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// blob
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj blob")
 	tk.MustExec("alter table t modify arr blob")
 	tk.MustExec("alter table t modify nil blob")
@@ -1416,11 +1428,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui blob")
 	tk.MustExec("alter table t modify f64 blob")
 	tk.MustExec("alter table t modify str blob")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul blob")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// text
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustExec("alter table t modify obj text")
 	tk.MustExec("alter table t modify arr text")
 	tk.MustExec("alter table t modify nil text")
@@ -1430,11 +1443,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui text")
 	tk.MustExec("alter table t modify f64 text")
 	tk.MustExec("alter table t modify str text")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustExec("alter table t modify nul text")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// enum
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustGetErrCode("alter table t modify obj enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify arr enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify nil enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
@@ -1444,11 +1458,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustGetErrCode("alter table t modify ui enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify str enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustGetErrCode("alter table t modify nul enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// set
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	tk.MustGetErrCode("alter table t modify obj set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify arr set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify nil set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
@@ -1458,12 +1473,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustGetErrCode("alter table t modify ui set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify str set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1] null true false -22 22 323232323.32323235 \"json string\""))
+	tk.MustGetErrCode("alter table t modify nul set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// To date and time data types.
 	// datetime
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
 	tk.MustGetErrCode("alter table t modify obj datetime", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify arr datetime", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify nil datetime", mysql.ErrTruncatedWrongValue)
@@ -1474,11 +1490,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 datetime")
 	// MySQL will get "ERROR 1292 (22007): Incorrect datetime value: '"2020-08-26 17:35:01.123456"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str datetime")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 17:35:01 2020-11-23 00:00:00 2020-08-26 17:35:01 2020-08-26 17:35:01"))
+	tk.MustExec("alter table t modify nul datetime")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 17:35:01 2020-11-23 00:00:00 2020-08-26 17:35:01 2020-08-26 17:35:01 <nil>"))
 
 	// time
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '200805', '1111', '200805.11', '\"19:35:41\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '200805', '1111', '200805.11', '\"19:35:41\"', null)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj time", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: '[-1, 0, 1]' for column 'arr' at row 11".
@@ -1494,11 +1511,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 time")
 	// MySQL will get "ERROR 1292 (22007): Incorrect time value: '"19:35:41"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str time")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 20:08:05 00:11:11 20:08:05 19:35:41"))
+	tk.MustExec("alter table t modify nul time")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 20:08:05 00:11:11 20:08:05 19:35:41 <nil>"))
 
 	// date
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
 	tk.MustGetErrCode("alter table t modify obj date", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify arr date", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify nil date", mysql.ErrTruncatedWrongValue)
@@ -1509,11 +1527,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 date")
 	// MySQL will get "ERROR 1292 (22007): Incorrect date value: '"2020-08-26 17:35:01.123456"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str date")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 2020-11-23 2020-08-26 2020-08-26"))
+	tk.MustExec("alter table t modify nul date")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 2020-11-23 2020-08-26 2020-08-26 <nil>"))
 
 	// timestamp
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
 	tk.MustGetErrCode("alter table t modify obj timestamp", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify arr timestamp", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify nil timestamp", mysql.ErrTruncatedWrongValue)
@@ -1524,17 +1543,18 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 timestamp")
 	// MySQL will get "ERROR 1292 (22007): Incorrect timestamptime value: '"2020-08-26 17:35:01.123456"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str timestamp")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 17:35:01 2020-11-23 00:00:00 2020-08-26 17:35:01 2020-08-26 17:35:01"))
+	tk.MustExec("alter table t modify nul timestamp")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false 2020-08-26 17:35:01 2020-11-23 00:00:00 2020-08-26 17:35:01 2020-08-26 17:35:01 <nil>"))
 
 	// year
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '2020', '91', '9', '\"2020\"')")
+	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '2020', '91', '9', '\"2020\"', null)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
 	tk.MustGetErrCode("alter table t modify obj year", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 11".
 	tk.MustGetErrCode("alter table t modify arr year", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustExec("alter table t modify nil year")
+	tk.MustGetErrCode("alter table t modify nil year", mysql.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t year")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1544,7 +1564,8 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify f64 year")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '"2020"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str year")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 2001 0 2020 1991 2009 2020"))
+	tk.MustExec("alter table t modify nul year")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 2001 0 2020 1991 2009 2020 <nil>"))
 }
 
 func (s *testColumnTypeChangeSuite) TestUpdateDataAfterChangeTimestampToDate(c *C) {
@@ -2128,6 +2149,52 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
 }
 
+// https://github.com/pingcap/tidb/issues/25285.
+func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	prepare := func() {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int);")
+		tk.MustExec("insert into t values (0);")
+	}
+	const errCodeNone = -1
+	testCases := []struct {
+		sqlMode string
+		errCode int
+	}{
+		{"STRICT_TRANS_TABLES", mysql.ErrTruncatedWrongValue},
+		{"STRICT_ALL_TABLES", mysql.ErrTruncatedWrongValue},
+		{"NO_ZERO_IN_DATE", errCodeNone},
+		{"NO_ZERO_DATE", errCodeNone},
+		{"ALLOW_INVALID_DATES", errCodeNone},
+		{"", errCodeNone},
+	}
+	for _, tc := range testCases {
+		prepare()
+		tk.MustExec(fmt.Sprintf("set @@sql_mode = '%s';", tc.sqlMode))
+		if tc.sqlMode == "NO_ZERO_DATE" {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("<nil>"))
+		} else {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("0000-00-00"))
+		}
+		tk.MustQuery(`select time(0);`).Check(testkit.Rows("00:00:00"))
+		if tc.errCode == errCodeNone {
+			tk.MustExec("alter table t modify column a date;")
+			prepare()
+			tk.MustExec("alter table t modify column a datetime;")
+			prepare()
+			tk.MustExec("alter table t modify column a timestamp;")
+		} else {
+			tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+		}
+	}
+	tk.MustExec("drop table if exists t;")
+}
+
 func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -2217,6 +2284,7 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 }
 
 // See https://github.com/pingcap/tidb/issues/25287.
+// Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
 func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -2224,8 +2292,8 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bit(45));")
 	tk.MustExec("insert into t values (1174717);")
-	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
-	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+	tk.MustExec("alter table t modify column a varchar(31) collate utf8mb4_general_ci;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
 }
 
 func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
@@ -2237,4 +2305,72 @@ func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
 	tk.MustExec("insert into t values('0123456789abc');")
 	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
 	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Some ddl cases.
+	prepare := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare()
+	tk.MustExec("alter table t modify column a timestamp NOT NULL")
+	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+
+	prepare()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful.
+	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+
+	prepare2 := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a timestamp null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare2()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
+	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+
+	// Some dml cases.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp NOT NULL)")
+	_, err = tk.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+
+	_, err = tk.Exec("insert into t values(null)")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+	// issue #31372
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func(createTableStmt string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableStmt)
+		tk.MustExec("insert into t values (36.4), (24.1);")
+	}
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 }

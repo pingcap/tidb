@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -35,7 +36,6 @@ import (
 )
 
 func TestRowDecoder(t *testing.T) {
-	t.Parallel()
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
@@ -129,7 +129,7 @@ func TestRowDecoder(t *testing.T) {
 		for i, col := range cols[:len(cols)-1] {
 			v, ok := r[col.ID]
 			if ok {
-				equal, err1 := v.CompareDatum(sc, &row.output[i])
+				equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
 				require.Nil(t, err1)
 				require.Equal(t, 0, equal)
 			} else {
@@ -143,7 +143,7 @@ func TestRowDecoder(t *testing.T) {
 		for k, v := range r2 {
 			v1, ok := r[k]
 			require.True(t, ok)
-			equal, err1 := v.CompareDatum(sc, &v1)
+			equal, err1 := v.Compare(sc, &v1, collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}
@@ -151,7 +151,6 @@ func TestRowDecoder(t *testing.T) {
 }
 
 func TestClusterIndexRowDecoder(t *testing.T) {
-	t.Parallel()
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
@@ -204,7 +203,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		for i, col := range cols {
 			v, ok := r[col.ID]
 			require.True(t, ok)
-			equal, err1 := v.CompareDatum(sc, &row.output[i])
+			equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}

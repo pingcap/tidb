@@ -66,3 +66,13 @@ func rowsOrdered(rows [][]interface{}) bool {
 	}
 	return true
 }
+
+func (s *testSuite1) TestTracePlanStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp123(id int);")
+	rows := tk.MustQuery("trace plan select * from tp123").Rows()
+	c.Assert(rows, HasLen, 1)
+	c.Assert(rows[0], HasLen, 1)
+	c.Assert(rows[0][0].(string), Matches, ".*zip")
+}

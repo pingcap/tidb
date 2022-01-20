@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -65,29 +67,33 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue              bool
-	InInsertStmt                 bool
-	InUpdateStmt                 bool
-	InDeleteStmt                 bool
-	InSelectStmt                 bool
-	InLoadDataStmt               bool
-	InExplainStmt                bool
-	InCreateOrAlterStmt          bool
-	IgnoreTruncate               bool
-	IgnoreZeroInDate             bool
-	DupKeyAsWarning              bool
-	BadNullAsWarning             bool
-	DividedByZeroAsWarning       bool
-	TruncateAsWarning            bool
-	OverflowAsWarning            bool
-	InShowWarning                bool
-	UseCache                     bool
-	BatchCheck                   bool
-	InNullRejectCheck            bool
-	AllowInvalidDate             bool
-	IgnoreNoPartition            bool
-	MaybeOverOptimized4PlanCache bool
-	IgnoreExplainIDSuffix        bool
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	NoZeroDate             bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
+	SkipPlanCache          bool
+	IgnoreExplainIDSuffix  bool
+	SkipUTF8Check          bool
+	SkipASCIICheck         bool
+	SkipUTF8MB4Check       bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -113,6 +119,7 @@ type StatementContext struct {
 			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
 		*/
 		records uint64
+		deleted uint64
 		updated uint64
 		copied  uint64
 		touched uint64
@@ -152,6 +159,9 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
+	// If the binding is not used by the stmt, the value is empty
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
@@ -171,8 +181,7 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
-	// resourceGroupTag cache for the current statement resource group tag.
-	resourceGroupTag atomic.Value
+
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
@@ -193,10 +202,41 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
-	// EnableOptimizeTrace indicates whether the statement is enable optimize trace
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// PhysicalOptimizeTrace indicates the trace for optimize
+	PhysicalOptimizeTrace *tracing.PhysicalOptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
+
+	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
+	WeakConsistency bool
+
+	StatsLoad struct {
+		// Timeout to wait for sync-load
+		Timeout time.Duration
+		// NeededColumns stores the columns whose stats are needed for planner.
+		NeededColumns []model.TableColumnID
+		// ResultCh to receive stats loading results
+		ResultCh chan model.TableColumnID
+		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
+		Fallback bool
+		// LoadStartTime is to record the load start time to calculate latency
+		LoadStartTime time.Time
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -280,19 +320,20 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 	return sc.planNormalized, sc.planDigest
 }
 
-// GetResourceGroupTag gets the resource group of the statement.
-func (sc *StatementContext) GetResourceGroupTag() []byte {
-	tag, _ := sc.resourceGroupTag.Load().([]byte)
-	if len(tag) > 0 {
-		return tag
+// GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
+func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
+	return func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	normalized, sqlDigest := sc.SQLDigest()
-	if len(normalized) == 0 {
-		return nil
-	}
-	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
-	sc.resourceGroupTag.Store(tag)
-	return tag
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.
@@ -381,6 +422,20 @@ func (sc *StatementContext) AddRecordRows(rows uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.records += rows
+}
+
+// DeletedRows is used to generate info message
+func (sc *StatementContext) DeletedRows() uint64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.deleted
+}
+
+// AddDeletedRows adds record rows.
+func (sc *StatementContext) AddDeletedRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.deleted += rows
 }
 
 // UpdatedRows is used to generate info message
@@ -567,6 +622,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.affectedRows = 0
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
+	sc.mu.deleted = 0
 	sc.mu.updated = 0
 	sc.mu.copied = 0
 	sc.mu.touched = 0

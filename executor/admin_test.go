@@ -36,8 +36,6 @@ import (
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -58,8 +56,6 @@ func TestAdminCheckIndexRange(t *testing.T) {
 }
 
 func TestAdminCheckIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -89,8 +85,6 @@ func TestAdminCheckIndex(t *testing.T) {
 }
 
 func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -123,8 +117,6 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -149,8 +141,6 @@ func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInCacheTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -186,8 +176,6 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
 func TestAdminRecoverIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -305,8 +293,6 @@ func TestAdminRecoverIndex(t *testing.T) {
 }
 
 func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -353,8 +339,6 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 }
 
 func TestAdminRecoverPartitionTableIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -428,8 +412,6 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 }
 
 func TestAdminRecoverIndex1(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -485,8 +467,6 @@ func TestAdminRecoverIndex1(t *testing.T) {
 }
 
 func TestAdminCleanupIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -569,8 +549,6 @@ func TestAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -654,8 +632,6 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 }
 
 func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -708,8 +684,6 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 }
 
 func TestAdminCleanupIndexMore(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -776,8 +750,6 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 }
 
 func TestClusteredAdminCleanupIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -857,8 +829,6 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -960,8 +930,6 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 
 func TestAdminCheckTable(t *testing.T) {
 	// test NULL value.
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1081,8 +1049,6 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckPrimaryIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1094,8 +1060,6 @@ func TestAdminCheckPrimaryIndex(t *testing.T) {
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -1155,4 +1119,142 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	tk.MustExec("admin check table admin_t_s;")
 	tk.MustExec("admin check index admin_t_s a;")
 	tk.MustExec("drop table if exists admin_t_s")
+}
+
+func TestAdminCheckTableFailed(t *testing.T) {
+	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3), unique key(c2), key(c2, c3))")
+	tk.MustExec("insert admin_test (c1, c2, c3) values (-10, -20, 'y'), (-1, -10, 'z'), (1, 11, 'a'), (2, 12, 'b'), (5, 15, 'c'), (10, 20, 'd'), (20, 30, 'e')")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[1]
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := ctx.GetSessionVars().StmtCtx
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index.
+	// Table count > index count.
+	// Index c2 is missing 11.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), kv.IntHandle(-1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
+	require.True(t, executor.ErrAdminCheckTable.Equal(err))
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8003]admin_test err:[admin:8223]index:\"?\" != record:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
+	r := tk.MustQuery("admin recover index admin_test c2")
+	r.Check(testkit.Rows("1 7"))
+	tk.MustExec("admin check table admin_test")
+
+	// Add one row of index.
+	// Table count < index count.
+	// Index c2 has one more values than table data: 0, and the handle 0 hasn't correlative record.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(0), kv.IntHandle(0), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8133]handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8133]handle \"?\", index:\"?\" != record:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
+
+	// Add one row of index.
+	// Table count < index count.
+	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), kv.IntHandle(0))
+	require.NoError(t, err)
+	// Make sure the index value "19" is smaller "21". Then we scan to "19" before "21".
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(19), kv.IntHandle(10), nil)
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(13), kv.IntHandle(2), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
+
+	// Table count = index count.
+	// Two indices have the same handle.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), kv.IntHandle(2))
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), kv.IntHandle(2))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
+
+	// Table count = index count.
+	// Index c2 has one line of data is 19, the corresponding table data is 20.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(12), kv.IntHandle(2), nil)
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), kv.IntHandle(10))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
+
+	// Recover records.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), kv.IntHandle(10))
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(20), kv.IntHandle(10), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	tk.MustExec("admin check table admin_test")
 }

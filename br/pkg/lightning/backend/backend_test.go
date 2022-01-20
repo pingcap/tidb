@@ -39,7 +39,6 @@ func (s *backendSuite) tearDownTest() {
 }
 
 func TestOpenCloseImportCleanUpEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 	ctx := context.Background()
@@ -72,7 +71,6 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 }
 
 func TestUnsafeCloseEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -94,7 +92,6 @@ func TestUnsafeCloseEngine(t *testing.T) {
 }
 
 func TestUnsafeCloseEngineWithUUID(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -116,7 +113,6 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 }
 
 func TestWriteEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -155,7 +151,6 @@ func TestWriteEngine(t *testing.T) {
 }
 
 func TestWriteToEngineWithNothing(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -179,7 +174,6 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 }
 
 func TestOpenEngineFailed(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -193,7 +187,6 @@ func TestOpenEngineFailed(t *testing.T) {
 }
 
 func TestWriteEngineFailed(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -215,13 +208,12 @@ func TestWriteEngineFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, nil, rows)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable write error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable write error", err.Error())
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 }
 
 func TestWriteBatchSendFailedWithRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -243,13 +235,12 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, nil, rows)
 	require.Error(t, err)
-	require.Regexp(t, ".*fake recoverable write batch error", err.Error())
+	require.Regexp(t, "fake recoverable write batch error$", err.Error())
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 }
 
 func TestImportFailedNoRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -264,11 +255,10 @@ func TestImportFailedNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable import error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable import error", err.Error())
 }
 
 func TestImportFailedWithRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -285,11 +275,10 @@ func TestImportFailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1)
 	require.Error(t, err)
-	require.Regexp(t, ".*fake recoverable import error", err.Error())
+	require.Regexp(t, "fake recoverable import error$", err.Error())
 }
 
 func TestImportFailedRecovered(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -312,7 +301,6 @@ func TestImportFailedRecovered(t *testing.T) {
 
 //nolint:interfacer // change test case signature causes check panicking.
 func TestClose(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -322,7 +310,6 @@ func TestClose(t *testing.T) {
 }
 
 func TestMakeEmptyRows(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -332,7 +319,6 @@ func TestMakeEmptyRows(t *testing.T) {
 }
 
 func TestNewEncoder(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -346,7 +332,6 @@ func TestNewEncoder(t *testing.T) {
 }
 
 func TestCheckDiskQuota(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -59,6 +60,7 @@ type UnionScanExec struct {
 
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
+	collators  []collate.Collator
 }
 
 // Open implements the Executor Open interface.
@@ -101,6 +103,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	case *IndexMergeReaderExecutor:
+		us.addedRows, err = buildMemIndexMergeReader(us, x).getMemRows()
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
@@ -273,7 +277,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err := aColumn.CompareDatum(sc, &bColumn)
+		cmp, err := aColumn.Compare(sc, &bColumn, us.collators[colOff])
 		if err != nil {
 			return 0, err
 		}
@@ -281,5 +285,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	return us.belowHandleCols.Compare(a, b)
+	return us.belowHandleCols.Compare(a, b, us.collators)
 }

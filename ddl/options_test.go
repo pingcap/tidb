@@ -15,22 +15,19 @@
 package ddl_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 )
 
-type ddlOptionsSuite struct{}
-
-var _ = Suite(&ddlOptionsSuite{})
-
-func (s *ddlOptionsSuite) TestOptions(c *C) {
+func TestOptions(t *testing.T) {
 	client, err := clientv3.NewFromURL("test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}
@@ -49,9 +46,9 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 		o(opt)
 	}
 
-	c.Assert(opt.EtcdCli, Equals, client)
-	c.Assert(opt.Hook, Equals, callback)
-	c.Assert(opt.Lease, Equals, lease)
-	c.Assert(opt.Store, Equals, store)
-	c.Assert(opt.InfoCache, Equals, infoHandle)
+	require.Equal(t, client, opt.EtcdCli)
+	require.Equal(t, callback, opt.Hook)
+	require.Equal(t, lease, opt.Lease)
+	require.Equal(t, store, opt.Store)
+	require.Equal(t, infoHandle, opt.InfoCache)
 }

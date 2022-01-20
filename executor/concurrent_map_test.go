@@ -24,7 +24,6 @@ import (
 
 // TestConcurrentMap first inserts 1000 entries, then checks them
 func TestConcurrentMap(t *testing.T) {
-	t.Parallel()
 	m := newConcurrentMap()
 	const iterations = 1000
 	const mod = 111

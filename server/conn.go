@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -85,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -191,6 +193,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -213,6 +216,9 @@ func (cc *clientConn) String() string {
 // https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
+	failpoint.Inject("FakeAuthSwitch", func() {
+		failpoint.Return([]byte(plugin), nil)
+	})
 	enclen := 1 + len(plugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
@@ -310,8 +316,10 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	if cc.bufReadConn != nil {
+		err := cc.bufReadConn.Close()
+		terror.Log(err)
+	}
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -710,6 +718,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+			return err
 		}
 		if len(newAuth) > 0 {
 			resp.Auth = newAuth
@@ -717,30 +726,35 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
-			resp.Auth, err = cc.authSha(ctx)
-			if err != nil {
-				return err
-			}
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
 	} else {
+		// MySQL 5.1 and older clients don't support authentication plugins.
 		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
+		_, err := cc.checkAuthPlugin(ctx, resp)
+		if err != nil {
+			return err
+		}
+		resp.AuthPlugin = mysql.AuthNativePassword
 	}
 	return nil
 }
 
+// authSha implements the caching_sha2_password specific part of the protocol.
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 
 	const (
 		ShaCommand       = 1
-		RequestRsaPubKey = 2
+		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
 		FastAuthOk       = 3
 		FastAuthFail     = 4
 	)
 
+	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
+	// This triggers the client to send the full response.
 	err := cc.writePacket([]byte{0, 0, 0, 0, ShaCommand, FastAuthFail})
 	if err != nil {
 		logutil.Logger(ctx).Error("authSha packet write failed", zap.Error(err))
@@ -848,11 +862,24 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if err != nil {
 		return nil, err
 	}
-	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: host})
+	// Find the identity of the user based on username and peer host.
+	identity, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
-		return nil, err
+		return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
+	// Get the plugin for the identity.
+	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	if err != nil {
+		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
+			zap.String("user", cc.user), zap.String("host", host))
+	}
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		userplugin = val.(string)
+	})
 	if userplugin == mysql.AuthSocket {
+		if !cc.isUnixSocket {
+			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
 		resp.AuthPlugin = mysql.AuthSocket
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
 		if err != nil {
@@ -861,9 +888,19 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
-		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
-			zap.String("user", cc.user), zap.String("host", cc.peerHost))
-		resp.AuthPlugin = mysql.AuthNativePassword
+		// No user plugin set, assuming MySQL Native Password
+		// This happens if the account doesn't exist or if the account doesn't have
+		// a password set.
+		if resp.AuthPlugin != mysql.AuthNativePassword {
+			if resp.Capability&mysql.ClientPluginAuth > 0 {
+				resp.AuthPlugin = mysql.AuthNativePassword
+				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+				if err != nil {
+					return nil, err
+				}
+				return authData, nil
+			}
+		}
 		return nil, nil
 	}
 
@@ -873,12 +910,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
-		authData, err := cc.authSwitchRequest(ctx, userplugin)
-		if err != nil {
-			return nil, err
+		if resp.Capability&mysql.ClientPluginAuth > 0 {
+			authData, err := cc.authSwitchRequest(ctx, userplugin)
+			if err != nil {
+				return nil, err
+			}
+			resp.AuthPlugin = userplugin
+			return authData, nil
+		} else if userplugin != mysql.AuthNativePassword {
+			// MySQL 5.1 and older don't support authentication plugins yet
+			return nil, errNotSupportedAuthMode
 		}
-		resp.AuthPlugin = userplugin
-		return authData, nil
 	}
 
 	return nil, nil
@@ -886,7 +928,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 
 func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, "", nil
+		return cc.peerHost, cc.peerPort, nil
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -923,6 +965,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
 	cc.rsEncoder = newResultEncoder(chs)
+}
+
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1061,12 +1112,17 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
+				var startTS uint64
+				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
+					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
+					zap.Uint64("timestamp", startTS),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
@@ -1205,7 +1261,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
@@ -1325,11 +1381,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
-	msg := []byte("Uptime: 0  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000")
+	var err error
+	var uptime int64 = 0
+	info := serverInfo{}
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+	} else {
+		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
+	}
+	msg := []byte(fmt.Sprintf("Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
+		uptime))
 	data := cc.alloc.AllocWithLen(4, len(msg))
 	data = append(data, msg...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
@@ -1825,8 +1891,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
-	var idxKeys []kv.Key
-	var rowKeys []kv.Key
+	var idxKeys []kv.Key // nolint: prealloc
+	var rowKeys []kv.Key // nolint: prealloc
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		switch stmt.(type) {
@@ -2151,10 +2217,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	// if fetchedRows is not enough, getting data from recordSet.
+	// NOTE: chunk should not be allocated from the allocator
+	// the allocator will reset every statement
+	// but it maybe stored in the result set among statements
+	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
+	// Here server.tidbResultSet implements Next method.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
-		// Here server.tidbResultSet implements Next method.
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}
