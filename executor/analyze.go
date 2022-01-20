@@ -288,7 +288,6 @@ func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
 	tblInfo := tbl.Meta()
 	dbInfo, existed := is.SchemaByTable(tblInfo)
 	if !existed {
-
 		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
 	}
 	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
