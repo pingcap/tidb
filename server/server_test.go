@@ -400,10 +400,10 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 }
 
 func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
-	path := "/tmp/load_data_test.csv"
-	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	fp, err := os.CreateTemp("load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
+	path := fp.Name()
 	defer func() {
 		err = fp.Close()
 		require.NoError(t, err)
@@ -663,11 +663,6 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	// path := "/tmp/load_data_list_partition.csv"
-	// defer func() {
-	// 	_ = os.Remove(path)
-	// }()
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
@@ -723,11 +718,6 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	// path := "/tmp/load_data_list_partition.csv"
-	// defer func() {
-	// 	_ = os.Remove(path)
-	// }()
-
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
@@ -782,10 +772,6 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	path := f.Name()
-	// path := "/tmp/load_data_list_partition.csv"
-	// defer func() {
-	// 	_ = os.Remove(path)
-	// }()
 
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
