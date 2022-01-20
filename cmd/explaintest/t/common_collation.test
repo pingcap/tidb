@@ -8,6 +8,7 @@ select coercibility(convert(concat(a, b) using utf8mb4) collate utf8mb4_general_
 select coercibility(convert('a' using utf8mb4));
 select coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci);
 
+# test greatest and least function with collation.
 DROP TABLE IF EXISTS t2;
 CREATE TABLE t2 (
     id INT NOT NULL PRIMARY KEY auto_increment,
