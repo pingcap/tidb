@@ -1672,10 +1672,17 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
 	tk.MustGetErrCode("describe t I%", errno.ErrParse)
 
-	tk.MustQuery("show columns from t like `ABCLMN`").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+
 	tk.MustQuery("show columns from t where field like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
+	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
 }
