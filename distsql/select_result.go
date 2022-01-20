@@ -152,7 +152,8 @@ type selectResult struct {
 	durationReported bool
 	memTracker       *memory.Tracker
 
-	stats *selectResultRuntimeStats
+	stats  *selectResultRuntimeStats
+	paging bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -206,7 +207,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
 				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				if r.paging {
+					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "paging").Observe(r.fetchDuration.Seconds())
+				} else {
+					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "common").Observe(r.fetchDuration.Seconds())
+				}
 				r.durationReported = true
 			}
 			return nil

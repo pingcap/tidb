@@ -561,7 +561,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", step, minRegionStepValue)
+		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", minRegionStepValue, step)
 		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil

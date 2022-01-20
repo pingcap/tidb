@@ -616,11 +616,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), val)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCapturePlanBaseline)
-	require.NoError(t, err)
-	require.Equal(t, CapturePlanBaseline.GetVal(), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
@@ -668,7 +664,7 @@ func TestSettersandGetters(t *testing.T) {
 			// There are some historial exceptions where global variables are loaded into the session.
 			// Please don't add to this list, the behavior is not MySQL compatible.
 			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 				TiDBEnableTelemetry, TiDBEnablePointGetCache:
@@ -824,4 +820,42 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCollationName)
+}
+
+func TestIndexMergeSwitcher(t *testing.T) {
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBEnableIndexMerge)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBEnableIndexMerge, true)
+	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
+}
+
+func TestNoValidateForNoop(t *testing.T) {
+	vars := NewSessionVars()
+
+	// for noop variables, no error
+	val, err := GetSysVar("rpl_semi_sync_slave_enabled").ValidateFromType(vars, "", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "")
+
+	// for other variables, error
+	_, err = GetSysVar(TiDBAllowBatchCop).ValidateFromType(vars, "", ScopeGlobal)
+	require.Error(t, err)
+}
+
+func TestNetBufferLength(t *testing.T) {
+	netBufferLength := GetSysVar(NetBufferLength)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val) // converts it to min value
+	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1048576", val) // converts it to max value
+	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "524288", val) // unchanged
 }

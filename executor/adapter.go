@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -233,6 +235,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.observeStmtBeginForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -262,6 +265,12 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		a.PsStmt.Executor = newExecutor
 	}
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
+
+	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
+	})
+
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
 		return nil, err
@@ -297,7 +306,17 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
-	a.InfoSchema = ret.InfoSchema
+
+	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
+		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
+		}
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
+	})
+
+	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.IsStaleness = ret.IsStaleness
 	a.ReplicaReadScope = ret.ReadReplicaScope
@@ -314,7 +333,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !variable.TopSQLEnabled() {
+	if a.Plan == nil || !topsqlstate.TopSQLEnabled() {
 		return ctx
 	}
 	vars := a.Ctx.GetSessionVars()
@@ -383,6 +402,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.observeStmtBeginForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -478,6 +498,27 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}
 
 	return false, nil, nil
+}
+
+func isNoResultPlan(p plannercore.Plan) bool {
+	if p.Schema().Len() == 0 {
+		return true
+	}
+
+	// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+	// the Projection has two expressions and two columns in the schema, but we should
+	// not return the result of the two expressions.
+	switch raw := p.(type) {
+	case *plannercore.LogicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	case *plannercore.PhysicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	}
+	return false
 }
 
 // getMaxExecutionTime get the max execution timeout value.
@@ -753,6 +794,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
+	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
+	})
+
 	if err = e.Open(ctx); err != nil {
 		return nil, err
 	}
@@ -806,6 +851,11 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
+
+	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
+		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
+	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
@@ -896,6 +946,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
@@ -1022,13 +1073,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
+	slowLog := sessVars.SlowLogFormat(slowItems)
 	if trace.IsEnabled() {
-		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
+		trace.Log(a.GoCtx, "details", slowLog)
 	}
-	if costTime < threshold {
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
-	} else {
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
+	logutil.SlowQueryLogger.Warn(slowLog)
+	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
@@ -1194,8 +1244,14 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+
 	if stmtCtx.WaitLockLeaseTime > 0 {
+		if execDetail.BackoffSleep == nil {
+			execDetail.BackoffSleep = make(map[string]time.Duration)
+		}
 		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
+		execDetail.BackoffTime += stmtCtx.WaitLockLeaseTime
+		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
@@ -1247,4 +1303,41 @@ func (a *ExecStmt) GetTextToLog() string {
 		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	}
 	return sql
+}
+
+func (a *ExecStmt) observeStmtBeginForTopSQL() {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
+		stats.OnExecutionBegin(sqlDigest, planDigest)
+		// This is a special logic prepared for TiKV's SQLExecCount.
+		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
+	}
+}
+
+func (a *ExecStmt) observeStmtFinishedForTopSQL() {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
+		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+	}
+}
+
+func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
+	var sqlDigest, planDigest []byte
+	vars := a.Ctx.GetSessionVars()
+	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+		sqlDigest = d.Bytes()
+	}
+	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+		planDigest = d.Bytes()
+	}
+	return sqlDigest, planDigest
 }

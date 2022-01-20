@@ -797,7 +797,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varchar(30)")
 	tk.MustExec("alter table t modify b varchar(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// binary
 	reset(tk)
@@ -837,7 +837,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 blob")
 	tk.MustExec("alter table t modify f64 blob")
 	tk.MustExec("alter table t modify b blob")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// text
 	reset(tk)
@@ -850,7 +850,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 text")
 	tk.MustExec("alter table t modify f64 text")
 	tk.MustExec("alter table t modify b text")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// enum
 	reset(tk)
@@ -2284,6 +2284,7 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 }
 
 // See https://github.com/pingcap/tidb/issues/25287.
+// Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
 func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -2291,8 +2292,8 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bit(45));")
 	tk.MustExec("insert into t values (1174717);")
-	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
-	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+	tk.MustExec("alter table t modify column a varchar(31) collate utf8mb4_general_ci;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
 }
 
 func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
@@ -2350,6 +2351,28 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 
 	_, err = tk.Exec("insert into t values(null)")
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+	// issue #31372
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func(createTableStmt string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableStmt)
+		tk.MustExec("insert into t values (36.4), (24.1);")
+	}
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 }
 
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {

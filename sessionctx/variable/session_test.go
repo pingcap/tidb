@@ -54,14 +54,13 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", false},
+		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
 	}
 
 	for _, tc := range testCases {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			mtx.Lock()
 			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
 			mtx.Unlock()

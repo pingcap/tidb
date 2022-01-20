@@ -22,7 +22,6 @@ import (
 
 func TestPlanIDChanged(t *testing.T) {
 	// Attention: for compatibility, shouldn't modify the below test, you can only add test when add new plan ID.
-	t.Parallel()
 	testCases := []struct {
 		Value    int
 		Expected int

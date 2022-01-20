@@ -28,7 +28,6 @@ import (
 )
 
 func TestLoadUserTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -63,7 +62,6 @@ func TestLoadUserTable(t *testing.T) {
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -91,7 +89,6 @@ func TestLoadGlobalPrivTable(t *testing.T) {
 }
 
 func TestLoadDBTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -114,7 +111,6 @@ func TestLoadDBTable(t *testing.T) {
 }
 
 func TestLoadTablesPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -140,7 +136,6 @@ func TestLoadTablesPrivTable(t *testing.T) {
 }
 
 func TestLoadColumnsPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -166,7 +161,6 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -189,7 +183,6 @@ func TestLoadDefaultRoleTable(t *testing.T) {
 }
 
 func TestPatternMatch(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -230,7 +223,6 @@ func TestPatternMatch(t *testing.T) {
 }
 
 func TestHostMatch(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -288,7 +280,6 @@ func TestHostMatch(t *testing.T) {
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -310,7 +301,6 @@ func TestCaseInsensitive(t *testing.T) {
 }
 
 func TestLoadRoleGraph(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -344,7 +334,6 @@ func TestLoadRoleGraph(t *testing.T) {
 }
 
 func TestRoleGraphBFS(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -382,7 +371,6 @@ func TestRoleGraphBFS(t *testing.T) {
 }
 
 func TestFindAllUserEffectiveRoles(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -422,7 +410,6 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 }
 
 func TestAbnormalMySQLTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -501,7 +488,6 @@ func TestAbnormalMySQLTable(t *testing.T) {
 }
 
 func TestSortUserTable(t *testing.T) {
-	t.Parallel()
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
@@ -542,7 +528,6 @@ func TestSortUserTable(t *testing.T) {
 }
 
 func TestGlobalPrivValueRequireStr(t *testing.T) {
-	t.Parallel()
 	var (
 		none  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNone}
 		tls   = privileges.GlobalPrivValue{SSLType: privileges.SslTypeAny}
@@ -570,7 +555,6 @@ func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 }
 
 func TestDBIsVisible(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 

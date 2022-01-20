@@ -22,7 +22,6 @@ import (
 )
 
 func TestCheckFsp(t *testing.T) {
-	t.Parallel()
 	obtained, err := CheckFsp(int(UnspecifiedFsp))
 	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
@@ -62,7 +61,6 @@ func TestCheckFsp(t *testing.T) {
 }
 
 func TestParseFrac(t *testing.T) {
-	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
@@ -121,7 +119,6 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestAlignFrac(t *testing.T) {
-	t.Parallel()
 	obtained := alignFrac("100", 6)
 	require.Equal(t, "100000", obtained)
 	obtained = alignFrac("10000000000", 6)

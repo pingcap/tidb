@@ -363,6 +363,7 @@ func TestPrepareCount(t *testing.T) {
 	err = qctx.GetStatement(stmt.ID()).Close()
 	require.NoError(t, err)
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, qctx.Close())
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {

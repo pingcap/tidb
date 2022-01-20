@@ -21,8 +21,6 @@ import (
 )
 
 func TestFastSlowFastReverse(t *testing.T) {
-	t.Parallel()
-
 	if !supportsUnaligned {
 		return
 	}
@@ -35,8 +33,6 @@ func TestFastSlowFastReverse(t *testing.T) {
 }
 
 func TestBytesCodec(t *testing.T) {
-	t.Parallel()
-
 	inputs := []struct {
 		enc  []byte
 		dec  []byte

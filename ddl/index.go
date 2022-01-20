@@ -1042,7 +1042,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_speed"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
 			sqlMode:        sqlMode,
 		},
 		index: index,
@@ -1281,8 +1281,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	return nil
 }
 
-// BackfillDataInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
-// indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
+// BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
+// Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
@@ -1317,8 +1317,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				continue
 			}
 
-			// Lock the row key to notify us that someone delete or update the row,
-			// then we should not backfill the index of it, otherwise the adding index is redundant.
+			// We need to add this lock to make sure pessimistic transaction can realize this operation.
+			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
 			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
@@ -1489,7 +1489,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("clean_up_idx_speed"),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
 			sqlMode:        sqlMode,
 		},
 	}

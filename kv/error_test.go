@@ -23,8 +23,6 @@ import (
 )
 
 func TestError(t *testing.T) {
-	t.Parallel()
-
 	kvErrs := []*terror.Error{
 		ErrNotExist,
 		ErrTxnRetryable,

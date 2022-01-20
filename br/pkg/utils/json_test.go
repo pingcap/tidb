@@ -207,8 +207,6 @@ var testMetaJSONs = [][]byte{
 }
 
 func TestEncodeAndDecode(t *testing.T) {
-	t.Parallel()
-
 	for _, testMetaJSON := range testMetaJSONs {
 		meta, err := UnmarshalBackupMeta(testMetaJSON)
 		require.NoError(t, err)

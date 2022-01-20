@@ -13,8 +13,6 @@ import (
 )
 
 func TestCheckGCSafepoint(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333}
 	{
@@ -67,8 +65,6 @@ func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64)
 }
 
 func TestStartServiceSafePointKeeper(t *testing.T) {
-	t.Parallel()
-
 	pdClient := &mockSafePoint{safepoint: 2333}
 
 	cases := []struct {

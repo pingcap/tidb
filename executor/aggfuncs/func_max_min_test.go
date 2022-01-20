@@ -95,8 +95,6 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 }
 
 func TestMergePartialResult4MaxMin(t *testing.T) {
-	t.Parallel()
-
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
@@ -135,15 +133,12 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.funcName, func(t *testing.T) {
-			t.Parallel()
 			testMergePartialResult(t, test)
 		})
 	}
 }
 
 func TestMaxMin(t *testing.T) {
-	t.Parallel()
-
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
@@ -170,15 +165,12 @@ func TestMaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.funcName, func(t *testing.T) {
-			t.Parallel()
 			testAggFunc(t, test)
 		})
 	}
 }
 
 func TestMemMaxMin(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -229,7 +221,6 @@ func TestMemMaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.aggTest.funcName, func(t *testing.T) {
-			t.Parallel()
 			testAggMemFunc(t, test)
 		})
 	}
@@ -268,8 +259,6 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 }
 
 func TestMaxSlidingWindow(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -348,8 +337,6 @@ func TestMaxSlidingWindow(t *testing.T) {
 }
 
 func TestDequeReset(t *testing.T) {
-	t.Parallel()
-
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
@@ -360,8 +347,6 @@ func TestDequeReset(t *testing.T) {
 }
 
 func TestDequePushPop(t *testing.T) {
-	t.Parallel()
-
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})

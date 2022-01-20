@@ -25,8 +25,6 @@ import (
 )
 
 func TestRawHandler(t *testing.T) {
-	t.Parallel()
-
 	h := newRawHandler()
 	ctx := context.Background()
 	keys := make([][]byte, 10)

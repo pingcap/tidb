@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -154,6 +155,33 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
+}
+
+func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
+	tmpDir := c.MkDir()
+	// use slashPath in url to be compatible with windows
+	slashPath := filepath.ToSlash(tmpDir)
+
+	cfg := config.NewConfig()
+	cases := []string{
+		tmpDir,
+		".",
+		"file://" + slashPath,
+		"local://" + slashPath,
+		"s3://bucket_name",
+		"s3://bucket_name/path/to/dir",
+		"gcs://bucketname/path/to/dir",
+		"gs://bucketname/path/to/dir",
+		"noop:///",
+	}
+
+	for _, testCase := range cases {
+		cfg.Mydumper.SourceDir = testCase
+
+		err := cfg.CheckAndAdjustFilePath()
+		c.Assert(err, IsNil)
+	}
+
 }
 
 func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
@@ -323,6 +351,13 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
 		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
 	}
+	// test different tls config name
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.Security.CAPath = "/path/to/ca.pem"
+	cfg.Security.TLSConfigName = "tidb-tls"
+	c.Assert(cfg.Adjust(context.Background()), IsNil)
+	c.Assert(cfg.TiDB.Security.TLSConfigName, Equals, cfg.TiDB.TLS)
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {
@@ -880,4 +915,28 @@ func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
 
 	_, err := config.ParseCharset("Unknown")
 	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
+}
+
+func (s *configTestSuite) TestCheckAndAdjustForLocalBackend(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = ""
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir must not be empty!")
+
+	// non exists dir is legal
+	cfg.TikvImporter.SortedKVDir = "./not-exists"
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
+
+	base := c.MkDir()
+	// create empty file
+	file := filepath.Join(base, "file")
+	c.Assert(os.WriteFile(file, []byte(""), 0644), IsNil)
+	cfg.TikvImporter.SortedKVDir = file
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir (.*) is not a directory")
+
+	// legal dir
+	cfg.TikvImporter.SortedKVDir = base
+	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
 }

@@ -68,6 +68,11 @@ var (
 	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
+type tableScanAndPartitionInfo struct {
+	tableScan     *PhysicalTableScan
+	partitionInfo PartitionInfo
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -86,6 +91,8 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
+	PartitionInfos []tableScanAndPartitionInfo
 }
 
 // PartitionInfo indicates partition helper info in physical plan.
@@ -263,6 +270,7 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+	Paging     bool
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.

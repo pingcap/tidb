@@ -66,8 +66,6 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 }
 
 func TestListInDisk(t *testing.T) {
-	t.Parallel()
-
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
@@ -185,8 +183,6 @@ func checkRow(t *testing.T, row1, row2 Row) {
 }
 
 func testListInDisk(t *testing.T) {
-	t.Parallel()
-
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -256,8 +252,6 @@ func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
 // |      |                                          | |                             |
 // +------+------------------------------------------+ +-----------------------------+
 func testReaderWithCache(t *testing.T) {
-	t.Parallel()
-
 	testData := "0123456789"
 	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 102; i++ {
@@ -337,8 +331,6 @@ func testReaderWithCache(t *testing.T) {
 
 // Here we test situations where size of data is small, so no data is flushed to disk.
 func testReaderWithCacheNoFlush(t *testing.T) {
-	t.Parallel()
-
 	testData := "0123456789"
 
 	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}

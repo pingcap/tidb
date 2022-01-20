@@ -540,8 +540,8 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
 	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
-	if info.ReorgMeta.LocationInfo != nil {
-		tz, err := info.ReorgMeta.LocationInfo.GetLocation()
+	if info.ReorgMeta.Location != nil {
+		tz, err := info.ReorgMeta.Location.GetLocation()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -630,6 +630,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 			sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+			sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:

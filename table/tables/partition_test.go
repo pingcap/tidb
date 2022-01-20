@@ -31,7 +31,6 @@ import (
 )
 
 func TestPartitionBasic(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -63,7 +62,6 @@ PARTITION BY RANGE COLUMNS ( id ) (
 }
 
 func TestPartitionAddRecord(t *testing.T) {
-	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -166,7 +164,6 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestHashPartitionAddRecord(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -236,7 +233,6 @@ func TestHashPartitionAddRecord(t *testing.T) {
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().
 func TestPartitionGetPhysicalID(t *testing.T) {
-	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -264,7 +260,6 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestGeneratePartitionExpr(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -298,7 +293,6 @@ func TestGeneratePartitionExpr(t *testing.T) {
 }
 
 func TestLocateRangeColumnPartitionErr(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -317,7 +311,6 @@ func TestLocateRangeColumnPartitionErr(t *testing.T) {
 }
 
 func TestLocateRangePartitionErr(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -336,7 +329,6 @@ func TestLocateRangePartitionErr(t *testing.T) {
 }
 
 func TestLocatePartitionWithExtraHandle(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -356,7 +348,6 @@ func TestLocatePartitionWithExtraHandle(t *testing.T) {
 }
 
 func TestMultiTableUpdate(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -380,7 +371,6 @@ func TestMultiTableUpdate(t *testing.T) {
 }
 
 func TestLocatePartitionSingleColumn(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -411,7 +401,6 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 }
 
 func TestTimeZoneChange(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -471,7 +460,6 @@ func TestTimeZoneChange(t *testing.T) {
 }
 
 func TestCreatePartitionTableNotSupport(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -487,7 +475,6 @@ func TestCreatePartitionTableNotSupport(t *testing.T) {
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -513,7 +500,6 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 }
 
 func TestIntUint(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -550,7 +536,6 @@ partition p4 values less than (9223372036854775806))`)
 }
 
 func TestHashPartitionAndConditionConflict(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -576,7 +561,6 @@ func TestHashPartitionAndConditionConflict(t *testing.T) {
 }
 
 func TestHashPartitionInsertValue(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -595,7 +579,6 @@ func TestHashPartitionInsertValue(t *testing.T) {
 }
 
 func TestIssue21574(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -609,7 +592,6 @@ func TestIssue21574(t *testing.T) {
 }
 
 func TestIssue24746(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -625,4 +607,19 @@ func TestIssue24746(t *testing.T) {
 	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
 	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
 	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
+}
+
+func TestIssue31721(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_list_partition=on;")
+	tk.MustExec("drop tables if exists t_31721")
+	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
+		"(PARTITION `P0` VALUES IN ('1')," +
+		"PARTITION `P1` VALUES IN ('2')," +
+		"PARTITION `P2` VALUES IN ('3'));")
+	tk.MustExec("insert into t_31721 values ('1')")
+	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
 }

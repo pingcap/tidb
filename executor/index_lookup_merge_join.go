@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -88,6 +89,7 @@ type innerMergeCtx struct {
 	rowTypes                []*types.FieldType
 	joinKeys                []*expression.Column
 	keyCols                 []int
+	keyCollators            []collate.Collator
 	compareFuncs            []expression.CompareFunc
 	colLens                 []int
 	desc                    bool
@@ -697,7 +699,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.CompareDatum(sc, &innerValue)
+		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}
@@ -717,7 +719,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	deDupedLookUpContents := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys)
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, imw.keyCollators)
 		if cmp != 0 || (imw.nextColCompareFilters != nil && imw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookUpContents = append(deDupedLookUpContents, lookUpContents[i])
 		}

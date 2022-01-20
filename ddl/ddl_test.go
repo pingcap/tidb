@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -111,6 +110,12 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 func testCreateStore(c *C, name string) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	return store
+}
+
+func testCreateStoreT(t *testing.T, name string) kv.Storage {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
 	return store
 }
 
@@ -229,20 +234,6 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
-	}
-}
-
-func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	newCol := table.ToColumn(tblInfo.Columns[0])
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
-		ReorgMeta: &model.DDLReorgMeta{
-			LocationInfo: &model.LocationInfo{Name: timeutil.SystemLocation().String(), Offset: 0},
-		},
 	}
 }
 

@@ -179,7 +179,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 			paramNames = append(paramNames, name)
 		}
 		buf.WriteString(")")
-		stmt, err := e.ParseWithParams(ctx, buf.String(), paramNames...)
+		stmt, err := e.ParseWithParams(ctx, true, buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}

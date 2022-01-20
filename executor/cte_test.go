@@ -16,15 +16,17 @@ package executor_test
 
 import (
 	"fmt"
+	"math/rand"
+	"sort"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBasicCTE(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -74,8 +76,6 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -103,8 +103,6 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -146,8 +144,6 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -353,4 +349,62 @@ func TestCTEWithLimit(t *testing.T) {
 	rows.Check(testkit.Rows("3", "4", "3"))
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
 	rows.Check(testkit.Rows("3", "4", "3", "4"))
+}
+
+func TestSpillToDisk(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"))
+		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
+	}()
+
+	// Use duplicated rows to test UNION DISTINCT.
+	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
+	insertStr := "insert into t1 values(0)"
+	rowNum := 1000
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
+	}
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec(insertStr)
+	tk.MustExec("set tidb_mem_quota_query = 40000;")
+	tk.MustExec("set cte_max_recursion_depth = 500000;")
+	sql := fmt.Sprintf("with recursive cte1 as ( "+
+		"select c1 from t1 "+
+		"union "+
+		"select c1 + 1 c1 from cte1 where c1 < %d) "+
+		"select c1 from cte1 order by c1;", rowNum)
+	rows := tk.MustQuery(sql)
+
+	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	diskTracker := tk.Session().GetSessionVars().StmtCtx.DiskTracker
+	require.Greater(t, memTracker.MaxConsumed(), int64(0))
+	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
+
+	sort.Ints(vals)
+	resRows := make([]string, 0, rowNum)
+	for i := vals[0]; i <= rowNum; i++ {
+		resRows = append(resRows, fmt.Sprintf("%d", i))
+	}
+	rows.Check(testkit.Rows(resRows...))
 }
