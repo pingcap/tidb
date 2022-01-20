@@ -1644,9 +1644,41 @@ var defaultSysVars = []*SysVar{
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+=======
+	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		on := TiDBOptOn(val)
+		if on {
+			err := s.GlobalVarsAccessor.SetGlobalSysVar(TiDBSuperReadOnly, "ON")
+			if err != nil {
+				return err
+			}
+		}
+		RestrictedReadOnly.Store(on)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		on := TiDBOptOn(normalizedValue)
+		if !on {
+			result, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if TiDBOptOn(result) {
+				return normalizedValue, fmt.Errorf("can't turn off %s when %s is on", TiDBSuperReadOnly, TiDBRestrictedReadOnly)
+			}
+		}
+		return normalizedValue, nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		VarTiDBSuperReadOnly.Store(TiDBOptOn(val))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
+		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
+>>>>>>> 1a146fabd... variables: add constraints on tidb_super_read_only when tidb_restricted_read_only is turned on (#31746)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},

@@ -520,6 +520,9 @@ const (
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 
+	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
+	TiDBSuperReadOnly = "tidb_super_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -717,6 +720,7 @@ const (
 	DefTiDBEnableClusteredIndex           = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                      = false
 	DefTiDBRestrictedReadOnly             = false
+	DefTiDBSuperReadOnly                  = false
 	DefTiDBShardAllocateStep              = math.MaxInt64
 	DefTiDBEnableTelemetry                = true
 	DefTiDBEnableParallelApply            = false
@@ -764,6 +768,7 @@ var (
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+<<<<<<< HEAD
 	TopSQLVariable                        = TopSQL{
 		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
@@ -773,6 +778,18 @@ var (
 	}
 	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
 	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
+=======
+	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+>>>>>>> 1a146fabd... variables: add constraints on tidb_super_read_only when tidb_restricted_read_only is turned on (#31746)
 )
 
 // TopSQL is the variable for control top sql feature.
