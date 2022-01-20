@@ -380,8 +380,8 @@ const (
 	CreateStatsHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
 		table_id bigint(64) NOT NULL,
 		stats_data longblob NOT NULL,
-		seq_no bigint(64) NOT NULL,
-		version bigint(64) NOT NULL,
+		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
+		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
 		KEY table_create_time (table_id, create_time, seq_no)
