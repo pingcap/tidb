@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -81,8 +82,13 @@ type partialResult4MaxMinSet struct {
 
 type baseMaxMinAggFunc struct {
 	baseAggFunc
+<<<<<<< HEAD
 
 	isMax bool
+=======
+	isMax    bool
+	collator collate.Collator
+>>>>>>> e6812f948... executor: handle collate for min/max(enum/set column) (#31819)
 }
 
 type maxMin4Int struct {
@@ -713,7 +719,14 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		en := d.GetMysqlEnum()
+<<<<<<< HEAD
 		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
+=======
+		if e.isMax && e.collator.Compare(en.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(en.Name, p.val.Name) < 0 {
+			oldMem := len(p.val.Name)
+			newMem := len(en.Name)
+			memDelta += int64(newMem - oldMem)
+>>>>>>> e6812f948... executor: handle collate for min/max(enum/set column) (#31819)
 			p.val = en.Copy()
 		}
 	}
@@ -729,7 +742,11 @@ func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return nil
 	}
+<<<<<<< HEAD
 	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+=======
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
+>>>>>>> e6812f948... executor: handle collate for min/max(enum/set column) (#31819)
 		p2.val, p2.isNull = p1.val, false
 	}
 	return nil
@@ -776,7 +793,14 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		s := d.GetMysqlSet()
+<<<<<<< HEAD
 		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
+=======
+		if e.isMax && e.collator.Compare(s.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(s.Name, p.val.Name) < 0 {
+			oldMem := len(p.val.Name)
+			newMem := len(s.Name)
+			memDelta += int64(newMem - oldMem)
+>>>>>>> e6812f948... executor: handle collate for min/max(enum/set column) (#31819)
 			p.val = s.Copy()
 		}
 	}
@@ -792,7 +816,11 @@ func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 		*p2 = *p1
 		return nil
 	}
+<<<<<<< HEAD
 	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+=======
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
+>>>>>>> e6812f948... executor: handle collate for min/max(enum/set column) (#31819)
 		p2.val, p2.isNull = p1.val, false
 	}
 	return nil
