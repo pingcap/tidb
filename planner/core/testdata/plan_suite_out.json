@@ -2730,13 +2730,12 @@
           "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 batchCop[tiflash]  Column#6",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct Column#5)->Column#6",
-          "      └─HashAgg 1.00 batchCop[tiflash]  group by:Column#5, ",
-          "        └─Projection 1.00 batchCop[tiflash]  Column#5",
-          "          └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
-          "            └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
-          "              └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "                └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
-          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+          "      └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "        └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "          └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "            └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
         ]
       }
     ]
