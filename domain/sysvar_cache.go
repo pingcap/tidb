@@ -216,17 +216,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		if err != nil {
 			break
 		}
-<<<<<<< HEAD
 		variable.TopSQLVariable.MaxStatementCount.Store(val)
 	case variable.TiDBTopSQLMaxCollect:
-=======
-		topsqlstate.GlobalState.MaxCollect.Store(val)
-	case variable.TiDBRestrictedReadOnly:
-		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBSuperReadOnly:
-		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBStoreLimit:
->>>>>>> 1a146fabd... variables: add constraints on tidb_super_read_only when tidb_restricted_read_only is turned on (#31746)
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
@@ -240,6 +231,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBSuperReadOnly:
+		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
