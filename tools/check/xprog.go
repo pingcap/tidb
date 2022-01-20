@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"fmt"
 	"os"
 	"strings"
@@ -51,9 +52,36 @@ func main() {
 	fmt.Fprintf(l, "testBinaryPath %s\n", testBinaryPath)
 	fmt.Fprintf(l, "the path is %s\n", newName)
 
-	err = os.Rename(testBinaryPath, newName)
-	if err != nil {
-		fmt.Fprintf(l, "erro == %s", err.Error())
-		os.Exit(-4)
+	if err1 := os.Rename(testBinaryPath, newName); err1 != nil {
+		// Don't use os.Rename, because of error "invalid cross-device linkcd tools/check"
+		err1 = MoveFile(testBinaryPath, newName)
+		if err1 != nil {
+			fmt.Fprintf(l, "erro == %s", err.Error(), "===", err1.Error())
+			os.Exit(-4)
+		}
 	}
+}
+
+func MoveFile(sourcePath, destPath string) error {
+	inputFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("Couldn't open source file: %s", err)
+	}
+	outputFile, err := os.Create(destPath)
+	if err != nil {
+		inputFile.Close()
+		return fmt.Errorf("Couldn't open dest file: %s", err)
+	}
+	defer outputFile.Close()
+	_, err = io.Copy(outputFile, inputFile)
+	inputFile.Close()
+	if err != nil {
+		return fmt.Errorf("Writing to output file failed: %s", err)
+	}
+	// The copy was successful, so now delete the original file
+	err = os.Remove(sourcePath)
+	if err != nil {
+		return fmt.Errorf("Failed removing original file: %s", err)
+	}
+	return nil
 }
