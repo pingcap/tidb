@@ -683,7 +683,7 @@ func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *St
 			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
-			tables[utils.UniqueID(table.DB.Name.String(), table.Info.Name.String())] = table
+			tables[utils.UniqueID(dbName, table.Info.Name.String())] = table
 		}
 	}
 	return tables, nil
