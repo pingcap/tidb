@@ -87,7 +87,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		flag = flag | 1<<3 | 1<<8
 		_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
 		require.NoError(t, err)
-		otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 		require.NotNil(t, otrace)
 		logicalList, physicalList := getList(otrace)
 		require.True(t, checkList(logicalList, testcase.logicalList))
