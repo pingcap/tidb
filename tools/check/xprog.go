@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	// "fmt"
 	"os"
 	"strings"
 	"bufio"
@@ -29,14 +29,14 @@ func main() {
 	// packagefile github.com/pingcap/tidb/session.test=/home/genius/.cache/go-build/fb/fb1587cce5727fa9461131eab8260a52878da04f5c8da49dd3c7b2d941430c63-d
 	line, _, err := r.ReadLine()
 	if err != nil {
-		os.Exit(-1)
+		os.Exit(-2)
 	}
 	start := strings.IndexByte(string(line), ' ')
 	end := strings.IndexByte(string(line), '=')
 	pkg := string(line[start+1:end])
 	const prefix = "github.com/pingcap/tidb/"
 	if !strings.HasPrefix(pkg, prefix) {
-		os.Exit(-1)
+		os.Exit(-3)
 	}
 	// github.com/pingcap/tidb/util/topsql.test => util/topsql
 	pkg = pkg[len(prefix) : len(pkg)-len(".test")]
@@ -46,13 +46,13 @@ func main() {
 	// $CWD/util/topsql/topsql.test.bin
 	newName := filepath.Join(cwd, pkg, file+".test.bin")
 
-	l, err := os.Create("/tmp/xxx.log")
-	fmt.Fprintf(l, "cwd %s\n", cwd)
-	fmt.Fprintf(l, "testBinaryPath %s\n", testBinaryPath)
-	fmt.Fprintf(l, "the path is %s\n", newName)
+	// l, err := os.Create("/tmp/xxx.log")
+	// fmt.Fprintf(l, "cwd %s\n", cwd)
+	// fmt.Fprintf(l, "testBinaryPath %s\n", testBinaryPath)
+	// fmt.Fprintf(l, "the path is %s\n", newName)
 
 	err = os.Rename(testBinaryPath, newName)
 	if err != nil {
-		os.Exit(-1)
+		os.Exit(-4)
 	}
 }
