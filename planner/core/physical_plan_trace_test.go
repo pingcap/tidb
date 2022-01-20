@@ -110,10 +110,8 @@ func checkList(d []string, s []string) bool {
 func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
 	for logicalPlan, v := range otrace.State {
 		ll = append(ll, logicalPlan)
-		for _, info := range v {
-			for _, task := range info.Candidates {
-				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
-			}
+		for physicalPlanKey := range v {
+			pl = append(pl, physicalPlanKey)
 		}
 	}
 	sort.Strings(ll)
