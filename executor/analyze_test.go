@@ -2614,7 +2614,9 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 
 	// 2. switch on the tidb_enable_historical_stats and do analyze
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history")).Rows()
 	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
@@ -2626,16 +2628,15 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 
 	// 4. get the historical stats json
 	rows = tk.MustQuery(fmt.Sprintf("select * from mysql.stats_history where table_id = '%d' and create_time = ("+
-		"select create_time from mysql.stats_history order by create_time desc limit 1)", tableInfo.Meta().ID)).Rows()
+		"select create_time from mysql.stats_history where table_id = '%d' order by create_time desc limit 1) "+
+		"order by seq_no", tableInfo.Meta().ID, tableInfo.Meta().ID)).Rows()
 	num = len(rows)
 	require.GreaterOrEqual(t, num, 1)
 	data := make([][]byte, num)
-	for _, row := range rows {
-		index, err := strconv.Atoi(row[2].(string))
-		require.NoError(t, err)
-		data[index] = []byte(row[1].(string))
+	for i, row := range rows {
+		data[i] = []byte(row[1].(string))
 	}
-	jsonTbl, err := h.ConvertStatsBlocksToJSON(data)
+	jsonTbl, err := handle.BlocksToJSONTable(data)
 	require.NoError(t, err)
 	jsCur, err := json.Marshal(jsonTbl)
 	require.NoError(t, err)

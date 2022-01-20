@@ -383,7 +383,8 @@ const (
 		seq_no bigint(64) NOT NULL,
 		version bigint(64) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		PRIMARY KEY(table_id)
+		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		KEY table_create_time (table_id, create_time, seq_no)
 	);`
 )
 

@@ -118,72 +118,6 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 	return jsonCol
 }
 
-// DumpStatsToJSONBlocks dumps statistic to json, then compresses the json to blocks by gzip.
-func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo, blockSize int) ([][]byte, uint64, error) {
-	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-	version := uint64(0)
-	for _, value := range js.Columns {
-		version = uint64(*value.StatsVer)
-		if version != 0 {
-			break
-		}
-	}
-	data, err := json.Marshal(js)
-	if err != nil {
-		return nil, version, errors.Trace(err)
-	}
-	var gzippedData bytes.Buffer
-	gzipWriter := gzip.NewWriter(&gzippedData)
-	if _, err := gzipWriter.Write(data); err != nil {
-		return nil, version, errors.Trace(err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, version, errors.Trace(err)
-	}
-	blocksNum := gzippedData.Len() / blockSize
-	if gzippedData.Len()%blockSize != 0 {
-		blocksNum = blocksNum + 1
-	}
-	blocks := make([][]byte, blocksNum)
-	for i := 0; i < blocksNum-1; i++ {
-		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
-	}
-	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
-	return blocks, version, nil
-}
-
-// ConvertStatsBlocksToJSON dumps statistic to json, then compresses the json to blocks by gzip.
-func (h *Handle) ConvertStatsBlocksToJSON(blocks [][]byte) (*JSONTable, error) {
-	if len(blocks) == 0 {
-		return nil, errors.New("Block empty error")
-	}
-	data := blocks[0]
-	for i := 1; i < len(blocks); i++ {
-		data = append(data, blocks[i]...)
-	}
-	gzippedData := bytes.NewReader(data)
-	gzipReader, err := gzip.NewReader(gzippedData)
-	if err != nil {
-		return nil, err
-	}
-	if err := gzipReader.Close(); err != nil {
-		return nil, err
-	}
-	jsonStr, err := ioutil.ReadAll(gzipReader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jsonTbl := JSONTable{}
-	err = json.Unmarshal(jsonStr, &jsonTbl)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &jsonTbl, nil
-}
-
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	var snapshot uint64
@@ -395,4 +329,59 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
 	return tbl, nil
+}
+
+// JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
+func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
+	data, err := json.Marshal(jsTable)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var gzippedData bytes.Buffer
+	gzipWriter := gzip.NewWriter(&gzippedData)
+	if _, err := gzipWriter.Write(data); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	blocksNum := gzippedData.Len() / blockSize
+	if gzippedData.Len()%blockSize != 0 {
+		blocksNum = blocksNum + 1
+	}
+	blocks := make([][]byte, blocksNum)
+	for i := 0; i < blocksNum-1; i++ {
+		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
+	}
+	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
+	return blocks, nil
+}
+
+// BlocksToJSONTable convert gzip-compressed blocks to JSONTable
+func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
+	if len(blocks) == 0 {
+		return nil, errors.New("Block empty error")
+	}
+	data := blocks[0]
+	for i := 1; i < len(blocks); i++ {
+		data = append(data, blocks[i]...)
+	}
+	gzippedData := bytes.NewReader(data)
+	gzipReader, err := gzip.NewReader(gzippedData)
+	if err != nil {
+		return nil, err
+	}
+	if err := gzipReader.Close(); err != nil {
+		return nil, err
+	}
+	jsonStr, err := ioutil.ReadAll(gzipReader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jsonTbl := JSONTable{}
+	err = json.Unmarshal(jsonStr, &jsonTbl)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &jsonTbl, nil
 }

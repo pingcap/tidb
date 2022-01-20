@@ -382,7 +382,7 @@ func TestDumpVer2Stats(t *testing.T) {
 	requireTableEqual(t, statsCacheTbl, loadTbl)
 }
 
-func TestDumpStatsToJSONBlocks(t *testing.T) {
+func TestJSONTableToBlocks(t *testing.T) {
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("set @@tidb_analyze_version = 2")
@@ -406,9 +406,11 @@ func TestDumpStatsToJSONBlocks(t *testing.T) {
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 
 	blockSize := 30
-	dumpJSONBlocks, _, err := h.DumpStatsToJSONBlocks("test", tableInfo.Meta(), blockSize)
+	js, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
 	require.NoError(t, err)
-	jsConverted, err := h.ConvertStatsBlocksToJSON(dumpJSONBlocks)
+	dumpJSONBlocks, err := handle.JSONTableToBlocks(js, blockSize)
+	require.NoError(t, err)
+	jsConverted, err := handle.BlocksToJSONTable(dumpJSONBlocks)
 	require.NoError(t, err)
 	jsonStr, err := json.Marshal(jsConverted)
 	require.NoError(t, err)

@@ -1951,7 +1951,18 @@ const maxColumnSize = 6 << 20
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
 	ctx := context.Background()
-	blocks, version, err := h.DumpStatsToJSONBlocks(dbName, tableInfo, maxColumnSize)
+	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	version := uint64(0)
+	for _, value := range js.Columns {
+		version = uint64(*value.StatsVer)
+		if version != 0 {
+			break
+		}
+	}
+	blocks, err := JSONTableToBlocks(js, maxColumnSize)
 	if err != nil {
 		return version, errors.Trace(err)
 	}
@@ -1965,14 +1976,11 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
-	if err != nil {
-		return version, errors.Trace(err)
-	}
-	createTS := txn.StartTS()
+	ts := time.Now().Format("2006-01-02 15:04:05.999999")
+
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
-		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, oracle.GetTimeFromTS(createTS)); err != nil {
+		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, ts); err != nil {
 			return version, errors.Trace(err)
 		}
 	}
