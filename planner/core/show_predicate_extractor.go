@@ -36,7 +36,7 @@ var _ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
 //
 // it is a way to fix https://github.com/pingcap/tidb/issues/29910.
 type ShowPredicateExtractor interface {
-	// Extracts predicates which can be pushed down and returns the remained predicates
+	// Extracts predicates which can be pushed down and returns whether the extractor can extract predicates.
 	Extract(show *ast.ShowStmt) bool
 	explainInfo() string
 }
@@ -66,8 +66,8 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
-			e.Field = pattern.Pattern.(*ast.ColumnNameExpr).Name.Name.L
-			return true
+			// MySQL do not support this syntax and return the error.
+			return false
 		}
 	} else if show.Column != nil && show.Column.Name.L != "" {
 		// it is used in `DESCRIBE t COLUMN`.
