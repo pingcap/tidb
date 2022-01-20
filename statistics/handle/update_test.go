@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -105,6 +106,7 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 
@@ -775,6 +777,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
@@ -955,6 +958,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t with 0 topn")
@@ -1073,6 +1077,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
@@ -1207,6 +1212,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
@@ -1267,6 +1273,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
@@ -1289,7 +1296,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	testKit.MustQuery("select * from t where a > 1")
+	testKit.MustQuery("select * from t where a > 1").Check(testkit.Rows("2 2", "3 5", "4 5"))
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 
@@ -1443,6 +1450,7 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 }
 
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
+	c.Skip("not stable")
 	defer cleanEnv(c, s.store, s.do)
 
 	oriProbability := statistics.FeedbackProbability.Load()
@@ -1464,6 +1472,9 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait =0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
@@ -1739,6 +1750,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), index idx(a))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(`insert into t values (1)`)
@@ -1747,6 +1759,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_enable_fast_analyze = 1")
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 0; i < 20; i++ {
@@ -1941,6 +1954,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
 	testKit.MustExec("create table t1 (a bigint unsigned, primary key(a))")
 	for i := 0; i < 20; i++ {
@@ -2335,4 +2349,182 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (5, 6), (7, 8)")
+	tk.MustExec("insert into t3 values (1, 2), (3, 4), (11, 12), (13, 14)")
+	tk.MustExec("select * from t1 where a > 1")
+	tk.MustExec("select * from t2 where b < 10")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a is collected as predicate column
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+	tk.MustExec("analyze table t1")
+	tk.MustExec("select * from t1 where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a updates last_used_at first and then updates last_analyzed_at while t1.b updates last_analyzed_at first and then updates last_used_at.
+	// Check both of them behave as expected.
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[1][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][5].(string) != "<nil>", IsTrue)
+
+	// Test partition table.
+	// No matter whether it is static or dynamic pruning mode, we record predicate columns using table ID rather than partition ID.
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", val))
+		tk.MustExec("delete from mysql.column_stats_usage")
+		tk.MustExec("select * from t3 where a < 5")
+		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
+		c.Assert(len(rows), Equals, 1)
+		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t3", "global", "a"})
+		c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+		c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	}
+
+	// Test non-correlated subquery.
+	// Non-correlated subquery will be executed during the plan building phase, which cannot be done by mock in (*testPlanSuite).TestCollectPredicateColumns.
+	// Hence we put the test of collecting predicate columns for non-correlated subquery here.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("select * from t2 where t2.a > (select count(*) from t1 where t1.b > 1)")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestCollectPredicateColumnsFromExecute(c *C) {
+	for _, val := range []bool{false, true} {
+		func(planCache bool) {
+			originalVal1 := plannercore.PreparedPlanCacheEnabled()
+			defer func() {
+				plannercore.SetPreparedPlanCache(originalVal1)
+			}()
+			plannercore.SetPreparedPlanCache(planCache)
+
+			defer cleanEnv(c, s.store, s.do)
+			tk := testkit.NewTestKit(c, s.store)
+
+			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+			defer func() {
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
+			}()
+			tk.MustExec("set global tidb_enable_column_tracking = 1")
+
+			h := s.do.StatsHandle()
+			tk.MustExec("use test")
+			tk.MustExec("create table t1(a int, b int)")
+			tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
+			tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			tk.MustExec("set @p1 = 1")
+			tk.MustExec("execute stmt using @p1")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+			c.Assert(len(rows), Equals, 1)
+			c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+			c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+			c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+			tk.MustExec("delete from mysql.column_stats_usage")
+			tk.MustExec("set @p2 = 2")
+			tk.MustExec("execute stmt using @p2")
+			if planCache {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				// If the second execution uses the cached plan, no predicate column is collected.
+				tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			} else {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+				c.Assert(len(rows), Equals, 1)
+				c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+				c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+				c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+			}
+		}(val)
+	}
+}
+
+func (s *testSerialStatsSuite) TestEnableAndDisableColumnTracking(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][3], Equals, "b")
+
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
+	time.Sleep(1500 * time.Millisecond)
+	tk.MustExec("select * from t where a > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// We don't collect predicate columns when tidb_enable_column_tracking = 0
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b < 1 and c > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+
+	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }

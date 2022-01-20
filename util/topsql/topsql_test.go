@@ -15,33 +15,37 @@
 package topsql_test
 
 import (
-	"bytes"
 	"context"
 	"testing"
 	"time"
 
-	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/collector/mock"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
-type collectorWrapper struct {
-	reporter.TopSQLReporter
-}
-
 func TestTopSQLCPUProfile(t *testing.T) {
-	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
+	topsqlstate.EnableTopSQL()
+	mc := mock.NewTopSQLCollector()
+	topsql.SetupTopSQLForTest(mc)
+	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.Start()
+	defer sqlCPUCollector.Stop()
 	reqs := []struct {
 		sql  string
 		plan string
@@ -50,11 +54,13 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{"select * from t where a>?", "table-scan"},
 		{"insert into t values (?)", ""},
 	}
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for _, req := range reqs {
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -63,46 +69,17 @@ func TestTopSQLCPUProfile(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
 
-	// test for StartCPUProfile.
-	buf := bytes.NewBuffer(nil)
-	err := tracecpu.StartCPUProfile(buf)
-	require.NoError(t, err)
-	collector.WaitCollectCnt(2)
-	err = tracecpu.StopCPUProfile()
-	require.NoError(t, err)
-	_, err = profile.Parse(buf)
-	require.NoError(t, err)
-
 	for _, req := range reqs {
-		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
+		stats := mc.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
 		require.Equal(t, 1, len(stats))
-		sql := collector.GetSQL(stats[0].SQLDigest)
-		plan := collector.GetPlan(stats[0].PlanDigest)
+		sql := mc.GetSQL(stats[0].SQLDigest)
+		plan := mc.GetPlan(stats[0].PlanDigest)
 		require.Equal(t, req.sql, sql)
 		require.Equal(t, req.plan, plan)
 	}
-}
-
-func TestIsEnabled(t *testing.T) {
-	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
-
-	setTopSQLEnable(true)
-	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
-	require.NoError(t, err)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
-	setTopSQLEnable(false)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
-	err = tracecpu.StopCPUProfile()
-	require.NoError(t, err)
-
-	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
-	setTopSQLEnable(true)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
@@ -110,23 +87,30 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 }
 
 func TestTopSQLReporter(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	server, err := mockServer.StartMockAgentServer()
 	require.NoError(t, err)
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	topsqlstate.GlobalState.MaxStatementCount.Store(200)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
+	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 	ds := reporter.NewSingleTargetDataSink(report)
+	ds.Start()
+	topsql.SetupTopSQLForTest(report)
 
 	defer func() {
 		ds.Close()
 		report.Close()
 	}()
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
 		sql  string
 		plan string
@@ -135,7 +119,8 @@ func TestTopSQLReporter(t *testing.T) {
 		{"select * from t where a>?", "table-scan"},
 		{"insert into t values (?)", ""},
 	}
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -145,8 +130,8 @@ func TestTopSQLReporter(t *testing.T) {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
 		sqlMap[string(sqlDigest.Bytes())] = req.sql
-
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -155,15 +140,14 @@ func TestTopSQLReporter(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
-
 	server.WaitCollectCnt(1, time.Second*5)
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		require.Greater(t, len(req.RecordListCpuTimeMs), 0)
-		require.Greater(t, req.RecordListCpuTimeMs[0], uint32(0))
+		require.Greater(t, len(req.Items), 0)
+		require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
 		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
@@ -184,8 +168,12 @@ func TestTopSQLReporter(t *testing.T) {
 }
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	topsql.SetupTopSQLForTest(collector)
 
 	ctx := context.Background()
 
@@ -217,12 +205,18 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 }
 
 func TestTopSQLPubSub(t *testing.T) {
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
 
+	topsqlstate.GlobalState.MaxStatementCount.Store(200)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+
+	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 	defer report.Close()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
+	topsql.SetupTopSQLForTest(report)
 
 	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)
@@ -242,7 +236,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer conn.Close()
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client := tipb.NewTopSQLPubSubClient(conn)
@@ -264,8 +259,8 @@ func TestTopSQLPubSub(t *testing.T) {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
 		digest2sql[string(sqlDigest.Bytes())] = req.sql
-
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -274,12 +269,12 @@ func TestTopSQLPubSub(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
 
 	sqlMetas := make(map[string]*tipb.SQLMeta)
 	planMetas := make(map[string]string)
-	records := make(map[string]*tipb.CPUTimeRecord)
+	records := make(map[string]*tipb.TopSQLRecord)
 
 	for {
 		r, err := stream.Recv()
@@ -292,12 +287,11 @@ func TestTopSQLPubSub(t *testing.T) {
 			if _, ok := records[string(rec.SqlDigest)]; !ok {
 				records[string(rec.SqlDigest)] = rec
 			} else {
-				cpu := records[string(rec.SqlDigest)]
+				record := records[string(rec.SqlDigest)]
 				if rec.PlanDigest != nil {
-					cpu.PlanDigest = rec.PlanDigest
+					record.PlanDigest = rec.PlanDigest
 				}
-				cpu.RecordListTimestampSec = append(cpu.RecordListTimestampSec, rec.RecordListTimestampSec...)
-				cpu.RecordListCpuTimeMs = append(cpu.RecordListCpuTimeMs, rec.RecordListCpuTimeMs...)
+				record.Items = append(record.Items, rec.Items...)
 			}
 		} else if r.GetSqlMeta() != nil {
 			sql := r.GetSqlMeta()
@@ -315,8 +309,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	checkSQLPlanMap := map[string]struct{}{}
 	for i := range records {
 		record := records[i]
-		require.Greater(t, len(record.RecordListCpuTimeMs), 0)
-		require.Greater(t, record.RecordListCpuTimeMs[0], uint32(0))
+		require.Greater(t, len(record.Items), 0)
+		require.Greater(t, record.Items[0].CpuTimeMs, uint32(0))
 		sqlMeta, exist := sqlMetas[string(record.SqlDigest)]
 		require.True(t, exist)
 		expectedNormalizedSQL, exist := digest2sql[string(record.SqlDigest)]
@@ -337,7 +331,9 @@ func TestTopSQLPubSub(t *testing.T) {
 }
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {
+	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 
 	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)
@@ -371,10 +367,6 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err, "reporter is closed")
-}
-
-func setTopSQLEnable(enabled bool) {
-	variable.TopSQLVariable.Enable.Store(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {

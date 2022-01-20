@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -136,7 +137,7 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -151,7 +152,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -161,7 +162,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -172,7 +173,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planC
 }
 
 // rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
-func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64) error {
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64, opt *physicalOptimizeOp) error {
 	// The taskMap of children nodes should be rolled back first.
 	for _, child := range p.children {
 		child.rollBackTaskMap(TS)
@@ -187,7 +188,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	for j, child := range p.children {
 		multAll /= childCnts[j]
 		curClock = PlanCounterTp((planCounter-1)/multAll + 1)
-		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
+		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock, opt)
 		planCounter = (planCounter-1)%multAll + 1
 		if err != nil {
 			return err
@@ -203,13 +204,15 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
+	childProps := make(map[task]*property.PhysicalProperty)
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
+
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
@@ -217,7 +220,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		TimeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
-			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
+			childProp := pp.GetChildReqProps(j)
+			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
 			childCnts[j] = cnt
 			if err != nil {
 				return nil, 0, err
@@ -227,6 +231,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 				break
 			}
 			childTasks = append(childTasks, childTask)
+			childProps[childTask] = childProp
 		}
 
 		// This check makes sure that there is no invalid child task.
@@ -238,7 +243,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.ctx.GetSessionVars().PlanID = savedPlanID
 			curCntPlan = int64(*planCounter)
-			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -274,6 +279,15 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			bestTask = curTask
 			break
 		}
+		c := opt.appendCandidate(p, curTask.plan(), prop)
+		if c != nil {
+			for _, childTask := range childTasks {
+				if childTask == nil {
+					continue
+				}
+				opt.appendChildToCandidate(c, childTask.plan(), childProps[childTask])
+			}
+		}
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
@@ -282,8 +296,62 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	return bestTask, cntPlan, nil
 }
 
+type physicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during physical optimizing
+	tracer *tracing.PhysicalOptimizeTracer
+}
+
+func defaultPhysicalOptimizeOption() *physicalOptimizeOp {
+	return &physicalOptimizeOp{}
+}
+
+func (op *physicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.PhysicalOptimizeTracer) *physicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+func (op *physicalOptimizeOp) buildPhysicalOptimizeTraceInfo(p LogicalPlan, prop string) *tracing.PhysicalOptimizeTraceInfo {
+	if op == nil || op.tracer == nil {
+		return nil
+	}
+	name := tracing.CodecPlanName(p.TP(), p.ID())
+	if _, ok := op.tracer.State[name]; !ok {
+		op.tracer.State[name] = make(map[string]*tracing.PhysicalOptimizeTraceInfo)
+	}
+	if info, ok := op.tracer.State[name][prop]; ok {
+		return info
+	}
+	traceInfo := &tracing.PhysicalOptimizeTraceInfo{Property: prop}
+	op.tracer.State[name][prop] = traceInfo
+	return traceInfo
+}
+
+func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.PlanTrace, plan PhysicalPlan, prop *property.PhysicalProperty) {
+	if op == nil || op.tracer == nil || candidateInfo == nil {
+		return
+	}
+	childPhysicalPlanTrace := &tracing.PlanTrace{TP: plan.TP(), ID: plan.ID(), ExplainInfo: plan.ExplainInfo(), Cost: plan.Cost(), ProperType: prop.String()}
+	candidateInfo.Children = append(candidateInfo.Children, childPhysicalPlanTrace)
+}
+
+func (op *physicalOptimizeOp) appendCandidate(logicalPlan LogicalPlan, physicalPlan PhysicalPlan, prop *property.PhysicalProperty) *tracing.PlanTrace {
+	if op == nil || op.tracer == nil {
+		return nil
+	}
+	key := string(prop.HashCode())
+	PhysicalPlanTrace := &tracing.PlanTrace{TP: physicalPlan.TP(), ID: physicalPlan.ID(),
+		ExplainInfo: physicalPlan.ExplainInfo(), Cost: physicalPlan.Cost(), ProperType: prop.String()}
+	name := tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())
+	traceInfo := op.tracer.State[name][key]
+	if traceInfo == nil {
+		traceInfo = op.buildPhysicalOptimizeTraceInfo(logicalPlan, key)
+	}
+	traceInfo.Candidates = append(traceInfo.Candidates, PhysicalPlanTrace)
+	return PhysicalPlanTrace
+}
+
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (bestTask task, cntPlan int64, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -353,7 +421,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter); err != nil {
+	opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -361,7 +430,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 
-	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter)
+	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -379,7 +448,7 @@ END:
 	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -689,7 +758,7 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -710,7 +779,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		t, cnt, err = ds.findBestTask(prop, planCounter)
+		t, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -2169,7 +2238,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	return is, cost, rowCount
 }
 
-func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
@@ -2187,7 +2256,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 	return t, 1, nil
 }
 
-func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsEmpty() {
 		return nil, 1, nil
 	}

@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDropAndTruncatePartition(t *testing.T) {
+func ExportTestDropAndTruncatePartition(t *testing.T) {
 	store := testCreateStoreT(t, "test_store")
 	d, err := testNewDDLAndStart(
 		context.Background(),

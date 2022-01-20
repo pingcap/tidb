@@ -475,7 +475,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
+				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 					e.idxInfo.Name.O, e.handles[i])
 			}

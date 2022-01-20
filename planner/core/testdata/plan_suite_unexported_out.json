@@ -991,6 +991,14 @@
       {
         "Best": "Join{DataScan(t1)->DataScan(t2)}->Sel([nulleq(test.t.b, test.t.b)])->Projection",
         "JoinType": "left outer join"
+      },
+      {
+        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Sel([not(plus(0, and(eq(test.t.c, 1), eq(test.t.c, 2))))])->Projection",
+        "JoinType": "left outer join"
+      },
+      {
+        "Best": "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Projection",
+        "JoinType": "inner join"
       }
     ]
   },

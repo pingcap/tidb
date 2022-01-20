@@ -13,7 +13,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -48,6 +47,10 @@ const (
 	RejectStoreCheckRetryTimes  = 64
 	RejectStoreCheckInterval    = 100 * time.Millisecond
 	RejectStoreMaxCheckInterval = 2 * time.Second
+)
+
+var (
+	ScanRegionAttemptTimes = 30
 )
 
 // RegionSplitter is a executor of region split by rules.
@@ -300,7 +303,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 		for _, region := range newRegionSet {
 			err := rs.client.ScatterRegion(ctx, region)
 			if err == nil {
-				// it is safe accroding to the Go language spec.
+				// it is safe according to the Go language spec.
 				delete(newRegionSet, region.Region.Id)
 			} else if !pdErrorCanRetry(err) {
 				log.Warn("scatter meet error cannot be retried, skipping",
@@ -319,7 +322,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			logutil.ShortError(err),
 			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
 				m := i.(map[uint64]*RegionInfo)
-				result := make([]string, len(m))
+				result := make([]string, 0, len(m))
 				for id := range m {
 					result = append(result, strconv.Itoa(int(id)))
 				}
@@ -455,7 +458,7 @@ type scanRegionBackoffer struct {
 
 func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: 30,
+		attempt: ScanRegionAttemptTimes,
 	}
 }
 
@@ -528,35 +531,4 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRu
 	}
 
 	return s, nil
-}
-
-func beforeEnd(key []byte, end []byte) bool {
-	return bytes.Compare(key, end) < 0 || len(end) == 0
-}
-
-func intersectRange(region *metapb.Region, rg Range) Range {
-	var startKey, endKey []byte
-	if len(region.StartKey) > 0 {
-		_, startKey, _ = codec.DecodeBytes(region.StartKey)
-	}
-	if bytes.Compare(startKey, rg.Start) < 0 {
-		startKey = rg.Start
-	}
-	if len(region.EndKey) > 0 {
-		_, endKey, _ = codec.DecodeBytes(region.EndKey)
-	}
-	if beforeEnd(rg.End, endKey) {
-		endKey = rg.End
-	}
-
-	return Range{Start: startKey, End: endKey}
-}
-
-func insideRegion(region *metapb.Region, meta *sst.SSTMeta) bool {
-	rg := meta.GetRange()
-	return keyInsideRegion(region, rg.GetStart()) && keyInsideRegion(region, rg.GetEnd())
-}
-
-func keyInsideRegion(region *metapb.Region, key []byte) bool {
-	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }

@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -433,6 +432,30 @@ const (
 	oneShotUse
 )
 
+// ReadConsistencyLevel is the level of read consistency.
+type ReadConsistencyLevel string
+
+const (
+	// ReadConsistencyStrict means read by strict consistency, default value.
+	ReadConsistencyStrict ReadConsistencyLevel = "strict"
+	// ReadConsistencyWeak means read can be weak consistency.
+	ReadConsistencyWeak ReadConsistencyLevel = "weak"
+)
+
+// IsWeak returns true only if it's a weak-consistency read.
+func (r ReadConsistencyLevel) IsWeak() bool {
+	return r == ReadConsistencyWeak
+}
+
+func validateReadConsistencyLevel(val string) error {
+	switch v := ReadConsistencyLevel(strings.ToLower(val)); v {
+	case ReadConsistencyStrict, ReadConsistencyWeak:
+		return nil
+	default:
+		return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+	}
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -465,7 +488,8 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams PreparedParams
+	PreparedParams    PreparedParams
+	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -718,11 +742,10 @@ type SessionVars struct {
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
-	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
-	EnableAlterPlacement bool
-
-	// EnablePlacementChecks indicates whether a user can check validation of placement.
-	EnablePlacementChecks bool
+	// PlacementMode the placement mode we use
+	//   strict: Check placement settings strictly in ddl operations
+	//   ignore: Ignore all placement settings in ddl operations
+	PlacementMode string
 
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
@@ -973,12 +996,11 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
-	// StmtStats is used to count various indicators of each SQL in this session
-	// at each point in time. These data will be periodically taken away by the
-	// background goroutine. The background goroutine will continue to aggregate
-	// all the local data in each session, and finally report them to the remote
-	// regularly.
-	StmtStats *stmtstats.StatementStats
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
+
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1050,6 +1072,13 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		SkipPositionRecording:       true,
 	}
 }
+
+const (
+	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
+	PlacementModeStrict string = "STRICT"
+	// PlacementModeIgnore indicates ignore all placement operations in ddl
+	PlacementModeIgnore string = "IGNORE"
+)
 
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
@@ -1172,7 +1201,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            false,
+		enableIndexMerge:            DefTiDBEnableIndexMerge,
 		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
@@ -1196,7 +1225,6 @@ func NewSessionVars() *SessionVars {
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
-		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),
@@ -1211,9 +1239,8 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
-		StmtStats:                   stmtstats.CreateStatementStats(),
+		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1265,11 +1292,9 @@ func NewSessionVars() *SessionVars {
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
-	var enableChunkRPC string
+	enableChunkRPC := "0"
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
-	} else {
-		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
@@ -1978,13 +2003,13 @@ const (
 	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
 	SlowLogCopProcAddr = "Cop_proc_addr"
 	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
-	SlowLogCopWaitAvg = "Cop_wait_avg"
+	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
 	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
-	SlowLogCopWaitP90 = "Cop_wait_p90"
+	SlowLogCopWaitP90 = "Cop_wait_p90" // #nosec G101
 	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
-	SlowLogCopWaitAddr = "Cop_wait_addr"
+	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogCopBackoffPrefix contains backoff information.
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
@@ -2157,7 +2182,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				vStr = "pseudo"
 			} else {
 				vStr = strconv.FormatUint(v, 10)
-
 			}
 			if firstComma {
 				buf.WriteString("," + k + ":" + vStr)

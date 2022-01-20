@@ -527,8 +527,6 @@ func TestStmtSummary(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-	mustExec(t, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	writeStmtSummaryVars(se)
 
 	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
@@ -771,13 +769,12 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err = getBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExec(t, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
 			row := req.GetRow(0)
 			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
-			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(1))
 		}()
 	}
 }
@@ -927,4 +924,145 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "1", row.GetString(0))
+}
+
+func TestIndexMergeInNewCluster(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	// Indicates we are in a new cluster.
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	// In a new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
+	mustExec(t, se, "use test;")
+	r := mustExec(t, se, "select @@tidb_enable_index_merge;")
+	require.NotNil(t, r)
+
+	ctx := context.Background()
+	chk := r.NewChunk(nil)
+	err = r.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(1), row.GetInt64(0))
+}
+
+func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 3.0.0 to 5.4+.
+	ver300 := 33
+	seV3 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver300))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	mustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	mustExec(t, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver300), ver)
+
+	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 5.x, tidb_enable_index_merge should be off.
+	res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(0), row.GetInt64(0))
+}
+
+func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		ctx := context.Background()
+		store, _ := createStoreAndBootstrap(t)
+		defer func() { require.NoError(t, store.Close()) }()
+
+		// upgrade from 4.0.0 to 5.4+.
+		ver400 := 46
+		seV4 := createSessionAndSetID(t, store)
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(ver400))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		mustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+		mustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+		mustExec(t, seV4, "commit")
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(seV4)
+		require.NoError(t, err)
+		require.Equal(t, int64(ver400), ver)
+
+		// We are now in 4.0.0, tidb_enable_index_merge is off.
+		res := mustExec(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		row := chk.GetRow(0)
+		require.Equal(t, 2, row.Len())
+		require.Equal(t, variable.Off, row.GetString(1))
+
+		if i == 0 {
+			// For the first time, We set tidb_enable_index_merge as on.
+			// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+			// For the second it should be off.
+			mustExec(t, seV4, "set global tidb_enable_index_merge = on")
+		}
+
+		// Upgrade to 5.x.
+		domCurVer, err := BootstrapSession(store)
+		require.NoError(t, err)
+		defer domCurVer.Close()
+		seCurVer := createSessionAndSetID(t, store)
+		ver, err = getBootstrapVersion(seCurVer)
+		require.NoError(t, err)
+		require.Equal(t, currentBootstrapVersion, ver)
+
+		// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
+		res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+		chk = res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		row = chk.GetRow(0)
+		require.Equal(t, 1, row.Len())
+		if i == 0 {
+			require.Equal(t, int64(1), row.GetInt64(0))
+		} else {
+			require.Equal(t, int64(0), row.GetInt64(0))
+		}
+	}
 }

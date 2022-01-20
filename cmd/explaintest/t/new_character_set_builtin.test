@@ -1,3 +1,4 @@
+set names utf8mb4;
 set @@sql_mode = '';
 -- test for builtin function hex(), length(), ascii(), octet_length()
 drop table if exists t;
@@ -248,3 +249,13 @@ select crc32(a), crc32(b), crc32(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select crc32(a), crc32(b), crc32(c) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for elt
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+

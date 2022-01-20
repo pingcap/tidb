@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -46,6 +45,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -1658,7 +1659,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableAttributes),
-			strings.ToLower(infoschema.TablePlacementRules):
+			strings.ToLower(infoschema.TablePlacementPolicies):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1714,8 +1715,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &hugeMemTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.ColumnsTableExtractor),
 				},
 			}
 
@@ -1900,6 +1902,17 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
+	// A quick fix for avoiding a race mentioned in issue #30468.
+	// Fetch the snapshot ts to make the transaction's state ready. Otherwise, multiple threads in the Union executor
+	// may change the transaction's state concurrently, which causes race.
+	// This fix is a hack, but with minimal change to the current code and works. Actually, the usage of the transaction
+	// states and the logic to access the snapshot ts should all be refactored.
+	_, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
@@ -2216,6 +2229,9 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 }
 
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+	if task.V2Options != nil {
+		opts = task.V2Options.FilledOpts
+	}
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
@@ -2282,7 +2298,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
@@ -2320,19 +2336,20 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate
 	}
 	var statsTbl *statistics.Table
-	if tid == tblInfo.ID {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+	tid := task.TableID.GetStatisticsID()
+	if tid == task.TblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(task.TblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+		statsTbl = statsHandle.GetPartitionStats(task.TblInfo, tid)
 	}
-	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
+	approxiCount, hasPD := b.getApproximateTableCountFromStorage(sctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
 		return defaultRate
@@ -2345,7 +2362,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.Count*100) < approxiCount {
+	if float64(statsTbl.Count*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
@@ -2359,18 +2376,49 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
-func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context, tid int64) (float64, bool) {
+func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return 0, false
 	}
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
-	err := pdHelper.GetPDRegionStats(tid, regionStats)
+	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
+	failpoint.Inject("calcSampleRateByStorageCount", func() {
+		// Force the TiDB thinking that there's PD and the count of region is small.
+		err = nil
+		regionStats.Count = 1
+		// Set a very large approximate count.
+		regionStats.StorageKeys = 1000000
+	})
 	if err != nil {
 		return 0, false
 	}
-	return float64(regionStats.StorageKeys), true
+	// If this table is not small, we directly use the count from PD,
+	// since for a small table, it's possible that it's data is in the same region with part of another large table.
+	// Thus, we use the number of the regions of the table's table KV to decide whether the table is small.
+	if regionStats.Count > 2 {
+		return float64(regionStats.StorageKeys), true
+	}
+	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", task.DBName, task.TableName)
+	if task.PartitionName != "" {
+		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
+	}
+	stmt, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.TODO(), true, sql.String())
+	if err != nil {
+		return 0, false
+	}
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return 0, false
+	}
+	// If the record set is nil, there's something wrong with the execution. The COUNT(*) would always return one row.
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return 0, false
+	}
+	return float64(rows[0].GetInt64(0)), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
@@ -2600,6 +2648,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		wg:           &sync.WaitGroup{},
 		opts:         v.Opts,
+		OptionsMap:   v.OptionsMap,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
@@ -3378,8 +3427,8 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
+func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	indexReq, indexStreaming, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
@@ -3405,7 +3454,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, indexStreaming, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3538,6 +3587,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	descs := make([]bool, 0, partialPlanCount)
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
+	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	for i := 0; i < partialPlanCount; i++ {
 		var tempReq *tipb.DAGRequest
 		var tempStreaming bool
@@ -3548,7 +3599,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
@@ -3564,8 +3615,11 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		tempReq.CollectRangeCounts = &collect
 		partialReqs = append(partialReqs, tempReq)
 		partialStreamings = append(partialStreamings, tempStreaming)
+		isCorColInPartialFilters = append(isCorColInPartialFilters, b.corColInDistPlan(v.PartialPlans[i]))
+		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
 	}
 	tableReq, tableStreaming, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3574,21 +3628,24 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 	e := &IndexMergeReaderExecutor{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPBs:            partialReqs,
-		startTS:           startTS,
-		table:             tblInfo,
-		indexes:           indexes,
-		descs:             descs,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		partialStreamings: partialStreamings,
-		tableStreaming:    tableStreaming,
-		partialPlans:      v.PartialPlans,
-		tblPlans:          v.TablePlans,
-		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		feedbacks:         feedbacks,
-		handleCols:        ts.HandleCols,
+		baseExecutor:             newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPBs:                   partialReqs,
+		startTS:                  startTS,
+		table:                    tblInfo,
+		indexes:                  indexes,
+		descs:                    descs,
+		tableRequest:             tableReq,
+		columns:                  ts.Columns,
+		partialStreamings:        partialStreamings,
+		tableStreaming:           tableStreaming,
+		partialPlans:             v.PartialPlans,
+		tblPlans:                 v.TablePlans,
+		dataReaderBuilder:        &dataReaderBuilder{executorBuilder: b},
+		feedbacks:                feedbacks,
+		handleCols:               ts.HandleCols,
+		isCorColInPartialFilters: isCorColInPartialFilters,
+		isCorColInTableFilter:    isCorColInTableFilter,
+		isCorColInPartialAccess:  isCorColInPartialAccess,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -3857,8 +3914,8 @@ type kvRangeBuilderFromRangeAndPartition struct {
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
-	var ret [][]kv.KeyRange
-	var pids []int64
+	ret := make([][]kv.KeyRange, 0, len(h.partitions))
+	pids := make([]int64, 0, len(h.partitions))
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
@@ -3890,6 +3947,9 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
+	}
+	if builder.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		reqBuilderWithRange.SetIsolationLevel(kv.RC)
 	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
@@ -4609,19 +4669,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 2. Build tables to store intermediate results.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
+	// iterOutTbl will be constructed in CTEExec.Open().
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
-	var iterOutTbl cteutil.Storage
-
-	if v.RecurPlan != nil {
-		// For non-recursive CTE, the result will be put into resTbl directly.
-		// So no need to build iterOutTbl.
-		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := iterOutTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
@@ -4670,13 +4720,13 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		recursiveExec: recursiveExec,
 		resTbl:        resTbl,
 		iterInTbl:     iterInTbl,
-		iterOutTbl:    iterOutTbl,
 		chkIdx:        0,
 		isDistinct:    v.CTE.IsDistinct,
 		sel:           sel,
 		hasLimit:      v.CTE.HasLimit,
 		limitBeg:      v.CTE.LimitBeg,
 		limitEnd:      v.CTE.LimitEnd,
+		isInApply:     v.CTE.IsInApply,
 	}
 }
 
@@ -4747,25 +4797,15 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	sessVars := b.ctx.GetSessionVars()
+	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
-		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
 	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logutil.BgLogger().Error("panic in the recoverable goroutine",
-						zap.Reflect("r", r),
-						zap.Stack("stack trace"))
-				}
-			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
-			if err != nil {
-				log.Warn("Update Lock Info Error")
-			}
-		}()
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }

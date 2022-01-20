@@ -525,6 +525,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// lpad
+	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// rpad
+	function, err = NewFunction(mock.NewContext(), ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -844,11 +854,18 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// Datesub
-	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	constStringColumn := new(Constant)
+	constStringColumn.Value = types.NewStringDatum("day")
+	constStringColumn.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, constStringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_SubDateStringInt, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
@@ -988,6 +1005,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// quarter: supported
+	function, err = NewFunction(mock.NewContext(), ast.Quarter, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// strcmp
+	function, err = NewFunction(mock.NewContext(), ast.Strcmp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1058,7 +1085,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	exprs := make([]Expression, 0)
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
-	//intColumn := genColumn(mysql.TypeLonglong, 2)
+	intColumn := genColumn(mysql.TypeLonglong, 2)
 	//realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
@@ -1066,6 +1093,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 
+	// Test exprs that cannot be pushed.
 	function, err := NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -1101,6 +1129,26 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
+
+	// Test exprs that can be pushed.
+	exprs = exprs[:0]
+	pushed = pushed[:0]
+	remained = remained[:0]
+
+	substringRelated := []string{ast.Substr, ast.Substring, ast.Mid}
+	for _, exprName := range substringRelated {
+		function, err = NewFunction(mock.NewContext(), exprName, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
+
+	function, err = NewFunction(mock.NewContext(), ast.CharLength, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {

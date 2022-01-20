@@ -3180,17 +3180,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "expr": "sum(rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-rate",
+              "legendFormat": "{{type}}-rate",
               "refId": "A"
             },
             {
-              "expr": "tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-total",
+              "legendFormat": "{{type}}-total",
               "refId": "B"
             }
           ],
@@ -9228,7 +9228,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB batch add index durations by histogram buckets",
+          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
           "fill": 1,
           "gridPos": {
             "h": 7,
@@ -9264,25 +9264,18 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}",
-              "refId": "A"
-            },
-            {
               "expr": "sum(rate(tidb_ddl_add_index_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
-              "refId": "B"
+              "refId": "A"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Batch Add Index Duration 100",
+          "title": "DDL Backfill Data Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -10853,6 +10846,224 @@
               "max": null,
               "min": null,
               "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 170
+          },
+          "hiddenSeries": false,
+          "id": 229,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_statistics_sync_load_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "sync-load",
+              "refId": "A",
+              "step": 30
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_statistics_sync_load_timeout_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "timeout",
+              "refId": "B",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Sync Load QPS",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 170
+          },
+          "hiddenSeries": false,
+          "id": 230,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "sync-load",
+              "refId": "A",
+              "step": 30
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "read-stats",
+              "refId": "B",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Sync Load Latency 95 (ms)",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
             }
           ],
           "yaxis": {

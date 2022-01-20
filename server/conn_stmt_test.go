@@ -214,6 +214,16 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		newInputDecoder("gbk"))
 	require.NoError(t, err)
 	require.Equal(t, "测试", dt[0].GetValue())
+
+	err = parseExecArgs(&stmtctx.StatementContext{},
+		dt,
+		[][]byte{{178, 226, 202, 212}},
+		[]byte{0x0},
+		[]byte{mysql.TypeString, 0},
+		[]byte{},
+		newInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].GetString())
 }
 
 func TestParseStmtFetchCmd(t *testing.T) {

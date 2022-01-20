@@ -19,7 +19,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -342,7 +341,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT * FROM information_schema.engines`)
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -473,7 +472,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT
 		table_name, engine, version, row_format, table_rows,
 		avg_row_length, data_length, max_data_length, index_length,
 		data_free, auto_increment, create_time, update_time, check_time,
@@ -1083,8 +1082,6 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add direct placement info here
-	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
@@ -1219,27 +1216,6 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
-	if directPlacementOpts == nil {
-		return
-	}
-	opts := reflect.ValueOf(*directPlacementOpts)
-	typeOpts := opts.Type()
-	fmt.Fprintf(buf, " /*T![placement]")
-	for i := 0; i < opts.NumField(); i++ {
-		if !opts.Field(i).IsZero() {
-			v := opts.Field(i).Interface()
-			switch v.(type) {
-			case string:
-				fmt.Fprintf(buf, ` %s="%s"`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
-			case uint64:
-				fmt.Fprintf(buf, " %s=%d", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
-			}
-		}
-	}
-	fmt.Fprintf(buf, " */")
-}
-
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
@@ -1255,7 +1231,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 				defaultPartitionDefinitions = false
 				break
 			}
-			if len(def.Comment) > 0 || def.DirectPlacementOpts != nil || def.PlacementPolicyRef != nil {
+			if len(def.Comment) > 0 || def.PlacementPolicyRef != nil {
 				defaultPartitionDefinitions = false
 				break
 			}
@@ -1310,10 +1286,6 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		if len(def.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
 		}
-		if def.DirectPlacementOpts != nil {
-			// add direct placement info here
-			appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
-		}
 		if def.PlacementPolicyRef != nil {
 			// add placement ref info here
 			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
@@ -1356,10 +1328,6 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
-	}
-	if dbInfo.DirectPlacementOpts != nil {
-		// add direct placement info here
-		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
 	}
 	return nil
 }
@@ -1439,7 +1407,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
+	stmt, err := exec.ParseWithParams(ctx, true, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1459,7 +1427,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authplugin = rows[0].GetString(0)
 	}
 
-	stmt, err = exec.ParseWithParamsInternal(ctx, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	stmt, err = exec.ParseWithParams(ctx, true, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}

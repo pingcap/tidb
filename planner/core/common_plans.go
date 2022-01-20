@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -294,6 +295,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if prepared.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.PreparedPlanCache().DeleteAll()
+		prepared.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
 	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -380,6 +391,37 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	return err
 }
 
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
+		return ""
+	}
+	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return ""
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	if globalHandle == nil {
+		return ""
+	}
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	return ""
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
@@ -403,10 +445,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 
 	var bindSQL string
 	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
+		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -512,8 +555,11 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.SkipPlanCache {
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -542,6 +588,22 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containTableDual(child)
+	}
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
@@ -985,6 +1047,16 @@ type AnalyzeInfo struct {
 	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
+	V2Options     *V2AnalyzeOptions
+}
+
+// V2AnalyzeOptions is used to hold analyze options information.
+type V2AnalyzeOptions struct {
+	PhyTableID int64
+	RawOpts    map[ast.AnalyzeOptionType]uint64
+	FilledOpts map[ast.AnalyzeOptionType]uint64
+	ColChoice  model.ColumnChoice
+	ColumnList []*model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -1008,9 +1080,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
+	ColTasks   []AnalyzeColumnsTask
+	IdxTasks   []AnalyzeIndexTask
+	Opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]V2AnalyzeOptions
 }
 
 // LoadData represents a loaddata plan.
@@ -1357,7 +1430,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 		}
 		copStats := runtimeStatsColl.GetCopStats(explainID)
 		analyzeInfo += copStats.String()
-		actRows = fmt.Sprint(copStats.GetActRows())
+		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
