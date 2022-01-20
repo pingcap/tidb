@@ -216,6 +216,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		topsqlstate.GlobalState.MaxCollect.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBSuperReadOnly:
+		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
