@@ -139,23 +139,28 @@ func newStreamRestoreCommand() *cobra.Command {
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
 	var err error
+	defer func() {
+		if err != nil {
+			command.SilenceUsage = false
+		}
+	}()
 	if err = cfg.Config.ParseFromFlags(command.Flags()); err != nil {
 		return errors.Trace(err)
 	}
 
-	if cmdName == task.StreamRestore {
+	switch cmdName {
+	case task.StreamRestore:
 		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
-	} else {
-		if err = cfg.ParseCommonFromFlags(command.Flags()); err != nil {
-			command.SilenceUsage = false
+	case task.StreamStart:
+		if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
-		if cmdName == task.StreamStart {
-			if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
-				return errors.Trace(err)
-			}
+		fallthrough
+	default:
+		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	ctx := GetDefaultContext()

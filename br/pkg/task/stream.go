@@ -165,8 +165,8 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-// ParseCommonFromFlags parse parameters for `stream task`
-func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
+// ParseStreamCommonFromFlags parse parameters for `stream task`
+func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error {
 	var err error
 
 	cfg.TaskName, err = flags.GetString(flagStreamTaskName)
