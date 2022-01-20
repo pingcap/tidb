@@ -306,6 +306,11 @@ func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementConte
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
+	if builder.IsStaleness {
+		return nil
+	}
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}

@@ -508,6 +508,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	testKit.MustExec("analyze table t")
@@ -798,6 +799,7 @@ func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 0")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
@@ -945,7 +947,7 @@ func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.Tes
 	}
 }
 
-func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
+func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts1(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -2502,6 +2504,7 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
@@ -2932,6 +2935,7 @@ func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
 	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
 	testKit.MustExec("analyze table t with 0 topn, 2 buckets")

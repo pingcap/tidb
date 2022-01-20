@@ -211,7 +211,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
-			e.IndexLookUpJoin.ctxCancelReason.Store(err)
 			e.cancelFunc()
 		}
 	}
@@ -248,9 +247,6 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
-		if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-			return err.(error)
-		}
 		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
@@ -280,9 +276,6 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
-			if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-				return err.(error)
-			}
 			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
@@ -505,7 +498,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
-		if err != nil {
+		if err != nil && !task.keepOuterOrder {
+			// Only need check non-keep-outer-order case because the
+			// `joinResult` had been sent to the `resultCh` when err != nil.
 			joinResult.err = err
 			break
 		}
@@ -695,9 +690,6 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
-					if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-						return err.(error)
-					}
 					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
@@ -848,9 +840,6 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
-						if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-							return err.(error)
-						}
 						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)

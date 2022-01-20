@@ -810,6 +810,12 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+
+	// For issue 31603, only affects unistore.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varbinary(100));")
+	tk.MustExec("insert into t1 values('abc');")
+	tk.MustQuery("select 1 from t1 where char_length(c1) = 10;").Check(testkit.Rows())
 }
 
 func TestInvalidStrings(t *testing.T) {
@@ -5764,7 +5770,7 @@ func TestVitessHash(t *testing.T) {
 		"(1, 30375298039), " +
 		"(2, 1123), " +
 		"(3, 30573721600), " +
-		"(4, " + fmt.Sprintf("%d", uint64(math.MaxUint64)) + ")," +
+		"(4, " + strconv.FormatUint(uint64(math.MaxUint64), 10) + ")," +
 		"(5, 116)," +
 		"(6, null);")
 
@@ -6988,4 +6994,44 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
 	// compare JSON/JSON, return JSON type
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
+}
+
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
+	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
+	require.NotNil(t, err)
+	tk.MustQuery("select * from t1").Check(nil)
+
+	// test vectorized build-in function
+	tk.MustExec("insert into t1 (a) values ('a'),('b');")
+	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	// test cast
+	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
+	require.Nil(t, err)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{nil},
+		{"a"},
+		{"b"},
+	})
 }
