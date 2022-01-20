@@ -28,6 +28,7 @@ record_case=""
 create=0
 create_case=""
 stats="s"
+disable_collation=0
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -39,6 +40,8 @@ function help_message()
     echo "Usage: $0 [options]
 
     -h: Print this help message.
+
+    -d: Disable the new collation during the explain test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
                            eg. \"./run-tests.sh -s ./explaintest_tidb-server\"
@@ -105,7 +108,7 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:c:i:h:p" opt; do
+while getopts "t:s:r:b:c:i:h:p:d" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -144,6 +147,9 @@ while getopts "t:s:r:b:c:i:h:p" opt; do
             ;;
         p)  
             portgenerator="$OPTARG"
+            ;;
+        d)
+            disable_collation=1
             ;;
         *)
             help_message 1>&2
@@ -216,88 +222,69 @@ done
 port=${ports[0]}
 status=${ports[1]}
 
-echo "start tidb-server, log file: $explain_test_log"
-if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-    $tidb_server -P "$port" -status "$status" -config config.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
-    SERVER_PID=$!
+coll_disabled=""
+config_file=""
+if [[ disable_collation -eq 1 ]]; then
+    coll_disabled="true"
+    config_file="disable_new_collation.toml"
 else
-    $tidb_server -P "$port" -status "$status" -config config.toml -store unistore -path "" > $explain_test_log 2>&1 &
-    SERVER_PID=$!
+    coll_disabled="false"
+    config_file="config.toml"
 fi
-echo "tidb-server(PID: $SERVER_PID) started"
 
+function start_tidb_server()
+{
+    echo "start tidb-server, log file: $explain_test_log"
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
+        SERVER_PID=$!
+    else
+        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $explain_test_log 2>&1 &
+        SERVER_PID=$!
+    fi
+    echo "tidb-server(PID: $SERVER_PID) started"
+}
+
+function run_explain_test()
+{
+  if [ $record -eq 1 ]; then
+      if [ "$record_case" = 'all' ]; then
+          echo "record all cases"
+          $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=$coll_disabled
+      else
+          echo "record result for case: \"$record_case\""
+          $explain_test -port "$port" -status "$status" --record $record_case --log-level=error --collation-disable=$coll_disabled
+      fi
+  elif [ $create -eq 1 ]; then
+      if [ "$create_case" = 'all' ]; then
+          echo "create all cases"
+          $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=$coll_disabled
+      else
+          echo "create result for case: \"$create_case\""
+          $explain_test -port "$port" -status "$status" --create $create_case --log-level=error --collation-disable=$coll_disabled
+      fi
+  else
+      if [ -z "$tests" ]; then
+          echo "run all explain test cases(collation disabled: $coll_disabled)"
+      else
+          echo "run explain test cases(collation disabled: $coll_disabled): $tests"
+      fi
+      $explain_test -port "$port" -status "$status" --log-level=error $tests --collation-disable=$coll_disabled
+  fi
+}
+
+function check_data_race() {
+    race=`grep 'DATA RACE' $explain_test_log || true`
+    if [ ! -z "$race" ]; then
+        echo "tidb-server DATA RACE!"
+        cat $explain_test_log
+        exit 1
+    fi
+}
+
+start_tidb_server
 sleep 5
-
-if [ $record -eq 1 ]; then
-    if [ "$record_case" = 'all' ]; then
-        echo "record all cases"
-        $explain_test -port "$port" -status "$status" --record --log-level=error
-    else
-        echo "record result for case: \"$record_case\""
-        $explain_test -port "$port" -status "$status" --record $record_case --log-level=error
-    fi
-elif [ $create -eq 1 ]; then
-    if [ "$create_case" = 'all' ]; then
-        echo "create all cases"
-        $explain_test -port "$port" -status "$status" --create --log-level=error
-    else
-        echo "create result for case: \"$create_case\""
-        $explain_test -port "$port" -status "$status" --create $create_case --log-level=error
-    fi
-else
-    if [ -z "$tests" ]; then
-        echo "run all explain test cases"
-    else
-        echo "run explain test cases: $tests"
-    fi
-    $explain_test -port "$port" -status "$status" --log-level=error $tests
-fi
-
-race=`grep 'DATA RACE' $explain_test_log || true`
-if [ ! -z "$race" ]; then
-    echo "tidb-server DATA RACE!"
-    cat $explain_test_log
-    exit 1
-fi
-
+run_explain_test
 kill -9 $SERVER_PID
-
-echo "run collation tests when new-collation disabled"
-echo "start tidb-server, log file: $explain_test_log"
-if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store tikv -path "${TIKV_PATH}" >> $explain_test_log 2>&1 &
-    SERVER_PID=$!
-else
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store unistore -path "" >> $explain_test_log 2>&1 &
-    SERVER_PID=$!
-fi
-echo "tidb-server(PID: $SERVER_PID) started"
-
-sleep 5
-
-if [ $record -eq 1 ]; then
-    if [ "$record_case" = 'all' ]; then
-        echo "record all collation cases"
-        $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=true
-    else
-        echo "record result for case: \"$record_case\""
-        $explain_test -port "$port" -status "$status" --collation-disable=true --record $record_case --log-level=error
-    fi
-elif [ $create -eq 1 ]; then
-    if [ "$create_case" = 'all' ]; then
-        echo "create all collation cases"
-        $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=true
-    else
-        echo "create result for case: \"$create_case\""
-        $explain_test -port "$port" -status "$status" --collation-disable=true --create $create_case --log-level=error
-    fi
-else
-    if [ -z "$tests" ]; then
-        echo "run all collation explain test cases"
-    else
-        echo "run explain test cases: $tests"
-    fi
-    $explain_test -port "$port" -status "$status" --collation-disable=true --log-level=error $tests
-fi
-
+check_data_race
 echo "explaintest end"
