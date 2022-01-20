@@ -481,9 +481,8 @@ func (tiflash *MockTiFlash) GetPlacementRule(ruleName string) (*placement.TiFlas
 	if r, ok := tiflash.GlobalTiFlashPlacementRules[ruleName]; ok {
 		p := r
 		return &p, ok
-	} else {
-		return nil, ok
 	}
+	return nil, false
 }
 
 // CleanPlacementRules cleans all placement rules.
@@ -507,9 +506,8 @@ func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableIn
 	if r, ok := tiflash.SyncStatus[tableID]; ok {
 		p := r
 		return &p, ok
-	} else {
-		return nil, ok
 	}
+	return nil, false
 }
 
 // PdSwitch controls if pd is enabled.
