@@ -1673,7 +1673,7 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
 	tk.MustGetErrCode("describe t I%", errno.ErrParse)
 
-	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,")
+	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'ABC%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
