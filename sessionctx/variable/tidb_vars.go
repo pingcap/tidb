@@ -420,9 +420,6 @@ const (
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
 
-	// TiDBEnableDirectPlacement is used to control whether the direct placement should be enabled
-	TiDBEnableDirectPlacement = "tidb_enable_direct_placement"
-
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -539,6 +536,9 @@ const (
 
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
+	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
+	TiDBSuperReadOnly = "tidb_super_read_only"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
@@ -772,6 +772,7 @@ const (
 	DefTiDBEnableClusteredIndex           = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                      = false
 	DefTiDBRestrictedReadOnly             = false
+	DefTiDBSuperReadOnly                  = false
 	DefTiDBShardAllocateStep              = math.MaxInt64
 	DefTiDBEnableTelemetry                = true
 	DefTiDBEnableParallelApply            = false
@@ -835,6 +836,7 @@ var (
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
