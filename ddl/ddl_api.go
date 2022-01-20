@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
-	. "github.com/pingcap/tidb/ddl/util"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -4331,7 +4331,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := GetTimeZone(sctx)
+	tzName, tzOffset, err := ddlutil.GetTimeZone(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -4575,7 +4575,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
-	tzName, tzOffset, err := GetTimeZone(ctx)
+	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5392,7 +5392,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := GetTimeZone(ctx)
+	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5588,7 +5588,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := GetTimeZone(ctx)
+	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

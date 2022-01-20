@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
-	. "github.com/pingcap/tidb/ddl/util"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -7737,7 +7737,7 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 	for _, tc := range testCases {
 		tk.MustExec(tc.tzSQL)
 		c.Assert(tk.Se.GetSessionVars().TimeZone.String(), Equals, tc.tzStr, Commentf("sql: %s", tc.tzSQL))
-		tz, offset, err := GetTimeZone(tk.Se)
+		tz, offset, err := ddlutil.GetTimeZone(tk.Se)
 		c.Assert(tc.err, Equals, err)
 		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s", tc.tzSQL))
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
