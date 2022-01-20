@@ -1377,7 +1377,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
-	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, sysTZ, w.rowMap)
+	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
 	}

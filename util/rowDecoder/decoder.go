@@ -15,7 +15,6 @@
 package decoder
 
 import (
-	"fmt"
 	"sort"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -83,7 +81,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -115,7 +113,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	return rd.EvalRemainedExprColumnMap(ctx, sysLoc, row)
+	return rd.EvalRemainedExprColumnMap(ctx, row)
 }
 
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
@@ -157,7 +155,6 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		logutil.BgLogger().Warn(fmt.Sprintf("-------------------- col:%v, val:%v", colInfo.Name, val.GetValue()))
 		if ok || dCol.GenExpr != nil || dCol.Col.ChangeStateInfo != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
@@ -177,7 +174,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 
 // EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
 // It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
-func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	keys := make([]int, 0, len(rd.colMap))
 	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {

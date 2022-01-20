@@ -17,7 +17,6 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -485,7 +483,6 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 				continue
 			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
-			logutil.BgLogger().Warn(fmt.Sprintf("hhh-------------------- col: handle, val:%v", d.GetValue()))
 			if err != nil {
 				return row, err
 			}
