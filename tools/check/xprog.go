@@ -1,7 +1,7 @@
 package main
 
 import (
-	// "fmt"
+	"fmt"
 	"os"
 	"strings"
 	"bufio"
@@ -46,10 +46,10 @@ func main() {
 	// $CWD/util/topsql/topsql.test.bin
 	newName := filepath.Join(cwd, pkg, file+".test.bin")
 
-	// l, err := os.Create("/tmp/xxx.log")
-	// fmt.Fprintf(l, "cwd %s\n", cwd)
-	// fmt.Fprintf(l, "testBinaryPath %s\n", testBinaryPath)
-	// fmt.Fprintf(l, "the path is %s\n", newName)
+	l, err := os.Create("/tmp/xxx.log")
+	fmt.Fprintf(l, "cwd %s\n", cwd)
+	fmt.Fprintf(l, "testBinaryPath %s\n", testBinaryPath)
+	fmt.Fprintf(l, "the path is %s\n", newName)
 
 	err = os.Rename(testBinaryPath, newName)
 	if err != nil {
