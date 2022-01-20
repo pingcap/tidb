@@ -20,7 +20,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
@@ -375,7 +374,7 @@ func TestListPolicyNames(t *testing.T) {
 	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_policies' doesn't exist"}
 	mock.ExpectExec("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
 		WillReturnError(expectedErr)
-	policies, err = ListAllPlacementPolicyNames(conn)
+	_, err = ListAllPlacementPolicyNames(conn)
 	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
 		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
 	}
@@ -1759,14 +1758,4 @@ func TestGetCharsetAndDefaultCollation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
 	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
-}
-
-func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
-	return &semver.Version{
-		Major:      major,
-		Minor:      minor,
-		Patch:      patch,
-		PreRelease: semver.PreRelease(preRelease),
-		Metadata:   "",
-	}
 }
