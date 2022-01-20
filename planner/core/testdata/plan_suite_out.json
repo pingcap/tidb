@@ -2679,7 +2679,7 @@
     ]
   },
   {
-    "Name": "TestMPPCollectType",
+    "Name": "TestMPPPassThroughType",
     "Cases": [
       {
         "SQL": "select count(*) from employee group by deptid+1",

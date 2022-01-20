@@ -2164,7 +2164,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.CollectType}
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.PassThroughType}
 		if !mpp.needEnforceExchanger(prop) {
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
@@ -2369,8 +2369,8 @@ func (t *mppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		return false
 	case property.BroadcastType:
 		return true
-	case property.CollectType:
-		return t.partTp != property.CollectType
+	case property.PassThroughType:
+		return t.partTp != property.PassThroughType
 	default:
 		if t.partTp != property.HashType {
 			return true

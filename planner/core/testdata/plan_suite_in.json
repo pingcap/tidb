@@ -748,7 +748,7 @@
     ]
   },
   {
-    "name": "TestMPPCollectType",
+    "name": "TestMPPPassThroughType",
     "cases": [
       // test normal aggregation, MPP2Phase.
       "select count(*) from employee group by deptid+1",
