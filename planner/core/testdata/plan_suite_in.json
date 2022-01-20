@@ -757,7 +757,14 @@
       // test normal join, Broadcast.
       "select * from employee join employee e1 using(deptid)",
       // test redundant collect exchange can be eliminated.
-      "select count(distinct a) from (select count(distinct deptid) a from employee) x"
+      "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+      // test mppScalar agg below mpp2Phase agg.
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+      // test mppScalar agg below mpp1Phase agg, TODO: add hint to enforce
+      // test mppScalar agg below mppTiDB agg, TODO: add hint to enforce
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+      // test mppScalar agg below join
+      "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1"
     ]
   }
 ]

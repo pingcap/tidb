@@ -2737,6 +2737,57 @@
           "              └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#7",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#7",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: N/A]",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:Column#15, funcs:count(Column#14)->Column#13",
+          "            └─Projection 1.00 batchCop[tiflash]  Column#5, plus(Column#6, 1)->Column#15",
+          "              └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6",
+          "                └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
+          "                  └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "                    └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "                      └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "                        └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#7",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:Column#6, funcs:count(Column#5)->Column#7",
+          "      └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6",
+          "        └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
+          "          └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "            └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 batchCop[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 batchCop[tiflash]  Column#9, Column#10",
+          "    │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9, funcs:count(distinct test.employee.empid)->Column#10",
+          "    │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
       }
     ]
   }
