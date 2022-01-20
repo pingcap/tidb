@@ -127,7 +127,7 @@ devgotest: failpoint-enable
 
 build_test_binary: tools/bin/xprog
 	@echo "building test binary"
-	$(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR)
+	$(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || true
 	@cat "/tmp/xxx.log"
 
 ut: failpoint-enable build_test_binary tools/bin/ut

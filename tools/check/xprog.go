@@ -53,6 +53,7 @@ func main() {
 
 	err = os.Rename(testBinaryPath, newName)
 	if err != nil {
+		fmt.Fprintf(l, "erro == %s", err.Error())
 		os.Exit(-4)
 	}
 }
