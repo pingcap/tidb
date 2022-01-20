@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
@@ -83,8 +82,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	require.NoError(t, err)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -130,15 +127,17 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	}()
 
 	dbt := testkit.NewDBTestKit(t, db)
-	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
-	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
-	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	dbt.MustExec("set @@global.tidb_top_sql_max_time_series_count=5;")
 
 	err = cpuprofile.StartCPUProfiler()
 	require.NoError(t, err)
 	cleanFn := func() {
 		cleanup()
 		cpuprofile.StopCPUProfiler()
+		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
 	}
 	return ts, cleanFn
 }
@@ -1302,7 +1301,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
 	})
-	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select

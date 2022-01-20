@@ -118,6 +118,12 @@ Projection	12500.00	root		ifnull(Column#10, 0)->Column#10
 explain format = 'brief' select * from information_schema.columns;
 id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
+explain format = 'brief' select * from information_schema.columns where table_name = 'T1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:COLUMNS	table_name:["t1"]
+explain format = 'brief' select * from information_schema.columns where table_schema = 'TEST' and table_name = 'T1' and column_name = 'c1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:COLUMNS	table_schema:["test"], table_name:["t1"], column_name:["c1"]
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11

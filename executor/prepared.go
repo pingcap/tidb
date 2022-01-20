@@ -201,17 +201,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	var (
-		normalizedSQL4PC, normalizedSQL4PCHash string
-		selectStmtNode                         ast.StmtNode
+		normalizedSQL4PC, digest4PC string
+		selectStmtNode              ast.StmtNode
 	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
-		selectStmtNode, normalizedSQL4PC, normalizedSQL4PCHash, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
-			normalizedSQL4PCHash = ""
+			digest4PC = ""
 		}
 	}
 
@@ -243,14 +243,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:          prepared,
-		VisitInfos:           destBuilder.GetVisitInfo(),
-		NormalizedSQL:        normalizedSQL,
-		SQLDigest:            digest,
-		ForUpdateRead:        destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator:  ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:     normalizedSQL4PC,
-		NormalizedSQL4PCHash: normalizedSQL4PCHash,
+		PreparedAst:         prepared,
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		SQLDigest4PC:        digest4PC,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

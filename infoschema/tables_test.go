@@ -113,6 +113,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("create table t ( s set('a','bc','def','ghij') default NULL, e1 enum('a', 'ab', 'cdef'), s2 SET('1','2','3','4','1585','ONE','TWO','Y','N','THREE'))")
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's'").Check(
 		testkit.Rows("s 13"))
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'S'").Check(
+		testkit.Rows("s 13"))
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's2'").Check(
 		testkit.Rows("s2 30"))
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'e1'").Check(
@@ -713,9 +715,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
 	// Clear all statements.
-	tk.MustExec("set session tidb_enable_stmt_summary = 0")
-	tk.MustExec("set session tidb_enable_stmt_summary = ''")
-
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
@@ -816,9 +816,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
-	tk.MustExec("set session tidb_enable_stmt_summary = false")
 	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -834,8 +832,7 @@ func TestStmtSummaryTable(t *testing.T) {
 		from information_schema.statements_summary`,
 	).Check(testkit.Rows())
 
-	// Enable it in session scope.
-	tk.MustExec("set session tidb_enable_stmt_summary = on")
+	tk.MustExec("SET GLOBAL tidb_enable_stmt_summary = on")
 	// It should work immediately.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(1, 'a')")
@@ -869,23 +866,6 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
-
-	tk.MustQuery("select * from t where a=2")
-
-	// Statement summary is still enabled.
-	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
-		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
-		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
-		"from information_schema.statements_summary " +
-		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
-
-	// Unset session variable.
-	tk.MustExec("set session tidb_enable_stmt_summary = ''")
-	tk.MustQuery("select * from t where a=2")
 
 	// Statement summary is disabled.
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,

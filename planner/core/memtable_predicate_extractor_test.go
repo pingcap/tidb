@@ -22,12 +22,14 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1551,4 +1553,144 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 			require.EqualValues(t, ca.storeIDs, tikvRegionPeersExtractor.StoreIDs, "SQL: %v", ca.sql)
 		}
 	}
+}
+
+func TestColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                string
+		columnName         set.StringSet
+		tableSchema        set.StringSet
+		tableName          set.StringSet
+		columnNamePattern  []string
+		tableSchemaPattern []string
+		tableNamePattern   []string
+		skipRequest        bool
+	}{
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.COLUMNS where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from INFORMATION_SCHEMA.COLUMNS where table_name='TEST';`,
+			tableName: set.NewStringSet("test"),
+		},
+		{
+			sql:        "select * from information_schema.COLUMNS where table_name in ('TEST','t') and column_name in ('A','b')",
+			columnName: set.NewStringSet("a", "b"),
+			tableName:  set.NewStringSet("test", "t"),
+		},
+		{
+			sql:       `select * from information_schema.COLUMNS where table_name='a' and table_name in ('a', 'B');`,
+			tableName: set.NewStringSet("a"),
+		},
+		{
+			sql:         `select * from information_schema.COLUMNS where table_name='a' and table_name='B';`,
+			skipRequest: true,
+		},
+		{
+			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
+			tableNamePattern: []string{"(?i)T.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
+			columnNamePattern: []string{"(?i)T.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
+			columnNamePattern: []string{"(?i)i.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
+			columnNamePattern: []string{"(?i)abc.*|def.*"},
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
+			columnNamePattern: []string{"(?i)abc.*", "(?i).*def"},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColumnName.Count())
+		if ca.columnName.Count() > 0 && columnsTableExtractor.ColumnName.Count() > 0 {
+			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColumnName, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.TableSchema.Count())
+		if ca.tableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.TableName.Count())
+		if ca.tableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
+			require.EqualValues(t, ca.tableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.TableNamePatterns))
+		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.TableNamePatterns) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.TableNamePatterns, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.ColumnNamePatterns))
+		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.ColumnNamePatterns) > 0 {
+			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.ColumnNamePatterns, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.TableSchemaPatterns))
+		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		}
+	}
+}
+
+func TestPredicateQuery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, abclmn int);")
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'I%' or column_name like '%D')").Check(testkit.Rows("id"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%lmn')").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+	tk.MustQuery("describe t id").Check(testkit.Rows("id int(11) YES  <nil> "))
+	tk.MustQuery("describe t ID").Check(testkit.Rows("id int(11) YES  <nil> "))
+	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
+	tk.MustGetErrCode("describe t I%", errno.ErrParse)
+
+	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABC%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+
+	tk.MustQuery("show columns from t where field like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+
+	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
+	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
 }
