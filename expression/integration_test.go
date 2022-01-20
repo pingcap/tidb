@@ -1307,9 +1307,9 @@ func TestControlBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("0 abc 12:00:00", "00:00:00 1 1abc", "0 0abc 12:59:59"))
 	result = tk.MustQuery("select if(1, 1.0, 1)")
 	result.Check(testkit.Rows("1.0"))
-	// FIXME: MySQL returns `1.0`.
+
 	result = tk.MustQuery("select if(1, 1, 1.0)")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("1.0"))
 	tk.MustQuery("select if(count(*), cast('2000-01-01' as date), cast('2011-01-01' as date)) from t1").Check(testkit.Rows("2000-01-01"))
 	tk.MustQuery("select if(count(*)=0, cast('2000-01-01' as date), cast('2011-01-01' as date)) from t1").Check(testkit.Rows("2011-01-01"))
 	tk.MustQuery("select if(count(*), cast('[]' as json), cast('{}' as json)) from t1").Check(testkit.Rows("[]"))
