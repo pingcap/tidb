@@ -131,9 +131,6 @@ func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo
 			break
 		}
 	}
-	if err != nil {
-		return nil, version, errors.Trace(err)
-	}
 	data, err := json.Marshal(js)
 	if err != nil {
 		return nil, version, errors.Trace(err)
