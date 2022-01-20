@@ -400,7 +400,7 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 }
 
 func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
-	fp, err := os.CreateTemp("load_data_test.csv")
+	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 	path := fp.Name()
