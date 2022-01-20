@@ -21,7 +21,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"math"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
@@ -533,8 +536,12 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	c.Assert(res, Equals, false)
 }
 
-func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSetPlacementRuleFail(t *testing.T) {
+
+	s := tiflashDDLTestSuite{}
+	tk := testkit2.NewTestKit(t, s.store)
+	s.SetUpSuite()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
@@ -544,9 +551,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	}()
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := s.CheckPlacementRule(*expectRule)
-	c.Assert(res, Equals, false)
+	require.Equal(t, res, false)
 }
