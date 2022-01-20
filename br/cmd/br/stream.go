@@ -132,6 +132,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return streamCommand(command, task.StreamRestore)
 		},
 	}
+	task.DefineFilterFlags(command, acceptAllTables)
 	task.DefineStreamRestoreFlags(command.Flags())
 	return command
 }
