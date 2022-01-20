@@ -808,7 +808,7 @@ var (
 	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
+	VarTiDBSuperReadOnly    = atomic.NewBool(DefTiDBSuperReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.
