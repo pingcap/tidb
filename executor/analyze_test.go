@@ -2616,7 +2616,6 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustExec("analyze table t with 2 topn")
-	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history")).Rows()
 	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
