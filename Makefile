@@ -111,7 +111,7 @@ test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
 explaintest: server_check
 	@cd cmd/explaintest; \
-    ./run-tests.sh -s ../../bin/tidb-server && \
+	./run-tests.sh -s ../../bin/tidb-server && \
 	./run-tests.sh -s ../../bin/tidb-server -i ./importer -b n -d
 
 ddltest:
