@@ -38,28 +38,61 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, primary key (a))")
+	testcases := []struct {
+		sql          string
+		logicalList  []string
+		physicalList []string
+		bests        []string
+	}{
+		{
+			sql: "select * from t",
+			logicalList: []string{
+				"DataSource_1", "Projection_2",
+			},
+			physicalList: []string{
+				"Projection_3", "TableReader_5",
+			},
+			bests: []string{
+				"Projection_3", "TableReader_5",
+			},
+		},
+		{
+			sql: "select * from t where a = 1",
+			logicalList: []string{
+				"DataSource_1", "Projection_3",
+			},
+			physicalList: []string{
+				"Point_Get_5", "Projection_4",
+			},
+			bests: []string{
+				"Point_Get_5", "Projection_4",
+			},
+		},
+	}
 
-	sql := "select * from t where a in (1,2)"
-
-	stmt, err := p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
-	require.NoError(t, err)
-	sctx := core.MockContext()
-	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
-	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
-	plan, err := builder.Build(context.TODO(), stmt)
-	require.NoError(t, err)
-	flag := uint64(0)
-	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
-	require.NoError(t, err)
-	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
-	require.NotNil(t, otrace)
-	logicalList, physicalList := getList(otrace)
-	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
-	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
+	for _, testcase := range testcases {
+		sql := testcase.sql
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		require.NoError(t, err)
+		sctx := core.MockContext()
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+		plan, err := builder.Build(context.TODO(), stmt)
+		require.NoError(t, err)
+		flag := uint64(0)
+		flag = flag | 1<<3 | 1<<8
+		_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
+		require.NoError(t, err)
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+		require.NotNil(t, otrace)
+		logicalList, physicalList := getList(otrace)
+		require.True(t, checkList(logicalList, testcase.logicalList))
+		require.True(t, checkList(physicalList, testcase.physicalList))
+	}
 }
 
 func checkList(d []string, s []string) bool {
@@ -77,10 +110,8 @@ func checkList(d []string, s []string) bool {
 func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
 	for logicalPlan, v := range otrace.State {
 		ll = append(ll, logicalPlan)
-		for _, info := range v {
-			for _, task := range info.Candidates {
-				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
-			}
+		for physicalPlanKey := range v {
+			pl = append(pl, physicalPlanKey)
 		}
 	}
 	sort.Strings(ll)

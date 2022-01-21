@@ -414,7 +414,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		}
 		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
 		c.Assert(otrace, NotNil)
 		assert := false
 		for _, step := range otrace.Steps {
