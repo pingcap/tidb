@@ -1278,6 +1278,7 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
+			log.Info("skip file due to table id not matched", zap.String("file", file.Path))
 			continue
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
