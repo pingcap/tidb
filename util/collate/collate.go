@@ -331,10 +331,13 @@ func IsCICollation(collate string) bool {
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
-// IsBinCollation returns if the collation is 'xx_bin'.
+// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
+// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
+// and both xx_bin and collationBin are satisfied.
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
-		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4
+		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
+		collate == charset.CollationBin
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).
