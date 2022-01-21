@@ -2041,7 +2041,7 @@ func (s *testPlanSuite) TestIssue30965(c *C) {
 			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
 }
 
-func (s *testPlanSuite) TestMPPPassThroughType(c *C) {
+func (s *testPlanSuite) TestMPPSinglePartitionType(c *C) {
 	var (
 		input  []string
 		output []struct {

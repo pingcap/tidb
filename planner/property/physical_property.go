@@ -53,8 +53,8 @@ const (
 	BroadcastType
 	// HashType requires current task to shuffle its data according to some columns.
 	HashType
-	// PassThroughType requires all the task pass the data to one node (tidb/tiflash).
-	PassThroughType
+	// SinglePartitionType requires all the task pass the data to one node (tidb/tiflash).
+	SinglePartitionType
 )
 
 // ToExchangeType generates ExchangeType from MPPPartitionType
@@ -64,7 +64,7 @@ func (t MPPPartitionType) ToExchangeType() tipb.ExchangeType {
 		return tipb.ExchangeType_Broadcast
 	case HashType:
 		return tipb.ExchangeType_Hash
-	case PassThroughType:
+	case SinglePartitionType:
 		return tipb.ExchangeType_PassThrough
 	default:
 		log.Warn("generate an exchange with any partition type, which is illegal.")
