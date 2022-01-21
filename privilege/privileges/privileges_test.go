@@ -1524,16 +1524,25 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `CREATE USER 'test_load'@'localhost';`)
 	mustExec(t, se, `CREATE TABLE t_load(a int)`)
+
 	mustExec(t, se, `GRANT SELECT on *.* to 'test_load'@'localhost'`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.NoError(t, err)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
+	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' REPLACE INTO TABLE t_load")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
 func TestSelectIntoNoPermissions(t *testing.T) {
