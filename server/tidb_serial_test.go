@@ -38,7 +38,7 @@ import (
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
-func TestLoadData(t *testing.T) {
+func TestLoadData1(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 

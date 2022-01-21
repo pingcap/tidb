@@ -203,6 +203,9 @@ func cmdRun(args ...string) bool {
 		// }
 
 		for _, pkg := range pkgs {
+			if pkg != args[0] {
+				continue
+			}
 			// if !re.MatchString(pkg) {
 			// 	continue
 			// }
@@ -232,11 +235,11 @@ func cmdRun(args ...string) bool {
 	// run a single test
 	if len(args) == 2 {
 		pkg := args[0]
-		// err := buildTestBinary(pkg)
-		// if err != nil {
-		// 	fmt.Println("build package error", pkg, err)
-		// 	return false
-		// }
+		err := buildTestBinary(pkg)
+		if err != nil {
+			fmt.Println("build package error", pkg, err)
+			return false
+		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
 			fmt.Println("check test binary existance error", err)
