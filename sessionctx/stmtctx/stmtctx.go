@@ -204,10 +204,8 @@ type StatementContext struct {
 
 	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
 	EnableOptimizeTrace bool
-	// LogicalOptimizeTrace indicates the trace for optimize
-	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
-	// PhysicalOptimizeTrace indicates the trace for optimize
-	PhysicalOptimizeTrace *tracing.PhysicalOptimizeTracer
+	// OptimizeTracer indicates the tracer for optimize
+	OptimizeTracer *tracing.OptimizeTracer
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
