@@ -37,7 +37,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"

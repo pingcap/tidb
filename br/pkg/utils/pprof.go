@@ -5,13 +5,12 @@ package utils
 import (
 	"fmt"
 	"net"
-	"os"
-	"sync"
-
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
 	_ "net/http/pprof" // nolint:gosec
+	"os"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
