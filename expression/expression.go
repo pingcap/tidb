@@ -1254,7 +1254,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
-		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().Tp == mysql.TypeEnum && canEnumPush {
 				break
 			}
