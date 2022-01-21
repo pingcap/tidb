@@ -456,7 +456,7 @@ type testResult struct {
 func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
-			Classname : pkg,
+			Classname : path.Join(modulePath, pkg),
 			Name : fn,
 		},
 	}
