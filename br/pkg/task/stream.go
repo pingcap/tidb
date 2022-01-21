@@ -199,12 +199,11 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 		}
 	}()
 
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// just stream start need Storage
+	s := &streamMgr{
+		Cfg: cfg,
+		mgr: mgr,
+	}
 	if needStorage {
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
@@ -216,15 +215,15 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 			SendCredentials: cfg.SendCreds,
 			SkipCheckPath:   cfg.SkipCheckPath,
 		}
+		client, err := backup.NewBackupClient(ctx, mgr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	s := &streamMgr{
-		Cfg: cfg,
-		mgr: mgr,
-		bc:  client,
+		s.bc = client
 	}
 	return s, nil
 }
@@ -595,7 +594,7 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, true)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
