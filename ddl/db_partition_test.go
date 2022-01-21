@@ -3552,3 +3552,10 @@ func TestRenameTables(t *testing.T) {
 
 	ddl.ExportTestRenameTables(t)
 }
+
+func TestCreateTables(t *testing.T) {
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestRenameTables(t)
+}
