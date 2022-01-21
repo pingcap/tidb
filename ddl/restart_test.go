@@ -19,13 +19,16 @@ package ddl
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // this test file include some test that will cause data race, mainly because restartWorkers modify d.ctx
@@ -54,7 +57,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
+func runInterruptedJob(d *ddl, job *model.Job, doneCh chan error) {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 
@@ -83,9 +86,9 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
 	doneCh <- err
 }
 
-func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
+func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 	done := make(chan error, 1)
-	go runInterruptedJob(c, d, job, done)
+	go runInterruptedJob(d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
@@ -94,21 +97,21 @@ LOOP:
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			c.Assert(err, IsNil)
+			require.Nil(t, err)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
-			c.Assert(err, IsNil)
+			require.Nil(t, err)
 			break LOOP
 		}
 	}
 }
 
-func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	store := testCreateStore(c, "test_schema_resume")
+func TestSchemaResume(t *testing.T) {
+	store := testCreateStore(t, "test_schema_resume")
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	d1, err := testNewDDLAndStart(
@@ -116,39 +119,39 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := d1.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(t, d1, true)
 
 	dbInfo, err := testSchemaInfo(d1, "test_restart")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
 	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
+	testRunInterruptedJob(t, d1, job)
+	testCheckSchemaState(t, d1, dbInfo, model.StatePublic)
 
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+	testRunInterruptedJob(t, d1, job)
+	testCheckSchemaState(t, d1, dbInfo, model.StateNone)
 }
 
-func (s *testStatSuite) TestStat(c *C) {
-	store := testCreateStore(c, "test_stat")
+func (s *testStatSuiteToVerify) TestStat() {
+	store := testCreateStore(s.T(), "test_stat")
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 
 	d, err := testNewDDLAndStart(
@@ -156,15 +159,15 @@ func (s *testStatSuite) TestStat(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 
 	dbInfo, err := testSchemaInfo(d, "test_restart")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	require.NoError(s.T(), err)
+	testCreateSchema(s.T(), testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
 	//	m, err := d.Stats(nil)
@@ -179,68 +182,74 @@ func (s *testStatSuite) TestStat(c *C) {
 	}
 
 	done := make(chan error, 1)
-	go runInterruptedJob(c, d, job, done)
+	go runInterruptedJob(d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-	ver := s.getDDLSchemaVer(c, d)
+	ver := s.getDDLSchemaVer(d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			c.Assert(err, IsNil)
-			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
+			require.Nil(s.T(), err)
+			require.GreaterOrEqual(s.T(), s.getDDLSchemaVer(d), ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			c.Assert(err, IsNil)
+			require.Nil(s.T(), err)
 			break LOOP
 		}
 	}
 }
 
-var _ = Suite(&testTableSuite{})
-
-type testTableSuite struct {
+type testTableSuiteToVerify struct {
+	suite.Suite
 	store  kv.Storage
 	dbInfo *model.DBInfo
 
 	d *ddl
 }
 
-func (s *testTableSuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_table")
+func TestTableSuite(t *testing.T) {
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
+	require.NoError(t, err)
+
+	suite.Run(t, new(testTableSuiteToVerify))
+}
+
+func (s *testTableSuiteToVerify) SetupSuite() {
+	s.store = testCreateStore(s.T(), "test_table")
 	ddl, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	s.d = ddl
 
 	s.dbInfo, err = testSchemaInfo(s.d, "test_table")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	require.NoError(s.T(), err)
+	testCreateSchema(s.T(), testNewContext(s.d), s.d, s.dbInfo)
 }
 
-func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+func (s *testTableSuiteToVerify) TearDownSuite() {
+	testDropSchema(s.T(), testNewContext(s.d), s.d, s.dbInfo)
 	err := s.d.Stop()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = s.store.Close()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 }
 
-func (s *testTableSuite) TestTableResume(c *C) {
+func (s *testTableSuiteToVerify) TestTableResume() {
 	d := s.d
 
-	testCheckOwner(c, d, true)
+	testCheckOwner(s.T(), d, true)
 
 	tblInfo, err := testTableInfo(d, "t1", 3)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	job := &model.Job{
 		SchemaID:   s.dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -248,8 +257,8 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testRunInterruptedJob(s.T(), d, job)
+	testCheckTableState(s.T(), d, s.dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
 		SchemaID:   s.dbInfo.ID,
@@ -257,6 +266,6 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
+	testRunInterruptedJob(s.T(), d, job)
+	testCheckTableState(s.T(), d, s.dbInfo, tblInfo, model.StateNone)
 }

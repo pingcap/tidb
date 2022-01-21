@@ -195,7 +195,7 @@ StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
     └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(b) from tt;
 min(b)
-B
+a
 desc format='brief' select min(b collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
@@ -224,7 +224,7 @@ HashAgg	1.00	root		funcs:min(collation_agg_func.tt.c)->Column#6
   └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(c) from tt;
 min(c)
-B
+a
 desc format='brief' select min(c collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:min(Column#7)->Column#6
