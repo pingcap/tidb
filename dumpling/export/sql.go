@@ -309,7 +309,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string
-	const query = "select distinct policy_name from information_schema.placement_rules where policy_name is not null;"
+	const query = "select distinct policy_name from information_schema.placement_policies where policy_name is not null;"
 	err := db.QuerySQL(tctx, func(rows *sql.Rows) error {
 		err := rows.Scan(&policy)
 		if err != nil {
@@ -397,7 +397,7 @@ func buildOrderByClause(tctx *tcontext.Context, conf *Config, db *BaseConn, data
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(tctx *tcontext.Context, db *BaseConn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	hasImplictRowID := false
 	err := db.ExecSQL(tctx, func(_ sql.Result, err error) error {
 		if err != nil {
@@ -1442,6 +1442,9 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
 	}
 	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	if rows.Err() != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err

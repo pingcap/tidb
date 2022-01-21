@@ -11,8 +11,6 @@ import (
 )
 
 func TestParseTSString(t *testing.T) {
-	t.Parallel()
-
 	var (
 		ts  uint64
 		err error
@@ -33,8 +31,6 @@ func TestParseTSString(t *testing.T) {
 }
 
 func TestParseCompressionType(t *testing.T) {
-	t.Parallel()
-
 	var (
 		ct  backup.CompressionType
 		err error

@@ -59,8 +59,22 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable(),
-		MockRangePartitionTable(), MockHashPartitionTable(), MockListPartitionTable()})
+	tblInfos := []*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable(),
+		MockRangePartitionTable(), MockHashPartitionTable(), MockListPartitionTable()}
+	id := int64(0)
+	for _, tblInfo := range tblInfos {
+		tblInfo.ID = id
+		id += 1
+		pi := tblInfo.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			def.ID = id
+			id += 1
+		}
+	}
+	s.is = infoschema.MockInfoSchema(tblInfos)
 	s.ctx = MockContext()
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true

@@ -1,3 +1,4 @@
+set names utf8mb4;
 set @@sql_mode = '';
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
@@ -523,3 +524,25 @@ select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c
 hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
 C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = true;
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB

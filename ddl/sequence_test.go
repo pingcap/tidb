@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"strconv"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -1087,4 +1089,22 @@ func (s *testSequenceSuite) TestAlterSequencePrivilege(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'")
 	tk.MustExec("drop sequence if exists my_seq")
+}
+
+func TestDdl_AlterSequenceIssue31265(t *testing.T) {
+	store, clean := testkit2.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence seq cache=1 nocache")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+
+	tk.MustExec("create sequence cache_to_nocache_seq;")
+	tk.MustExec("alter sequence cache_to_nocache_seq nocache;")
+	tk.MustQuery("show create sequence cache_to_nocache_seq;").Check(testkit.Rows("cache_to_nocache_seq CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+
+	tk.MustExec("create sequence nocache_to_cache_seq nocache;")
+	tk.MustExec("alter sequence nocache_to_cache_seq cache 10;")
+	tk.MustQuery("show create sequence nocache_to_cache_seq;").Check(testkit.Rows("nocache_to_cache_seq CREATE SEQUENCE `nocache_to_cache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 10 nocycle ENGINE=InnoDB"))
 }

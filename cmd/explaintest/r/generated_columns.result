@@ -182,7 +182,7 @@ INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
 EXPLAIN format = 'brief' SELECT sum(a) FROM t1 GROUP BY b;
 id	estRows	task	access object	operator info
 HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	10000.00	root		cast(test.t1.a, decimal(32,0) BINARY)->Column#6, test.t1.b
+└─Projection	10000.00	root		cast(test.t1.a, decimal(10,0) BINARY)->Column#6, test.t1.b
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT sum(a) FROM t1 GROUP BY c;
@@ -194,13 +194,13 @@ HashAgg	8000.00	root		group by:test.t1.c, funcs:sum(Column#6)->Column#5
 EXPLAIN format = 'brief' SELECT sum(b) FROM t1 GROUP BY a;
 id	estRows	task	access object	operator info
 HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	10000.00	root		cast(test.t1.b, decimal(32,0) BINARY)->Column#6, test.t1.a
+└─Projection	10000.00	root		cast(test.t1.b, decimal(10,0) BINARY)->Column#6, test.t1.a
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT sum(b) FROM t1 GROUP BY c;
 id	estRows	task	access object	operator info
 HashAgg	8000.00	root		group by:Column#9, funcs:sum(Column#8)->Column#5
-└─Projection	10000.00	root		cast(test.t1.b, decimal(32,0) BINARY)->Column#8, test.t1.c
+└─Projection	10000.00	root		cast(test.t1.b, decimal(10,0) BINARY)->Column#8, test.t1.c
   └─Projection	10000.00	root		test.t1.b, test.t1.c
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -213,7 +213,7 @@ HashAgg	8000.00	root		group by:test.t1.a, funcs:sum(Column#6)->Column#5
 EXPLAIN format = 'brief' SELECT sum(c) FROM t1 GROUP BY b;
 id	estRows	task	access object	operator info
 HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	10000.00	root		cast(test.t1.c, decimal(32,0) BINARY)->Column#6, test.t1.b
+└─Projection	10000.00	root		cast(test.t1.c, decimal(10,0) BINARY)->Column#6, test.t1.b
   └─Projection	10000.00	root		test.t1.b, test.t1.c
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

@@ -131,7 +131,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	}
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+	stmt, err := exec.ParseWithParams(context.TODO(), true, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
 	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 	if err != nil {
 		return err
@@ -697,7 +697,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		tables:    make(map[stmtctx.TableEntry]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
+	stmt, err := exec.ParseWithParams(context.TODO(), true, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {
 		logutil.BgLogger().Warn("[sql-bind] failed to parse query for mysql.capture_plan_baselines_blacklist load", zap.Error(err))
 		return
@@ -925,6 +925,7 @@ func (h *BindHandle) SaveEvolveTasksToStore() {
 func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
 	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(
 		context.TODO(),
+		true,
 		"SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN (%?, %?, %?)",
 		variable.TiDBEvolvePlanTaskMaxTime,
 		variable.TiDBEvolvePlanTaskStartTime,

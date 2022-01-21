@@ -154,10 +154,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
-	//init charset and default collation map
-	d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
-	if err != nil {
-		return err
+	if d.conf.CollationCompatible == StrictCollationCompatible {
+		//init charset and default collation map
+		d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
+		if err != nil {
+			return err
+		}
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
@@ -251,7 +253,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return err
 		}
 	} else {
-		d.dumpSQL(writerCtx, taskChan)
+		d.dumpSQL(writerCtx, metaConn, taskChan)
 	}
 	close(taskChan)
 	_ = baseConn.DBConn.Close()
@@ -348,11 +350,13 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			// adjust db collation
-			createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
+			createDatabaseSQL, err = adjustDatabaseCollation(tctx, d.conf.CollationCompatible, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
 			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 			if ctxDone {
@@ -376,12 +380,14 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 						return tctx.Err()
 					}
 				} else {
+
 					// adjust table collation
-					newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
+					newCreateSQL, err := adjustTableCollation(tctx, d.conf.CollationCompatible, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
 					if err != nil {
 						return errors.Trace(err)
 					}
 					meta.(*tableMeta).showCreateTable = newCreateSQL
+
 					task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
@@ -402,7 +408,10 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 }
 
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
-func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+func adjustDatabaseCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	if collationCompatible != StrictCollationCompatible {
+		return originSQL, nil
+	}
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		tctx.L().Warn("parse create database error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
@@ -444,7 +453,10 @@ func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, orig
 }
 
 // adjustTableCollation adjusts table collation
-func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	if collationCompatible != StrictCollationCompatible {
+		return originSQL, nil
+	}
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
@@ -1146,11 +1158,14 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 	return meta, nil
 }
 
-func (d *Dumper) dumpSQL(tctx *tcontext.Context, taskChan chan<- Task) {
+func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *sql.Conn, taskChan chan<- Task) {
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
+	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
+	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(c))
+	atomic.StoreInt64(&d.totalTables, int64(1))
 	d.sendTaskToChan(tctx, task, taskChan)
 }
 

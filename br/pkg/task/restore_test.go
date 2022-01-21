@@ -10,8 +10,6 @@ import (
 )
 
 func TestRestoreConfigAdjust(t *testing.T) {
-	t.Parallel()
-
 	cfg := &RestoreConfig{}
 	cfg.adjustRestoreConfig()
 

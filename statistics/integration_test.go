@@ -35,6 +35,12 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options=false")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
@@ -89,6 +95,88 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t ")
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(1), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+}
+
+func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options=true")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
+	statsTblT := h.GetTableStats(tblT.Meta())
+	// Analyze table with version 1 success, all statistics are version 1.
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(1), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t ")
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(2), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.")) // since fallback to ver2 path, should do samplerate adjustment
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
