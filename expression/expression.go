@@ -942,6 +942,11 @@ func IsBinaryLiteral(expr Expression) bool {
 }
 
 func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
+	if sf.FuncName.L == ast.Sysdate {
+		if !sf.GetCtx().GetSessionVars().SysdateIsNow {
+			return true
+		}
+	}
 	switch sf.FuncName.L {
 	case
 		// op functions.
@@ -966,7 +971,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// string functions.
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		ast.Reverse, ast.LTrim, ast.RTrim                   /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
 
 		// json functions.

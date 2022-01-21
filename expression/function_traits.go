@@ -33,7 +33,10 @@ var UnCacheableFunctions = map[string]struct{}{
 }
 
 func getUnFoldableFunctions(sysdateIsNow bool) map[string]struct{} {
-	t := unFoldableFunctions
+	t := make(map[string]struct{}, len(unFoldableFunctions))
+	for k, v := range unFoldableFunctions {
+		t[k] = v
+	}
 	if sysdateIsNow {
 		delete(t, ast.Sysdate)
 	}
