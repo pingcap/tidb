@@ -1210,7 +1210,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
 	err := rc.storage.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		log.Debug("walk Dir", zap.String("file", path))
-		if strings.HasPrefix(path, streamBackupMetaPrefix) {
+		if strings.Contains(path, streamBackupMetaPrefix) {
 			m := &backuppb.Metadata{}
 			b, err := rc.storage.ReadFile(ctx, path)
 			if err != nil {
