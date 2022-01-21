@@ -28,7 +28,7 @@ record_case=""
 create=0
 create_case=""
 stats="s"
-disable_collation=0
+collation_opt=2
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -41,7 +41,10 @@ function help_message()
 
     -h: Print this help message.
 
-    -d: Disable the new collation during the explain test.
+    -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
+                      \"n\" or \"N\" for only disabling the new collation during test.
+                      \"b\" or \"B\" for both tests [default].
+                      Enable/Disable the new collation during the explain test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
                            eg. \"./run-tests.sh -s ./explaintest_tidb-server\"
@@ -108,7 +111,7 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:c:i:h:p:d" opt; do
+while getopts "t:s:r:b:d:c:i:h:p" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -134,6 +137,20 @@ while getopts "t:s:r:b:c:i:h:p:d" opt; do
                     ;;
             esac
             ;;
+        d)
+            case $OPTARG in
+                y|Y)
+                    collation_opt=1
+                    ;;
+                n|N)
+                    collation_opt=0
+                    ;;
+                *)
+                    help_messge 1>&2
+                    exit 1
+                    ;;
+            esac
+            ;;
         h)
             help_message
             exit 0
@@ -147,9 +164,6 @@ while getopts "t:s:r:b:c:i:h:p:d" opt; do
             ;;
         p)  
             portgenerator="$OPTARG"
-            ;;
-        d)
-            disable_collation=1
             ;;
         *)
             help_message 1>&2
@@ -222,18 +236,12 @@ done
 port=${ports[0]}
 status=${ports[1]}
 
-coll_disabled=""
-config_file=""
-if [[ disable_collation -eq 1 ]]; then
-    coll_disabled="true"
-    config_file="disable_new_collation.toml"
-else
-    coll_disabled="false"
-    config_file="config.toml"
-fi
-
 function start_tidb_server()
 {
+    config_file="config.toml"
+    if [[ $enabled_new_collation = 0 ]]; then
+        config_file="disable_new_collation.toml"
+    fi
     echo "start tidb-server, log file: $explain_test_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
@@ -247,7 +255,13 @@ function start_tidb_server()
 
 function run_explain_test()
 {
-  if [ $record -eq 1 ]; then
+    coll_disabled="false"
+    coll_msg="enabled new collation"
+    if [[ $enabled_new_collation = 0 ]]; then
+        coll_disabled="true"
+        coll_msg="disabled new collation"
+    fi
+    if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
           $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=$coll_disabled
@@ -255,7 +269,7 @@ function run_explain_test()
           echo "record result for case: \"$record_case\""
           $explain_test -port "$port" -status "$status" --record $record_case --log-level=error --collation-disable=$coll_disabled
       fi
-  elif [ $create -eq 1 ]; then
+    elif [ $create -eq 1 ]; then
       if [ "$create_case" = 'all' ]; then
           echo "create all cases"
           $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=$coll_disabled
@@ -263,14 +277,14 @@ function run_explain_test()
           echo "create result for case: \"$create_case\""
           $explain_test -port "$port" -status "$status" --create $create_case --log-level=error --collation-disable=$coll_disabled
       fi
-  else
+    else
       if [ -z "$tests" ]; then
-          echo "run all explain test cases(collation disabled: $coll_disabled)"
+          echo "run all explain test cases ($coll_msg)"
       else
-          echo "run explain test cases(collation disabled: $coll_disabled): $tests"
+          echo "run explain test cases($coll_msg): $tests"
       fi
       $explain_test -port "$port" -status "$status" --log-level=error $tests --collation-disable=$coll_disabled
-  fi
+    fi
 }
 
 function check_data_race() {
@@ -282,9 +296,24 @@ function check_data_race() {
     fi
 }
 
-start_tidb_server
-sleep 5
-run_explain_test
-kill -9 $SERVER_PID
-check_data_race
-echo "explaintest end"
+enabled_new_collation=""
+
+if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
+    enabled_new_collation=0
+    start_tidb_server
+    sleep 5
+    run_explain_test
+    kill -9 $SERVER_PID
+    check_data_race
+fi
+
+if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
+    enabled_new_collation=1
+    start_tidb_server
+    sleep 5
+    run_explain_test
+    kill -9 $SERVER_PID
+    check_data_race
+fi
+
+echo "explaintest passed!"
