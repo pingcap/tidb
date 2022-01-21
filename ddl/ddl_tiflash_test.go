@@ -561,8 +561,6 @@ func TestSetPlacementRuleFail(t *testing.T) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-	tk := testkit2.NewTestKit(t, s.store)
-
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
@@ -573,6 +571,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
 
+	tk := testkit2.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
