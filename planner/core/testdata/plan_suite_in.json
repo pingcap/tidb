@@ -776,6 +776,8 @@
       // non-broadcast join
       "set tidb_broadcast_join_threshold_count=1",
       "set tidb_broadcast_join_threshold_size=1",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
       "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
       "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
       "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
