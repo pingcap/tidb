@@ -132,7 +132,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	}
 	replaced := false
 	var args []Expression
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+	if _, ok := getUnFoldableFunctions(ctx.GetSessionVars().SysdateIsNow)[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {

@@ -1708,6 +1708,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
 
+	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
+
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)

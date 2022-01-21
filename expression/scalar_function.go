@@ -320,7 +320,7 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 // ConstItem implements Expression interface.
 func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
-	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+	if _, ok := getUnFoldableFunctions(sc.SysdateIsNow)[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {

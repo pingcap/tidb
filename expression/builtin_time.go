@@ -2069,6 +2069,9 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
+	failpoint.Inject("injectSysdate", func(val failpoint.Value) {
+		now = time.Unix(int64(val.(int)), 0)
+	})
 	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
 	if err != nil {
 		return types.ZeroTime, true, err

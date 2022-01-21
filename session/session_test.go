@@ -5975,3 +5975,26 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 }
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test01 (
+	id int(11) DEFAULT NULL,
+		emdt date DEFAULT NULL,
+		KEY dt_ind (emdt)
+	)`)
+	now := time.Now()
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSysdate", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
+
+	rows := []string{
+		"TableReader_7 3333.33 root  data:Selection_6",
+		fmt.Sprintf("└─Selection_6 3333.33 cop[tikv]  ge(test.test01.emdt, %s)", now.Format("2006-01-02 15:04:05")),
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:test01 keep order:false, stats:pseudo",
+	}
+	tk.MustQuery("explain select * from test.test01 where emdt >=sysdate();").
+		Check(testkit.Rows(rows...))
+}
