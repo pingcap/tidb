@@ -1,3 +1,7 @@
+## Structure
+
+<img src="../resources/log-backup-architecture.jpg" style="width:6.26772in;height:4.69444in" />
+
 ## Background
 
 The ability of commercial databases to handle emergencies and accidents is a basic requirement. When a disaster occurs, we must restore the database with minimal data loss and recovery time. Various factors such as exercise, recovery time, operability and operation and maintenance.
@@ -139,17 +143,19 @@ Failed to stop the task, maybe it is already stopped. Check the TiKV logs for de
        * if backup to s3, we have a separate thread push data from local storage to s3 at every 5 minutes.
     - Need a flush control when the disk is full.
 
+<img src="../resources/log-backup-data-flow.jpg" style="width:6.26772in;height:4.69444in" />
+
 * Rollback
     - The Rollbacks do the real delete in rocksdb according to the txn.
     - The Rollbacks only have the StartTS.
     - So we must apply rollback events at the end of one restore task. we must ensure that the prewrite happened before rollback.
 
 
-### **Stop**
+### Stop
 
 Stopping a task causes all collected events not yet flushed to be lost.
 
-### **Pause and Resume**
+### Pause and Resume
 
 Pausing a task will make it stop observing the TiKV changes, record the
 ResolvedTS of every involved region, and immediately flush the log files
@@ -159,7 +165,7 @@ Resuming a task is like re-subscribing to a CDC stream, like running br
 stream start «TaskName» --backupts «PrevRTS». All KVs between PrevRTS
 and current CommitTS will be scanned out and logged as a single batch.
 
-### **Output format**
+### Output format
 
 -   There are kinds of events we can send out: "BR-like" or "CDC-like".
     -   "BR-like" generates events below the MVCC/Percolator abstraction, and is closer to BR's SST format with content like
@@ -210,7 +216,7 @@ message DataFileInfo {
     // The region of the file.
     int64 region_id = 7;
     // The key range of the file.
-    // Encoded and starts with 'z'(internal key).
+    // Encoded.
     bytes start_key = 8;
     bytes end_key = 9;
     // The column family of the file.
@@ -287,3 +293,167 @@ $ br stream merge \
 
 The "merge" operation performs an offline compaction. It applies the KV events on top of an existing snapshot, and produces a new set of SST files.
 
+### Error scenarios
+
+#### Scaling out
+
+If BR (or TiDB API) directly sends the tasks to TiKV services (i.e.
+"push-based interface"), when we add new TiKV stores they will not know
+there is a backup task, causing information loss.
+
+I think this suggests that either
+
+-   There has to be some kind of "BR-stream-master" (like DM-master or CDC-master) which maintains the task list and push it to any new members, or
+-   The task list should be stored on etcd / PD and every TiKV uses [<u>Watch</u>](https://etcd.io/docs/v3.5/tutorials/how-to-watch-keys/) to pull new tasks.
+
+I very much prefer the stateless, pull-based approach, but afaik TiKV
+has never introduced any etcdv3 dependency before (TiDB o.t.o.h. uses
+etcdv3 extensively, esp in DDL sync).
+
+(Since TiKV itself is also a KV store, we could as well use RawKV in a
+non-watched keyspace to share the task list. But it seems CDC *is*
+TiKV's Watch 🤔)
+
+#### Crashing
+
+After a TiKV store has successfully uploaded content to external
+storage, it should report to the master / etcdv3 / S3 like "in task T,
+in store 8, in region 432, we have backed up until TS=123456789".
+
+In case of a crash, the new leader of region 432 should initialize
+itself from this progress report, and start scanning from TS=123456789
+rather than TS=0 or Now().
+
+This also means there is a communication cost of fetching the initial
+TS.
+
+Because we need to ensure everything in the TS range 123456789..Now()
+are intact, we have to extend the GC lifetime to include 123456789.
+Setting a GC safepoint has a global effect, however, whereas we only
+want to prevent GC from happening in this particular region. Therefore,
+we'd like to instead change the [<u>gc\_worker.rs</u> <u>implementation
+in
+TiKV</u>](https://github.com/tikv/tikv/blob/5552758d277b0ab2761deb88c9a82525ecac8980/src/server/gc_worker/gc_worker.rs#L224).
+A keyrange can indicate if it is ready to be GC'ed. If a leader has just
+been elected for &lt; 5 minutes, we indicate the region as not-GC-ready.
+
+#### Network partition
+
+Consider split-brain, where a region's peers are split into two groups
+(say <u>1</u>,2,3 / 3,4,<u>5</u>) and both sides have leader (<u>1</u>,
+<u>5</u>), and both leaders do back up (inconsistent) data to S3. Raft
+should be able to avoid this, the bridge node (3) being aware of both
+sides should prevent any modification (Put/Delete) on one side from
+taking place and thus the back up can never diverge. So this is
+equivalent to a normal partition where the minority side is considered
+dead (<u>1</u>,2,3 / <s>4,5</s>).
+
+### Task management
+
+As stated above we need a place reachable from all TiKVs to store the
+task status.
+
+**Starting task**
+
+BR pushes these keys:
+
+-   TaskInfo:(task\_name) → ( all info about the task )
+
+TiKV, on initialization, scans for every KV in the keyspace TaskInfo:
+to learn what backup tasks have been scheduled. After it is done, TiKV
+watches the keyspace for any new tasks.
+
+When a new task is seen by TiKV, and the task's end\_ts &gt;
+current\_ts, it will do
+
+```rust
+for region in self.regions {
+    if self.is_leader(region.id) {
+        put!(
+            "NextBackupTS:({task.name}, {self.store_id}, {region_id})",
+            task.start_ts,
+        );
+    }
+}
+```
+
+Stop the task if end\_ts &lt;= current\_ts.
+
+**Stopping task**
+
+Delete the TaskInfo key. Watcher should be able to do cleanup.
+
+**Configurating, resuming and pausing task**
+
+Update the TaskInfo key. The KV API is equivalent to starting a task.
+Pausing changes the --start-ts to the last key's CommitTS, and set
+"paused" to true. Resuming restores "paused" to false.
+
+**Initialization, leader change and region split/merge**
+
+For every new region, we assume all keys between NextBackupTS:\* to the
+current TS is not yet backed up. So we initiate a full scan on the
+region for CommitTS between these two numbers.
+
+**Flushing**
+
+For every region which this store is still a leader of, update
+NextBackupTS:\* to the ResolvedTS of the region.
+
+**Risks**
+
+-   Still need to sort out all potential crash scenarios
+-   Scanning TxnEntry after changing leaders, no matter when it happened, may reduce the cluster's performance.
+-   Events such as "DeleteRange" and "IngestSST" are not handled.
+-   Should we backup lockcf
+-   How to deal with Rollback (esp across 5min point)
+    -   may lead to dangling default cf entries if the KVDelete is not handled
+    -   in some scenarios there may be a lot of rollbacks?
+    -   The Rollback key will carry start ts. For each key with start ts we need to ensure the delete happened after the put.
+
+**Alternatives & Rationale**
+
+**Scanning RaftDB**
+
+Since all modifications must go through Raft consensus, we can capture
+the changes on RaftDB instead of TiKVDB for the incremental changes. We
+can even physically copy the WAL file to minimize computation. Another
+advantage of scanning RaftDB is that, if we want to batch copy events
+between two timestamps (e.g. after changing leader), we don't need to
+scan the entire region key space, but just those entries indexed by TS.
+
+In fact, TiCDC also considered this approach. It was eventually
+abandoned, however, due to the difficulty of actually utilizing the raft
+log. Given the previous failure, we will not attempt to touch the raft
+log unless the TxnEntry scan proved to have a really bad effect on
+performance.
+
+-   Scan the raft log directly. The current raftstore implementation needs to be adjusted, such as raft log gc. In addition, it is also necessary to ensure that the scan is performed during the leader’s lifetime, otherwise the complete data may not be seen.
+
+-   Also need to pay attention to region epoch check, raft log commit != apply successfully
+
+-   To support the interpretation of raftlog, I think I need to implement most of the logic of raftstore now, especially some operations such as split/merge/conf change. Due to the existence of these operations, the original total order raft log in a region has a sloping relationship between different regions. I think it is not easy to solve. This is also the reason why cdc did not use raftlog or wal at the time.
+
+**Trivia**
+
+-   CDC only observes leaders.
+-   The tikv\_gc\_leader\_lease entry in mysql.tidb table is updated every few seconds (also tikv\_gc\_last\_run\_time every 10 minutes).
+    -   The backup procedure must skip the key ranges of system schemas otherwise the backup storage is littered with irrelevant changes.
+    -   Rolling upgrades can introduce new system tables, so it is probably insufficient to tell TiKV to “skip this key range” on start. It has to be maintained
+
+-   There are 1PC and 2PC transactions. We may need to reuse the CDC / binlog sorter during restore for the 2PC transactions.
+    -   1PC:
+        -   {type=Committed/Initialized, start\_ts=X, commit\_ts=X+1, op\_type=Put/Delete, key=K, value=V}
+    -   2PC:
+        -   {type=Prewrite, start\_ts=X, commit\_ts=0, op\_type=Put/Delete, key=K, value=V} × N
+        -   {type=Commit, start\_ts=X, commit\_ts=Y, op\_type=Put/Delete, key=K, value=nil} × N
+-   The transactions are reconstructed from MVCC (percolator) in cdc::Delegate::sink\_data. Originally a CmdObserver&lt;E> impl defines a callback receiving Vec&lt;CmdBatch> which is isomorphic to Vec&lt;Vec&lt;Cmd>&gt; which is isomorphic to Vec&lt;Vec&lt;(RaftCmdRequest, RaftCmdResponse)>&gt; which is isomorphic to Vec&lt;Vec&lt;Vec&lt;(raftcmd\_pb::Request, raftcmd\_pb::Response)>&gt;&gt;. The Request/Response can be:
+    -   <s>Get(cf, key) → value</s>
+    -   Put(cf, key, value) → ()
+    -   Delete(cf, key) → ()
+    -   <s>Snap() → region</s>
+    -   Prewrite(key, value, lock) → ()
+    -   DeleteRange(cf, start\_key..end\_key, notify\_only) → ()
+    -   IngestSST(sst) → ()
+    -   <s>[<u>ReadIndex</u>](https://github.com/tikv/rfcs/blob/master/text/0014-consistent-replica-read.md)(start\_ts, key\_ranges) → (read\_index, locked)</s>
+-   CDC only handles the Put and Delete commands on the "write", "lock" and "default" CFs, reconstructing MVCC.
