@@ -809,6 +809,7 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefSysdateIsNow                       = false
 )
 
 // Process global variables.
@@ -842,4 +843,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	SysdateIsNow                          = atomic.NewBool(DefSysdateIsNow)
 )

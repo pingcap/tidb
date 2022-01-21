@@ -1001,6 +1001,9 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

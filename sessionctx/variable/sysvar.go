@@ -395,9 +395,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(DefOptLimitPushDownThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-			s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
-			return nil
-		}},
+		s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 		return nil
@@ -1375,6 +1375,19 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SysdateIsNow = TiDBOptOn(s)
+			return nil
+		},
+		GetGlobal: func(vars *SessionVars) (s string, err error) {
+			return strconv.FormatBool(SysdateIsNow.Load()), nil
+		},
+		SetGlobal: func(vars *SessionVars, s string) error {
+			SysdateIsNow.Store(TiDBOptOn(s))
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1684,4 +1697,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// TiDBSysdateIsNow is the name of the `sysdate_is_now` system variable
+	TiDBSysdateIsNow = "sysdate_is_now"
 )
