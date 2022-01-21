@@ -17,13 +17,13 @@ package property
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tipb/go-tipb"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
