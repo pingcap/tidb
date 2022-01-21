@@ -381,3 +381,38 @@ func TestDumpVer2Stats(t *testing.T) {
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
 	requireTableEqual(t, statsCacheTbl, loadTbl)
 }
+
+func TestJSONTableToBlocks(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	// mark column stats as needed
+	tk.MustExec("select * from t where a = 3")
+	tk.MustExec("select * from t where b = 'bbb'")
+	tk.MustExec("alter table t add index single(a)")
+	tk.MustExec("alter table t add index multi(a, b)")
+	tk.MustExec("analyze table t with 2 topn")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+	jsOrigin, _ := json.Marshal(dumpJSONTable)
+
+	blockSize := 30
+	js, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+	dumpJSONBlocks, err := handle.JSONTableToBlocks(js, blockSize)
+	require.NoError(t, err)
+	jsConverted, err := handle.BlocksToJSONTable(dumpJSONBlocks)
+	require.NoError(t, err)
+	jsonStr, err := json.Marshal(jsConverted)
+	require.NoError(t, err)
+	require.JSONEq(t, string(jsOrigin), string(jsonStr))
+}
