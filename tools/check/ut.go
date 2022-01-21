@@ -378,6 +378,7 @@ func main() {
 		case "run":
 			isSucceed = cmdRun(os.Args[2:]...)
 		default:
+			fmt.Println(os.Args)
 			isSucceed = usage()
 		}
 		if !isSucceed {
