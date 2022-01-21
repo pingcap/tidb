@@ -2788,6 +2788,254 @@
           "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
+        "Plan": [
+          "TableReader 1.25 root  data:ExchangeSender",
+          "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#9)]",
+          "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 batchCop[tiflash]  Column#9",
+          "    │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9",
+          "    │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+        "Plan": [
+          "TableReader 1.25 root  data:ExchangeSender",
+          "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.25 batchCop[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
+          "      ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "      │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "      │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "      │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "      │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "      │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "      │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 1.00 batchCop[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
+          "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "    │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 1.00 batchCop[tiflash]  Column#10",
+          "      └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#10",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "    │     └─TableFullScan 10000.00 cop[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 8000.00 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "      │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 batchCop[tiflash]  Column#5, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: N/A]",
+          "      │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#27, funcs:count(Column#25)->Column#14, funcs:firstrow(Column#26)->Column#15",
+          "      │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
+          "      │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
+          "    │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 batchCop[tiflash]  Column#9, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: N/A]",
+          "    │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#27, funcs:count(Column#25)->Column#14, funcs:firstrow(Column#26)->Column#15",
+          "    │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
+          "    │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+        "Plan": [
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 6400.00 batchCop[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "    │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 batchCop[tiflash]  Column#5, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#17, funcs:sum(Column#18)->Column#5, funcs:firstrow(Column#19)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#17, collate: N/A]",
+          "    │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#18, funcs:firstrow(Column#42)->Column#19",
+          "    │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#43",
+          "    │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
+          "      └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "        └─Projection 8000.00 batchCop[tiflash]  Column#11, test.employee.deptid",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#20, funcs:sum(Column#21)->Column#11, funcs:firstrow(Column#22)->test.employee.deptid",
+          "            └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "              └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#20, collate: N/A]",
+          "                └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#46, funcs:count(Column#44)->Column#21, funcs:firstrow(Column#45)->Column#22",
+          "                  └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#46",
+          "                    └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set tidb_broadcast_join_threshold_count=1",
+        "Plan": null
+      },
+      {
+        "SQL": "set tidb_broadcast_join_threshold_size=1",
+        "Plan": null
+      },
+      {
+        "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "    │     └─TableFullScan 10000.00 cop[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 cop[tiflash]  ",
+          "      └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "        └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 8000.00 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: N/A]",
+          "      │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "      │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 batchCop[tiflash]  Column#5, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: N/A]",
+          "      │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "      │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#29",
+          "      │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#26, collate: N/A]",
+          "          └─Projection 9990.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "            └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9",
+          "    └─HashJoin 8000.00 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#10, collate: N/A]",
+          "      │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
+          "      │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 batchCop[tiflash]  Column#9, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: N/A]",
+          "      │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "      │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#29",
+          "      │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 9990.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#26, collate: N/A]",
+          "          └─Projection 9990.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "            └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+        "Plan": [
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 6400.00 batchCop[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: N/A]",
+          "    │   └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "    │     └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 batchCop[tiflash]  Column#5, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#17, funcs:sum(Column#18)->Column#5, funcs:firstrow(Column#19)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#17, collate: N/A]",
+          "    │               └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#18, funcs:firstrow(Column#42)->Column#19",
+          "    │                 └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#43",
+          "    │                   └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 6400.00 batchCop[tiflash]  ",
+          "      └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: N/A]",
+          "        └─Projection 6400.00 batchCop[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
+          "          └─Selection 6400.00 batchCop[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "            └─Projection 8000.00 batchCop[tiflash]  Column#11, test.employee.deptid",
+          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#20, funcs:sum(Column#21)->Column#11, funcs:firstrow(Column#22)->test.employee.deptid",
+          "                └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#20, collate: N/A]",
+          "                    └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#46, funcs:count(Column#44)->Column#21, funcs:firstrow(Column#45)->Column#22",
+          "                      └─Projection 10000.00 batchCop[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#46",
+          "                        └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

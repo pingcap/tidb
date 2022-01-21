@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -2074,6 +2075,13 @@ func (s *testPlanSuite) TestMPPPassThroughType(c *C) {
 	}
 
 	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+		})
+		if strings.HasPrefix(ts, "set") {
+			tk.MustExec(ts)
+			continue
+		}
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
