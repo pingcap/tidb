@@ -110,7 +110,7 @@ test_part_br: br_unit_test br_integration_test
 test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
 explaintest: server_check
-	@cd cmd/explaintest; ./run-tests.sh -s ../../bin/tidb-server
+	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
