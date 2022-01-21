@@ -125,7 +125,7 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-ut: failpoint-enable tools/bin/ut
+ut: failpoint-enable tools/bin/ut tools/bin/xprog
 	tools/bin/ut $(X);
 	@$(FAILPOINT_DISABLE)
 
@@ -215,6 +215,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
 	$(GO) build -o ../bin/ut ut.go
+
+tools/bin/xprog: tools/check/xprog.go
+	cd tools/check; \
+	$(GO) build -o ../bin/xprog xprog.go
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
