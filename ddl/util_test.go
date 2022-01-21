@@ -18,8 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -28,11 +28,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *model.TableInfo {
+func testTableInfoWith2IndexOnFirstColumn(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
 	normalInfo, err := testTableInfo(d, name, num)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	idxs := make([]*model.IndexInfo, 0, 2)
 	for i := range idxs {
 		idx := &model.IndexInfo{
@@ -79,11 +80,11 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 }
 
 // testTableInfoWithPartition creates a test table with num int columns and with no index.
-func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
+func testTableInfoWithPartition(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo, err := testTableInfo(d, name, num)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pid := genIDs[0]
 	tblInfo.Partition = &model.PartitionInfo{
 		Type:   model.PartitionTypeRange,
@@ -100,15 +101,15 @@ func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.Table
 }
 
 // testTableInfoWithPartitionLessThan creates a test table with num int columns and one partition specified with lessthan.
-func testTableInfoWithPartitionLessThan(c *C, d *ddl, name string, num int, lessthan string) *model.TableInfo {
-	tblInfo := testTableInfoWithPartition(c, d, name, num)
+func testTableInfoWithPartitionLessThan(t *testing.T, d *ddl, name string, num int, lessthan string) *model.TableInfo {
+	tblInfo := testTableInfoWithPartition(t, d, name, num)
 	tblInfo.Partition.Definitions[0].LessThan = []string{lessthan}
 	return tblInfo
 }
 
-func testAddedNewTablePartitionInfo(c *C, d *ddl, tblInfo *model.TableInfo, partName, lessthan string) *model.PartitionInfo {
+func testAddedNewTablePartitionInfo(t *testing.T, d *ddl, tblInfo *model.TableInfo, partName, lessthan string) *model.PartitionInfo {
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pid := genIDs[0]
 	// the new added partition should change the partition state to state none at the beginning.
 	return &model.PartitionInfo{
@@ -124,12 +125,12 @@ func testAddedNewTablePartitionInfo(c *C, d *ddl, tblInfo *model.TableInfo, part
 }
 
 // testViewInfo creates a test view with num int columns.
-func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
+func testViewInfo(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
@@ -160,7 +161,7 @@ func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -169,16 +170,16 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		Args:       []interface{}{tblInfo},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
 
-func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateView(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -187,18 +188,18 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		Args:       []interface{}{tblInfo, false, 0},
 	}
 
-	c.Assert(tblInfo.IsView(), IsTrue)
+	require.True(t, tblInfo.IsView())
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
 
-func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -206,41 +207,41 @@ func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+func testCheckTableState(test *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
-		c.Assert(err, IsNil)
+		require.NoError(test, err)
 
 		if state == model.StateNone {
-			c.Assert(info, IsNil)
+			require.NoError(test, err)
 			return nil
 		}
 
-		c.Assert(info.Name, DeepEquals, tblInfo.Name)
-		c.Assert(info.State, Equals, state)
+		require.Equal(test, info.Name, tblInfo.Name)
+		require.Equal(test, info.State, state)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(test, err)
 }
 
-func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
+func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Table {
 	tbl, err := testGetTableWithError(d, schemaID, tableID)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return tbl
 }
 
 // for drop indexes
-func createTestTableForDropIndexes(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
+func createTestTableForDropIndexes(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
 	tableInfo, err := testTableInfo(d, name, num)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	var idxs []*model.IndexInfo
 	for i := 0; i < num; i++ {
 		idxName := model.NewCIStr(fmt.Sprintf("i%d", i+1))
@@ -252,6 +253,6 @@ func createTestTableForDropIndexes(c *C, ctx sessionctx.Context, d *ddl, dbInfo 
 		idxs = append(idxs, idx)
 	}
 	tableInfo.Indices = idxs
-	testCreateTable(c, ctx, d, dbInfo, tableInfo)
+	testCreateTable(t, ctx, d, dbInfo, tableInfo)
 	return tableInfo
 }
