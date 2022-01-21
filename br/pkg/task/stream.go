@@ -655,7 +655,8 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 	if len(metas) == 0 {
-		return errors.New("nothing to restore.")
+		log.Info("nothing to restore.")
+		return nil
 	}
 	// read data file by given ts.
 	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
