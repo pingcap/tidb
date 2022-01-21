@@ -133,6 +133,7 @@ devgotest: failpoint-enable
 
 ut: failpoint-enable tools/bin/xprog tools/bin/ut
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
 gotest: failpoint-enable
 	@echo "Running in native mode."
