@@ -620,9 +620,9 @@ func buildTestBinaryMulti(pkgs []string) error {
 
 	var cmd *exec.Cmd
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off")
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
 	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off")
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir
