@@ -469,9 +469,10 @@ func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows
 	for _, row := range rows {
 		fields := strings.Split(row, " ")
 		_, err = fp.WriteString(strings.Join(fields, "\t"))
+		require.NoError(t, err)
 		_, err = fp.WriteString("\n")
+		require.NoError(t, err)
 	}
-	require.NoError(t, err)
 	require.NoError(t, fp.Sync())
 }
 
