@@ -22,3 +22,25 @@ coercibility(a)	coercibility(b)	coercibility(c)	coercibility(d)	coercibility(e)	
 select collation(d), collation(upper(d)), collation(elt(1, d, 0x12)), collation(elt(1, elt(1, d, 0x12), 0x12)), collation(elt(1, d, b)) from t;
 collation(d)	collation(upper(d))	collation(elt(1, d, 0x12))	collation(elt(1, elt(1, d, 0x12), 0x12))	collation(elt(1, d, b))
 binary	utf8mb4_bin	utf8mb4_bin	utf8mb4_bin	binary
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (
+id INT NOT NULL PRIMARY KEY auto_increment,
+`col_91` char(47) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL,
+`col_92` int(10) unsigned DEFAULT '2478966067',
+`col_97` char(32) COLLATE utf8mb4_bin NOT NULL
+) collate utf8mb4_general_ci;
+INSERT INTO `t2` VALUES (17,'UUtJeaV',497551109,'snRXXCZHBPW');
+SET names utf8mb4 collate utf8mb4_bin;
+SELECT greatest( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+snRXXCZHBPW
+SELECT least( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+UUtJeaV
+SET names utf8mb4 collate utf8mb4_general_ci;
+SELECT greatest( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+snRXXCZHBPW
+SELECT least( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+UUtJeaV

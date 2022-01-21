@@ -527,7 +527,7 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
-				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In,
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
 				newConstString("a", CoercibilityCoercible, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
