@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SubTestDomainSession is batched in TestDomainSerial
-func SubTestDomainSession(t *testing.T) {
+// TestDomainSession is batched in TestDomainSerial
+func TestDomainSession(t *testing.T) {
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

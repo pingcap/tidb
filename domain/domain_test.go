@@ -45,8 +45,8 @@ import (
 	"go.etcd.io/etcd/integration"
 )
 
-// SubTestInfo is batched in TestDomainSerial
-func SubTestInfo(t *testing.T) {
+// TestInfo is batched in TestDomainSerial
+func TestInfo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -154,8 +154,8 @@ func SubTestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement"))
 }
 
-// SubTestDomain is batched in TestDomainSerial
-func SubTestDomain(t *testing.T) {
+// TestDomain is batched in TestDomainSerial
+func TestDomain(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
