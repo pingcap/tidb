@@ -27,7 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"regexp"
+	// "regexp"
 	"encoding/xml"
 
 	// Set the correct when it runs inside docker.
@@ -139,14 +139,12 @@ func cmdBuild(args ...string) bool {
 
 	// build all packages
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
 		}
-		return true
+
 	}
 
 	// build test binary of a single package
@@ -172,14 +170,13 @@ func cmdRun(args ...string) bool {
 	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			fmt.Println("handling package", pkg)
-			// err := buildTestBinary(pkg)
-			// if err != nil {
-			// 	fmt.Println("build package error", pkg, err)
-			// 	return false
-			// }
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
+		}
 
+		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
 				fmt.Println("check test binary existance error", err)
@@ -200,20 +197,20 @@ func cmdRun(args ...string) bool {
 
 	// run tests for packages
 	if len(args) == 1 {
-		re, err := regexp.Compile(args[0])
-		if err != nil {
-			fmt.Println("compile regexp error for", args[0])
-		}
+		// re, err := regexp.Compile(args[0])
+		// if err != nil {
+		// 	fmt.Println("compile regexp error for", args[0])
+		// }
 
 		for _, pkg := range pkgs {
-			if !re.MatchString(pkg) {
-				continue
-			}
-			// err := buildTestBinary(pkg)
-			// if err != nil {
-			// 	fmt.Println("build package error", pkg, err)
-			// 	return false
+			// if !re.MatchString(pkg) {
+			// 	continue
 			// }
+			err := buildTestBinary(pkg)
+			if err != nil {
+				fmt.Println("build package error", pkg, err)
+				return false
+			}
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
 				fmt.Println("check test binary existance error", err)
@@ -601,6 +598,31 @@ func buildTestBinary(pkg string) error {
 		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	}
 	cmd.Dir = path.Join(workDir, pkg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
+}
+
+// buildTestBinaryMulti is much faster than build the test packages one by one.
+func buildTestBinaryMulti(pkgs []string) error {
+	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	packages := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		packages = append(packages, path.Join(modulePath, pkg))
+	}
+
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off")
+	} else {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off")
+	}
+	cmd.Args = append(cmd.Args, packages...)
+	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

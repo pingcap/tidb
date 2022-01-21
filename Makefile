@@ -125,24 +125,21 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-build_test_binary: tools/bin/xprog failpoint-enable
-	@echo "building test binary"
-	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off --count=0 $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-ut: tools/bin/ut build_test_binary
-	@echo "Running ut."
-	@mkdir -p $(TEST_COVERAGE_DIR)
-	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" $(X) || { $(FAILPOINT_DISABLE); exit 1; }
-
-# gotest: failpoint-enable
-# 	@echo "Running in native mode."
-# 	@export log_level=info; export TZ='Asia/Shanghai'; \
-# 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS_WITHOUT_BR) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+# build_test_binary: tools/bin/xprog failpoint-enable
+# 	@echo "building test binary"
+# 	@export TZ='Asia/Shanghai'; \
+# 	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off --count=0 $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
 # 	@$(FAILPOINT_DISABLE)
 
-gotest_in_verify_ci: ut
+ut: failpoint-enable tools/bin/xprog tools/bin/ut
+	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci: failpoint-enable tools/bin/xprog tools/bin/ut
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
 
 # gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
 # 	@echo "Running gotest_in_verify_ci"
