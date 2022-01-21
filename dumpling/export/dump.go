@@ -253,7 +253,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return err
 		}
 	} else {
-		d.dumpSQL(writerCtx, metaConn, taskChan)
+		d.dumpSQL(writerCtx, baseConn, taskChan)
 	}
 	close(taskChan)
 	_ = baseConn.DBConn.Close()
@@ -1158,7 +1158,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 	return meta, nil
 }
 
-func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *sql.Conn, taskChan chan<- Task) {
+func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan chan<- Task) {
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
