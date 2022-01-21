@@ -923,6 +923,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 			iter = nil
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
+		pkVals = pkVals[:0]
 		buf.Reset()
 	}, query)
 	if err == nil && iter != nil && iter.Error() != nil {
