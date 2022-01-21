@@ -439,15 +439,18 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	// There are no region in this TiFlash store.
 	resp1 := "0\n\n"
 	// There are one region 1009 in this TiFlash store.
-	resp2 := "1\n1009\n"
+	resp2 := "1\n1009 1010 \n"
 	br1 := bufio.NewReader(strings.NewReader(resp1))
 	br2 := bufio.NewReader(strings.NewReader(resp2))
 	err := helper.ComputeTiFlashStatus(br1, &regionReplica)
 	require.NoError(t, err)
 	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
 	require.NoError(t, err)
-	require.Equal(t, len(regionReplica), 1)
+	require.Equal(t, len(regionReplica), 2)
 	v, ok := regionReplica[1009]
+	require.Equal(t, v, 1)
+	require.Equal(t, ok, true)
+	v, ok = regionReplica[1010]
 	require.Equal(t, v, 1)
 	require.Equal(t, ok, true)
 }
