@@ -22,7 +22,6 @@ import (
 
 var GetBootstrapVersion = getBootstrapVersion
 var CurrentBootstrapVersion = currentBootstrapVersion
-var UnsetStoreBootstrapped = unsetStoreBootstrapped
 
 func TestIndexUsageSyncLease(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
