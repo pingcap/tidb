@@ -230,10 +230,10 @@ func TestFailSchemaSyncer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	defer tk.MustExec("drop table if exists t")
-	originalRetryTimes := domain.SchemaOutOfDateRetryTimes
-	domain.SchemaOutOfDateRetryTimes = 1
+	originalRetryTimes := domain.SchemaOutOfDateRetryTimes.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(1)
 	defer func() {
-		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
 	require.True(t, s.dom.SchemaValidator.IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
