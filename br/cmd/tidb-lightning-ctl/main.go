@@ -254,7 +254,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	}
 	defer cpdb.Close()
 
-	if err := os.MkdirAll(dumpFolder, 0o755); err != nil {
+	if err := os.MkdirAll(dumpFolder, 0o750); err != nil {
 		return errors.Trace(err)
 	}
 

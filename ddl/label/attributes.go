@@ -136,7 +136,7 @@ func (labels *Labels) Add(label Label) error {
 		}
 		s1 := label.Restore()
 		s2 := l.Restore()
-		return fmt.Errorf("%w: '%s' and '%s'", ErrConflictingAttributes, s1, s2)
+		return fmt.Errorf("'%s' and '%s' are conflicted", s1, s2)
 	}
 
 	*labels = append(*labels, label)

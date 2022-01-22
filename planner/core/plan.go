@@ -66,6 +66,8 @@ type Plan interface {
 	SetOutputNames(names types.NameSlice)
 
 	SelectBlockOffset() int
+
+	buildPlanTrace() *tracing.PlanTrace
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -316,9 +318,6 @@ type LogicalPlan interface {
 
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
-
-	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -389,15 +388,6 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 // ExplainInfo implements Plan interface.
 func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
-}
-
-// buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
-	}
-	return planTrace
 }
 
 type basePhysicalPlan struct {
@@ -720,4 +710,28 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
+}
+
+// buildPlanTrace implements Plan
+func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
+	return planTrace
 }

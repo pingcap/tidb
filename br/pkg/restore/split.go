@@ -303,7 +303,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 		for _, region := range newRegionSet {
 			err := rs.client.ScatterRegion(ctx, region)
 			if err == nil {
-				// it is safe accroding to the Go language spec.
+				// it is safe according to the Go language spec.
 				delete(newRegionSet, region.Region.Id)
 			} else if !pdErrorCanRetry(err) {
 				log.Warn("scatter meet error cannot be retried, skipping",
@@ -322,7 +322,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			logutil.ShortError(err),
 			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
 				m := i.(map[uint64]*RegionInfo)
-				result := make([]string, len(m))
+				result := make([]string, 0, len(m))
 				for id := range m {
 					result = append(result, strconv.Itoa(int(id)))
 				}

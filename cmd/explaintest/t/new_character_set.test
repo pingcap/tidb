@@ -56,3 +56,15 @@ insert into t values (0x61, '啊');
 insert into t values (0x61, '一');
 set names gbk;
 select * from t;
+
+drop table t;
+set names gbk;
+set character_set_connection = utf8mb4;
+create table t(j json, b blob, s1 varchar(255) collate binary, s2 varchar(255), st set('{"点赞": "你好"}'), en enum('{"点赞": "你好"}'));
+insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}');
+select * from t;
+
+set names utf8mb4;
+set @@character_set_client=gbk;
+set @@character_set_connection=gbk;
+select hex('一a'), '一a';

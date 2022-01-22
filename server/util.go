@@ -281,7 +281,9 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 			d.updateDataEncoding(columns[i].Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(columns[i].Charset)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
@@ -370,6 +372,11 @@ func (d *resultEncoder) encodeMeta(src []byte) []byte {
 // encodeData encodes bytes for row data.
 // Note that the result should be consumed immediately.
 func (d *resultEncoder) encodeData(src []byte) []byte {
+	// For the following cases, TiDB encodes the results with column charset
+	// instead of @@character_set_results:
+	//   - @@character_set_result = null.
+	//   - @@character_set_result = binary.
+	//   - The column is binary type like blob, binary char/varchar.
 	if d.isNull || d.isBinary || d.dataIsBinary {
 		// Use the column charset to encode.
 		return d.encodeWith(src, d.dataEncoding)
@@ -447,7 +454,9 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 			d.updateDataEncoding(col.Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(col.Charset)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
