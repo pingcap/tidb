@@ -35,7 +35,7 @@ import (
 // This test file have many problem.
 // 1. Please use testkit to create dom, session and store.
 // 2. Don't use createStoreAndBootstrap and BootstrapSession together. It will cause data race.
-// Please do not add any test here. You can add test case at the update_test.go. After All problem fixed,
+// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
 // We will overwrite this file by update_test.go.
 func TestBootstrap(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
