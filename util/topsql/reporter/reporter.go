@@ -169,16 +169,18 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
 	currentReportInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
-	collectTicker := time.NewTicker(time.Second)
-	defer collectTicker.Stop()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	defer reportTicker.Stop()
 	for {
 		select {
 		case <-tsr.ctx.Done():
 			return
-		case <-collectTicker.C:
-			tsr.takeDataFromCollectChanBuffer()
+		case data := <-tsr.collectCPUTimeChan:
+			timestamp := uint64(nowFunc().Unix())
+			tsr.processCPUTimeData(timestamp, data)
+		case data := <-tsr.collectStmtStatsChan:
+			timestamp := uint64(nowFunc().Unix())
+			tsr.stmtStatsBuffer[timestamp] = data
 		case <-reportTicker.C:
 			tsr.processStmtStatsData()
 			tsr.takeDataAndSendToReportChan()
@@ -234,20 +236,6 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
-}
-
-func (tsr *RemoteTopSQLReporter) takeDataFromCollectChanBuffer() {
-	timestamp := uint64(nowFunc().Unix())
-	for {
-		select {
-		case data := <-tsr.collectCPUTimeChan:
-			tsr.processCPUTimeData(timestamp, data)
-		case data := <-tsr.collectStmtStatsChan:
-			tsr.stmtStatsBuffer[timestamp] = data
-		default:
-			return
-		}
-	}
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.

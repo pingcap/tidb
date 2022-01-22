@@ -707,40 +707,26 @@ func TestCaptureBaselinesScope(t *testing.T) {
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines OFF",
 	))
-	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
-	))
 	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
 		"0",
 	))
 
-	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
+	tk1.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
+		tk1.MustExec(" set GLOBAL tidb_capture_plan_baselines = off")
 	}()
-	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+
+	tk1.MustQuery(`show variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines ON",
 	))
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"1",
-	))
-	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
-	))
-	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines ON",
 	))
 	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"1",
+		"tidb_capture_plan_baselines ON",
 	))
 	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
+		"1",
 	))
 }
 

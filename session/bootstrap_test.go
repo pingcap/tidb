@@ -527,8 +527,6 @@ func TestStmtSummary(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-	mustExec(t, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	writeStmtSummaryVars(se)
 
 	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
@@ -771,13 +769,12 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err = getBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExec(t, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
 			row := req.GetRow(0)
 			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
-			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(1))
 		}()
 	}
 }
@@ -825,6 +822,40 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
+}
+
+func TestUpgradeVersion83(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	domV83, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV83.Close()
+	seV83 := createSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seV83)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	statsHistoryTblFields := []struct {
+		field string
+		tp    string
+	}{
+		{"table_id", "bigint(64)"},
+		{"stats_data", "longblob"},
+		{"seq_no", "bigint(64)"},
+		{"version", "bigint(64)"},
+		{"create_time", "datetime(6)"},
+	}
+	rStatsHistoryTbl := mustExec(t, seV83, `desc mysql.stats_history`)
+	req := rStatsHistoryTbl.NewChunk(nil)
+	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
+	require.Equal(t, 5, req.NumRows())
+	for i := 0; i < 5; i++ {
+		row := req.GetRow(i)
+		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
+		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
+	}
 }
 
 func TestForIssue23387(t *testing.T) {

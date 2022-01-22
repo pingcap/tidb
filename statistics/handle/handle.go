@@ -226,7 +226,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.workingColMap = map[model.TableColumnID][]chan model.TableColumnID{}
+	handle.StatsLoad.WorkingColMap = map[model.TableColumnID][]chan model.TableColumnID{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -1943,4 +1943,55 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 		}
 	}
 	return columnIDs, nil
+}
+
+// Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
+const maxColumnSize = 6 << 20
+
+// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
+	ctx := context.Background()
+	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	version := uint64(0)
+	for _, value := range js.Columns {
+		version = uint64(*value.StatsVer)
+		if version != 0 {
+			break
+		}
+	}
+	blocks, err := JSONTableToBlocks(js, maxColumnSize)
+	if err != nil {
+		return version, errors.Trace(err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return version, errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	ts := time.Now().Format("2006-01-02 15:04:05.999999")
+
+	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	for i := 0; i < len(blocks); i++ {
+		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, ts); err != nil {
+			return version, errors.Trace(err)
+		}
+	}
+	return version, nil
+}
+
+// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
+func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return variable.TiDBOptOn(val), nil
 }
