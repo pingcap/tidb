@@ -2218,8 +2218,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(d.callHookOnChanged(err))
 	}
 
-	for j := range infos {
-		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
+	for j := range args {
+		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}
 	}
