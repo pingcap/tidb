@@ -116,10 +116,6 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialFilters []bool
 	isCorColInTableFilter    bool
 	isCorColInPartialAccess  []bool
-
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column
-	// in static tidb_partition_prune_mode
-	extraPIDColumnIndex offsetOptional
 }
 
 // Open implements the Executor Open interface
@@ -603,17 +599,16 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ Executor, err error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
-		table:               tbl,
-		dagPB:               e.tableRequest,
-		startTS:             e.startTS,
-		readReplicaScope:    e.readReplicaScope,
-		isStaleness:         e.isStaleness,
-		streaming:           e.tableStreaming,
-		columns:             e.columns,
-		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:               e.tblPlans,
-		extraPIDColumnIndex: e.extraPIDColumnIndex,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
+		table:            tbl,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		streaming:        e.tableStreaming,
+		columns:          e.columns,
+		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+		plans:            e.tblPlans,
 	}
 	if e.isCorColInTableFilter {
 		if tableReaderExec.dagPB.Executors, _, err = constructDistExec(e.ctx, e.tblPlans); err != nil {

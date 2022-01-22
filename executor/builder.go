@@ -668,16 +668,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		}
 	}
 
-	if len(e.partitionedTable) > 0 {
-		schema := v.Schema()
-		e.tblID2PIDColumnIndex = make(map[int64]int)
-		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
-			col := v.ExtraPIDInfo.Columns[i]
-			tblID := v.ExtraPIDInfo.TblIDs[i]
-			offset := schema.ColumnIndex(col)
-			e.tblID2PIDColumnIndex[tblID] = offset
-		}
-	}
 	return e
 }
 
@@ -3035,9 +3025,25 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
+	var partitionPhysTblIDOffset int
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
+		if ts.Table.ID == physicalTableID {
+			// TODO: Remove after some testing...
+			panic("isPartition is set but still physicalTableID is set to logical table id!!!")
+		}
+		// NOTE for mjonss: TODO, add a comment about Global Indexes, that it is only used for index data, and also stores the Physical Table ID, so never any need to fill it in
+		// Only time to fill the Physical Table ID is under static pruning mode when ExtraPhysTblID has been requested!
+		for i, col := range v.Schema().Columns {
+			if col.ID == model.ExtraPhysTblID {
+				if i == 0 {
+					panic("ExtraPhysTblID in offset 0!!!")
+				}
+				partitionPhysTblIDOffset = i
+				break
+			}
+		}
 	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -3060,9 +3066,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
 		batchCop:         v.BatchCop,
-	}
-	if tbl.Meta().Partition != nil {
-		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+		// default 0
+		partitionPhysTblIDOffset: partitionPhysTblIDOffset,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
@@ -3092,16 +3097,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 
 	return e, nil
-}
-
-func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
-	for idx, col := range schema.Columns {
-		// TODO: Handle partitioned global index, i.e. both ExtraPidColID and ExtraPhysTblID is used.
-		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
-			return newOffset(idx)
-		}
-	}
-	return 0
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
@@ -3497,9 +3492,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
 	}
-	if ok, _ := ts.IsPartition(); ok {
-		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
-	}
 
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3651,9 +3643,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-	if tblInfo.Meta().Partition != nil {
-		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
-	}
 	return e, nil
 }
 

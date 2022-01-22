@@ -950,6 +950,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 						return err
 					}
 
+					// TODO: Only have this enabled during development phase, remove PANIC and change log to Debug before GA.
 					// Debug print.
 					if physicalID == 0 || (handle.IsInt() && handle.IntValue() == 0) || (handle.Len() == 0) {
 						txn, _ := e.ctx.Txn(false)

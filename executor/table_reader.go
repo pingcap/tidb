@@ -108,24 +108,9 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
-
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
-	extraPIDColumnIndex offsetOptional
-}
-
-// offsetOptional may be a positive integer, or invalid.
-type offsetOptional int
-
-func newOffset(i int) offsetOptional {
-	return offsetOptional(i + 1)
-}
-
-func (i offsetOptional) valid() bool {
-	return i != 0
-}
-
-func (i offsetOptional) value() int {
-	return int(i - 1)
+	// partitionPhysTblIDOffset if Physical Table ID is not filled in by storage,
+	// add it to column on this offset (!= 0) Used for partitioned table with static pruning
+	partitionPhysTblIDOffset int
 }
 
 // Open initializes necessary variables for using this executor.
@@ -241,15 +226,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	// When 'select ... for update' work on a partitioned table, the table reader should
-	// add the partition ID as an extra column. The SelectLockExec need this information
-	// to construct the lock key.
-	if e.extraPIDColumnIndex.valid() {
+	// SelectLock and transaction buffer needs Physical Table ID for its full key
+	// For partitioned tables under static prune mode (one TableReaderExecutor per partition),
+	// it needs to be added by TiDB, otherwise it is added by storate (column id ExtraPhysTblID)
+	if e.partitionPhysTblIDOffset != 0 {
 		physicalID := getPhysicalTableID(e.table)
-		if physicalID != e.table.Meta().ID {
-			// table partition in static prune mode (one TableReaderExecutor per partition)
-			fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
-		}
+		fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
 	}
 
 	return nil

@@ -649,7 +649,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 		return s.processListPartition(ds, pi, opt)
 	}
 
-	// We haven't implement partition by list and so on.
+	// We haven't implement partition by key and so on.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 

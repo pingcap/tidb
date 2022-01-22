@@ -3823,6 +3823,7 @@ func (ds *DataSource) addExtraPIDColumnWithInfo(info *extraPIDInfo) {
 	if pidCol == nil {
 		// TODO: remove check/log when table partition dynamic prune mode is GA
 		logutil.BgLogger().Warn("Missing Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
+		panic("Missing Partition ID/Physical Table ID for SELECT FOR UPDATE!")
 		pidCol = &expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
