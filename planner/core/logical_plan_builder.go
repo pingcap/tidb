@@ -55,10 +55,8 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
 )
 
 const (
@@ -3783,10 +3781,19 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// addExtraPIDColumn add an extra PID column for partition table.
+// AddExtraPhysTblIDColumn for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn() {
+// Also needed for checking against the sessions transaction buffer
+func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
+	// Avoid adding multiple times
+	// TODO: Can sd.Columns be empty?
+	cols := ds.TblCols
+	for i := len(cols) - 1; i >= 0; i-- {
+		if cols[i].ID == model.ExtraPhysTblID {
+			return cols[i]
+		}
+	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -3804,47 +3811,7 @@ func (ds *DataSource) addExtraPIDColumn() {
 		OrigColName: model.ExtraPhysTblIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
-}
-
-// addExtraPIDColumnWithInfo add an extra PID column for partition table.
-// 'select ... for update' on a partition table need to know the partition ID
-func (ds *DataSource) addExtraPIDColumnWithInfo(info *extraPIDInfo) {
-	var pidCol *expression.Column
-	schema := ds.Schema()
-	for _, col := range schema.Columns {
-		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
-			if pidCol != nil {
-				// TODO: remove when table partition dynamic prune mode is GA
-				logutil.BgLogger().Warn("Duplicate Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
-			}
-			pidCol = col
-		}
-	}
-	if pidCol == nil {
-		// TODO: remove check/log when table partition dynamic prune mode is GA
-		logutil.BgLogger().Warn("Missing Partition ID/Physical table id for SELECT FOR UPDATE", zap.String("table", ds.TableAsName.O))
-		panic("Missing Partition ID/Physical Table ID for SELECT FOR UPDATE!")
-		pidCol = &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       model.ExtraPidColID,
-			OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
-		}
-
-		ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
-		schema := ds.Schema()
-		schema.Append(pidCol)
-		ds.names = append(ds.names, &types.FieldName{
-			DBName:      ds.DBName,
-			TblName:     ds.TableInfo().Name,
-			ColName:     model.ExtraPartitionIdName,
-			OrigColName: model.ExtraPartitionIdName,
-		})
-		ds.TblCols = append(ds.TblCols, pidCol)
-	}
-
-	info.Columns = append(info.Columns, pidCol)
-	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return pidCol
 }
 
 var (
@@ -4221,18 +4188,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
+		if tableInfo.Partition != nil {
+			us.ExtraPhysTblIDCol = ds.AddExtraPhysTblIDColumn()
+		}
 		result = us
 	}
-	if tableInfo.GetPartitionInfo() != nil {
-		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			// Use the new partition implementation, add partition id as handle/hidden column.
-			// dirty => must check transaction buffer, which uses Physical table id, so we need it per record from the partitioned table
-			// IsPessimistic => SelectLock needs the Physical table id for locking each row.
-			if dirty || b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-				ds.addExtraPIDColumn()
-			}
-		}
-	}
+
+	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) and UnionScan (transaction buffer handling) are done when building SelectLock and UnionScan
+
 	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
 	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		cachedTable := tbl.(table.CachedTable)
@@ -4247,6 +4210,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			sessionVars.StmtCtx.ReadFromTableCache = true
 			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
+			// Table cache does not support table partitions, so no need to add ExtraPhysTblIDCol here!
 			result = us
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {

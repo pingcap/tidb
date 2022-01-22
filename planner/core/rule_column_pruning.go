@@ -478,16 +478,15 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
 	}
 
-	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
-	}
-
-	for _, cols := range p.tblID2Handle {
+	for tblID, cols := range p.tblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
+		}
+		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+			// If the children include partitioned tables, there is an extra partition ID column.
+			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)

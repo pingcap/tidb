@@ -905,16 +905,35 @@ type SelectLockExec struct {
 	// All the partition tables in the children of this executor.
 	partitionedTable []table.PartitionedTable
 
-	// When SelectLock work on the partition table, we need the partition ID
-	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
-	// extra column in the chunk row.
-	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
-	// of multiple tables, so the map struct is used.
-	tblID2PIDColumnIndex map[int64]int
+	// TODO: Do we even need to use a plannercore.HandleCols struct?
+	// tblID2PhyTblIDCol is used for partitioned tables,
+	// the child executor need to return an extra column containing
+	// the Physical Table ID (i.e. from which partition the row came from)
+	tblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
+	if len(e.partitionedTable) > 0 {
+		cols := e.Schema().Columns
+		for i := len(cols) - 1; i > 0; i-- {
+			if cols[i].ID == model.ExtraPhysTblID {
+				found := false
+				for _, col := range e.tblID2PhysTblIDCol {
+					if cols[i].UniqueID == col.UniqueID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					panic("PhysTblIDCol not find in map?!?")
+				}
+			}
+		}
+		if cols[0].ID == model.ExtraPhysTblID {
+			panic("Should never be the only ID?!?")
+		}
+	}
 	return e.baseExecutor.Open(ctx)
 }
 
@@ -933,53 +952,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-
-			for id, cols := range e.tblID2Handle {
-				physicalID := id
-				if len(e.partitionedTable) > 0 {
-					// Replace the table ID with partition ID.
-					// The partition ID is returned as an extra column from the table reader.
-					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
-						physicalID = row.GetInt64(offset)
-					}
+			for tblID, cols := range e.tblID2Handle {
+				if len(cols) > 1 {
+					panic("More than 1 Handle column for a single table in SelectLockExec!?!")
 				}
-
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
-
-					// TODO: Only have this enabled during development phase, remove PANIC and change log to Debug before GA.
-					// Debug print.
-					if physicalID == 0 || (handle.IsInt() && handle.IntValue() == 0) || (handle.Len() == 0) {
-						txn, _ := e.ctx.Txn(false)
-						sql := e.ctx.GetSessionVars().StmtCtx.OriginalSQL
-						tblIDs := make([]int64, 0, len(e.tblID2Handle))
-						for tmpTblID := range e.tblID2Handle {
-							tblIDs = append(tblIDs, tmpTblID)
-						}
-						partTblLen := len(e.partitionedTable)
-						tblid2ColIdxMapKeys := make([]int64, 0, len(e.tblID2PIDColumnIndex))
-						tblid2ColIdxMapVals := make([]int, 0, len(e.tblID2PIDColumnIndex))
-						for key, val := range e.tblID2PIDColumnIndex {
-							tblid2ColIdxMapKeys = append(tblid2ColIdxMapKeys, key)
-							tblid2ColIdxMapVals = append(tblid2ColIdxMapVals, val)
-						}
-						logutil.Logger(ctx).Error("[for debug] the physicalID or handle value is unexpected",
-							zap.Uint64("ts", txn.StartTS()),
-							zap.Int64("id", id),
-							zap.Int64("physicalID", physicalID),
-							zap.Stringer("handle", handle),
-							zap.String("sql", sql),
-							zap.Int64s("tblIDs", tblIDs),
-							zap.Int("partTblLen", partTblLen),
-							zap.Int64s("tblID2PIDColIdxMapKeys", tblid2ColIdxMapKeys),
-							zap.Ints("tblid2ColIdxMapVals", tblid2ColIdxMapVals))
-						panic("unexpected lock key, check the tidb log with for debug")
+					physTblID := tblID
+					if physTblCol, ok := e.tblID2PhysTblIDCol[tblID]; ok {
+						physTblID = row.GetInt64(physTblCol.Index)
 					}
-
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, handle))
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
 		}

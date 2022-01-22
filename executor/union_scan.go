@@ -63,6 +63,9 @@ type UnionScanExec struct {
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
 	collators  []collate.Collator
+
+	// If partitioned table and the physical table id is encoded in the chuck at this column index
+	physTblIDIdx *int
 }
 
 // Open implements the Executor Open interface.
@@ -89,6 +92,17 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 
+	for i := range us.columns {
+		if us.columns[i].ID == model.ExtraPhysTblID {
+			if us.physTblIDIdx != nil {
+				// TODO: remove when table partition dynamic mode is GA (and add a break afterwards)
+				logutil.Logger(ctx).Warn("More than one ExtraPhysTblID column!", zap.String("table", us.table.Meta().Name.O))
+				panic("More than one ExtraPhysTblID columns!!!")
+			}
+			us.physTblIDIdx = new(int)
+			*us.physTblIDIdx = i
+		}
+	}
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -221,18 +235,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	var err error
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	physTblIDIdx := -1
-	fts := make([]*types.FieldType, len(us.columns))
-	for i := range us.columns {
-		fts[i] = &us.columns[i].FieldType
-		if us.columns[i].ID == model.ExtraPhysTblID {
-			if physTblIDIdx >= 0 {
-				// TODO: remove when table partition dynamic mode is GA
-				logutil.Logger(ctx).Warn("More than one ExtraPhysTblID column!", zap.String("table", us.table.Meta().Name.O))
-			}
-			physTblIDIdx = i
-		}
-	}
 	for len(us.snapshotRows) == 0 {
 		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
@@ -246,8 +248,8 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				return nil, err
 			}
 			var checkKey kv.Key
-			if physTblIDIdx >= 0 {
-				tblID := row.GetInt64(physTblIDIdx)
+			if us.physTblIDIdx != nil {
+				tblID := row.GetInt64(*us.physTblIDIdx)
 				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
 			} else {
 				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
