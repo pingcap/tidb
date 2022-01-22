@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDomainSession is batched in TestDomainSerial
 func TestDomainSession(t *testing.T) {
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
