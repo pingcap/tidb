@@ -19,11 +19,8 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-<<<<<<< HEAD
 	"reflect"
-=======
 	"regexp"
->>>>>>> ad1c5b508... *: add pushdown for ShowStmt and implement for show columns (#31742)
 	"sort"
 	"strconv"
 	"strings"
