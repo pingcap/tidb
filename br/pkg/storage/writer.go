@@ -92,7 +92,6 @@ type simpleCompressWriter interface {
 type simpleCompressBuffer struct {
 	*bytes.Buffer
 	compressWriter simpleCompressWriter
-	len            int
 	cap            int
 }
 
