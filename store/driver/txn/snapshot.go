@@ -23,6 +23,7 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 )
@@ -120,6 +121,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
+	case kv.RPCInterceptor:
+		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	}
 }
 

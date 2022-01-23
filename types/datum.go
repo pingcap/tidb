@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Kind constants.
@@ -180,6 +182,57 @@ func (d *Datum) SetFloat32(f float32) {
 // GetString gets string value.
 func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
+}
+
+// GetBinaryStringEncoded gets the string value encoded with given charset.
+func (d *Datum) GetBinaryStringEncoded() string {
+	coll, err := charset.GetCollationByName(d.Collation())
+	if err != nil {
+		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
+		return d.GetString()
+	}
+	enc := charset.FindEncodingTakeUTF8AsNoop(coll.CharsetName)
+	replace, _ := enc.Transform(nil, d.GetBytes(), charset.OpEncodeNoErr)
+	return string(hack.String(replace))
+}
+
+// GetBinaryStringDecoded gets the string value decoded with given charset.
+func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string) (string, error) {
+	enc, skip := findEncoding(sc, chs)
+	if skip {
+		return d.GetString(), nil
+	}
+	trim, err := enc.Transform(nil, d.GetBytes(), charset.OpDecode)
+	return string(hack.String(trim)), err
+}
+
+// GetStringWithCheck gets the string and checks if it is valid in a given charset.
+func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (string, error) {
+	enc, skip := findEncoding(sc, chs)
+	if skip {
+		return d.GetString(), nil
+	}
+	str := d.GetBytes()
+	if !enc.IsValid(str) {
+		replace, err := enc.Transform(nil, str, charset.OpReplace)
+		return string(hack.String(replace)), err
+	}
+	return d.GetString(), nil
+}
+
+func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
+	enc = charset.FindEncoding(chs)
+	if sc == nil {
+		return enc, false
+	}
+	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
+		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
+		return nil, true
+	}
+	if chs == charset.CharsetUTF8 && !sc.SkipUTF8MB4Check {
+		enc = charset.EncodingUTF8MB3StrictImpl
+	}
+	return enc, false
 }
 
 // SetString sets string value.
@@ -938,8 +991,11 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
-	var ret Datum
-	var s string
+	var (
+		ret Datum
+		s   string
+		err error
+	)
 	switch d.k {
 	case KindInt64:
 		s = strconv.FormatInt(d.GetInt64(), 10)
@@ -950,7 +1006,17 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindFloat64:
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
-		s = d.GetString()
+		fromBinary := d.Collation() == charset.CollationBin
+		toBinary := target.Charset == charset.CharsetBin
+		if fromBinary && toBinary {
+			s = d.GetString()
+		} else if fromBinary {
+			s, err = d.GetBinaryStringDecoded(sc, target.Charset)
+		} else if toBinary {
+			s = d.GetBinaryStringEncoded()
+		} else {
+			s, err = d.GetStringWithCheck(sc, target.Charset)
+		}
 	case KindMysqlTime:
 		s = d.GetMysqlTime().String()
 	case KindMysqlDuration:
@@ -962,26 +1028,24 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
 	case KindBinaryLiteral:
-		s = d.GetBinaryLiteral().ToString()
+		s, err = d.GetBinaryStringDecoded(sc, target.Charset)
 	case KindMysqlBit:
-		// issue #25037
-		// bit to binary/varbinary. should consider transferring to uint first.
-		if target.Tp == mysql.TypeString || (target.Tp == mysql.TypeVarchar && target.Collate == charset.CollationBin) {
-			val, err := d.GetBinaryLiteral().ToInt(sc)
-			if err != nil {
-				s = d.GetBinaryLiteral().ToString()
-			} else {
-				s = strconv.FormatUint(val, 10)
-			}
-		} else {
+		// https://github.com/pingcap/tidb/issues/31124.
+		// Consider converting to uint first.
+		val, err := d.GetBinaryLiteral().ToInt(sc)
+		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
+		} else {
+			s = strconv.FormatUint(val, 10)
 		}
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
+	if err == nil {
+		s, err = ProduceStrWithSpecifiedTp(s, target, sc, true)
+	}
 	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -1574,6 +1638,8 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 		}
 	case KindMysqlJSON:
 		ret = *d
+	case KindBinaryLiteral:
+		err = json.ErrInvalidJSONCharset.GenWithStackByArgs(charset.CharsetBin)
 	default:
 		var s string
 		if s, err = d.ToString(); err == nil {

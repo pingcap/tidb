@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -180,6 +181,10 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	setupLog()
+	err := cpuprofile.StartCPUProfiler()
+	terror.MustNil(err)
+
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
@@ -189,7 +194,6 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -207,6 +211,7 @@ func main() {
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
+		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
