@@ -217,6 +217,9 @@ const (
 
 	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
 	TiDBEnablePaging = "tidb_enable_paging"
+
+	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
+	TiDBReadConsistency = "tidb_read_consistency"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -411,7 +414,11 @@ const (
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
 	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	// Deprecated: It is removed and do not use it again
 	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
+	// TiDBPlacementMode is used to control the mode for placement
+	TiDBPlacementMode = "tidb_placement_mode"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
@@ -530,6 +537,9 @@ const (
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 
+	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
+	TiDBSuperReadOnly = "tidb_super_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -572,17 +582,12 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
-	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
+	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
 
-	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
-	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
+	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
 
-	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
-	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
-
-	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
-	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
@@ -603,6 +608,12 @@ const (
 
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
+	// TiDBTableCacheLease indicates the read lock lease of a cached table.
+	TiDBTableCacheLease = "tidb_table_cache_lease"
+
+	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
+	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
 )
 
 // TiDB vars that have only global scope
@@ -622,6 +633,16 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
+	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
+	// TiDBEnableColumnTracking enables collecting predicate columns.
+	TiDBEnableColumnTracking = "tidb_enable_column_tracking"
+	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
+	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
+	// It doesn't have cache in memory and we directly get/set the variable value from/to mysql.tidb.
+	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
+	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
+	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 )
 
 // TiDB intentional limits
@@ -713,7 +734,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount            = 1024
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
-	DefTiDBEnableAlterPlacement           = false
+	DefTiDBPlacementMode                  = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
@@ -751,6 +772,7 @@ const (
 	DefTiDBEnableClusteredIndex           = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                      = false
 	DefTiDBRestrictedReadOnly             = false
+	DefTiDBSuperReadOnly                  = false
 	DefTiDBShardAllocateStep              = math.MaxInt64
 	DefTiDBEnableTelemetry                = true
 	DefTiDBEnableParallelApply            = false
@@ -765,11 +787,6 @@ const (
 	DefTiDBTrackAggregateMemoryUsage      = true
 	DefTiDBEnableExchangePartition        = false
 	DefCTEMaxRecursionDepth               = 1000
-	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLPrecisionSeconds         = 1
-	DefTiDBTopSQLMaxStatementCount        = 200
-	DefTiDBTopSQLMaxCollect               = 5000
-	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBTSOClientBatchMaxWaitTime      = 0.0 // 0ms
@@ -779,6 +796,19 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableStmtSummary              = true
+	DefTiDBStmtSummaryInternalQuery       = false
+	DefTiDBStmtSummaryRefreshInterval     = 1800
+	DefTiDBStmtSummaryHistorySize         = 24
+	DefTiDBStmtSummaryMaxStmtCount        = 3000
+	DefTiDBStmtSummaryMaxSQLLength        = 4096
+	DefTiDBCapturePlanBaseline            = Off
+	DefTiDBEnableIndexMerge               = true
+	DefTiDBTableCacheLease                = 3 // 3s
+	DefTiDBPersistAnalyzeOptions          = true
+	DefTiDBEnableColumnTracking           = false
+	DefTiDBStatsLoadSyncWait              = 0
+	DefTiDBStatsLoadPseudoTimeout         = false
 )
 
 // Process global variables.
@@ -800,37 +830,16 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
-	TopSQLVariable                        = TopSQL{
-		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
-		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
-		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
-		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
-		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
-	}
-	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 )
-
-// TopSQL is the variable for control top sql feature.
-type TopSQL struct {
-	// Enable top-sql or not.
-	Enable *atomic.Bool
-	// The refresh interval of top-sql.
-	PrecisionSeconds *atomic.Int64
-	// The maximum number of statements kept in memory.
-	MaxStatementCount *atomic.Int64
-	// The maximum capacity of the collect map.
-	MaxCollect *atomic.Int64
-	// The report data interval of top-sql.
-	ReportIntervalSeconds *atomic.Int64
-}
-
-// TopSQLEnabled uses to check whether enabled the top SQL feature.
-func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
-}

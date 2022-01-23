@@ -6,6 +6,7 @@ coverage.out
 *.iml
 *.swp
 *.log
+*.test.bin
 tags
 profile.coverprofile
 explain_test

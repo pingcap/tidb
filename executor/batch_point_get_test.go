@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -351,4 +352,31 @@ func TestCacheSnapShot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, batchGet[string(keys[0])], []byte("1111"))
 	require.Equal(t, batchGet[string(keys[1])], []byte("2222"))
+}
+
+func TestPointGetForTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
+		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+	}()
+
+	// Batch point get.
+	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
+
+	// Point get.
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
 }

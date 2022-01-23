@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -261,10 +260,9 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // ValidateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// The string "DEFAULT" is a special keyword in MySQL, which restores
-	// the compiled sysvar value. In which case we can skip further validation.
-	if strings.EqualFold(value, "DEFAULT") {
-		return sv.Value, nil
+	// TODO: this is a temporary solution for issue: https://github.com/pingcap/tidb/issues/31538, an elegant solution is needed.
+	if value == "" && sv.IsNoop {
+		return value, nil
 	}
 	// Some sysvars in TiDB have a special behavior where the empty string means
 	// "use the config file value". This needs to be cleaned up once the behavior
@@ -378,7 +376,7 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 		}
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	val, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
@@ -386,11 +384,12 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	}
 	if val < uint64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
+
 	}
 	return value, nil
 }
@@ -405,11 +404,11 @@ func (sv *SysVar) checkInt64SystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < sv.MinValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > int64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -419,7 +418,7 @@ func (sv *SysVar) checkEnumSystemVar(value string, vars *SessionVars) (string, e
 	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
 	var iStr string
 	for i, v := range sv.PossibleValues {
-		iStr = fmt.Sprintf("%d", i)
+		iStr = strconv.Itoa(i)
 		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
 			return v, nil
 		}
@@ -437,11 +436,11 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < float64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > float64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -502,7 +501,7 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 		TiDBEnableTelemetry, TiDBEnablePointGetCache:

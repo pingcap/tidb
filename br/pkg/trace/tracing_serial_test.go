@@ -48,5 +48,5 @@ func TestSpan(t *testing.T) {
 	// possible result:
 	// "jobA      22:02:02.545296  200.621764ms\n"
 	// "  └─jobB  22:02:02.545297  100.293444ms\n"
-	require.Regexp(t, `^jobA.*20[0-9]\.[0-9]+ms\n  └─jobB.*10[0-9]\.[0-9]+ms\n$`, s)
+	require.Regexp(t, `^jobA.*2[0-9][0-9]\.[0-9]+ms\n  └─jobB.*1[0-9][0-9]\.[0-9]+ms\n$`, s)
 }

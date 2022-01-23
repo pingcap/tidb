@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -173,6 +174,38 @@ func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
 	}
 }
 
+func (s *testSuite1) TestIndexMergeWithPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 100; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+
+	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
+	tk.MustExec("set @a = 10;")
+	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
+	tk.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	})
+	explainStr := "explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)
+	res := tk.MustQuery(explainStr)
+	indexMergeLine := res.Rows()[1][0].(string)
+	re, err := regexp.Compile(".*IndexMerge.*")
+	c.Assert(err, IsNil)
+	c.Assert(re.MatchString(indexMergeLine), IsTrue)
+
+	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ? and c3';")
+	tk.MustExec("set @a = 10;")
+	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
+	res = tk.MustQuery(explainStr)
+	indexMergeLine = res.Rows()[1][0].(string)
+	c.Assert(re.MatchString(indexMergeLine), IsTrue)
+}
+
 func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -199,22 +232,31 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 			"  └─TableRowIDScan_7 3330.01 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 		// Test with normal key.
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("insert into t1 values(1, 1, 1, 1);")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
 		tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("delete from t1;")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
 
 		// Test with primary key, so the partialPlan is TableScan.
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("insert into t1 values(1, 1, 1, 1);")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
 		tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("delete from t1;")
-		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+
 		tk.MustExec("commit;")
 		if i == 1 {
 			tk.MustExec("set tx_isolation = 'REPEATABLE-READ';")
@@ -273,22 +315,108 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 	tk.MustExec("insert into t1 values(11, 11, 11, 11, 11);")
 	tk.MustExec("insert into t1 values(21, 21, 21, 21, 21);")
 	tk.MustExec("insert into t1 values(31, 31, 31, 31, 31);")
-	res := tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < 20) and c3 < 20;").Sort()
+
+	res := tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;").Sort()
 	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
-	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < 20) and c3 < 20;").Sort()
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;").Sort()
 	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
 
 	tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
-	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < 20) and c3 < 20;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;")
 	res.Check(testkit.Rows("11 11 11 11 11"))
-	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < 20) and c3 < 20;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;")
 	res.Check(testkit.Rows("11 11 11 11 11"))
 
 	tk.MustExec("delete from t1;")
-	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < 20) and c3 < 20;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;")
 	res.Check(testkit.Rows())
-	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < 20) and c3 < 20;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;")
 	res.Check(testkit.Rows())
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows())
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows())
+	tk.MustExec("commit;")
+}
+
+func (s *testSuite1) TestIndexMergeReaderInTransIssue30685(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// This is a case generated by sqlgen to test if clustered index is ok.
+	// Detect the bugs in memIndexMergeReader.getMemRowsHandle().
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (col_30 decimal default 0 ,
+				      col_31 char(99) collate utf8_bin default 'sVgzHblmYYtEjVg' not null , 
+				      col_37 int unsigned default 377206828 , 
+				      primary key idx_16 ( col_37 ) , key idx_19 ( col_31) ) collate utf8mb4_general_ci ;`)
+	tk.MustExec("begin;")
+	tk.MustExec("insert ignore into t1 values (388021, '', 416235653);")
+	tk.MustQuery("select /*+ use_index_merge( t1 ) */ 1 from t1 where ( t1.col_31 in ( 'OiOXzpCs' , 'oaVv' ) or t1.col_37 <= 4059907010 ) and t1.col_30 ;").Check(testkit.Rows("1"))
+	tk.MustExec("commit;")
+
+	tk.MustExec("drop table if exists tbl_3;")
+	tk.MustExec(`create table tbl_3 ( col_30 decimal , col_31 char(99) , col_32 smallint ,
+				  col_33 tinyint unsigned not null , col_34 char(209) , 
+				  col_35 char(110) , col_36 int unsigned , col_37 int unsigned ,
+				  col_38 decimal(50,15) not null , col_39 char(104), 
+				  primary key ( col_37 ) , unique key ( col_33,col_30,col_36,col_39 ) ,
+				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) , 
+				  key ( col_31,col_33,col_32,col_35,col_36 ) , 
+				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) , 
+				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) , 
+				  key ( col_38,col_32,col_33 ) )`)
+	tk.MustExec("begin;")
+	tk.MustExec("insert ignore into tbl_3 values ( 71,'Fipc',-6676,30,'','FgfK',2464927398,4084082400,5602.5868,'' );")
+	tk.MustQuery("select /*+ use_index_merge( tbl_3 ) */ 1 from tbl_3 where ( tbl_3.col_37 not in ( 1626615245 , 2433569159 ) or tbl_3.col_38 = 0.06 ) ;").Check(testkit.Rows("1"))
+	tk.MustExec("commit;")
+
+	// int + int compound type as clustered index pk.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, c4 int, primary key(c1, c2) /*T![clustered_index] CLUSTERED */, key(c3));")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;").Check(testkit.Rows(
+		"UnionScan_6 1841.86 root  lt(test.t1.c4, 10), or(lt(test.t1.c1, -1), lt(test.t1.c3, 10))",
+		"└─IndexMerge_11 1841.86 root  ",
+		"  ├─TableRangeScan_7(Build) 3323.33 cop[tikv] table:t1 range:[-inf,-1), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c3(c3) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1841.86 cop[tikv]  lt(test.t1.c4, 10)",
+		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c3 < -1) and c4 < 10;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < -1) and c4 < 10;").Check(testkit.Rows())
+	tk.MustExec("commit;")
+
+	// Single int type as clustered index pk.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 int, c3 int, c4 int, primary key(c1) /*T![clustered_index] CLUSTERED */, key(c3));")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values('b', 1, 1, 1);")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;").Check(testkit.Rows(
+		"UnionScan_6 1841.86 root  lt(test.t1.c4, 10), or(lt(test.t1.c1, \"a\"), lt(test.t1.c3, 10))",
+		"└─IndexMerge_11 1841.86 root  ",
+		"  ├─TableRangeScan_7(Build) 3323.33 cop[tikv] table:t1 range:[-inf,\"a\"), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c3(c3) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1841.86 cop[tikv]  lt(test.t1.c4, 10)",
+		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 <= 'b' or c3 < -1) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < -1) and c4 < 10;").Check(testkit.Rows())
 	tk.MustExec("commit;")
 }
 
@@ -325,4 +453,24 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
 	c.Assert(err, IsNil)
 	c.Assert(bytes, Greater, 0.0)
+}
+
+func (test *testSerialSuite2) TestIndexMergeSplitTable(c *C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS tab2;")
+	tk.MustExec("CREATE TABLE tab2(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
+	tk.MustExec("CREATE INDEX idx_tab2_0 ON tab2 (col0 DESC,col3 DESC);")
+	tk.MustExec("CREATE UNIQUE INDEX idx_tab2_3 ON tab2 (col4,col0 DESC);")
+	tk.MustExec("CREATE INDEX idx_tab2_4 ON tab2 (col3,col1 DESC);")
+	tk.MustExec("INSERT INTO tab2 VALUES(0,146,632.63,'shwwd',703,412.47,'xsppr');")
+	tk.MustExec("INSERT INTO tab2 VALUES(1,81,536.29,'trhdh',49,726.3,'chuxv');")
+	tk.MustExec("INSERT INTO tab2 VALUES(2,311,541.72,'txrvb',493,581.92,'xtrra');")
+	tk.MustExec("INSERT INTO tab2 VALUES(3,669,293.27,'vcyum',862,415.14,'nbutk');")
+	tk.MustExec("INSERT INTO tab2 VALUES(4,681,49.46,'odzhp',106,324.65,'deudp');")
+	tk.MustExec("INSERT INTO tab2 VALUES(5,319,769.65,'aeqln',855,197.9,'apipa');")
+	tk.MustExec("INSERT INTO tab2 VALUES(6,610,302.62,'bixap',184,840.31,'vggit');")
+	tk.MustExec("INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');")
+	tk.MustExec("SPLIT TABLE tab2 BY (5);")
+	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
 }

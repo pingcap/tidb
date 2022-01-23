@@ -556,7 +556,9 @@
       "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1);",
       "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
       "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c;",
-      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;"
+      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;",
+      "select * from t t1 left join t t2 on t1.b = t2.b where not(0+(t1.c=1 and t2.c=2));",
+      "select * from t t1 left join t t2 on t1.b = t2.b where not(t1.c) and not(t2.c)"
     ]
   },
   {

@@ -187,7 +187,10 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
-	query.SetAttrSelection([]string{"Name", "Size"})
+	err := query.SetAttrSelection([]string{"Name", "Size"})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	iter := s.bucket.Objects(ctx, query)
 	for {
 		attrs, err := iter.Next()

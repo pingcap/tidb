@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -416,10 +417,33 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-// resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
-	aggType := aggregateType(args)
+// GLCmpStringMode represents Greatest/Least interal string comparison mode
+type GLCmpStringMode uint8
 
+const (
+	// GLCmpStringDirectly Greatest and Least function compares string directly
+	GLCmpStringDirectly GLCmpStringMode = iota
+	// GLCmpStringAsDate Greatest/Least function compares string as 'yyyy-mm-dd' format
+	GLCmpStringAsDate
+	// GLCmpStringAsDatetime Greatest/Least function compares string as 'yyyy-mm-dd hh:mm:ss' format
+	GLCmpStringAsDatetime
+)
+
+// GLRetTimeType represents Greatest/Least return time type
+type GLRetTimeType uint8
+
+const (
+	// GLRetNoneTemporal Greatest/Least function returns non temporal time
+	GLRetNoneTemporal GLRetTimeType = iota
+	// GLRetDate Greatest/Least function returns date type, 'yyyy-mm-dd'
+	GLRetDate
+	// GLRetDatetime Greatest/Least function returns datetime type, 'yyyy-mm-dd hh:mm:ss'
+	GLRetDatetime
+)
+
+// resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
+	aggType := aggregateType(args)
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
@@ -432,13 +456,22 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 			}
 		}
 
-		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
-			aggType.Tp = temporalItem.Tp
-			cmpStringAsDatetime = true
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(temporalItem.Tp) {
+			if temporalItem.Tp == mysql.TypeDate {
+				cmpStringMode = GLCmpStringAsDate
+			} else {
+				cmpStringMode = GLCmpStringAsDatetime
+			}
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), cmpStringAsDatetime
+	var timeType = GLRetNoneTemporal
+	if aggType.Tp == mysql.TypeDate {
+		timeType = GLRetDate
+	} else if aggType.Tp == mysql.TypeDatetime || aggType.Tp == mysql.TypeTimestamp {
+		timeType = GLRetDatetime
+	}
+	return aggType.EvalType(), timeType, cmpStringMode
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -460,23 +493,25 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
+	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	argTp := tp
+	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
-		tp = types.ETString
+		argTp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
+		argTp = types.ETString
 		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = tp
+		argTps[i] = argTp
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	switch tp {
+	switch argTp {
 	case types.ETInt:
 		// adjust unsigned flag
 		greastInitUnsignedFlag := false
@@ -495,8 +530,11 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf}
+		if cmpStringMode == GLCmpStringAsDate {
+			sig = &builtinGreatestCmpStringAsTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsDate)
+		} else if cmpStringMode == GLCmpStringAsDatetime {
+			sig = &builtinGreatestCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
 			sig = &builtinGreatestStringSig{bf}
@@ -506,8 +544,13 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinGreatestTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
+		if fieldTimeType == GLRetDate {
+			sig = &builtinGreatestTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestDate)
+		} else {
+			sig = &builtinGreatestTimeSig{bf, false}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
+		}
 	}
 	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
@@ -648,11 +691,13 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 
 type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinGreatestCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -665,13 +710,9 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := types.ParseDatetime(sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, err
-			}
-		} else {
-			v = t.String()
+			return v, true, err
 		}
 		// In MySQL, if the compare result is zero, than we will try to use the string comparison result
 		if i == 0 || strings.Compare(v, strRes) > 0 {
@@ -681,13 +722,39 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 	return strRes, false, nil
 }
 
+func doTimeConversionForGL(cmpAsDate bool, ctx sessionctx.Context, sc *stmtctx.StatementContext, strVal string) (string, error) {
+	var t types.Time
+	var err error
+	if cmpAsDate {
+		t, err = types.ParseDate(sc, strVal)
+		if err == nil {
+			t, err = t.Convert(sc, mysql.TypeDate)
+		}
+	} else {
+		t, err = types.ParseDatetime(sc, strVal)
+		if err == nil {
+			t, err = t.Convert(sc, mysql.TypeDatetime)
+		}
+	}
+	if err != nil {
+		if err = handleInvalidTimeError(ctx, err); err != nil {
+			return "", err
+		}
+	} else {
+		strVal = t.String()
+	}
+	return strVal, nil
+}
+
 type builtinGreatestTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 	newSig := &builtinGreatestTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -700,6 +767,12 @@ func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 		if i == 0 || v.Compare(res) > 0 {
 			res = v
 		}
+	}
+	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	if res, err = res.Convert(sc, resTimeTp); err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	return res, false, nil
 }
@@ -735,17 +808,19 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
+	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	argTp := tp
+	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
-		tp = types.ETString
+		argTp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
+		argTp = types.ETString
 		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = tp
+		argTps[i] = argTp
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
@@ -770,8 +845,11 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsTimeSig{bf}
+		if cmpStringMode == GLCmpStringAsDate {
+			sig = &builtinLeastCmpStringAsTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsDate)
+		} else if cmpStringMode == GLCmpStringAsDatetime {
+			sig = &builtinLeastCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
 			sig = &builtinLeastStringSig{bf}
@@ -781,8 +859,13 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinLeastTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
+		if fieldTimeType == GLRetDate {
+			sig = &builtinLeastTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastDate)
+		} else {
+			sig = &builtinLeastTimeSig{bf, false}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
+		}
 	}
 	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
@@ -910,11 +993,13 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 
 type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinLeastCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -927,13 +1012,9 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := types.ParseDatetime(sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, err
-			}
-		} else {
-			v = t.String()
+			return v, true, err
 		}
 		if i == 0 || strings.Compare(v, strRes) < 0 {
 			strRes = v
@@ -945,11 +1026,13 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 
 type builtinLeastTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinLeastTimeSig) Clone() builtinFunc {
 	newSig := &builtinLeastTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -963,7 +1046,23 @@ func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bo
 			res = v
 		}
 	}
+	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	if res, err = res.Convert(sc, resTimeTp); err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+	}
 	return res, false, nil
+}
+
+func getAccurateTimeTypeForGLRet(cmpAsDate bool) byte {
+	var resTimeTp byte
+	if cmpAsDate {
+		resTimeTp = mysql.TypeDate
+	} else {
+		resTimeTp = mysql.TypeDatetime
+	}
+	return resTimeTp
 }
 
 type builtinLeastDurationSig struct {
