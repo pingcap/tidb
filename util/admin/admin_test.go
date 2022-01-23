@@ -28,8 +28,6 @@ import (
 )
 
 func TestGetDDLInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -79,8 +77,6 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func TestGetDDLJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -134,8 +130,6 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -165,8 +159,6 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestCancelJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -280,8 +272,6 @@ func TestCancelJobs(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -340,8 +330,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 }
 
 func TestIsJobRollbackable(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		tp     model.ActionType
 		state  model.SchemaState
@@ -364,8 +352,6 @@ func TestIsJobRollbackable(t *testing.T) {
 }
 
 func TestError(t *testing.T) {
-	t.Parallel()
-
 	kvErrs := []*terror.Error{
 		ErrDataInConsistent,
 		ErrDDLJobNotFound,

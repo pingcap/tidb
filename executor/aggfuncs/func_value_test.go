@@ -61,8 +61,6 @@ func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
 }
 
 func TestMemValue(t *testing.T) {
-	t.Parallel()
-
 	firstMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(1)
 	secondMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(2)
 	fifthMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(5)

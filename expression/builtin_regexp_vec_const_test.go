@@ -61,7 +61,6 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 }
 
 func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
-	t.Parallel()
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants()
 	err := bf.vecEvalInt(input, output)
 	require.NoError(t, err)

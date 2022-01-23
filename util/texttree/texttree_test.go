@@ -22,7 +22,6 @@ import (
 )
 
 func TestPrettyIdentifier(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, "test", texttree.PrettyIdentifier("test", "", false))
 	require.Equal(t, "  ├ ─test", texttree.PrettyIdentifier("test", "  │  ", false))
 	require.Equal(t, "\t\t├\t─test", texttree.PrettyIdentifier("test", "\t\t│\t\t", false))
@@ -31,7 +30,6 @@ func TestPrettyIdentifier(t *testing.T) {
 }
 
 func TestIndent4Child(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, "    │ ", texttree.Indent4Child("    ", false))
 	require.Equal(t, "    │ ", texttree.Indent4Child("    ", true))
 	require.Equal(t, "     │ ", texttree.Indent4Child("   │ ", true))

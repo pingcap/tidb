@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -126,8 +127,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
@@ -5031,7 +5030,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 
 	// For issue #13189
 	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
-	tk.MustExec("create table t1(a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("create table t1 (a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("SET @@time_zone = '+00:00'")
+	defer tk.MustExec("SET @@time_zone = DEFAULT")
+	tk.MustQuery("SELECT @@time_zone").Check(testkit.Rows("+00:00"))
+	tk.MustExec("create table t2 (a int primary key, b timestamp DEFAULT CURRENT_TIMESTAMP, c timestamp DEFAULT '2000-01-01 00:00:00')")
 	tk.MustExec("insert into t1 set a = 1, b = default(c);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
 	tk.MustExec("insert into t1 set a = 2, b = default(c), c = default(d), d = default(b);")
@@ -5041,6 +5044,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 set a = default(b) + default(c) - default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
+	tk.MustExec("set @@timestamp = 1321009871")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustQuery("SELECT NOW()").Check(testkit.Rows("2011-11-11 11:11:11"))
+	tk.MustExec("insert into t2 set a = 1, b = default(c)")
+	tk.MustExec("insert into t2 set a = 2, c = default(b)")
+	tk.MustGetErrCode("insert into t2 set a = 3, b = default(a)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t2 set a = 4, b = default(b), c = default(c)")
+	tk.MustExec("insert into t2 set a = 5, b = default, c = default")
+	tk.MustExec("insert into t2 set a = 6")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows(
+		"1 2000-01-01 00:00:00 2000-01-01 00:00:00",
+		"2 2011-11-11 11:11:11 2011-11-11 11:11:11",
+		"4 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"6 2011-11-11 11:11:11 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `UPDATE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5053,6 +5071,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("insert into t1 set a = 10")
 	tk.MustExec("update t1 set a = 10, b = default(c) + default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	tk.MustExec("set @@timestamp = 1671747742")
+	tk.MustExec("update t2 set b = default(c) WHERE a = 6")
+	tk.MustExec("update t2 set c = default(b) WHERE a = 5")
+	tk.MustGetErrCode("update t2 set b = default(a) WHERE a = 4", errno.ErrNoDefaultForField)
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 4")
+	// Non existing row!
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 3")
+	tk.MustExec("update t2 set b = default, c = default WHERE a = 2")
+	tk.MustExec("update t2 set b = default(b) WHERE a = 1")
+	tk.MustQuery("select * from t2;").Sort().Check(testkit.Rows(
+		"1 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"2 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"4 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2022-12-22 22:22:22",
+		"6 2000-01-01 00:00:00 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `REPLACE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5069,9 +5102,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40", "20 20 30 50"))
 
 	// Use `DEFAULT()` in expression of generate columns, issue #12471
+	tk.MustExec("DROP TABLE t2")
 	tk.MustExec("create table t2(a int default 9, b int as (1 + default(a)));")
 	tk.MustExec("insert into t2 values(1, default);")
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10"))
+	tk.MustExec("insert into t2 values(2, default(b))")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
 
 	// Use `DEFAULT()` with subquery, issue #13390
 	tk.MustExec("create table t3(f1 int default 11);")
@@ -6387,10 +6422,9 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	var err1 error
 	var err2 error
-	wg.Add(2)
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
@@ -6413,15 +6447,13 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		_, err1 = se1.Execute(context.Background(), sql1)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		_, err2 = se2.Execute(context.Background(), sql2)
-	}()
+	})
 
 	wg.Wait()
 	f(c, err1, err2)
@@ -6837,8 +6869,8 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
-	domain.SchemaOutOfDateRetryTimes = int32(50)
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
 }
 
 func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
@@ -7640,4 +7672,42 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"  `d` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testDBSuite2) TestCreateTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tables_1")
+	tk.MustExec("drop table if exists tables_2")
+	tk.MustExec("drop table if exists tables_3")
+
+	d := s.dom.DDL()
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+	})
+
+	// correct name
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(err, IsNil)
+
+	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
+	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
+	c.Assert(job[1], Equals, "test")
+	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
+	c.Assert(job[3], Equals, "create tables")
+	c.Assert(job[4], Equals, "public")
+	// FIXME: we must change column type to give multiple id
+	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
 }

@@ -26,8 +26,6 @@ import (
 )
 
 func TestMergePartialResult4Varpop(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
 	}
@@ -37,8 +35,6 @@ func TestMergePartialResult4Varpop(t *testing.T) {
 }
 
 func TestVarpop(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, nil, types.NewFloat64Datum(float64(2))),
 	}
@@ -48,8 +44,6 @@ func TestVarpop(t *testing.T) {
 }
 
 func TestMemVarpop(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
@@ -59,7 +53,6 @@ func TestMemVarpop(t *testing.T) {
 	for n, test := range tests {
 		test := test
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, n), func(t *testing.T) {
-			t.Parallel()
 			testAggMemFunc(t, test)
 		})
 	}

@@ -1502,8 +1502,6 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 // testVectorizedBuiltinFuncForRand is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCases) {
-	t.Parallel()
-
 	for funcName, testCases := range vecExprCases {
 		require.True(t, strings.EqualFold("rand", funcName))
 

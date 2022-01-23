@@ -105,7 +105,6 @@ func primitiveValsToConstants(ctx sessionctx.Context, args []interface{}) []Expr
 }
 
 func TestSleep(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sessVars := ctx.GetSessionVars()
 
@@ -171,7 +170,6 @@ func TestSleep(t *testing.T) {
 }
 
 func TestBinopComparison(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -250,7 +248,6 @@ func TestBinopComparison(t *testing.T) {
 }
 
 func TestBinopLogic(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -290,7 +287,6 @@ func TestBinopLogic(t *testing.T) {
 }
 
 func TestBinopBitop(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -328,7 +324,6 @@ func TestBinopBitop(t *testing.T) {
 }
 
 func TestBinopNumeric(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -472,7 +467,6 @@ func TestBinopNumeric(t *testing.T) {
 }
 
 func TestExtract(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
@@ -519,7 +513,6 @@ func TestExtract(t *testing.T) {
 }
 
 func TestUnaryOp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg    interface{}
@@ -588,7 +581,6 @@ func TestUnaryOp(t *testing.T) {
 }
 
 func TestMod(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))

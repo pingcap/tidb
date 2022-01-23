@@ -26,8 +26,6 @@ import (
 )
 
 func TestProfileToDatum(t *testing.T) {
-	t.Parallel()
-
 	file, err := os.Open("testdata/test.pprof")
 	require.Nil(t, err)
 	defer func() {

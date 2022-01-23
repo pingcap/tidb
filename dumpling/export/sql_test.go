@@ -20,7 +20,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
@@ -51,8 +50,6 @@ const (
 )
 
 func TestBuildSelectAllQuery(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -174,8 +171,6 @@ func TestBuildSelectAllQuery(t *testing.T) {
 }
 
 func TestBuildOrderByClause(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -238,8 +233,6 @@ func TestBuildOrderByClause(t *testing.T) {
 }
 
 func TestBuildSelectField(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -286,8 +279,6 @@ func TestBuildSelectField(t *testing.T) {
 }
 
 func TestParseSnapshotToTSO(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -316,8 +307,6 @@ func TestParseSnapshotToTSO(t *testing.T) {
 }
 
 func TestShowCreateView(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -343,8 +332,6 @@ func TestShowCreateView(t *testing.T) {
 }
 
 func TestShowCreatePolicy(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -366,8 +353,6 @@ func TestShowCreatePolicy(t *testing.T) {
 }
 
 func TestListPolicyNames(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -377,7 +362,7 @@ func TestListPolicyNames(t *testing.T) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
 		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
 			AddRow("policy_x"))
 	policies, err := ListAllPlacementPolicyNames(conn)
@@ -386,18 +371,16 @@ func TestListPolicyNames(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// some old tidb version doesn't support placement rules returns error
-	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_rules' doesn't exist"}
-	mock.ExpectExec("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_policies' doesn't exist"}
+	mock.ExpectExec("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
 		WillReturnError(expectedErr)
-	policies, err = ListAllPlacementPolicyNames(conn)
+	_, err = ListAllPlacementPolicyNames(conn)
 	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
 		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
 	}
 }
 
 func TestGetSuitableRows(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		avgRowLength uint64
 		expectedRows uint64
@@ -426,8 +409,6 @@ func TestGetSuitableRows(t *testing.T) {
 }
 
 func TestSelectTiDBRowID(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -463,8 +444,6 @@ func TestSelectTiDBRowID(t *testing.T) {
 }
 
 func TestBuildTableSampleQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -782,8 +761,6 @@ func TestBuildTableSampleQueries(t *testing.T) {
 }
 
 func TestBuildPartitionClauses(t *testing.T) {
-	t.Parallel()
-
 	const (
 		dbName        = "test"
 		tbName        = "t"
@@ -842,8 +819,6 @@ func TestBuildPartitionClauses(t *testing.T) {
 }
 
 func TestBuildWhereCondition(t *testing.T) {
-	t.Parallel()
-
 	conf := DefaultConfig()
 	testCases := []struct {
 		confWhere     string
@@ -879,8 +854,6 @@ func TestBuildWhereCondition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1040,8 +1013,6 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithPartitions(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1277,8 +1248,6 @@ func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
 }
 
 func TestBuildVersion3RegionQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1554,8 +1523,6 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 }
 
 func TestCheckTiDBWithTiKV(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1603,8 +1570,6 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 }
 
 func TestPickupPossibleField(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1748,8 +1713,6 @@ func TestPickupPossibleField(t *testing.T) {
 }
 
 func TestCheckIfSeqExists(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1777,7 +1740,6 @@ func TestCheckIfSeqExists(t *testing.T) {
 }
 
 func TestGetCharsetAndDefaultCollation(t *testing.T) {
-	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1796,14 +1758,4 @@ func TestGetCharsetAndDefaultCollation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
 	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
-}
-
-func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
-	return &semver.Version{
-		Major:      major,
-		Minor:      minor,
-		Patch:      patch,
-		PreRelease: semver.PreRelease(preRelease),
-		Metadata:   "",
-	}
 }

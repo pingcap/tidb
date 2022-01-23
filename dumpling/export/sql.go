@@ -297,7 +297,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
 	var policyList []string
 	var policy string
-	const query = "select distinct policy_name from information_schema.placement_rules where policy_name is not null;"
+	const query = "select distinct policy_name from information_schema.placement_policies where policy_name is not null;"
 	rows, err := db.QueryContext(context.Background(), query)
 	if err != nil {
 		return policyList, errors.Annotatef(err, "sql: %s", query)
@@ -387,11 +387,11 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasI
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
+		if strings.Contains(errMsg, strconv.Itoa(errBadFieldCode)) {
 			return false, nil
 		}
 		return false, errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
@@ -1436,6 +1436,9 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
 	}
 	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	if rows.Err() != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err
