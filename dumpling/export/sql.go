@@ -73,7 +73,7 @@ func ShowCreateDatabase(tctx *tcontext.Context, db *BaseConn, database string) (
 			if mysqlErr, ok := errors.Cause(multiErr).(*mysql.MySQLError); ok {
 				// Falling back to simple create statement for MemSQL/SingleStore, because of this:
 				// ERROR 1706 (HY000): Feature 'SHOW CREATE DATABASE' is not supported by MemSQL.
-				if mysqlErr.Number == 1706 {
+				if strings.Contains(mysqlErr.Error(), "SHOW CREATE DATABASE") {
 					return fmt.Sprintf("CREATE DATABASE `%s`", escapeString(database)), nil
 				}
 			}
