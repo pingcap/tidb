@@ -98,16 +98,7 @@ func (msm *mockSessionManager) SetServerID(serverID uint64) {
 	msm.serverID = serverID
 }
 
-func TestExecutorPkg(t *testing.T) {
-	t.Run("ShowProcessList", SubTestShowProcessList)
-	t.Run("BuildKvRangesForIndexJoinWithoutCwc", SubTestBuildKvRangesForIndexJoinWithoutCwc)
-	t.Run("GetFieldsFromLine", SubTestGetFieldsFromLine)
-	t.Run("SlowQueryRuntimeStats", SubTestSlowQueryRuntimeStats)
-	t.Run("AggPartialResultMapperB", SubTestAggPartialResultMapperB)
-	t.Run("FilterTemporaryTableKeys", SubTestFilterTemporaryTableKeys)
-}
-
-func SubTestShowProcessList(t *testing.T) {
+func TestShowProcessList(t *testing.T) {
 	// Compose schema.
 	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
@@ -180,7 +171,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-func SubTestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
+func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -224,7 +215,7 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 	return datums
 }
 
-func SubTestGetFieldsFromLine(t *testing.T) {
+func TestGetFieldsFromLine(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected []string
@@ -282,7 +273,7 @@ func assertEqualStrings(t *testing.T, got []field, expect []string) {
 	}
 }
 
-func SubTestSlowQueryRuntimeStats(t *testing.T) {
+func TestSlowQueryRuntimeStats(t *testing.T) {
 	stats := &slowQueryRuntimeStats{
 		totalFileNum: 2,
 		readFileNum:  2,
@@ -300,7 +291,7 @@ func SubTestSlowQueryRuntimeStats(t *testing.T) {
 
 // Test whether the actual buckets in Golang Map is same with the estimated number.
 // The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
-func SubTestAggPartialResultMapperB(t *testing.T) {
+func TestAggPartialResultMapperB(t *testing.T) {
 	if runtime.Version() < `go1.13` {
 		t.Skip("Unsupported version")
 	}
@@ -392,7 +383,7 @@ func getGrowing(m aggPartialResultMapper) bool {
 	return value.oldbuckets != nil
 }
 
-func SubTestFilterTemporaryTableKeys(t *testing.T) {
+func TestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{

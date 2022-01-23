@@ -320,7 +320,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	for i := 0; i < 50; i++ {
+	cacheUsed = false
+	for i := 0; i < 100; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if tk2.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true
@@ -458,7 +459,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_stmt_summary = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	se := tk.Session()
 
 	// This line is a hack, if auth user string is "", the statement summary is skipped,
@@ -482,4 +483,50 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
 
 	tk.MustQuery("select DIGEST_TEXT from INFORMATION_SCHEMA.STATEMENTS_SUMMARY where MAX_BACKOFF_TIME > 0 or MAX_WAIT_TIME > 0").Check(testkit.Rows("insert into `wait_tb1` values ( ? )"))
+}
+
+func TestTableCacheLeaseVariable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Check default value.
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("3"))
+
+	// Check a valid value.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 1;")
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("1"))
+
+	// Check a invalid value, the valid range is [2, 10]
+	tk.MustExec("set @@global.tidb_table_cache_lease = 111;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_table_cache_lease value: '111'"))
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("10"))
+
+	// Change to a non-default value and verify the behaviour.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 2;")
+
+	tk.MustExec("drop table if exists test_lease_variable;")
+	tk.MustExec(`create table test_lease_variable(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_lease_variable(c0, c1, c2) values (1, null, 'green');`)
+	tk.MustExec(`alter table test_lease_variable cache;`)
+
+	tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
+	cached := false
+	for i := 0; i < 20; i++ {
+		if tk.HasPlan("select * from test_lease_variable", "UnionScan") {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	start := time.Now()
+	tk.MustExec("update test_lease_variable set c0 = 2")
+	duration := time.Since(start)
+
+	// The lease is 2s, check how long the write operation takes.
+	require.True(t, duration > time.Second)
+	require.True(t, duration < 3*time.Second)
 }

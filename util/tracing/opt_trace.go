@@ -14,26 +14,31 @@
 
 package tracing
 
-// LogicalPlanTrace indicates for the LogicalPlan trace information
-type LogicalPlanTrace struct {
-	ID       int
-	TP       string
-	Children []*LogicalPlanTrace
+import "fmt"
 
-	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string
+// PlanTrace indicates for the Plan trace information
+type PlanTrace struct {
+	ID         int          `json:"id"`
+	TP         string       `json:"type"`
+	Children   []*PlanTrace `json:"-"`
+	ChildrenID []int        `json:"children"`
+	Cost       float64      `json:"cost"`
+	Selected   bool         `json:"selected"`
+	ProperType string       `json:"property"`
+	// ExplainInfo should be implemented by each implemented Plan
+	ExplainInfo string `json:"info"`
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	FinalLogicalPlan []FlattenLogicalPlanTrace    `json:"final"`
+	FinalLogicalPlan []*PlanTrace                 `json:"final"`
 	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
 }
 
 // AppendRuleTracerBeforeRuleOptimize add plan tracer before optimize
-func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index int, name string, before *LogicalPlanTrace) {
+func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index int, name string, before *PlanTrace) {
 	ruleTracer := buildLogicalRuleOptimizeTracerBeforeOptimize(index, name, before)
 	tracer.Steps = append(tracer.Steps, ruleTracer)
 	tracer.curRuleTracer = ruleTracer
@@ -52,21 +57,33 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, r
 }
 
 // RecordFinalLogicalPlan add plan trace after logical optimize
-func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *LogicalPlanTrace) {
+func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *PlanTrace) {
 	tracer.FinalLogicalPlan = toFlattenLogicalPlanTrace(final)
+	tracer.removeUselessStep()
+}
+
+// TODO: use a switch to control it
+func (tracer *LogicalOptimizeTracer) removeUselessStep() {
+	newSteps := make([]*LogicalRuleOptimizeTracer, 0)
+	for _, step := range tracer.Steps {
+		if len(step.Steps) > 0 {
+			newSteps = append(newSteps, step)
+		}
+	}
+	tracer.Steps = newSteps
 }
 
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
 	Index    int                            `json:"index"`
-	Before   []FlattenLogicalPlanTrace      `json:"before"`
+	Before   []*PlanTrace                   `json:"before"`
 	RuleName string                         `json:"name"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
-func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
+func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
 		Before:   toFlattenLogicalPlanTrace(before),
@@ -85,45 +102,36 @@ type LogicalRuleOptimizeTraceStep struct {
 	Index  int    `json:"index"`
 }
 
-// FlattenLogicalPlanTrace indicates the flatten LogicalPlanTrace
-type FlattenLogicalPlanTrace struct {
-	ID       int    `json:"id"`
-	TP       string `json:"type"`
-	Children []int  `json:"children"`
-
-	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string `json:"info"`
-}
-
 // toFlattenLogicalPlanTrace transform LogicalPlanTrace into FlattenLogicalPlanTrace
-func toFlattenLogicalPlanTrace(root *LogicalPlanTrace) []FlattenLogicalPlanTrace {
-	wrapper := &flattenWrapper{flatten: make([]FlattenLogicalPlanTrace, 0)}
+func toFlattenLogicalPlanTrace(root *PlanTrace) []*PlanTrace {
+	wrapper := &flattenWrapper{flatten: make([]*PlanTrace, 0)}
 	flattenLogicalPlanTrace(root, wrapper)
 	return wrapper.flatten
 }
 
 type flattenWrapper struct {
-	flatten []FlattenLogicalPlanTrace
+	flatten []*PlanTrace
 }
 
-func flattenLogicalPlanTrace(node *LogicalPlanTrace, wrapper *flattenWrapper) {
-	flattenNode := FlattenLogicalPlanTrace{
+func flattenLogicalPlanTrace(node *PlanTrace, wrapper *flattenWrapper) {
+	newNode := &PlanTrace{
 		ID:          node.ID,
 		TP:          node.TP,
+		ChildrenID:  make([]int, 0),
+		Cost:        node.Cost,
 		ExplainInfo: node.ExplainInfo,
-		Children:    make([]int, 0),
 	}
 	if len(node.Children) < 1 {
-		wrapper.flatten = append(wrapper.flatten, flattenNode)
+		wrapper.flatten = append(wrapper.flatten, newNode)
 		return
 	}
 	for _, child := range node.Children {
-		flattenNode.Children = append(flattenNode.Children, child.ID)
+		newNode.ChildrenID = append(newNode.ChildrenID, child.ID)
 	}
 	for _, child := range node.Children {
 		flattenLogicalPlanTrace(child, wrapper)
 	}
-	wrapper.flatten = append(wrapper.flatten, flattenNode)
+	wrapper.flatten = append(wrapper.flatten, newNode)
 }
 
 // CETraceRecord records an expression and related cardinality estimation result.
@@ -146,4 +154,90 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 		}
 	}
 	return ret
+}
+
+// PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
+type PhysicalOptimizeTracer struct {
+	// final indicates the final physical plan trace
+	Final               []*PlanTrace          `json:"final"`
+	SelectedCandidates  []*CandidatePlanTrace `json:"selected_candidates"`
+	DiscardedCandidates []*CandidatePlanTrace `json:"discarded_candidates"`
+	// (logical plan) -> physical plan codename -> physical plan
+	State map[string]map[string]*PlanTrace `json:"-"`
+}
+
+// RecordFinalPlanTrace records final physical plan trace
+func (tracer *PhysicalOptimizeTracer) RecordFinalPlanTrace(root *PlanTrace) {
+	tracer.Final = toFlattenLogicalPlanTrace(root)
+	tracer.buildCandidatesInfo()
+}
+
+// CandidatePlanTrace indicates info for candidate
+type CandidatePlanTrace struct {
+	*PlanTrace
+	MappingLogicalPlan string `json:"mapping"`
+}
+
+func newCandidatePlanTrace(trace *PlanTrace, logicalPlanKey string, bestKey map[string]struct{}) *CandidatePlanTrace {
+	selected := false
+	if _, ok := bestKey[CodecPlanName(trace.TP, trace.ID)]; ok {
+		selected = true
+	}
+	c := &CandidatePlanTrace{
+		MappingLogicalPlan: logicalPlanKey,
+	}
+	c.PlanTrace = trace
+	c.Selected = selected
+	for i, child := range c.Children {
+		if _, ok := bestKey[CodecPlanName(child.TP, child.ID)]; ok {
+			child.Selected = true
+		}
+		c.Children[i] = child
+	}
+	return c
+}
+
+// buildCandidatesInfo builds candidates info
+func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
+	if tracer == nil || len(tracer.State) < 1 {
+		return
+	}
+	sCandidates := make([]*CandidatePlanTrace, 0)
+	dCandidates := make([]*CandidatePlanTrace, 0)
+	bestKeys := map[string]struct{}{}
+	for _, node := range tracer.Final {
+		bestKeys[CodecPlanName(node.TP, node.ID)] = struct{}{}
+	}
+	for logicalKey, pps := range tracer.State {
+		for _, pp := range pps {
+			c := newCandidatePlanTrace(pp, logicalKey, bestKeys)
+			if c.Selected {
+				sCandidates = append(sCandidates, c)
+			} else {
+				dCandidates = append(dCandidates, c)
+			}
+		}
+	}
+	tracer.SelectedCandidates = sCandidates
+	tracer.DiscardedCandidates = dCandidates
+}
+
+// CodecPlanName returns tp_id of plan.
+func CodecPlanName(tp string, id int) string {
+	return fmt.Sprintf("%v_%v", tp, id)
+}
+
+// OptimizeTracer indicates tracer for optimizer
+type OptimizeTracer struct {
+	// Logical indicates logical plan
+	Logical *LogicalOptimizeTracer `json:"logical"`
+	// Physical indicates physical plan
+	Physical *PhysicalOptimizeTracer `json:"physical"`
+	// FinalPlan indicates the plan after post optimize
+	FinalPlan []*PlanTrace `json:"final"`
+}
+
+// RecordFinalPlan records plan after post optimize
+func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
+	tracer.FinalPlan = toFlattenLogicalPlanTrace(final)
 }

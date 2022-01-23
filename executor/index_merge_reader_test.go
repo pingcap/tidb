@@ -454,3 +454,23 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bytes, Greater, 0.0)
 }
+
+func (test *testSerialSuite2) TestIndexMergeSplitTable(c *C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS tab2;")
+	tk.MustExec("CREATE TABLE tab2(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
+	tk.MustExec("CREATE INDEX idx_tab2_0 ON tab2 (col0 DESC,col3 DESC);")
+	tk.MustExec("CREATE UNIQUE INDEX idx_tab2_3 ON tab2 (col4,col0 DESC);")
+	tk.MustExec("CREATE INDEX idx_tab2_4 ON tab2 (col3,col1 DESC);")
+	tk.MustExec("INSERT INTO tab2 VALUES(0,146,632.63,'shwwd',703,412.47,'xsppr');")
+	tk.MustExec("INSERT INTO tab2 VALUES(1,81,536.29,'trhdh',49,726.3,'chuxv');")
+	tk.MustExec("INSERT INTO tab2 VALUES(2,311,541.72,'txrvb',493,581.92,'xtrra');")
+	tk.MustExec("INSERT INTO tab2 VALUES(3,669,293.27,'vcyum',862,415.14,'nbutk');")
+	tk.MustExec("INSERT INTO tab2 VALUES(4,681,49.46,'odzhp',106,324.65,'deudp');")
+	tk.MustExec("INSERT INTO tab2 VALUES(5,319,769.65,'aeqln',855,197.9,'apipa');")
+	tk.MustExec("INSERT INTO tab2 VALUES(6,610,302.62,'bixap',184,840.31,'vggit');")
+	tk.MustExec("INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');")
+	tk.MustExec("SPLIT TABLE tab2 BY (5);")
+	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
+}

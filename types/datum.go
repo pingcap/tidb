@@ -222,6 +222,9 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 
 func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
 	enc = charset.FindEncoding(chs)
+	if sc == nil {
+		return enc, false
+	}
 	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
 		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
 		return nil, true
@@ -1616,7 +1619,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
-		if j, err = json.ParseBinaryFromString(d.GetBinaryStringEncoded()); err == nil {
+		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:

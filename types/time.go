@@ -2558,7 +2558,8 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		if (length == 8) || (length == 6) {
+		// "20129" will be parsed to 2020-12-09, which is date format.
+		if (length == 8) || (length == 6) || (length == 5) {
 			return true
 		}
 	case 3:

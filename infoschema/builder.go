@@ -57,8 +57,6 @@ type Builder struct {
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
-	var tblIDs []int64
-	var err error
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
@@ -74,19 +72,39 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropPolicy(diff.SchemaID), nil
 	case model.ActionAlterPlacementPolicy:
 		return b.applyAlterPolicy(m, diff)
+	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
+		return b.applyTruncateTableOrPartition(m, diff)
+	case model.ActionDropTable, model.ActionDropTablePartition:
+		return b.applyDropTableOrParition(m, diff)
+	case model.ActionRecoverTable:
+		return b.applyRecoverTable(m, diff)
+	case model.ActionCreateTables:
+		return b.applyCreateTables(m, diff)
 	default:
-		switch diff.Type {
-		case model.ActionTruncateTablePartition, model.ActionTruncateTable:
-			tblIDs, err = b.applyTruncateTableOrPartition(m, diff)
-		case model.ActionDropTable, model.ActionDropTablePartition:
-			tblIDs, err = b.applyDropTableOrParition(m, diff)
-		case model.ActionRecoverTable:
-			tblIDs, err = b.applyRecoverTable(m, diff)
-		default:
-			tblIDs, err = b.applyDefaultAction(m, diff)
+		return b.applyDefaultAction(m, diff)
+	}
+}
+
+func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        model.ActionCreateTable,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
 		}
 	}
-	return tblIDs, err
+	return tblIDs, nil
 }
 
 func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -375,7 +393,6 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 	}
 	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
-	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
 }
 

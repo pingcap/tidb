@@ -35,6 +35,7 @@ var _ = Suite(&testMetaBundleSuite{})
 type testMetaBundleSuite struct {
 	policy1 *model.PolicyInfo
 	policy2 *model.PolicyInfo
+	policy3 *model.PolicyInfo
 	tbl1    *model.TableInfo
 	tbl2    *model.TableInfo
 	tbl3    *model.TableInfo
@@ -60,6 +61,14 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 		},
 		State: model.StatePublic,
 	}
+	s.policy3 = &model.PolicyInfo{
+		ID:   13,
+		Name: model.NewCIStr("p3"),
+		PlacementSettings: &model.PlacementSettings{
+			LeaderConstraints: "[+region=bj]",
+		},
+		State: model.StatePublic,
+	}
 	s.tbl1 = &model.TableInfo{
 		ID:   101,
 		Name: model.NewCIStr("t1"),
@@ -82,11 +91,6 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 					ID:   1002,
 					Name: model.NewCIStr("par2"),
 				},
-				{
-					ID:                  1003,
-					Name:                model.NewCIStr("par3"),
-					DirectPlacementOpts: &model.PlacementSettings{PrimaryRegion: "r3", Regions: "r3"},
-				},
 			},
 		},
 	}
@@ -105,23 +109,16 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 					Name: model.NewCIStr("par1"),
 				},
 				{
-					ID:                  1002,
-					Name:                model.NewCIStr("par2"),
-					DirectPlacementOpts: &model.PlacementSettings{PrimaryRegion: "r2", Regions: "r2"},
-				},
-				{
-					ID:   1003,
-					Name: model.NewCIStr("par3"),
+					ID:   1002,
+					Name: model.NewCIStr("par2"),
 				},
 			},
 		},
 	}
 	s.tbl3 = &model.TableInfo{
-		ID:   103,
-		Name: model.NewCIStr("t3"),
-		DirectPlacementOpts: &model.PlacementSettings{
-			LeaderConstraints: "[+region=bj]",
-		},
+		ID:                 103,
+		Name:               model.NewCIStr("t3"),
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 13, Name: model.NewCIStr("p3")},
 	}
 	s.tbl4 = &model.TableInfo{
 		ID:   104,
@@ -134,6 +131,7 @@ func (s *testMetaBundleSuite) prepareMeta(c *C, store kv.Storage) {
 		t := meta.NewMeta(txn)
 		c.Assert(t.CreatePolicy(s.policy1), IsNil)
 		c.Assert(t.CreatePolicy(s.policy2), IsNil)
+		c.Assert(t.CreatePolicy(s.policy3), IsNil)
 		return nil
 	}), IsNil)
 }
@@ -191,11 +189,6 @@ func (s *testMetaBundleSuite) TestNewPartitionBundle(c *C) {
 		c.Assert(err, IsNil)
 		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundle)
 
-		// tbl1.par3
-		bundle, err = placement.NewPartitionBundle(t, s.tbl1.Partition.Definitions[3])
-		c.Assert(err, IsNil)
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundle)
-
 		return nil
 	}), IsNil)
 }
@@ -212,9 +205,8 @@ func (s *testMetaBundleSuite) TestNewPartitionListBundles(c *C) {
 
 		bundles, err := placement.NewPartitionListBundles(t, s.tbl1.Partition.Definitions)
 		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 2)
+		c.Assert(len(bundles), Equals, 1)
 		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundles[0])
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundles[1])
 
 		bundles, err = placement.NewPartitionListBundles(t, []model.PartitionDefinition{})
 		c.Assert(err, IsNil)
@@ -243,16 +235,14 @@ func (s *testMetaBundleSuite) TestNewFullTableBundles(c *C) {
 
 		bundles, err := placement.NewFullTableBundles(t, s.tbl1)
 		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 3)
+		c.Assert(len(bundles), Equals, 2)
 		s.checkTableBundle(c, s.tbl1, bundles[0])
 		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundles[1])
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundles[2])
 
 		bundles, err = placement.NewFullTableBundles(t, s.tbl2)
 		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 2)
+		c.Assert(len(bundles), Equals, 1)
 		s.checkPartitionBundle(c, s.tbl2.Partition.Definitions[0], bundles[0])
-		s.checkPartitionBundle(c, s.tbl2.Partition.Definitions[2], bundles[1])
 
 		bundles, err = placement.NewFullTableBundles(t, s.tbl3)
 		c.Assert(err, IsNil)
@@ -280,7 +270,7 @@ func (s *testMetaBundleSuite) checkTwoJSONObjectEquals(c *C, expected interface{
 }
 
 func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *placement.Bundle) {
-	if tbl.PlacementPolicyRef == nil && tbl.DirectPlacementOpts == nil {
+	if tbl.PlacementPolicyRef == nil {
 		c.Assert(got, IsNil)
 		return
 	}
@@ -289,7 +279,7 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 		ID:       fmt.Sprintf("TiDB_DDL_%d", tbl.ID),
 		Index:    placement.RuleIndexTable,
 		Override: true,
-		Rules:    s.expectedRules(c, tbl.PlacementPolicyRef, tbl.DirectPlacementOpts),
+		Rules:    s.expectedRules(c, tbl.PlacementPolicyRef),
 	}
 
 	for idx, rule := range expected.Rules {
@@ -302,7 +292,7 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 
 	if tbl.Partition != nil {
 		for _, par := range tbl.Partition.Definitions {
-			rules := s.expectedRules(c, tbl.PlacementPolicyRef, tbl.DirectPlacementOpts)
+			rules := s.expectedRules(c, tbl.PlacementPolicyRef)
 			for idx, rule := range rules {
 				rule.GroupID = expected.ID
 				rule.Index = placement.RuleIndexPartition
@@ -318,7 +308,7 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 }
 
 func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefinition, got *placement.Bundle) {
-	if def.PlacementPolicyRef == nil && def.DirectPlacementOpts == nil {
+	if def.PlacementPolicyRef == nil {
 		c.Assert(got, IsNil)
 		return
 	}
@@ -327,7 +317,7 @@ func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefi
 		ID:       fmt.Sprintf("TiDB_DDL_%d", def.ID),
 		Index:    placement.RuleIndexPartition,
 		Override: true,
-		Rules:    s.expectedRules(c, def.PlacementPolicyRef, def.DirectPlacementOpts),
+		Rules:    s.expectedRules(c, def.PlacementPolicyRef),
 	}
 
 	for idx, rule := range expected.Rules {
@@ -341,31 +331,24 @@ func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefi
 	s.checkTwoJSONObjectEquals(c, expected, got)
 }
 
-func (s *testMetaBundleSuite) expectedRules(c *C, ref *model.PolicyRefInfo, direct *model.PlacementSettings) []*placement.Rule {
-	c.Assert(ref != nil && direct != nil, IsFalse)
-
-	var settings *model.PlacementSettings
-	if ref != nil {
-		var policy *model.PolicyInfo
-		switch ref.ID {
-		case s.policy1.ID:
-			policy = s.policy1
-		case s.policy2.ID:
-			policy = s.policy2
-		default:
-			c.FailNow()
-		}
-		c.Assert(ref.Name, Equals, policy.Name)
-		settings = policy.PlacementSettings
-	}
-
-	if direct != nil {
-		settings = direct
-	}
-
-	if settings == nil {
+func (s *testMetaBundleSuite) expectedRules(c *C, ref *model.PolicyRefInfo) []*placement.Rule {
+	if ref == nil {
 		return []*placement.Rule{}
 	}
+
+	var policy *model.PolicyInfo
+	switch ref.ID {
+	case s.policy1.ID:
+		policy = s.policy1
+	case s.policy2.ID:
+		policy = s.policy2
+	case s.policy3.ID:
+		policy = s.policy3
+	default:
+		c.FailNow()
+	}
+	c.Assert(ref.Name, Equals, policy.Name)
+	settings := policy.PlacementSettings
 
 	bundle, err := placement.NewBundleFromOptions(settings)
 	c.Assert(err, IsNil)

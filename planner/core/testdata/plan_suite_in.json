@@ -746,5 +746,42 @@
     "cases": [
         "select * from t where t.a < 3 and t.a < 3"
     ]
+  },
+  {
+    "name": "TestMPPSinglePartitionType",
+    "cases": [
+      // test normal aggregation, MPP2Phase.
+      "select count(*) from employee group by deptid+1",
+      // test normal aggregation, MPPScalar.
+      "select count(distinct deptid) a from employee",
+      // test normal join, Broadcast.
+      "select * from employee join employee e1 using(deptid)",
+      // test redundant collect exchange can be eliminated.
+      "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+      // test mppScalar agg below mpp2Phase agg.
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+      // test mppScalar agg below mpp1Phase agg, TODO: add hint to enforce
+      // test mppScalar agg below mppTiDB agg, TODO: add hint to enforce
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+      // test mppScalar agg below join
+      "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
+      "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      // test mpp2Phase agg below join
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+      // non-broadcast join
+      "set tidb_broadcast_join_threshold_count=1",
+      "set tidb_broadcast_join_threshold_size=1",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d"
+    ]
   }
 ]

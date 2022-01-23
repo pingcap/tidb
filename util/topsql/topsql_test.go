@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
@@ -53,11 +54,13 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{"select * from t where a>?", "table-scan"},
 		{"insert into t values (?)", ""},
 	}
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for _, req := range reqs {
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -66,7 +69,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
 
 	for _, req := range reqs {
@@ -116,7 +119,8 @@ func TestTopSQLReporter(t *testing.T) {
 		{"select * from t where a>?", "table-scan"},
 		{"insert into t values (?)", ""},
 	}
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -126,8 +130,8 @@ func TestTopSQLReporter(t *testing.T) {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
 		sqlMap[string(sqlDigest.Bytes())] = req.sql
-
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -136,9 +140,8 @@ func TestTopSQLReporter(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
-
 	server.WaitCollectCnt(1, time.Second*5)
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
@@ -233,7 +236,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer conn.Close()
-
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client := tipb.NewTopSQLPubSubClient(conn)
@@ -255,8 +259,8 @@ func TestTopSQLPubSub(t *testing.T) {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
 		digest2sql[string(sqlDigest.Bytes())] = req.sql
-
-		go func(sql, plan string) {
+		sql, plan := req.sql, req.plan
+		wg.Run(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -265,7 +269,7 @@ func TestTopSQLPubSub(t *testing.T) {
 					mockExecuteSQL(sql, plan)
 				}
 			}
-		}(req.sql, req.plan)
+		})
 	}
 
 	sqlMetas := make(map[string]*tipb.SQLMeta)

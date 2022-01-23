@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -333,6 +334,7 @@ func (s *restoreSuite) TestPreCheckFailed(c *C) {
 		metaMgrBuilder: failMetaMgrBuilder{},
 		checkTemplate:  NewSimpleTemplate(),
 		tidbGlue:       g,
+		errorMgr:       errormanager.New(nil, cfg),
 	}
 
 	mock.ExpectBegin()
@@ -421,7 +423,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 			FileMeta: mydump.SourceFileMeta{
 				Path:     fakeFileName,
 				Type:     mydump.SourceTypeSQL,
-				SortKey:  fmt.Sprintf("%d", i),
+				SortKey:  strconv.Itoa(i),
 				FileSize: 37,
 			},
 		})
@@ -1213,6 +1215,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		diskQuotaLock:     newDiskQuotaLock(),
+		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {
 		for scp := range chptCh {
@@ -2078,6 +2081,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
+		c.Assert(err, IsNil)
 		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
