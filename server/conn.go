@@ -679,23 +679,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
-		logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
-	}
-	if len(newAuth) > 0 {
-		resp.Auth = newAuth
-	}
-
-	switch resp.AuthPlugin {
-	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
-		if err != nil {
-			return err
-		}
-	case mysql.AuthNativePassword:
-	default:
-		return errors.New("Unknown auth plugin")
+		return err
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
@@ -703,6 +689,32 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
 	return err
+}
+
+func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
+	if resp.Capability&mysql.ClientPluginAuth > 0 {
+		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+		if err != nil {
+			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+		}
+		if len(newAuth) > 0 {
+			resp.Auth = newAuth
+		}
+
+		switch resp.AuthPlugin {
+		case mysql.AuthCachingSha2Password:
+			resp.Auth, err = cc.authSha(ctx)
+			if err != nil {
+				return err
+			}
+		case mysql.AuthNativePassword:
+		default:
+			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
+		}
+	} else {
+		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
+	}
+	return nil
 }
 
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {

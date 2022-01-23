@@ -583,6 +583,44 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
 
+func (s *testSerialStatsSuite) TestAutoAnalyzeOutOfSpecifiedTime(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("alter table t add index ia(a)")
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
 func (s *testSerialStatsSuite) TestIssue25700(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1470,9 +1508,6 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		tbl    *statistics.Table
 		ratio  float64
 		limit  time.Duration
-		start  string
-		end    string
-		now    string
 		result bool
 		reason string
 	}{
@@ -1481,20 +1516,14 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: true,
 			reason: "table unanalyzed",
 		},
-		// table was never analyzed but has not reach the limit
+		// table was never analyzed but has not reached the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
@@ -1503,76 +1532,52 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
-		// table was already analyzed and but modify count is small
+		// table was already analyzed but modify count is small
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
-		// table was already analyzed and but not within time period
+		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:02 +0800",
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed and but not within time period
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:  0,
-			ratio:  0.3,
-			start:  "22:00 +0800",
-			end:    "06:00 +0800",
-			now:    "10:00 +0800",
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed and within time period
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:  0,
-			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: true,
 			reason: "too many modifications",
 		},
-		// table was already analyzed and within time period
+		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "22:00 +0800",
-			end:    "06:00 +0800",
-			now:    "23:00 +0800",
+			result: true,
+			reason: "too many modifications",
+		},
+		// table was already analyzed
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			result: true,
+			reason: "too many modifications",
+		},
+		// table was already analyzed
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
-		start, err := time.ParseInLocation(variable.FullDayTimeFormat, test.start, time.UTC)
-		c.Assert(err, IsNil)
-		end, err := time.ParseInLocation(variable.FullDayTimeFormat, test.end, time.UTC)
-		c.Assert(err, IsNil)
-		now, err := time.ParseInLocation(variable.FullDayTimeFormat, test.now, time.UTC)
-		c.Assert(err, IsNil)
-		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio)
 		c.Assert(needAnalyze, Equals, test.result)
 		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}

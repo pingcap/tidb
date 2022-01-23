@@ -66,7 +66,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210820060448-daddf73a0706
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210831090540-391fcd842dc8
 	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0

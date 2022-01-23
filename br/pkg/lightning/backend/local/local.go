@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -57,9 +56,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/table"
@@ -68,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -977,17 +977,43 @@ func NewLocalBackend(
 }
 
 func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.PdController) error {
-	stores, err := conn.GetAllTiKVStores(ctx, pdCtl.GetPDClient(), conn.SkipTiFlash)
+	stores, err := pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	hasTiFlash := false
 	for _, s := range stores {
-		client, err := local.getImportClient(ctx, s.Id)
-		if err != nil {
-			return errors.Trace(err)
+		if version.IsTiFlash(s) {
+			hasTiFlash = true
+			break
 		}
-		_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
-		if err != nil {
+	}
+
+	for _, s := range stores {
+		// skip stores that are not online
+		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+			continue
+		}
+		var err error
+		for i := 0; i < maxRetryTimes; i++ {
+			if i > 0 {
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			client, err1 := local.getImportClient(ctx, s.Id)
+			if err1 != nil {
+				err = err1
+				log.L().Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
+				continue
+			}
+			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
+			if err == nil {
+				break
+			}
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
 					log.L().Info("multi ingest not support", zap.Any("unsupported store", s))
@@ -995,7 +1021,18 @@ func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.P
 					return nil
 				}
 			}
-			return errors.Trace(err)
+			log.L().Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
+				zap.Int("retry", i))
+		}
+		if err != nil {
+			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
+			// so in this condition, downgrade the logic instead of return an error.
+			if hasTiFlash {
+				return errors.Trace(err)
+			}
+			log.L().Warn("check multi failed all retry, fallback to false", log.ShortError(err))
+			local.supportMultiIngest = false
+			return nil
 		}
 	}
 
@@ -2277,11 +2314,9 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	versionStr, err := local.g.GetSQLExecutor().ObtainStringWithLog(
-		ctx,
-		"SELECT version();",
-		"check TiDB version",
-		log.L())
+	// TODO: support lightning via SQL
+	db, _ := local.g.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2295,8 +2330,8 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 
-	tidbVersion, _ := version.ExtractTiDBVersion(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *tidbVersion)
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {

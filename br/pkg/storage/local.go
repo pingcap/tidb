@@ -25,6 +25,11 @@ type LocalStorage struct {
 	base string
 }
 
+func (l *LocalStorage) DeleteFile(ctx context.Context, name string) error {
+	path := filepath.Join(l.base, name)
+	return os.Remove(path)
+}
+
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	path := filepath.Join(l.base, name)

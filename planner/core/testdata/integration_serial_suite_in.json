@@ -3,7 +3,7 @@
     "name": "TestSelPushDownTiFlash",
     "cases": [
       "explain format = 'brief' select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
-      "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
+      "explain format = 'brief' select * from t where cast(t.a as double) + 3 = 5.1",
       "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
       "explain format = 'brief' select * from t where b > 'a' order by b limit 2"
     ]
@@ -99,6 +99,14 @@
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)"
+    ]
+  },
+  {
+    "name": "TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError",
+    "cases": [
+      "explain format = 'brief' select v from t3 as a left join (select t1.v1, t1.v2, t1.v1 + t1.v2 as v from t1 left join t2 on t1.v1 = t2.v1 and t1.v2 = t2.v2) b on a.v1 = b.v1 and a.v2 = b.v2",
+      "explain format = 'brief' select count(*), t2.v1, t2.v2 from t1 left join t2 on t1.v1 = t2.v1 and t1.v2 = t2.v2 group by t2.v1, t2.v2",
+      "explain format = 'brief' select count(*), t2.v1, t2.v2 from t3 left join t2 on t3.v1 = t2.v1 and t3.v2 = t2.v2 group by t2.v1, t2.v2"
     ]
   },
   {
@@ -211,7 +219,8 @@
       "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)"
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
@@ -230,7 +239,8 @@
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id"
+      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {

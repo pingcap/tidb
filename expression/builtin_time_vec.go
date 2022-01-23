@@ -1942,12 +1942,11 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(ds[i].Hours())
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Hour())
 	}
 	return nil
 }

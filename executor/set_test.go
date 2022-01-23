@@ -1412,13 +1412,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
 	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
 
-	tk.MustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
-	tk.MustExec("set @@tidb_top_sql_agent_address='';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows(""))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
-
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
 	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))

@@ -654,3 +654,47 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
 }
+
+func (s *testEvaluatorSuite) TestDecimalErrOverflow(c *C) {
+	testCases := []struct {
+		args   []float64
+		opd    string
+		sig    tipb.ScalarFuncSig
+		errStr string
+	}{
+		{
+			args:   []float64{8.1e80, 8.1e80},
+			opd:    ast.Plus,
+			sig:    tipb.ScalarFuncSig_PlusDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 + 810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, -8.1e80},
+			opd:    ast.Minus,
+			sig:    tipb.ScalarFuncSig_MinusDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 - -810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, 8.1e80},
+			opd:    ast.Mul,
+			sig:    tipb.ScalarFuncSig_MultiplyDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 * 810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, 0.1},
+			opd:    ast.Div,
+			sig:    tipb.ScalarFuncSig_DivideDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 / 0.1)'",
+		},
+	}
+	for _, tc := range testCases {
+		dec1, dec2 := types.NewDecFromFloatForTest(tc.args[0]), types.NewDecFromFloatForTest(tc.args[1])
+		bf, err := funcs[tc.opd].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(dec1, dec2)))
+		c.Assert(err, IsNil)
+		c.Assert(bf, NotNil)
+		c.Assert(bf.PbCode(), Equals, tc.sig)
+		_, err = evalBuiltinFunc(bf, chunk.Row{})
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, tc.errStr)
+	}
+}

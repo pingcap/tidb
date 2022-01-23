@@ -14,6 +14,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -213,13 +215,13 @@ func ExtractTiDBVersion(version string) (*semver.Version, error) {
 	return semver.NewVersion(rawVersion)
 }
 
-// CheckTiDBVersion is equals to ExtractTiDBVersion followed by CheckVersion.
+// CheckTiDBVersion is equals to ParseServerInfo followed by CheckVersion.
 func CheckTiDBVersion(versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
-	version, err := ExtractTiDBVersion(versionStr)
-	if err != nil {
-		return errors.Trace(err)
+	serverInfo := ParseServerInfo(versionStr)
+	if serverInfo.ServerType != ServerTypeTiDB {
+		return errors.Errorf("server with version '%s' is not TiDB", versionStr)
 	}
-	return CheckVersion("TiDB", *version, requiredMinVersion, requiredMaxVersion)
+	return CheckVersion("TiDB", *serverInfo.ServerVersion, requiredMinVersion, requiredMaxVersion)
 }
 
 // NormalizeBackupVersion normalizes the version string from backupmeta.
@@ -237,4 +239,121 @@ func NormalizeBackupVersion(version string) *semver.Version {
 		log.Warn("cannot parse backup version", zap.String("version", normalizedVerStr), zap.Error(err))
 	}
 	return ver
+}
+
+// FetchVersion gets the version information from the database server
+//
+// NOTE: the executed query will be:
+// - `select tidb_version()` if target db is tidb
+// - `select version()` if target db is not tidb
+func FetchVersion(ctx context.Context, db common.QueryExecutor) (string, error) {
+	var versionInfo string
+	const queryTiDB = "SELECT tidb_version();"
+	tidbRow := db.QueryRowContext(ctx, queryTiDB)
+	err := tidbRow.Scan(&versionInfo)
+	if err == nil {
+		return versionInfo, nil
+	}
+	log.L().Warn("select tidb_version() failed, will fallback to 'select version();'", logutil.ShortError(err))
+	const query = "SELECT version();"
+	row := db.QueryRowContext(ctx, query)
+	err = row.Scan(&versionInfo)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return versionInfo, nil
+}
+
+type ServerType int
+
+const (
+	// ServerTypeUnknown represents unknown server type
+	ServerTypeUnknown = iota
+	// ServerTypeMySQL represents MySQL server type
+	ServerTypeMySQL
+	// ServerTypeMariaDB represents MariaDB server type
+	ServerTypeMariaDB
+	// ServerTypeTiDB represents TiDB server type
+	ServerTypeTiDB
+
+	// ServerTypeAll represents All server types
+	ServerTypeAll
+)
+
+var serverTypeString = []string{
+	ServerTypeUnknown: "Unknown",
+	ServerTypeMySQL:   "MySQL",
+	ServerTypeMariaDB: "MariaDB",
+	ServerTypeTiDB:    "TiDB",
+}
+
+// String implements Stringer.String
+func (s ServerType) String() string {
+	if s >= ServerTypeAll {
+		return ""
+	}
+	return serverTypeString[s]
+}
+
+// ServerInfo is the combination of ServerType and ServerInfo
+type ServerInfo struct {
+	ServerType    ServerType
+	ServerVersion *semver.Version
+}
+
+var (
+	mysqlVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select version()` result
+	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result
+	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+)
+
+// ParseServerInfo parses exported server type and version info from version string
+func ParseServerInfo(src string) ServerInfo {
+	lowerCase := strings.ToLower(src)
+	serverInfo := ServerInfo{}
+	isReleaseVersion := false
+	switch {
+	case strings.Contains(lowerCase, "release version:"):
+		// this version string is tidb release version
+		serverInfo.ServerType = ServerTypeTiDB
+		isReleaseVersion = true
+	case strings.Contains(lowerCase, "tidb"):
+		serverInfo.ServerType = ServerTypeTiDB
+	case strings.Contains(lowerCase, "mariadb"):
+		serverInfo.ServerType = ServerTypeMariaDB
+	case mysqlVersionRegex.MatchString(lowerCase):
+		serverInfo.ServerType = ServerTypeMySQL
+	default:
+		serverInfo.ServerType = ServerTypeUnknown
+	}
+
+	var versionStr string
+	if serverInfo.ServerType == ServerTypeTiDB {
+		if isReleaseVersion {
+			versionStr = tidbReleaseVersionRegex.FindString(src)
+		} else {
+			versionStr = tidbVersionRegex.FindString(src)[1:]
+		}
+		versionStr = strings.TrimPrefix(versionStr, "v")
+	} else {
+		versionStr = mysqlVersionRegex.FindString(src)
+	}
+
+	var err error
+	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
+	if err != nil {
+		log.L().Warn("fail to parse version",
+			zap.String("version", versionStr))
+	}
+	var version string
+	if serverInfo.ServerVersion != nil {
+		version = serverInfo.ServerVersion.String()
+	}
+	log.L().Info("detect server version",
+		zap.String("type", serverInfo.ServerType.String()),
+		zap.String("version", version))
+
+	return serverInfo
 }

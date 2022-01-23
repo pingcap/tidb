@@ -694,8 +694,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfK
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210820060448-daddf73a0706 h1:UwEODRazer/iP7fi7K9xKWoSsDSIAHNIhtklh1+28a8=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210820060448-daddf73a0706/go.mod h1:KwtZXt0JD+bP9bWW2ka0ir3Wp3oTEfZUTh22bs2sI4o=
+github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210831090540-391fcd842dc8 h1:8nv1BaOlTfYtK3Pyb0fHQ0zm9mRMPlXFbAWUhTEvRdo=
+github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210831090540-391fcd842dc8/go.mod h1:KwtZXt0JD+bP9bWW2ka0ir3Wp3oTEfZUTh22bs2sI4o=
 github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d/go.mod h1:Jw9KG11C/23Rr7DW4XWQ7H5xOgGZo6DFL1OKAF4+Igw=
 github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690 h1:qGn7fDqj7IZ5dozy7QVkoj+0bama92ruVGHqoCBg7W4=
 github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690/go.mod h1:rammPjeZgpvfrQRPkijcx8tlxF1XM5+m6kRXrkDzCAA=

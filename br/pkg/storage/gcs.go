@@ -88,6 +88,13 @@ type gcsStorage struct {
 	bucket *storage.BucketHandle
 }
 
+// DeleteFile delete the file in storage
+func (s *gcsStorage) DeleteFile(ctx context.Context, name string) error {
+	object := s.objectName(name)
+	err := s.bucket.Object(object).Delete(ctx)
+	return errors.Trace(err)
+}
+
 func (s *gcsStorage) objectName(name string) string {
 	return path.Join(s.gcs.Prefix, name)
 }

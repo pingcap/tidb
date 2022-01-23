@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
@@ -181,6 +183,47 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedDecimalErrOverflow(c *C) {
+	ctx := mock.NewContext()
+	testCases := []struct {
+		args     []float64
+		funcName string
+		errStr   string
+	}{
+		{args: []float64{8.1e80, 8.1e80}, funcName: ast.Plus,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 + Column#0)'",
+		},
+		{args: []float64{8.1e80, -8.1e80}, funcName: ast.Minus,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 - Column#0)'",
+		},
+		{args: []float64{8.1e80, 8.1e80}, funcName: ast.Mul,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 * Column#0)'",
+		},
+		{args: []float64{8.1e80, 0.1}, funcName: ast.Div,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 / Column#0)'",
+		},
+	}
+
+	for _, tt := range testCases {
+		fts := []*types.FieldType{eType2FieldType(types.ETDecimal), eType2FieldType(types.ETDecimal)}
+		input := chunk.New(fts, 1, 1)
+		dec1, dec2 := new(types.MyDecimal), new(types.MyDecimal)
+		err := dec1.FromFloat64(tt.args[0])
+		c.Assert(err, IsNil)
+		err = dec2.FromFloat64(tt.args[1])
+		c.Assert(err, IsNil)
+		input.AppendMyDecimal(0, dec1)
+		input.AppendMyDecimal(1, dec2)
+		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
+		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
+		c.Assert(err, IsNil)
+		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
+		err = baseFunc.vecEvalDecimal(input, result)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, tt.errStr)
+	}
 }
 
 func BenchmarkVectorizedBuiltinArithmeticFunc(b *testing.B) {
