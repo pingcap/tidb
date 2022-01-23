@@ -206,7 +206,6 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestPlacementFollowers(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	defer tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop placement policy if exists x")
 
 	tk.MustExec("drop placement policy if exists x")
@@ -215,13 +214,6 @@ func (s *testDBSuite6) TestPlacementFollowers(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 	tk.MustExec("create placement policy x FOLLOWERS=4")
 	tk.MustGetErrMsg("alter placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustGetErrMsg("create table t1 (a int) followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int) followers=4;")
-	tk.MustGetErrMsg("alter table t1 followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
 }
 
 func testGetPolicyByIDFromMeta(c *C, store kv.Storage, policyID int64) *model.PolicyInfo {
@@ -401,13 +393,13 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	);`)
 	defer tk.MustExec("drop table if exists tp")
 
-	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("x"))
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("x"))
 	c.Assert(ok, IsTrue)
 
 	// test for normal cases
 	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\" NULL"))
-	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj,sh      0 0"))
+	tk.MustQuery("select * from information_schema.placement_policies where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj,sh      0 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -415,7 +407,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\" NULL"))
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj     EVEN 0 0"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj     EVEN 0 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -425,7 +417,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk.MustQuery("show placement where target='POLICY x'").Check(
 		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL"),
 	)
-	tk.MustQuery("SELECT POLICY_NAME,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,FOLLOWERS FROM information_schema.PLACEMENT_RULES WHERE POLICY_NAME = 'x'").Check(
+	tk.MustQuery("SELECT POLICY_NAME,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,FOLLOWERS FROM information_schema.PLACEMENT_POLICIES WHERE POLICY_NAME = 'x'").Check(
 		testkit.Rows("x [+region=us-east-1] [+region=us-east-2] 3"),
 	)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
@@ -440,10 +432,10 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL"),
 	)
 	tk.MustQuery("SELECT " +
-		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
+		"CATALOG_NAME,POLICY_NAME," +
 		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
-		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE POLICY_NAME='x'").Check(
-		testkit.Rows("def x <nil> <nil> <nil>   [+disk=ssd]   [+region=sh]  0 3"),
+		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_policies WHERE POLICY_NAME='x'").Check(
+		testkit.Rows("def x   [+disk=ssd]   [+region=sh]  0 3"),
 	)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -452,7 +444,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows())
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows())
 }
 
 func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
@@ -460,53 +452,21 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
+	defer func() {
+		tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
+		tk.MustExec("drop placement policy if exists x")
+		tk.MustExec("drop placement policy if exists y")
+	}()
 
-	// Direct placement option: special constraints may be incompatible with common constraint.
-	_, err := tk.Exec("create table t(a int) " +
+	// special constraints may be incompatible with common constraint.
+	_, err := tk.Exec("create placement policy pn " +
 		"FOLLOWERS=2 " +
 		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*conflicting label constraints.*")
-
-	tk.MustExec("create table t(a int) " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 ")
-	defer tk.MustExec("DROP TABLE IF EXISTS t")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t <nil> PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1, cn-east-2" FOLLOWERS=2`))
-	checkExistTableBundlesInPD(c, s.dom, "test", "t")
-
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(tbl.Meta().PlacementPolicyRef, IsNil)
-	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
-
-	checkFunc := func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(tbl.Meta().DirectPlacementOpts)
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil> cn-east-1 cn-east-1, cn-east-2      2 0"))
-	tk.MustExec("drop table if exists t")
-
-	// Direct placement option and placement policy can't co-exist.
-	_, err = tk.Exec("create table t(a int) " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\" " +
-		"PLACEMENT POLICY=\"x\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
 
 	// Only placement policy should check the policy existence.
 	tk.MustGetErrCode("create table t(a int)"+
@@ -519,17 +479,17 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"CONSTRAINTS=\"[+region=bj]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t x <nil>`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t x`))
 	tk.MustExec("create table t_range_p(id int) placement policy x partition by range(id) (" +
 		"PARTITION p0 VALUES LESS THAN (100)," +
 		"PARTITION p1 VALUES LESS THAN (1000) placement policy y," +
-		"PARTITION p2 VALUES LESS THAN (10000) PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2 )",
+		"PARTITION p2 VALUES LESS THAN (10000))",
 	)
 	tk.MustExec("set tidb_enable_list_partition=1")
 	tk.MustExec("create table t_list_p(name varchar(10)) placement policy x partition by list columns(name) (" +
 		"PARTITION p0 VALUES IN ('a', 'b')," +
 		"PARTITION p1 VALUES IN ('c', 'd') placement policy y," +
-		"PARTITION p2 VALUES IN ('e', 'f') PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2 )",
+		"PARTITION p2 VALUES IN ('e', 'f'))",
 	)
 	tk.MustExec("create table t_hash_p(id int) placement policy x partition by HASH(id) PARTITIONS 4")
 
@@ -541,12 +501,11 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	c.Assert(policyY.Name.L, Equals, "y")
 	c.Assert(policyY.ID != 0, Equals, true)
 
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
 
 	checkPartitionTableFunc := func(tblName string) {
@@ -555,24 +514,20 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 		c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 		c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
-		c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
 
 		c.Assert(tbl.Meta().Partition, NotNil)
 		c.Assert(len(tbl.Meta().Partition.Definitions), Equals, 3)
 
 		p0 := tbl.Meta().Partition.Definitions[0]
 		c.Assert(p0.PlacementPolicyRef, IsNil)
-		c.Assert(p0.DirectPlacementOpts, IsNil)
 
 		p1 := tbl.Meta().Partition.Definitions[1]
 		c.Assert(p1.PlacementPolicyRef, NotNil)
 		c.Assert(p1.PlacementPolicyRef.Name.L, Equals, "y")
 		c.Assert(p1.PlacementPolicyRef.ID, Equals, policyY.ID)
-		c.Assert(p1.DirectPlacementOpts, IsNil)
 
 		p2 := tbl.Meta().Partition.Definitions[2]
-		c.Assert(p0.PlacementPolicyRef, IsNil)
-		checkFunc(p2.DirectPlacementOpts)
+		c.Assert(p2.PlacementPolicyRef, IsNil)
 	}
 
 	checkPartitionTableFunc("t_range_p")
@@ -586,39 +541,9 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
-	c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
 	for _, p := range tbl.Meta().Partition.Definitions {
 		c.Assert(p.PlacementPolicyRef, IsNil)
-		c.Assert(p.DirectPlacementOpts, IsNil)
 	}
-	tk.MustExec("drop table if exists t_hash_p")
-
-	tk.MustExec("create table t(a int)" +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t <nil> CONSTRAINTS="[+disk=ssd]" FOLLOWERS=2`))
-
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
-
-	checkFunc = func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "")
-		c.Assert(policySetting.Regions, Equals, "")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(tbl.Meta().DirectPlacementOpts)
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil>   [+disk=ssd]     2 0"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop placement policy if exists x")
-	tk.MustExec("drop placement policy if exists y")
 }
 
 func (s *testDBSuite6) getClonedTable(dbName string, tableName string) (*model.TableInfo, error) {
@@ -768,7 +693,7 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	defer tk.MustExec("drop placement policy if exists p2")
 	tk.MustExec("create table test.t12 (id int) placement policy 'p2'")
 	defer tk.MustExec("drop table if exists test.t12")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't12'").Check(testkit.Rows(`def test t12 p2 <nil>`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't12'").Check(testkit.Rows(`def test t12 p2`))
 
 	// p3 is used by test2.t22
 	tk.MustExec("create placement policy p3 " +
@@ -855,7 +780,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x <nil>`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Test policy dependency cache.
@@ -867,7 +792,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2 (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t2")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x <nil>`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
 	tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
 
 	dependencies = testGetPolicyDependency(s.store, "x")
@@ -926,6 +851,8 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists x")
+
 	// Direct placement option: special constraints may be incompatible with common constraint.
 	tk.MustExec("create table t1 (c int) PARTITION BY RANGE (c) " +
 		"(PARTITION p0 VALUES LESS THAN (6)," +
@@ -933,54 +860,7 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 		"PARTITION p2 VALUES LESS THAN (16)," +
 		"PARTITION p3 VALUES LESS THAN (21));")
 	defer tk.MustExec("drop table if exists t1")
-	tk.MustQuery("SELECT " +
-		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
-		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
-		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE table_NAME='t1'").Check(
-		testkit.Rows())
 	checkExistTableBundlesInPD(c, s.dom, "test", "t1")
-
-	tk.MustExec("alter table t1 partition p0 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 ")
-
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Partitions WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't1' AND PARTITION_NAME = 'p0'").Check(testkit.Rows(`def test t1 p0 <nil> PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1, cn-east-2" FOLLOWERS=2`))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Partitions WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't1' AND PARTITION_NAME = 'p1'").Check(testkit.Rows(`def test t1 p1 <nil> <nil>`))
-	tbl := testGetTableByName(c, tk.Se, "test", "t1")
-	c.Assert(tbl, NotNil)
-	ptDef := testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
-	c.Assert(ptDef.PlacementPolicyRef, IsNil)
-	c.Assert(ptDef.DirectPlacementOpts, NotNil)
-	checkExistTableBundlesInPD(c, s.dom, "test", "t1")
-
-	checkFunc := func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(ptDef.DirectPlacementOpts)
-	tk.MustQuery("SELECT " +
-		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
-		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
-		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE TABLE_NAME='t1'").Check(
-		testkit.Rows("def <nil> test t1 p0 cn-east-1 cn-east-1, cn-east-2      2 0"))
-
-	//Direct placement option and placement policy can't co-exist.
-	_, err := tk.Exec("alter table t1 partition p0 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"PLACEMENT POLICY=\"x\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
 
 	// Only placement policy should check the policy existence.
 	tk.MustGetErrCode("alter table t1 partition p0 "+
@@ -989,39 +869,16 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 		"FOLLOWERS=2 ")
 	tk.MustExec("alter table t1 partition p0 " +
 		"PLACEMENT POLICY=\"x\"")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Partitions WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't1' AND PARTITION_NAME = 'p0'").Check(testkit.Rows(`def test t1 p0 x <nil>`))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Partitions WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't1' AND PARTITION_NAME = 'p0'").Check(testkit.Rows(`def test t1 p0 x`))
 	checkExistTableBundlesInPD(c, s.dom, "test", "t1")
 
-	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	policyX, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("x"))
+	c.Assert(ok, IsTrue)
+	ptDef := testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
 	c.Assert(ptDef, NotNil)
 	c.Assert(ptDef.PlacementPolicyRef, NotNil)
 	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "x")
-	c.Assert(ptDef.PlacementPolicyRef.ID != 0, Equals, true)
-
-	tk.MustExec("alter table t1 partition p0 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 ")
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Partitions WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't1' AND PARTITION_NAME = 'p0'").Check(testkit.Rows("def test t1 p0 <nil> PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2"))
-
-	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
-	c.Assert(ptDef, NotNil)
-	c.Assert(ptDef.DirectPlacementOpts, NotNil)
-	checkExistTableBundlesInPD(c, s.dom, "test", "t1")
-
-	checkFunc = func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(ptDef.DirectPlacementOpts)
+	c.Assert(ptDef.PlacementPolicyRef.ID, Equals, policyX.ID)
 }
 
 func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
@@ -1046,25 +903,34 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t0")
-	tk.MustExec("drop placement policy if exists x")
+
+	tk.MustExec("drop database if exists mydb")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	defer func() {
+		tk.MustExec("drop database if exists mydb")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	// test table inherit database's placement rules.
-	tk.MustExec("create database mydb constraints=\"[+zone=hangzhou]\"")
-	tk.MustQuery("show create database mydb").Check(testkit.Rows("mydb CREATE DATABASE `mydb` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+	tk.MustExec("create placement policy p1 constraints=\"[+zone=hangzhou]\"")
+	tk.MustExec("create database mydb placement policy p1")
+	tk.MustQuery("show create database mydb").Check(testkit.Rows("mydb CREATE DATABASE `mydb` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
 
 	tk.MustExec("use mydb")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
 	checkExistTableBundlesInPD(c, s.dom, "mydb", "t")
 	tk.MustExec("drop table if exists t")
 
-	tk.MustExec("create table t(a int) constraints=\"[+zone=suzhou]\"")
+	tk.MustExec("create placement policy p2 constraints=\"[+zone=suzhou]\"")
+	tk.MustExec("create table t(a int) placement policy p2")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p2` */"))
 	checkExistTableBundlesInPD(c, s.dom, "mydb", "t")
 	tk.MustExec("drop table if exists t")
 
@@ -1085,7 +951,7 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200))")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`a`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (200))"))
@@ -1093,24 +959,24 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk.MustExec("drop table if exists t")
 
 	// partition's specified placement rules will override the default one.
-	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100) constraints=\"[+zone=suzhou]\", partition p1 values less than (200))")
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100) placement policy p2, partition p1 values less than (200))")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (200))"))
 	checkExistTableBundlesInPD(c, s.dom, "mydb", "t")
 	tk.MustExec("drop table if exists t")
 
 	// test partition override table's placement rules.
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int) CONSTRAINTS=\"[+zone=suzhou]\" partition by range(a) (partition p0 values less than (100) CONSTRAINTS=\"[+zone=changzhou]\", partition p1 values less than (200))")
+	tk.MustExec("create table t(a int) placement policy p2 partition by range(a) (partition p0 values less than (100) placement policy p1, partition p1 values less than (200))")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p2` */\n" +
 		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (200))"))
 	checkExistTableBundlesInPD(c, s.dom, "mydb", "t")
 }
@@ -1119,11 +985,15 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
 
-	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	tk.MustExec("create placement policy p2 primary_region='r2' regions='r1,r2'")
+	defer tk.MustExec("drop placement policy p2")
+
+	policy1, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
 	tk.MustExec(`create database db2`)
@@ -1132,22 +1002,27 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
+	c.Assert(ok, IsTrue)
+
 	// alter with policy
 	tk.MustExec("alter database db2 placement policy p1")
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */",
 	))
 
-	db, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).SchemaByName(model.NewCIStr("db2"))
+	db, ok := s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
-	c.Assert(db.PlacementPolicyRef.ID, Equals, policy.ID)
-	c.Assert(db.DirectPlacementOpts, IsNil)
+	c.Assert(db.PlacementPolicyRef.ID, Equals, policy1.ID)
 
-	// alter with direct placement
-	tk.MustExec("alter database db2 primary_region='r2' regions='r1,r2'")
+	tk.MustExec("alter database db2 placement policy p2")
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
-		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */",
+		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p2` */",
 	))
+
+	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef.ID, Equals, policy2.ID)
 
 	// reset with placement policy 'default'
 	tk.MustExec("alter database db2 placement policy default")
@@ -1155,17 +1030,13 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 		"db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
+	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef, IsNil)
+
 	// error invalid policy
 	err := tk.ExecToErr("alter database db2 placement policy px")
 	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'px'")
-
-	// error when policy and direct options both set
-	err = tk.ExecToErr("alter database db2 placement policy p1 primary_region='r2' regions='r2'")
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'p1' can't co-exist with direct placement options")
-
-	// error for invalid placement opt
-	err = tk.ExecToErr("alter database db2 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
@@ -1188,21 +1059,31 @@ func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists db2")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (id int) primary_region='r0' regions='r0'")
+	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create table t (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create database db2")
+	defer tk.MustExec("drop database if exists db2")
+
 	tk.MustExec("create table db2.t0 (id int)")
-	tk.MustExec("create table db2.t1 (id int) primary_region='r1' regions='r1,r2'")
-	tk.MustExec(`create table db2.t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+	tk.MustExec("create table db2.t1 (id int) placement policy p1")
+	tk.MustExec(`create table db2.t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 
-	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	is := s.dom.InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
@@ -1237,20 +1118,29 @@ func (s *testDBSuite6) TestDropTableGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0,t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
 
-	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 
-	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+	tk.MustExec(`create table t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	defer tk.MustExec("drop table if exists t2")
 
-	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	is := s.dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 
@@ -1280,7 +1170,7 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
 
-	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
 	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
@@ -1307,21 +1197,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
-	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().PlacementPolicyRef.ID, Equals, policy.ID)
-	c.Assert(tb.Meta().DirectPlacementOpts, IsNil)
-	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
-
-	// alter with direct placement
-	tk.MustExec("alter table tp primary_region='r2' regions='r1,r2'")
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	// reset with placement policy 'default'
@@ -1338,14 +1216,6 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	// error invalid policy
 	err = tk.ExecToErr("alter table tp placement policy px")
 	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'px'")
-
-	// error when policy and direct options both set
-	err = tk.ExecToErr("alter table tp placement policy p1 primary_region='r2' regions='r2'")
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'p1' can't co-exist with direct placement options")
-
-	// error for invalid placement opt
-	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
@@ -1373,20 +1243,33 @@ func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0,t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("drop placement policy if exists p3")
+
+	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create placement policy p3 primary_region='r2' regions='r2'")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
 
-	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 
-	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
-        PARTITION p1 VALUES LESS THAN (1000) primary_region='r3' regions='r3'
+	tk.MustExec(`create table t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
+        PARTITION p1 VALUES LESS THAN (1000) placement policy p3
 	)`)
 	defer tk.MustExec("drop table if exists t2")
 
-	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	is := s.dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
@@ -1433,7 +1316,7 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
 
-	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	policy, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
 	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p0 PARTITION BY RANGE (id) (
@@ -1460,31 +1343,9 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
-	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().Partition.Definitions[0].PlacementPolicyRef.ID, Equals, policy.ID)
-	c.Assert(tb.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
-	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
-
-	// alter with direct placement
-	tk.MustExec("alter table tp partition p1 primary_region='r2' regions='r1,r2'")
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */)"))
-	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
-
-	tk.MustExec("alter table tp partition p1 primary_region='r3' regions='r3,r4'")
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	// reset with placement policy 'default'
@@ -1512,16 +1373,8 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 	err = tk.ExecToErr("alter table tp partition p1 placement policy px")
 	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'px'")
 
-	// error when policy and direct options both set
-	err = tk.ExecToErr("alter table tp partition p0 placement policy p1 primary_region='r2' regions='r2'")
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'p1' can't co-exist with direct placement options")
-
-	// error for invalid placement opt
-	err = tk.ExecToErr("alter table tp partition p1 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
-
 	// error invalid partition name
-	err = tk.ExecToErr("alter table tp partition p2 primary_region='r2' regions='r2'")
+	err = tk.ExecToErr("alter table tp partition p2 placement policy p1")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p2' in table 'tp'")
 
 	// failed alter has no effect
@@ -1541,14 +1394,18 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
 
-	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
+	defer tk.MustExec("drop placement policy p2")
+
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
 	c.Assert(ok, IsTrue)
 
-	tk.MustExec(`CREATE TABLE tp (id INT) FOLLOWERS=1 PARTITION BY RANGE (id) (
+	tk.MustExec(`CREATE TABLE tp (id INT) PLACEMENT POLICY p1 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100),
         PARTITION p1 VALUES LESS THAN (1000)
 	);`)
@@ -1556,7 +1413,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -1564,48 +1421,40 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 
 	// Add partitions
 	tk.MustExec(`alter table tp add partition (
-		partition p2 values less than (10000) placement policy p1,
-		partition p3 values less than (100000) primary_region="r1" regions="r1,r2",
+		partition p2 values less than (10000) placement policy p2,
+		partition p3 values less than (100000),
 		partition p4 values less than (1000000) placement policy default
 	)`)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (100000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (1000000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
-	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().Partition.Definitions[2].PlacementPolicyRef.ID, Equals, policy.ID)
+	c.Assert(tb.Meta().Partition.Definitions[2].PlacementPolicyRef.ID, Equals, policy2.ID)
 
 	// error invalid policy
 	err = tk.ExecToErr("alter table tp add partition (partition p5 values less than (10000000) placement policy px)")
 	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'px'")
 
-	// error when policy and direct options both set
-	err = tk.ExecToErr("alter table tp add partition (partition p5 values less than (10000000) placement policy p1 primary_region='r2' regions='r2')")
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'p1' can't co-exist with direct placement options")
-
-	// error for invalid placement opt
-	err = tk.ExecToErr("alter table tp add partition (partition p5 values less than (10000000) primary_region='r2' regions='r2' leader_constraints='[+region=bj]')")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
-
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (100000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (1000000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 }
@@ -1613,6 +1462,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t1, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -1623,29 +1473,29 @@ func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
 	defer tk.MustExec("drop placement policy p2")
 
-	policy1, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	policy1, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
-	policy2, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p2"))
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
 	c.Assert(ok, IsTrue)
 
-	tk.MustExec(`CREATE TABLE t1 (id INT) primary_region="r1" regions="r1"`)
+	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy p1`)
 	defer tk.MustExec("drop table t1")
 
 	// test for normal table
 	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
 		"t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
 
-	t1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tk.MustExec("TRUNCATE TABLE t1")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
 		"t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */"))
-	newT1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
+	newT1, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(newT1.Meta().ID != t1.Meta().ID, IsTrue)
 
@@ -1653,11 +1503,11 @@ func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100),
         PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
-        PARTITION p2 VALUES LESS THAN (10000) primary_region="r1" regions="r1,r2"
+        PARTITION p2 VALUES LESS THAN (10000)
 	);`)
 	defer tk.MustExec("drop table tp")
 
-	tp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tp, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
 	c.Assert(tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID, Equals, policy2.ID)
@@ -1668,10 +1518,10 @@ func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 
 	tk.MustExec("TRUNCATE TABLE tp")
-	newTp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	newTp, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(newTp.Meta().ID != tp.Meta().ID, IsTrue)
 	c.Assert(newTp.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
@@ -1696,22 +1546,31 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0,t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
 
-	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 
-	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+	tk.MustExec(`create table t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	defer tk.MustExec("drop table if exists t2")
 
 	tk.MustExec("truncate table t2")
 
-	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	is := s.dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
@@ -1745,7 +1604,8 @@ func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, tp")
+
+	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
 	tk.MustExec("drop placement policy if exists p3")
@@ -1759,32 +1619,29 @@ func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 	tk.MustExec("create placement policy p3 primary_region='r3' regions='r3'")
 	defer tk.MustExec("drop placement policy p3")
 
-	policy1, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	policy1, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
-	policy2, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p2"))
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
 	c.Assert(ok, IsTrue)
 
-	policy3, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p3"))
+	policy3, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p3"))
 	c.Assert(ok, IsTrue)
-
-	tk.MustExec(`CREATE TABLE t1 (id INT) primary_region="r1" regions="r1"`)
-	defer tk.MustExec("drop table t1")
 
 	// test for partitioned table
 	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100),
         PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
         PARTITION p2 VALUES LESS THAN (10000) placement policy p3,
-        PARTITION p3 VALUES LESS THAN (100000) primary_region="r2" regions="r2"
+        PARTITION p3 VALUES LESS THAN (100000)
 	);`)
 	defer tk.MustExec("drop table tp")
 
-	tp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tp, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 
 	tk.MustExec("ALTER TABLE tp TRUNCATE partition p1,p3")
-	newTp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	newTp, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(newTp.Meta().ID, Equals, tp.Meta().ID)
 	c.Assert(newTp.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
@@ -1803,7 +1660,7 @@ func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p3` */,\n" +
-		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */)"))
+		" PARTITION `p3` VALUES LESS THAN (100000))"))
 }
 
 func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
@@ -1821,22 +1678,30 @@ func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create placement policy p1 primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create table t0 (id int)")
 	defer tk.MustExec("drop table if exists t0")
 
-	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 
-	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+	tk.MustExec(`create table t2 (id int) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p2,
         PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	defer tk.MustExec("drop table if exists t2")
 
 	tk.MustExec("alter table t2 truncate partition p0")
 
-	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	is := s.dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
@@ -1875,6 +1740,7 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustExec("drop table if exists t1, t2, tp")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("drop placement policy if exists p3")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy p1")
@@ -1882,10 +1748,13 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
 	defer tk.MustExec("drop placement policy p2")
 
-	policy1, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	tk.MustExec("create placement policy p3 primary_region='r3' regions='r3'")
+	defer tk.MustExec("drop placement policy p3")
+
+	policy1, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
-	policy2, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p2"))
+	policy2, ok := s.dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
 	c.Assert(ok, IsTrue)
 
 	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy p1`)
@@ -1894,27 +1763,26 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustExec(`CREATE TABLE t2 (id INT)`)
 	defer tk.MustExec("drop table t2")
 
-	t1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t1ID := t1.Meta().ID
 
-	t2, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	t2ID := t2.Meta().ID
 
-	tk.MustExec(`CREATE TABLE tp (id INT) primary_region="r1" regions="r1" PARTITION BY RANGE (id) (
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p3 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100),
         PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
-        PARTITION p2 VALUES LESS THAN (10000) primary_region="r1" regions="r1,r2"
+        PARTITION p2 VALUES LESS THAN (10000)
 	);`)
 	defer tk.MustExec("drop table tp")
 
-	tp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tp, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	tpID := tp.Meta().ID
 	par0ID := tp.Meta().Partition.Definitions[0].ID
 	par1ID := tp.Meta().Partition.Definitions[1].ID
-	par2ID := tp.Meta().Partition.Definitions[2].ID
 
 	// exchange par0, t1
 	tk.MustExec("alter table tp exchange partition p0 with table t1")
@@ -1925,21 +1793,19 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
-	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
+	tp, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[0].ID, Equals, t1ID)
-	c.Assert(tp.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[0].PlacementPolicyRef, IsNil)
-	t1, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(t1.Meta().ID, Equals, par0ID)
-	c.Assert(t1.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t1.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -1952,21 +1818,19 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
-	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
+	tp, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[0].ID, Equals, t2ID)
-	c.Assert(tp.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[0].PlacementPolicyRef, IsNil)
-	t2, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	c.Assert(t2.Meta().ID, Equals, t1ID)
-	c.Assert(t2.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t2.Meta().PlacementPolicyRef, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -1979,50 +1843,20 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
-	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
+	tp, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[1].ID, Equals, par0ID)
-	c.Assert(tp.Meta().Partition.Definitions[1].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID, Equals, policy2.ID)
-	t1, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(t1.Meta().ID, Equals, par1ID)
-	c.Assert(t1.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t1.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
-	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
-
-	// exchange par2, t2
-	tk.MustExec("alter table tp exchange partition p2 with table t2")
-	tk.MustQuery("show create table t2").Check(testkit.Rows("" +
-		"t2 CREATE TABLE `t2` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
-	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	c.Assert(err, IsNil)
-	c.Assert(tp.Meta().ID, Equals, tpID)
-	c.Assert(tp.Meta().Partition.Definitions[2].ID, Equals, t1ID)
-	c.Assert(tp.Meta().Partition.Definitions[2].DirectPlacementOpts.PrimaryRegion, Equals, "r1")
-	c.Assert(tp.Meta().Partition.Definitions[2].DirectPlacementOpts.Regions, Equals, "r1,r2")
-	c.Assert(tp.Meta().Partition.Definitions[2].PlacementPolicyRef, IsNil)
-	t2, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(t2.Meta().ID, Equals, par2ID)
-	c.Assert(t2.Meta().DirectPlacementOpts, IsNil)
-	c.Assert(t2.Meta().PlacementPolicyRef, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 }
 
@@ -2034,11 +1868,15 @@ func (s *testDBSuite6) TestPDFail(c *C) {
 	clearAllBundles(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop table if exists t1, t2, tp")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create placement policy p1 primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 followers=1")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec("create table t1(id int)")
 	defer tk.MustExec("drop table if exists t1")
@@ -2077,7 +1915,7 @@ func (s *testDBSuite6) TestPDFail(c *C) {
 	// add partition
 	err = tk.ExecToErr("alter table tp add partition (" +
 		"partition p2 values less than (10000) placement policy p1," +
-		"partition p3 values less than (100000) primary_region=\"r1\" regions=\"r1,r2\"" +
+		"partition p3 values less than (100000)" +
 		")")
 	c.Assert(infosync.ErrHTTPServiceError.Equal(err), IsTrue)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("tp CREATE TABLE `tp` (\n" +
@@ -2089,7 +1927,7 @@ func (s *testDBSuite6) TestPDFail(c *C) {
 	checkAllBundlesNotChange(c, existBundles)
 
 	// alter partition
-	err = tk.ExecToErr(`alter table tp PARTITION p1 primary_region="r2" regions="r2,r3"`)
+	err = tk.ExecToErr(`alter table tp PARTITION p1 placement policy p2`)
 	c.Assert(infosync.ErrHTTPServiceError.Equal(err), IsTrue)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -2160,11 +1998,11 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("recover table tp1")
 	tk.MustQuery("show create table tp1").Check(testkit.Rows("tp1 CREATE TABLE `tp1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp1")
 
 	// test flashback
@@ -2180,11 +2018,11 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("flashback table tp2")
 	tk.MustQuery("show create table tp2").Check(testkit.Rows("tp2 CREATE TABLE `tp2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp2")
 
 	// test recover after police drop
@@ -2196,10 +2034,10 @@ func (s *testDBSuite6) TestRecoverTableWithPlacementPolicy(c *C) {
 	tk.MustExec("flashback table tp2 to tp3")
 	tk.MustQuery("show create table tp3").Check(testkit.Rows("tp3 CREATE TABLE `tp3` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2,r3\" */,\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
+		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp3")
 }

@@ -824,6 +824,40 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
+func TestUpgradeVersion83(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	domV83, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV83.Close()
+	seV83 := createSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seV83)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	statsHistoryTblFields := []struct {
+		field string
+		tp    string
+	}{
+		{"table_id", "bigint(64)"},
+		{"stats_data", "longblob"},
+		{"seq_no", "bigint(64)"},
+		{"version", "bigint(64)"},
+		{"create_time", "datetime(6)"},
+	}
+	rStatsHistoryTbl := mustExec(t, seV83, `desc mysql.stats_history`)
+	req := rStatsHistoryTbl.NewChunk(nil)
+	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
+	require.Equal(t, 5, req.NumRows())
+	for i := 0; i < 5; i++ {
+		row := req.GetRow(i)
+		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
+		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
+	}
+}
+
 func TestForIssue23387(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion

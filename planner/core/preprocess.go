@@ -773,18 +773,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 				return
-			case ast.TableOptionPlacementPrimaryRegion,
-				ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount,
-				ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount,
-				ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints,
-				ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints,
-				ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints,
-				ast.TableOptionPlacementPolicy:
+			case ast.TableOptionPlacementPolicy:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
@@ -1204,7 +1193,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+	if tableMetaInfo.PlacementPolicyRef != nil {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
@@ -1688,6 +1677,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.LastSnapshotTS = ts
 			p.IsStaleness = true
 		}
+	case readTS == 0 && node == nil && readStaleness == 0:
+		// If both readTS and node is empty while the readStaleness is empty,
+		// setting p.ReadReplicaScope is necessary to verify the txn scope later
+		// because we may be in a local txn without using the Stale Read.
+		p.ReadReplicaScope = scope
 	}
 
 	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
