@@ -966,7 +966,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			}
 		}
 		if worker.req.Streaming {
-			task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
+			task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 		}
 		return []*copTask{task}, nil
 	}
@@ -1108,25 +1108,6 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil
-}
-
-// calculateRetry splits the input ranges into two, and take one of them according to desc flag.
-// It's used in streaming API, to calculate which range is consumed and what needs to be retry.
-// For example:
-// ranges: [r1 --> r2) [r3 --> r4)
-// split:      [s1   -->   s2)
-// In normal scan order, all data before s1 is consumed, so the retry ranges should be [s1 --> r2) [r3 --> r4)
-// In reverse scan order, all data after s2 is consumed, so the retry ranges should be [r1 --> r2) [r3 --> s2)
-func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
-	if split == nil {
-		return ranges
-	}
-	if desc {
-		left, _ := ranges.Split(split.End)
-		return left
-	}
-	_, right := ranges.Split(split.Start)
-	return right
 }
 
 // calculateRemain calculates the remain ranges to be processed, it's used in streaming and paging API.
