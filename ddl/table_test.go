@@ -402,7 +402,7 @@ func ExportTestRenameTables(t *testing.T) {
 	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
 }
 
-func TestCreateTables(t *testing.T) {
+func ExportTestCreateTables(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
