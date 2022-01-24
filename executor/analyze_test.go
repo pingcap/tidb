@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -1012,10 +1013,8 @@ func TestAnalyzeIndex(t *testing.T) {
 }
 
 func TestAnalyzeIncremental(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1026,10 +1025,7 @@ func TestAnalyzeIncremental(t *testing.T) {
 
 func TestAnalyzeIncrementalStreaming(t *testing.T) {
 	t.Skip("unistore hasn't support streaming yet.")
-	store, clean := testkit.CreateMockStore(t)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2567,4 +2563,61 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 			))
 		}(val)
 	}
+}
+
+func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// 1. switch off the tidb_enable_historical_stats, and there is no records in table `mysql.stats_history`
+	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	// 2. switch on the tidb_enable_historical_stats and do analyze
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.GreaterOrEqual(t, num, 1)
+
+	// 3. dump current stats json
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+	jsOrigin, _ := json.Marshal(dumpJSONTable)
+
+	// 4. get the historical stats json
+	rows = tk.MustQuery(fmt.Sprintf("select * from mysql.stats_history where table_id = '%d' and create_time = ("+
+		"select create_time from mysql.stats_history where table_id = '%d' order by create_time desc limit 1) "+
+		"order by seq_no", tableInfo.Meta().ID, tableInfo.Meta().ID)).Rows()
+	num = len(rows)
+	require.GreaterOrEqual(t, num, 1)
+	data := make([][]byte, num)
+	for i, row := range rows {
+		data[i] = []byte(row[1].(string))
+	}
+	jsonTbl, err := handle.BlocksToJSONTable(data)
+	require.NoError(t, err)
+	jsCur, err := json.Marshal(jsonTbl)
+	require.NoError(t, err)
+	// 5. historical stats must be equal to the current stats
+	require.JSONEq(t, string(jsOrigin), string(jsCur))
 }
