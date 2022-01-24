@@ -30,6 +30,8 @@ explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
 explain format = 'brief' select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 explain format = 'brief' select * from information_schema.columns;
+explain format = 'brief' select * from information_schema.columns where table_name = 'T1';
+explain format = 'brief' select * from information_schema.columns where table_schema = 'TEST' and table_name = 'T1' and column_name = 'c1';
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 explain format = 'brief' select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;

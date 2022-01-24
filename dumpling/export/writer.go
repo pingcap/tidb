@@ -259,7 +259,6 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 		metaSQL: metaSQL,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
-			"/*T![placement] SET PLACEMENT_CHECKS = 0*/;",
 		},
 	}, fileWriter)
 }
