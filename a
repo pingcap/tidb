@@ -1,0 +1,71 @@
+cat checklist.md
+# Following the checklist saves the reviewers' time and gets your PR reviewed faster.
+
+# Self Review
+Have you reviewed every line of your changes by yourself?
+
+# Test
+Have you added enough test cases to cover the new feature or bug fix?
+Also, add comments to describe your test cases.
+
+# Naming
+Do function names keep consistent with its behavior?
+Is it easy to infer the function's behavior by its name?
+
+# Comment
+Is there any code that confuses the reviewer?
+Add comments on them! You'll be asked to do so anyway.
+Make sure there is no syntax or spelling error in your comments.
+Some online syntax checking tools like Grammarly may be helpful.
+
+# Refactor
+Is there any way to refactor the code to make it more readable?
+If the refactoring touches a lot of existing code, send another PR to do it.
+
+# Single Purpose
+Make sure the PR does only one thing and nothing else.
+
+# Diff Size
+Make sure the diff size is no more than 500, split it into small PRs if it is too large.
+GO111MODULE=on go build  -tags codes  -ldflags '-X "github.com/pingcap/tidb/parser/mysql.TiDBReleaseVersion=v5.5.0-alpha-182-g55fce4539-dirty" -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=2022-01-24 07:44:38" -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=55fce4539a6b6188ff49148ad19567887a5b9a7a" -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=master" -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=Community" -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"' -o bin/tidb-server tidb-server/main.go
+extracting statistics: s
+skip building tidb-server, using existing binary: ../../bin/tidb-server
+building portgenerator binary: ./portgenerator
+building explain-test binary: ./explain_test
+start tidb-server, log file: ./explain-test.out
+tidb-server(PID: 42383) started
+run all explain test cases
+run collation tests when new-collation disabled
+start tidb-server, log file: ./explain-test.out
+tidb-server(PID: 42398) started
+run all collation explain test cases
+explaintest end
+GO111MODULE=on go build -o bin/goyacc goyacc/main.go goyacc/format_yacc.go
+bin/goyacc -o parser.go -p yy -t Parser parser.y
+bin/goyacc -o hintparser.go -p yyhint -t hintParser hintparser.y
+gofmt (simplify)
+gofmt (simplify)
+sh test.sh
+ok  	github.com/pingcap/tidb/parser	1.925s	coverage: 74.6% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/ast	0.765s	coverage: 40.5% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/auth	0.482s	coverage: 1.6% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/charset	0.386s	coverage: 1.7% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/format	0.403s	coverage: 1.3% of statements in ./...
+?   	github.com/pingcap/tidb/parser/goyacc	[no test files]
+ok  	github.com/pingcap/tidb/parser/model	0.406s	coverage: 2.1% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/mysql	0.407s	coverage: 1.0% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/opcode	0.399s	coverage: 0.8% of statements in ./...
+ok  	github.com/pingcap/tidb/parser/terror	0.424s	coverage: 1.1% of statements in ./...
+?   	github.com/pingcap/tidb/parser/test_driver	[no test files]
+?   	github.com/pingcap/tidb/parser/tidb	[no test files]
+ok  	github.com/pingcap/tidb/parser/types	0.434s	coverage: 5.5% of statements in ./...
+Running in native mode.
+ok  	github.com/pingcap/tidb/bindinfo	22.204s	coverage: 86.5% of statements
+ok  	github.com/pingcap/tidb/config	0.514s	coverage: 67.4% of statements
+ok  	github.com/pingcap/tidb/ddl	209.965s	coverage: 84.7% of statements
+ok  	github.com/pingcap/tidb/ddl/failtest	24.146s	coverage: [no statements]
+ok  	github.com/pingcap/tidb/ddl/label	0.326s	coverage: 91.1% of statements
+ok  	github.com/pingcap/tidb/ddl/placement	1.157s	coverage: 96.6% of statements
+?   	github.com/pingcap/tidb/ddl/testutil	[no test files]
+ok  	github.com/pingcap/tidb/ddl/util	2.494s	coverage: 47.9% of statements
+ok  	github.com/pingcap/tidb/distsql	0.400s	coverage: 62.2% of statements

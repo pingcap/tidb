@@ -1189,9 +1189,9 @@ func upgradeToVer38(s Session, ver int64) {
 
 func writeNewCollationParameter(s Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
-	b := varFalse
-	if flag {
-		b = varTrue
+	b := varTrue
+	if !flag {
+		b = varFalse
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b,
