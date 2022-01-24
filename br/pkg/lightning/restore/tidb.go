@@ -182,13 +182,6 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {

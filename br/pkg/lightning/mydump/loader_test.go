@@ -16,7 +16,6 @@ package mydump_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"

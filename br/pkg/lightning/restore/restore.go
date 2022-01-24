@@ -504,10 +504,6 @@ type schemaJob struct {
 	stmts    []string
 }
 
-type schemaStmt struct {
-	sql string
-}
-
 type restoreSchemaWorker struct {
 	ctx   context.Context
 	quit  context.CancelFunc
