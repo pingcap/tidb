@@ -562,13 +562,37 @@ func (r *builder) union(a, b []point) []point {
 	return r.merge(a, b, true)
 }
 
+func (r *builder) mergeSorted(a, b []point) []point {
+	ret := make([]point, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		less, err := rangePointLess(r.sc, a[i], b[j])
+		if err != nil {
+			r.err = err
+			return nil
+		}
+		if less {
+			ret = append(ret, a[i])
+			i++
+		} else {
+			ret = append(ret, b[j])
+			j++
+		}
+	}
+	if i < len(a) {
+		ret = append(ret, a[i:]...)
+	} else if j < len(b) {
+		ret = append(ret, b[j:]...)
+	}
+	return ret
+}
+
 func (r *builder) merge(a, b []point, union bool) []point {
-	sorter := pointSorter{points: append(a, b...), sc: r.sc}
-	sort.Sort(&sorter)
-	if sorter.err != nil {
-		r.err = sorter.err
+	mergedPoints := r.mergeSorted(a, b)
+	if r.err != nil {
 		return nil
 	}
+
 	var (
 		inRangeCount         int
 		requiredInRangeCount int
@@ -578,21 +602,23 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	} else {
 		requiredInRangeCount = 2
 	}
-	merged := make([]point, 0, len(sorter.points))
-	for _, val := range sorter.points {
+	curTail := 0
+	for _, val := range mergedPoints {
 		if val.start {
 			inRangeCount++
 			if inRangeCount == requiredInRangeCount {
-				// just reached the required in range count, a new range started.
-				merged = append(merged, val)
+				// Just reached the required in range count, a new range started.
+				mergedPoints[curTail] = val
+				curTail++
 			}
 		} else {
 			if inRangeCount == requiredInRangeCount {
-				// just about to leave the required in range count, the range is ended.
-				merged = append(merged, val)
+				// Just about to leave the required in range count, the range is ended.
+				mergedPoints[curTail] = val
+				curTail++
 			}
 			inRangeCount--
 		}
 	}
-	return merged
+	return mergedPoints[:curTail]
 }
