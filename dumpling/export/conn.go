@@ -40,7 +40,7 @@ func (conn *BaseConn) QuerySQL(tctx *tcontext.Context, handleOneRow func(*sql.Ro
 				return
 			}
 		}
-		err = simpleQueryWithArgs(conn.DBConn, handleOneRow, query, args...)
+		err = simpleQueryWithArgs(tctx, conn.DBConn, handleOneRow, query, args...)
 		if err != nil {
 			tctx.L().Info("cannot execute query", zap.Int("retryTime", retryTime), zap.String("sql", query),
 				zap.Any("args", args), zap.Error(err))
@@ -85,7 +85,7 @@ func (conn *BaseConn) QuerySQLWithColumns(tctx *tcontext.Context, columns []stri
 }
 
 // ExecSQL defines exec statement, and connect to real DB.
-func (conn *BaseConn) ExecSQL(tctx *tcontext.Context, handleResult func(sql.Result, error) error, query string, args ...interface{}) error {
+func (conn *BaseConn) ExecSQL(tctx *tcontext.Context, canRetryFunc func(sql.Result, error) error, query string, args ...interface{}) error {
 	retryTime := 0
 	err := utils.WithRetry(tctx, func() (err error) {
 		retryTime++
@@ -96,7 +96,7 @@ func (conn *BaseConn) ExecSQL(tctx *tcontext.Context, handleResult func(sql.Resu
 			}
 		}
 		res, err := conn.DBConn.ExecContext(tctx, query, args...)
-		if err = handleResult(res, err); err != nil {
+		if err = canRetryFunc(res, err); err != nil {
 			tctx.L().Info("cannot execute query", zap.Int("retryTime", retryTime), zap.String("sql", query),
 				zap.Any("args", args), zap.Error(err))
 			return err

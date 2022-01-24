@@ -23,6 +23,7 @@ import (
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 )
@@ -215,7 +216,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
 		}
-		if err = simpleQueryWithArgs(db, func(rows *sql.Rows) error {
+		if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
 			var (
 				sqlAvgRowLength sql.NullInt64
 				err2            error
@@ -246,7 +247,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s` WHERE %s",
 				escapeString(schema), strings.Join(tableTypeConditions, " OR "))
-			if err = simpleQueryWithArgs(db, func(rows *sql.Rows) error {
+			if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
 				var err2 error
 				if err2 = rows.Scan(&table, &tableTypeStr); err != nil {
 					return errors.Trace(err2)
@@ -396,14 +397,13 @@ func buildOrderByClause(tctx *tcontext.Context, conf *Config, db *BaseConn, data
 
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(tctx *tcontext.Context, db *BaseConn, database, table string) (bool, error) {
-	const errBadFieldCode = 1054
 	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	hasImplictRowID := false
 	err := db.ExecSQL(tctx, func(_ sql.Result, err error) error {
 		if err != nil {
 			hasImplictRowID = false
 			errMsg := strings.ToLower(err.Error())
-			if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
+			if strings.Contains(errMsg, fmt.Sprintf("%d", errno.ErrBadField)) {
 				return nil
 			}
 			return errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
@@ -1064,11 +1064,11 @@ func (o *oneStrColumnTable) handleOneRow(rows *sql.Rows) error {
 }
 
 func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error) error {
-	return simpleQueryWithArgs(conn, handleOneRow, sql)
+	return simpleQueryWithArgs(context.Background(), conn, handleOneRow, sql)
 }
 
-func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
-	rows, err := conn.QueryContext(context.Background(), sql, args...)
+func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
+	rows, err := conn.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return errors.Annotatef(err, "sql: %s, args: %s", sql, args)
 	}
