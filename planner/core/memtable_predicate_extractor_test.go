@@ -1700,6 +1700,7 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
 	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
 	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
 }
