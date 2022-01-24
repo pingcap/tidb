@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
@@ -162,9 +161,7 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	jsonEncoder := json.NewEncoder(&writer)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	logical := se.GetSessionVars().StmtCtx.LogicalOptimizeTrace
-	physical := se.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
-	err = jsonEncoder.Encode(&tracing.OptimizeTracer{Logical: logical, Physical: physical})
+	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.OptimizeTracer)
 	if err != nil {
 		return errors.AddStack(err)
 	}
