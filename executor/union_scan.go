@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -94,12 +92,9 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 
 	for i := range us.columns {
 		if us.columns[i].ID == model.ExtraPhysTblID {
-			if us.physTblIDIdx != nil {
-				// TODO: remove when table partition dynamic mode is GA (and add a break afterwards)
-				logutil.Logger(ctx).Warn("More than one ExtraPhysTblID column!", zap.String("table", us.table.Meta().Name.O))
-				panic("More than one ExtraPhysTblID columns!!!")
+			if us.physTblIDIdx == nil {
+				us.physTblIDIdx = new(int)
 			}
-			us.physTblIDIdx = new(int)
 			*us.physTblIDIdx = i
 		}
 	}

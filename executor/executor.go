@@ -906,22 +906,32 @@ type SelectLockExec struct {
 	partitionedTable []table.PartitionedTable
 
 	// TODO: Do we even need to use a plannercore.HandleCols struct?
-	// tblID2PhyTblIDCol is used for partitioned tables,
+	// tblID2PhyTblIDCol is used for partitioned tables in dynamic prune mode,
 	// the child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)
+	// Used during building
 	tblID2PhysTblIDCol map[int64]*expression.Column
+
+	// Used during execution
+	tblID2PhysTblIDColIdx map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
+	logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open()")
 	if len(e.partitionedTable) > 0 {
+		// This should be possible to do by going through the tblID2Handle and then see if the TableById gives a partitioned table or not, and then create the map for static prune? Maybe works for dynamic too?
+		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
 		for i := len(cols) - 1; i > 0; i-- {
 			if cols[i].ID == model.ExtraPhysTblID {
+				logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open()", zap.Int("i", i), zap.Int64("UniqueID", cols[i].UniqueID))
 				found := false
-				for _, col := range e.tblID2PhysTblIDCol {
+				for tblID, col := range e.tblID2PhysTblIDCol {
 					if cols[i].UniqueID == col.UniqueID {
+						logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open() Found in e.tblID2PhysTblIDCol", zap.Int("schema col index", cols[i].Index), zap.Int("PhysTblIDCol index", col.Index))
 						found = true
+						e.tblID2PhysTblIDColIdx[tblID] = i
 						break
 					}
 				}
@@ -946,25 +956,29 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
 	if len(e.tblID2Handle) == 0 || (!plannercore.IsSelectForUpdateLockType(e.Lock.LockType)) {
+		logutil.Logger(ctx).Info("MJONSS: SelectLocExec No handle or lock!!!")
 		return nil
 	}
 
+	touchedTableIDs := make(map[int64]bool)
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
-				if len(cols) > 1 {
-					panic("More than 1 Handle column for a single table in SelectLockExec!?!")
-				}
+				touchedTableIDs[tblID] = true
+				logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", tblID))
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
 					physTblID := tblID
-					if physTblCol, ok := e.tblID2PhysTblIDCol[tblID]; ok {
-						physTblID = row.GetInt64(physTblCol.Index)
+					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
+						physTblID = row.GetInt64(physTblColIdx)
+						touchedTableIDs[physTblID] = true
+						logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int("physTblColIdx", physTblColIdx), zap.Int64("tableID from row", physTblID))
 					}
+					//logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", physTblID), zap.Int64("handle", handle.IntValue()))
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
@@ -981,13 +995,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.tblID2Handle) > 0 {
 		for id := range e.tblID2Handle {
 			e.updateDeltaForTableID(id)
+			delete(touchedTableIDs, id)
 		}
 	}
-	if len(e.partitionedTable) > 0 {
-		for _, p := range e.partitionedTable {
-			pid := p.Meta().ID
-			e.updateDeltaForTableID(pid)
-		}
+
+	for id := range touchedTableIDs {
+		e.updateDeltaForTableID(id)
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)

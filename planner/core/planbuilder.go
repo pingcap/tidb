@@ -1228,19 +1228,23 @@ func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	tblID2PhysTblIDCol := make(map[int64]*expression.Column)
 	if len(b.partitionedTable) > 0 {
-		// TODO: Add the ExtraPhysTblIDCols here instead of in the other place. The same for UnionScan!!!
-		// If a chunk row is read from a partitioned table, which partition the row
-		// comes from is unknown. With the existence of Join, the situation could be
-		// even worse: SelectLock have to know the `pid` to construct the lock key.
-		// To solve the problem, an extra `pid` column is add to the schema, and the
-		// DataSource need to return the `pid` information in the chunk row.
-		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			// If a chunk row is read from a partitioned table, which partition the row
+			// comes from is unknown. With the existence of Join, the situation could be
+			// even worse: SelectLock have to know the `pid` to construct the lock key.
+			// To solve the problem, an extra `pid` column is add to the schema, and the
+			// DataSource need to return the `pid` information in the chunk row.
+			// table partition prune mode == dynamic (Single TableReader, needs the PhysTblID from storage)
+			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
 
-		// TODO: Re-evaluate this:
-		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
-		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
-		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		} else {
+			// Do this for static mode as well, but fill it in by the TableReader instead?
+			// TODO: filter it out when sending to coprocessor and add it in TableReader!
+			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+			// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+			// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		}
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,

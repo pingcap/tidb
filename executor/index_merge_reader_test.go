@@ -505,7 +505,7 @@ func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) 
 			where t1.c1 < 10 or t1.c2 < 10 for update`).Check(testkit.Rows(
 		"Projection 16635.64 root  test.t1.c1",
 		"└─SelectLock 16635.64 root  for update 0",
-		"  └─Projection 16635.64 root  test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_pid, test.t2._tidb_rowid",
+		"  └─Projection 16635.64 root  test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid, test.t2._tidb_rowid",
 		"    └─HashJoin 16635.64 root  CARTESIAN inner join, other cond:ge(test.t1.c_datetime, test.t2.c_datetime)",
 		"      ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
 		"      │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",

@@ -4188,7 +4188,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil {
+		if tableInfo.Partition != nil && b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			// table partition prune mode == dynamic (Single TableReader, needs the PhysTblID from storage)
 			us.ExtraPhysTblIDCol = ds.AddExtraPhysTblIDColumn()
 		}
 		result = us
