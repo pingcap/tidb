@@ -203,6 +203,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 		switch node := stmt.(type) {
 		case *ast.CreateDatabaseStmt:
 			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)

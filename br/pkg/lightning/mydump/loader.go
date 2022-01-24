@@ -443,7 +443,9 @@ func (s *mdLoaderSetup) insertDB(f FileInfo) (*MDDatabaseMeta, bool) {
 
 func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
 	dbFileInfo := FileInfo{
-		TableName: fileInfo.TableName,
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)
@@ -467,7 +469,9 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 
 func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
 	dbFileInfo := FileInfo{
-		TableName: fileInfo.TableName,
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)

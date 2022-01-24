@@ -72,10 +72,10 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	}
 
 	c.Assert(
-		createSQLIfNotExistsStmt("CREATE DATABASE `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;", "foo"),
+		createSQLIfNotExistsStmt("CREATE DATABASE `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;", ""),
 		DeepEquals,
-		[]string{"CREATE DATABASE IF NOT EXISTS `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;"},
-		)
+		[]string{"CREATE DATABASE IF NOT EXISTS `testdb` CHARACTER SET = utf8 COLLATE = utf8_general_ci;"},
+	)
 
 	c.Assert(
 		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),

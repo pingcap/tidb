@@ -16,6 +16,7 @@ package mydump_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,7 +182,7 @@ func (s *testMydumpLoaderSuite) TestTableInfoNotFound(c *C) {
 	for _, dbMeta := range loader.GetDatabases() {
 		dbSQL, err := dbMeta.GetSchema(ctx, store)
 		c.Assert(err, IsNil)
-		c.Assert(dbSQL, Equals, "CREATE DATABASE IF NOT EXIST `db`;")
+		c.Assert(dbSQL, Equals, "CREATE DATABASE IF NOT EXISTS `db`")
 		for _, tblMeta := range dbMeta.Tables {
 			sql, err := tblMeta.GetSchema(ctx, store)
 			c.Assert(sql, Equals, "")
@@ -275,11 +276,11 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	c.Assert(err, IsNil)
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{{
-		Name:       "db",
+		Name: "db",
 		SchemaFile: md.FileInfo{
 			TableName: filter.Table{
 				Schema: "db",
-				Name: "",
+				Name:   "",
 			},
 			FileMeta: md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
 		},
