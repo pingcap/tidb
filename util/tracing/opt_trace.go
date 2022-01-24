@@ -58,7 +58,7 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, r
 
 // RecordFinalLogicalPlan add plan trace after logical optimize
 func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *PlanTrace) {
-	tracer.FinalLogicalPlan = toFlattenLogicalPlanTrace(final)
+	tracer.FinalLogicalPlan = toFlattenPlanTrace(final)
 	tracer.removeUselessStep()
 }
 
@@ -86,7 +86,7 @@ type LogicalRuleOptimizeTracer struct {
 func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
-		Before:   toFlattenLogicalPlanTrace(before),
+		Before:   toFlattenPlanTrace(before),
 		RuleName: name,
 		Steps:    make([]LogicalRuleOptimizeTraceStep, 0),
 	}
@@ -103,7 +103,7 @@ type LogicalRuleOptimizeTraceStep struct {
 }
 
 // toFlattenLogicalPlanTrace transform LogicalPlanTrace into FlattenLogicalPlanTrace
-func toFlattenLogicalPlanTrace(root *PlanTrace) []*PlanTrace {
+func toFlattenPlanTrace(root *PlanTrace) []*PlanTrace {
 	wrapper := &flattenWrapper{flatten: make([]*PlanTrace, 0)}
 	flattenLogicalPlanTrace(root, wrapper)
 	return wrapper.flatten
@@ -168,7 +168,7 @@ type PhysicalOptimizeTracer struct {
 
 // RecordFinalPlanTrace records final physical plan trace
 func (tracer *PhysicalOptimizeTracer) RecordFinalPlanTrace(root *PlanTrace) {
-	tracer.Final = toFlattenLogicalPlanTrace(root)
+	tracer.Final = toFlattenPlanTrace(root)
 	tracer.buildCandidatesInfo()
 }
 
@@ -241,11 +241,11 @@ type OptimizeTracer struct {
 
 // SetFastPlan sets fast plan
 func (tracer *OptimizeTracer) SetFastPlan(final *PlanTrace) {
-	tracer.FinalPlan = toFlattenLogicalPlanTrace(final)
+	tracer.FinalPlan = toFlattenPlanTrace(final)
 	tracer.IsFastPlan = true
 }
 
 // RecordFinalPlan records plan after post optimize
 func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
-	tracer.FinalPlan = toFlattenLogicalPlanTrace(final)
+	tracer.FinalPlan = toFlattenPlanTrace(final)
 }
