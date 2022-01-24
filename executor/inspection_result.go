@@ -327,14 +327,18 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 	}
 
 	var results []inspectionResult
+	var rows []chunk.Row
+	sql := new(strings.Builder)
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	for _, cas := range cases {
 		if !filter.enable(cas.key) {
 			continue
 		}
-		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+		sql.Reset()
+		fmt.Fprintf(sql, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
+		stmt, err := exec.ParseWithParams(ctx, sql.String())
+		if err == nil {
+			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
 
 		for _, row := range rows {
