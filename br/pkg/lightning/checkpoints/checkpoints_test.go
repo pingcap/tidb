@@ -1,31 +1,24 @@
 package checkpoints
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&checkpointSuite{})
-
-type checkpointSuite struct {
-}
-
-func (s *checkpointSuite) TestMergeStatusCheckpoint(c *C) {
+func TestMergeStatusCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
 	m := StatusCheckpointMerger{EngineID: 0, Status: CheckpointStatusImported}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasStatus: false,
 		engines: map[int32]engineCheckpointDiff{
 			0: {
@@ -34,12 +27,12 @@ func (s *checkpointSuite) TestMergeStatusCheckpoint(c *C) {
 				chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 			},
 		},
-	})
+	}, cpd)
 
 	m = StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusLoaded}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasStatus: false,
 		engines: map[int32]engineCheckpointDiff{
 			0: {
@@ -53,12 +46,12 @@ func (s *checkpointSuite) TestMergeStatusCheckpoint(c *C) {
 				chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 			},
 		},
-	})
+	}, cpd)
 
 	m = StatusCheckpointMerger{EngineID: WholeTableEngineID, Status: CheckpointStatusClosed}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusClosed,
 		engines: map[int32]engineCheckpointDiff{
@@ -73,12 +66,12 @@ func (s *checkpointSuite) TestMergeStatusCheckpoint(c *C) {
 				chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 			},
 		},
-	})
+	}, cpd)
 
 	m = StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusAllWritten}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusClosed,
 		engines: map[int32]engineCheckpointDiff{
@@ -93,10 +86,10 @@ func (s *checkpointSuite) TestMergeStatusCheckpoint(c *C) {
 				chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 			},
 		},
-	})
+	}, cpd)
 }
 
-func (s *checkpointSuite) TestMergeInvalidStatusCheckpoint(c *C) {
+func TestMergeInvalidStatusCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
 	m := StatusCheckpointMerger{EngineID: 0, Status: CheckpointStatusLoaded}
@@ -106,7 +99,7 @@ func (s *checkpointSuite) TestMergeInvalidStatusCheckpoint(c *C) {
 	m.SetInvalid()
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusAllWritten / 10,
 		engines: map[int32]engineCheckpointDiff{
@@ -121,10 +114,10 @@ func (s *checkpointSuite) TestMergeInvalidStatusCheckpoint(c *C) {
 				chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 			},
 		},
-	})
+	}, cpd)
 }
 
-func (s *checkpointSuite) TestMergeChunkCheckpoint(c *C) {
+func TestMergeChunkCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
 	key := ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0}
@@ -138,7 +131,7 @@ func (s *checkpointSuite) TestMergeChunkCheckpoint(c *C) {
 	}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		engines: map[int32]engineCheckpointDiff{
 			2: {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
@@ -150,7 +143,7 @@ func (s *checkpointSuite) TestMergeChunkCheckpoint(c *C) {
 				},
 			},
 		},
-	})
+	}, cpd)
 
 	m = ChunkCheckpointMerger{
 		EngineID: 2,
@@ -161,7 +154,7 @@ func (s *checkpointSuite) TestMergeChunkCheckpoint(c *C) {
 	}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		engines: map[int32]engineCheckpointDiff{
 			2: {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
@@ -173,23 +166,23 @@ func (s *checkpointSuite) TestMergeChunkCheckpoint(c *C) {
 				},
 			},
 		},
-	})
+	}, cpd)
 }
 
-func (s *checkpointSuite) TestRebaseCheckpoint(c *C) {
+func TestRebaseCheckpoint(t *testing.T) {
 	cpd := NewTableCheckpointDiff()
 
 	m := RebaseCheckpointMerger{AllocBase: 10000}
 	m.MergeInto(cpd)
 
-	c.Assert(cpd, DeepEquals, &TableCheckpointDiff{
+	assert.Equal(t, &TableCheckpointDiff{
 		hasRebase: true,
 		allocBase: 10000,
 		engines:   make(map[int32]engineCheckpointDiff),
-	})
+	}, cpd)
 }
 
-func (s *checkpointSuite) TestApplyDiff(c *C) {
+func TestApplyDiff(t *testing.T) {
 	cp := TableCheckpoint{
 		Status:    CheckpointStatusLoaded,
 		AllocBase: 123,
@@ -256,7 +249,7 @@ func (s *checkpointSuite) TestApplyDiff(c *C) {
 
 	cp.Apply(cpd)
 
-	c.Assert(cp, DeepEquals, TableCheckpoint{
+	assert.Equal(t, TableCheckpoint{
 		Status:    CheckpointStatusAllWritten,
 		AllocBase: 11111,
 		Engines: map[int32]*EngineCheckpoint{
@@ -288,11 +281,14 @@ func (s *checkpointSuite) TestApplyDiff(c *C) {
 				},
 			},
 		},
-	})
+	}, cp)
 }
 
-func (s *checkpointSuite) TestCheckpointMarshallUnmarshall(c *C) {
-	path := filepath.Join(c.MkDir(), "filecheckpoint")
+func TestCheckpointMarshallUnmarshall(t *testing.T) {
+	dir, err := os.MkdirTemp("", "cptest")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "filecheckpoint")
 	fileChkp := NewFileCheckpointsDB(path)
 	fileChkp.checkpoints.Checkpoints["a"] = &checkpointspb.TableCheckpointModel{
 		Status:  uint32(CheckpointStatusLoaded),
@@ -302,5 +298,5 @@ func (s *checkpointSuite) TestCheckpointMarshallUnmarshall(c *C) {
 
 	fileChkp2 := NewFileCheckpointsDB(path)
 	// if not recover empty map explicitly, it will become nil
-	c.Assert(fileChkp2.checkpoints.Checkpoints["a"].Engines, NotNil)
+	assert.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
 }
