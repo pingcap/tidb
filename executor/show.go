@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ type ShowExec struct {
 	Flag      int                  // Some flag parsed from sql, such as FULL.
 	Roles     []*auth.RoleIdentity // Used for show grants.
 	User      *auth.UserIdentity   // Used by show grants, show create user.
+	Extractor plannercore.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -513,10 +515,23 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var (
+		fieldPatternsRegexp *regexp.Regexp
+		FieldFilterEnable   bool
+		fieldFilter         string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
+
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
@@ -535,10 +550,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return err
 	}
 	for _, col := range cols {
-		if e.Column != nil && e.Column.Name.L != col.Name.L {
+		if FieldFilterEnable && col.Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(col.Name.L) {
 			continue
 		}
-
 		desc := table.NewColDesc(col)
 		var columnDefault interface{}
 		if desc.DefaultValue != nil {
