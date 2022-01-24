@@ -1555,9 +1555,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	var tmp []sqlexec.OptionFuncAlias
-	for _, opt := range opts {
-		tmp = append(tmp, opt)
-	}
+	tmp = append(tmp, opts...)
 	se, clean, err := s.getInternalSession(tmp)
 	if err != nil {
 		return nil, nil, err
