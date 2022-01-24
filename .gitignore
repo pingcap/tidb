@@ -24,3 +24,10 @@ coverage.txt
 var
 fix.sql
 export-20*/
+<<<<<<< HEAD
+=======
+*-coverage.xml
+*-junit-report.xml
+# Files generated when testing
+out
+>>>>>>> ea7bc9766... dumpling: fix s3 compress writer (#30736)
