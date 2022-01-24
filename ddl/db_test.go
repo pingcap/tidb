@@ -4899,13 +4899,13 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 
 	// DROP PARTITION
 	s.mustExec(tk, c, "drop table if exists t2")
-	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 drop partition p1"
 	s.mustExec(tk, c, sql)
 	tk.MustGetErrCode(sql, errno.ErrDropPartitionNonExistent)
 	s.mustExec(tk, c, "alter table t2 drop partition if exists p1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to DROP"))
 }
 
 func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testDBSuite5, c *C) {
@@ -6869,8 +6869,8 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
-	domain.SchemaOutOfDateRetryTimes = int32(50)
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
 }
 
 func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
