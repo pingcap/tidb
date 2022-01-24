@@ -3407,20 +3407,30 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	pids := make([]int64, len(spec.PartitionNames))
+	var pids []int64
 	if spec.OnAllPartitions {
 		pids = make([]int64, len(meta.GetPartitionInfo().Definitions))
 		for i, def := range meta.GetPartitionInfo().Definitions {
 			pids[i] = def.ID
 		}
 	} else {
-		for i, name := range spec.PartitionNames {
+		// MySQL allows duplicate partition names in truncate partition
+		// so we filter them out through a hash
+		pidMap := make(map[int64]bool)
+		for _, name := range spec.PartitionNames {
 			pid, err := tables.FindPartitionByName(meta, name.L)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			pids[i] = pid
+			pidMap[pid] = true
 		}
+		// linter makezero does not handle changing pids to zero length,
+		// so create a new var and then assign to pids...
+		newPids := make([]int64, 0, len(pidMap))
+		for pid := range pidMap {
+			newPids = append(newPids, pid)
+		}
+		pids = newPids
 	}
 
 	job := &model.Job{
