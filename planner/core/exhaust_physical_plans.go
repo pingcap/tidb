@@ -2343,9 +2343,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		}
 		childProperty.MPPPartitionTp = property.HashType
 		childProperty.MPPPartitionCols = partitionCols
-	}/* else {
-		childProperty.MPPPartitionTp = property.AnyType
-	}*/
+	} else {
+		childProperty.MPPPartitionTp = property.SinglePartitionType
+	}
 
 	window := PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,

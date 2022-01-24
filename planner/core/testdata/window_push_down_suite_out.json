@@ -20,17 +20,30 @@
         "Warn": null
       },
       {
+        "SQL": "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
+        "Plan": [
+          "TableReader_15 10000.00 root  data:ExchangeSender_14",
+          "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(order by test.employee.salary rows between current row and current row)",
+          "    └─Sort_13 10000.00 cop[tiflash]  test.employee.salary",
+          "      └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "          └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
         "Plan": [
-          "Shuffle_16 10000.00 root  execution info: concurrency:5, data sources:[TableReader_14]",
-          "└─Window_9 10000.00 root  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
-          "  └─Sort_15 10000.00 root  test.employee.deptid",
-          "    └─TableReader_14 10000.00 root  data:TableFullScan_13",
-          "      └─TableFullScan_13 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_15 10000.00 root  data:ExchangeSender_14",
+          "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
+          "    └─Sort_13 10000.00 cop[tiflash]  test.employee.deptid",
+          "      └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "          └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because operator `Sort` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
@@ -50,42 +63,46 @@
       {
         "SQL": "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 4. with sort key",
         "Plan": [
-          "Shuffle_16 10000.00 root  execution info: concurrency:5, data sources:[TableReader_14]",
-          "└─Window_9 10000.00 root  row_number()->Column#6 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row)",
-          "  └─Sort_15 10000.00 root  test.employee.deptid, test.employee.salary:desc",
-          "    └─TableReader_14 10000.00 root  data:TableFullScan_13",
-          "      └─TableFullScan_13 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_15 10000.00 root  data:ExchangeSender_14",
+          "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row)",
+          "    └─Sort_13 10000.00 cop[tiflash]  test.employee.deptid, test.employee.salary:desc",
+          "      └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "          └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because operator `Sort` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, min(deptid) over w, max(deptid) over w from employee window w as (partition by deptid) -- 5. same kinds, multi function, same window",
         "Plan": [
-          "Shuffle_16 10000.00 root  execution info: concurrency:5, data sources:[TableReader_14]",
-          "└─Window_9 10000.00 root  min(test.employee.deptid)->Column#7, max(test.employee.deptid)->Column#8 over(partition by test.employee.deptid)",
-          "  └─Sort_15 10000.00 root  test.employee.deptid",
-          "    └─TableReader_14 10000.00 root  data:TableFullScan_13",
-          "      └─TableFullScan_13 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_15 10000.00 root  data:ExchangeSender_14",
+          "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_8 10000.00 cop[tiflash]  min(test.employee.deptid)->Column#7, max(test.employee.deptid)->Column#8 over(partition by test.employee.deptid)",
+          "    └─Sort_13 10000.00 cop[tiflash]  test.employee.deptid",
+          "      └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "          └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because operator `Sort` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 6. different kinds, multi funcitons, same window",
         "Plan": [
           "Projection_8 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, Column#8, Column#7",
-          "└─Window_11 10000.00 root  row_number()->Column#8 over(partition by test.employee.deptid rows between current row and current row)",
-          "  └─Window_21 10000.00 root  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
-          "    └─Sort_19 10000.00 root  test.employee.deptid",
-          "      └─TableReader_18 10000.00 root  data:TableFullScan_17",
-          "        └─TableFullScan_17 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "└─Shuffle_31 10000.00 root  execution info: concurrency:5, data sources:[TableReader_28]",
+          "  └─Window_11 10000.00 root  row_number()->Column#8 over(partition by test.employee.deptid rows between current row and current row)",
+          "    └─Sort_29 10000.00 root  test.employee.deptid",
+          "      └─TableReader_28 10000.00 root  data:ExchangeSender_27",
+          "        └─ExchangeSender_27 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "          └─Window_25 10000.00 cop[tiflash]  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
+          "            └─Window_12 10000.00 cop[tiflash]  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
+          "              └─Sort_18 10000.00 cop[tiflash]  test.employee.deptid",
+          "                └─ExchangeReceiver_17 10000.00 cop[tiflash]  ",
+          "                  └─ExchangeSender_16 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "                    └─TableFullScan_15 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because operator `Sort` is not supported now."
-        ]
+        "Warn": null
       }
     ]
   }
