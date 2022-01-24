@@ -340,6 +340,9 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+		}
 
 		for _, row := range rows {
 			results = append(results, inspectionResult{
