@@ -348,6 +348,10 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 
 func ExportTestRenameTables(t *testing.T) {
 	store, err := mockstore.NewMockStore()
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
 	require.NoError(t, err)
 	ddl, err := testNewDDLAndStart(
 		context.Background(),
@@ -355,6 +359,10 @@ func ExportTestRenameTables(t *testing.T) {
 		WithLease(testLease),
 	)
 	require.NoError(t, err)
+	defer func() {
+		err := ddl.Stop()
+		require.NoError(t, err)
+	}()
 
 	dbInfo, err := testSchemaInfo(ddl, "test_table")
 	require.NoError(t, err)
@@ -397,12 +405,20 @@ func ExportTestRenameTables(t *testing.T) {
 func TestCreateTables(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
 	ddl, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
 	)
 	require.NoError(t, err)
+	defer func() {
+		err := ddl.Stop()
+		require.NoError(t, err)
+	}()
 
 	dbInfo, err := testSchemaInfo(ddl, "test_table")
 	require.NoError(t, err)
