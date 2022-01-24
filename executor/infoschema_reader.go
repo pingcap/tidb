@@ -2892,6 +2892,12 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 		// also convert them to LeaderConstraints and FollowerConstraints
 		// for better user experience searching for particular constraints
 
+		// Followers == 0 means not set, so the default value 2 will be used
+		followerCnt := policy.PlacementSettings.Followers
+		if followerCnt == 0 {
+			followerCnt = 2
+		}
+
 		row := types.MakeDatums(
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
@@ -2903,7 +2909,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.FollowerConstraints,
 			policy.PlacementSettings.LearnerConstraints,
 			policy.PlacementSettings.Schedule,
-			policy.PlacementSettings.Followers,
+			followerCnt,
 			policy.PlacementSettings.Learners,
 		)
 		rows = append(rows, row)
