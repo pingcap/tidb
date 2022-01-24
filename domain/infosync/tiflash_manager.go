@@ -306,6 +306,9 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 		return errors.New("pd server is manually disabled, just quit")
 	}
 
+	j, _ := json.Marshal(rule)
+	buf := bytes.NewBuffer(j)
+	logutil.BgLogger().Info(fmt.Sprintf("!!!!! AAA %v", buf))
 	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
 	// Pd shall schedule TiFlash, we can mock here
 	tid := 0
@@ -412,7 +415,7 @@ func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash is not accessible")
+		return &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	return m.tiflash.HandleSetPlacementRule(rule)
 }
@@ -422,7 +425,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash is not accessible")
+		return &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
@@ -434,7 +437,7 @@ func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group s
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return nil, errors.New("MockTiFlash is not accessible")
+		return nil, &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	return m.tiflash.HandleGetGroupRules(group)
 }
@@ -444,7 +447,7 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash is not accessible")
+		return &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
@@ -456,7 +459,7 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash is not accessible")
+		return &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	*stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
@@ -467,7 +470,7 @@ func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helpe
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return nil, errors.New("MockTiFlash is not accessible")
+		return nil, &MockTiFlashError{"MockTiFlash is not accessible"}
 	}
 	return m.tiflash.HandleGetStoresStat(), nil
 }
@@ -479,4 +482,13 @@ func (m *mockTiFlashPlacementManager) Close(ctx context.Context) {
 	if m.tiflash.StatusServer != nil {
 		m.tiflash.StatusServer.Close()
 	}
+}
+
+// MockTiFlashError represents MockTiFlash error
+type MockTiFlashError struct {
+	Message string
+}
+
+func (me *MockTiFlashError) Error() string {
+	return me.Message
 }
