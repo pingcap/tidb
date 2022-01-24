@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,37 +15,17 @@
 package common_test
 
 import (
-	"errors"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestOnceError(t *testing.T) {
-	var err common.OnceError
-
-	require.Nil(t, err.Get())
-
-	err.Set(nil)
-	require.Nil(t, err.Get())
-
-	e := errors.New("1")
-	err.Set(e)
-	require.Equal(t, e, err.Get())
-
-	e2 := errors.New("2")
-	err.Set(e2)
-	require.Equal(t, e, err.Get()) // e, not e2.
-
-	err.Set(nil)
-	require.Equal(t, e, err.Get())
-
-	ch := make(chan struct{})
-	go func() {
-		err.Set(nil)
-		ch <- struct{}{}
-	}()
-	<-ch
-	require.Equal(t, e, err.Get())
+func TestMain(m *testing.M) {
+	testbridge.SetupForCommonTest()
+	opts := []goleak.Option{
+		// goleak.IgnoreTopFunction("github.com/klauspost/compress/zstd.(*blockDec).startDecoder"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
