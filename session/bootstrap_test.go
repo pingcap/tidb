@@ -32,6 +32,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// This test file have many problem.
+// 1. Please use testkit to create dom, session and store.
+// 2. Don't use createStoreAndBootstrap and BootstrapSession together. It will cause data race.
+// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
+// We will overwrite this file by update_test.go.
 func TestBootstrap(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -822,40 +827,6 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
-}
-
-func TestUpgradeVersion83(t *testing.T) {
-	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	domV83, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domV83.Close()
-	seV83 := createSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seV83)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	statsHistoryTblFields := []struct {
-		field string
-		tp    string
-	}{
-		{"table_id", "bigint(64)"},
-		{"stats_data", "longblob"},
-		{"seq_no", "bigint(64)"},
-		{"version", "bigint(64)"},
-		{"create_time", "datetime(6)"},
-	}
-	rStatsHistoryTbl := mustExec(t, seV83, `desc mysql.stats_history`)
-	req := rStatsHistoryTbl.NewChunk(nil)
-	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
-	require.Equal(t, 5, req.NumRows())
-	for i := 0; i < 5; i++ {
-		row := req.GetRow(i)
-		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
-		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
-	}
 }
 
 func TestForIssue23387(t *testing.T) {
