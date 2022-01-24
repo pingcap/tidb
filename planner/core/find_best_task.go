@@ -141,7 +141,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
-	if (!prop.IsEmpty() && p.RowCount > 1) || planCounter.Empty() {
+	if (!prop.IsSortItemEmpty() && p.RowCount > 1) || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
@@ -153,7 +153,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.ctx)
@@ -163,7 +163,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter 
 }
 
 func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
@@ -265,7 +265,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
-		if prop.IsEmpty() {
+		if prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
 		}
@@ -362,7 +362,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	if err != nil {
 		return nil, 0, err
 	}
-	if !hintWorksWithProp && !newProp.IsEmpty() {
+	if !hintWorksWithProp && !newProp.IsSortItemEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
 		// make sure the hint can work.
@@ -426,7 +426,7 @@ END:
 }
 
 func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
@@ -542,7 +542,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	// ```
 	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
 	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
-	if !prop.IsEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
+	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
 		isMatchProp = true
 		i := 0
 		for _, sortItem := range prop.SortItems {
@@ -621,7 +621,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				continue
 			}
 		} else {
-			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
+			if len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
 				// 2. We have a non-empty prop to match.
@@ -994,7 +994,7 @@ func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bo
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
-	if prop.TaskTp != property.RootTaskType || !prop.IsEmpty() {
+	if prop.TaskTp != property.RootTaskType || !prop.IsSortItemEmpty() {
 		return invalidTask, nil
 	}
 	path := candidate.path
@@ -1292,7 +1292,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	path := candidate.path
@@ -1355,7 +1355,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if cop.needExtraProj {
 		cop.originSchema = ds.schema
 	}
-	// prop.IsEmpty() would always return true when coming to here,
+	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
@@ -1793,7 +1793,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
@@ -1870,7 +1870,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
@@ -1891,7 +1891,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 }
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
@@ -1976,7 +1976,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 
 func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	candidate *candidatePath, hashPartColName *ast.ColumnName, opt *physicalOptimizeOp) (task task) {
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
@@ -1989,7 +1989,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
-		KeepOrder:        !prop.IsEmpty(),
+		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
@@ -2023,7 +2023,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
-		if !prop.IsEmpty() {
+		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
@@ -2197,7 +2197,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			rowCount = count
@@ -2224,7 +2224,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 }
 
 func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() && !prop.CanAddEnforcer {
+	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
@@ -2242,7 +2242,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 }
 
 func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil, 1, nil
 	}
 

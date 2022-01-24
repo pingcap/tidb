@@ -80,7 +80,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 			return &mppTask{}
 		}
-		tsk = mpp.enforceExchanger(p, ctx)
+		tsk = mpp.enforceExchanger(p)
 	}
 	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
