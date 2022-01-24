@@ -290,7 +290,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
-
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
+		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
+	}
 	return finalPlan, cost, nil
 }
 
@@ -409,12 +411,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
+		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			vars.StmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
 	}
 	var err error
@@ -455,12 +458,12 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PhysicalOptimizeTraceInfo)}
+		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PlanTrace)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {
 				tracer.RecordFinalPlanTrace(plan.buildPlanTrace())
-				stmtCtx.PhysicalOptimizeTrace = tracer
+				stmtCtx.OptimizeTracer.Physical = tracer
 			}
 		}()
 	}
