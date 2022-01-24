@@ -320,8 +320,6 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	defer func() {
 		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
-	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	var snapshot uint64
 	txn, err := ctx.Txn(false)
@@ -335,6 +333,8 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		snapshot = ctx.GetSessionVars().SnapshotTS
 	}
 
+	// Add `` for some names like `table name`.
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
