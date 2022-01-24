@@ -264,18 +264,18 @@ function run_explain_test()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=$coll_disabled
+          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --record --log-level=error
       else
           echo "record result for case: \"$record_case\""
-          $explain_test -port "$port" -status "$status" --record $record_case --log-level=error --collation-disable=$coll_disabled
+          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --record $record_case --log-level=error
       fi
     elif [ $create -eq 1 ]; then
       if [ "$create_case" = 'all' ]; then
           echo "create all cases"
-          $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=$coll_disabled
+          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --create --log-level=error
       else
           echo "create result for case: \"$create_case\""
-          $explain_test -port "$port" -status "$status" --create $create_case --log-level=error --collation-disable=$coll_disabled
+          $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --create $create_case --log-level=error
       fi
     else
       if [ -z "$tests" ]; then
@@ -283,7 +283,7 @@ function run_explain_test()
       else
           echo "run explain test cases($coll_msg): $tests"
       fi
-      $explain_test -port "$port" -status "$status" --log-level=error $tests --collation-disable=$coll_disabled
+      $explain_test -port "$port" -status "$status" --collation-disable=$coll_disabled --log-level=error $tests
     fi
 }
 
