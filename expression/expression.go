@@ -951,7 +951,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
 
 		// arithmetical functions.
-		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
+		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
 
 		// math functions.
 		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,

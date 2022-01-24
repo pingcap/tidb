@@ -2494,9 +2494,6 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	rows[1][2] = "left(test.t.c, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
-	rows[1][2] = "mod(test.t.id, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id,1);").
-		CheckAt([]int{0, 3, 6}, rows)
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
