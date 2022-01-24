@@ -2880,7 +2880,17 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			// avoid to build Selection.
 			show.Pattern = nil
 		}
-	case ast.ShowTables, ast.ShowTableStatus:
+	case ast.ShowTables:
+		if p.DBName == "" {
+			return nil, ErrNoDB
+		}
+		var extractor ShowTablesTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// avoid to build Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowTableStatus:
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
