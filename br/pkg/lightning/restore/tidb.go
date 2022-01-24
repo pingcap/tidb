@@ -158,7 +158,7 @@ loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -181,6 +181,7 @@ loopCreate:
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func createDatabaseIfNotExistStmt(dbName string) string {
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
@@ -190,6 +191,10 @@ func createDatabaseIfNotExistStmt(dbName string) string {
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.Parse(createTable, "", "")
+=======
+func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+	stmts, _, err := p.ParseSQL(createTable)
+>>>>>>> 18fc286fb... lightning: support charset for create schema (#31915)
 	if err != nil {
 		return []string{}, err
 	}
@@ -200,6 +205,9 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
+		case *ast.CreateDatabaseStmt:
+			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)

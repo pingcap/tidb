@@ -17,10 +17,12 @@ import (
 	"context"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -29,10 +31,28 @@ import (
 
 type MDDatabaseMeta struct {
 	Name       string
-	SchemaFile string
+	SchemaFile FileInfo
 	Tables     []*MDTableMeta
 	Views      []*MDTableMeta
 	charSet    string
+}
+
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+	if err != nil {
+		log.L().Warn("failed to extract table schema",
+			zap.String("Path", m.SchemaFile.FileMeta.Path),
+			log.ShortError(err),
+		)
+		schema = nil
+	}
+	schemaStr := strings.TrimSpace(string(schema))
+	// set default if schema sql is empty
+	if len(schemaStr) == 0 {
+		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
+	}
+
+	return schemaStr, nil
 }
 
 type MDTableMeta struct {
@@ -218,7 +238,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	// setup database schema
 	if len(s.dbSchemas) != 0 {
 		for _, fileInfo := range s.dbSchemas {
-			if _, dbExists := s.insertDB(fileInfo.TableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
+			if _, dbExists := s.insertDB(fileInfo); dbExists && s.loader.router == nil {
 				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
@@ -405,15 +425,15 @@ func (s *mdLoaderSetup) route() error {
 	return nil
 }
 
-func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, bool) {
-	dbIndex, ok := s.dbIndexMap[dbName]
+func (s *mdLoaderSetup) insertDB(f FileInfo) (*MDDatabaseMeta, bool) {
+	dbIndex, ok := s.dbIndexMap[f.TableName.Schema]
 	if ok {
 		return s.loader.dbs[dbIndex], true
 	}
-	s.dbIndexMap[dbName] = len(s.loader.dbs)
+	s.dbIndexMap[f.TableName.Schema] = len(s.loader.dbs)
 	ptr := &MDDatabaseMeta{
-		Name:       dbName,
-		SchemaFile: path,
+		Name:       f.TableName.Schema,
+		SchemaFile: f,
 		charSet:    s.loader.charSet,
 	}
 	s.loader.dbs = append(s.loader.dbs, ptr)
@@ -421,7 +441,13 @@ func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, b
 }
 
 func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
-	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	dbFileInfo := FileInfo{
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
+		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
+	}
+	dbMeta, dbExists := s.insertDB(dbFileInfo)
 	tableIndex, ok := s.tableIndexMap[fileInfo.TableName]
 	if ok {
 		return dbMeta.Tables[tableIndex], dbExists, true
@@ -441,7 +467,13 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 }
 
 func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
-	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	dbFileInfo := FileInfo{
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
+		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
+	}
+	dbMeta, dbExists := s.insertDB(dbFileInfo)
 	_, ok := s.tableIndexMap[fileInfo.TableName]
 	if ok {
 		meta := &MDTableMeta{
