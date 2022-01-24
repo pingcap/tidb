@@ -99,6 +99,31 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
 }
 
+func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	rows0 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	updateTime0 := rows0[0][1]
+	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
+
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("admin reload bindings;")
+
+	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	updateTime1 := rows1[0][1]
+	require.Equal(t, updateTime1, "2000-01-01 09:00:00.000")
+
+	rows2 := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(rows2), 0)
+}
+
 func TestBindParse(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

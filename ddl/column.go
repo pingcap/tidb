@@ -1253,7 +1253,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        sqlMode,

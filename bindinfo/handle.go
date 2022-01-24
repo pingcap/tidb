@@ -155,13 +155,16 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			continue
 		}
 		hash, meta, err := h.newBindRecord(row)
+
+		// Update lastUpdateTime to the newest one.
+		// Even if this one is an invalid bind.
+		if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
+			lastUpdateTime = meta.Bindings[0].UpdateTime
+		}
+
 		if err != nil {
 			logutil.BgLogger().Debug("[sql-bind] failed to generate bind record from data row", zap.Error(err))
 			continue
-		}
-		// Update lastUpdateTime to the newest one.
-		if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
-			lastUpdateTime = meta.Bindings[0].UpdateTime
 		}
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)

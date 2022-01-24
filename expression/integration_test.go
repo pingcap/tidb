@@ -810,6 +810,12 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+
+	// For issue 31603, only affects unistore.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varbinary(100));")
+	tk.MustExec("insert into t1 values('abc');")
+	tk.MustQuery("select 1 from t1 where char_length(c1) = 10;").Check(testkit.Rows())
 }
 
 func TestInvalidStrings(t *testing.T) {
@@ -5764,7 +5770,7 @@ func TestVitessHash(t *testing.T) {
 		"(1, 30375298039), " +
 		"(2, 1123), " +
 		"(3, 30573721600), " +
-		"(4, " + fmt.Sprintf("%d", uint64(math.MaxUint64)) + ")," +
+		"(4, " + strconv.FormatUint(uint64(math.MaxUint64), 10) + ")," +
 		"(5, 116)," +
 		"(6, null);")
 

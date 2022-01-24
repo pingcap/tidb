@@ -178,6 +178,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			finishJobWithLogFn(ctx, results.Job, true)
 		} else {
 			finishJobWithLogFn(ctx, results.Job, false)
+			// Dump stats to historical storage.
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			}
 		}
 	}
 	for _, task := range e.tasks {
@@ -209,6 +213,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+				// Dump stats to historical storage.
+				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 				}
 			}
 		}
@@ -254,6 +262,32 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
+	if err != nil {
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+	}
+	if !historicalStatsEnabled {
+		return nil
+	}
+
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, existed := is.TableByID(tableID)
+	if !existed {
+		return errors.Errorf("cannot get table by id %d", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, existed := is.SchemaByTable(tblInfo)
+	if !existed {
+		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
+	}
+	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
 	}
 	return nil
 }
