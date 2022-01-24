@@ -2483,7 +2483,6 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int,c varchar(11))")
-	tk.MustExec("insert into t (id,c) values(12,'abc')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
