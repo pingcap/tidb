@@ -428,11 +428,28 @@ func (e *ShowExec) fetchShowTables() error {
 	// sort for tables
 	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	var tableTypes = make(map[string]string)
+	var (
+		tableTypes          = make(map[string]string)
+		fieldPatternsRegexp *regexp.Regexp
+		FieldFilterEnable   bool
+		fieldFilter         string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+			continue
+		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(v.Meta().Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)

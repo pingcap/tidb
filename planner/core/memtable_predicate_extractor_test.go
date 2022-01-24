@@ -1661,6 +1661,7 @@ func TestPredicateQuery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, abclmn int);")
+	tk.MustExec("create table abclmn(a int);")
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
@@ -1693,4 +1694,12 @@ func TestPredicateQuery(t *testing.T) {
 
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
 	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
+
+	tk.MustQuery("show tables like 't'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'T'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
+	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
+	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
 }
