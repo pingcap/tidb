@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -186,7 +185,7 @@ func TestGet(t *testing.T) {
 			},
 		},
 	}
-	assert.Equal(t, expect, cp)
+	require.Equal(t, expect, cp)
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
 	require.NoError(t, err)
@@ -199,11 +198,11 @@ func TestGet(t *testing.T) {
 			},
 		},
 	}
-	assert.Equal(t, expect, cp)
+	require.Equal(t, expect, cp)
 
 	cp, err = cpdb.Get(ctx, "`db3`.`not-exists`")
 	require.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.True(t, errors.IsNotFound(err))
 }
 
 func TestRemoveAllCheckpoints(t *testing.T) {
@@ -216,11 +215,11 @@ func TestRemoveAllCheckpoints(t *testing.T) {
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.True(t, errors.IsNotFound(err))
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 }
 
 func TestRemoveOneCheckpoint(t *testing.T) {
@@ -232,12 +231,12 @@ func TestRemoveOneCheckpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
 	require.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
+	require.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
 }
 
 func TestIgnoreAllErrorCheckpoints(t *testing.T) {
@@ -251,12 +250,12 @@ func TestIgnoreAllErrorCheckpoints(t *testing.T) {
 	require.NoError(t, err)
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
+	require.NoError(t, err)
+	require.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	assert.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
+	require.NoError(t, err)
+	require.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
 }
 
 func TestIgnoreOneErrorCheckpoints(t *testing.T) {
@@ -270,12 +269,12 @@ func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 	require.NoError(t, err)
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
+	require.NoError(t, err)
+	require.Equal(t, checkpoints.CheckpointStatusLoaded, cp.Status)
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	assert.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
+	require.NoError(t, err)
+	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
 }
 
 func TestDestroyAllErrorCheckpoints(t *testing.T) {
@@ -300,15 +299,15 @@ func TestDestroyAllErrorCheckpoints(t *testing.T) {
 			MaxEngineID: -1,
 		},
 	}
-	assert.Equal(t, expect, dtc)
+	require.Equal(t, expect, dtc)
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 }
 
 func TestDestroyOneErrorCheckpoint(t *testing.T) {
@@ -327,13 +326,13 @@ func TestDestroyOneErrorCheckpoint(t *testing.T) {
 			MaxEngineID: 0,
 		},
 	}
-	assert.Equal(t, expect, dtc)
+	require.Equal(t, expect, dtc)
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	assert.NoError(t, err)
-	assert.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
+	require.NoError(t, err)
+	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
 }

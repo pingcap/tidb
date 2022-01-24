@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +17,7 @@ func TestMergeStatusCheckpoint(t *testing.T) {
 	m := StatusCheckpointMerger{EngineID: 0, Status: CheckpointStatusImported}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasStatus: false,
 		engines: map[int32]engineCheckpointDiff{
 			0: {
@@ -32,7 +31,7 @@ func TestMergeStatusCheckpoint(t *testing.T) {
 	m = StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusLoaded}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasStatus: false,
 		engines: map[int32]engineCheckpointDiff{
 			0: {
@@ -51,7 +50,7 @@ func TestMergeStatusCheckpoint(t *testing.T) {
 	m = StatusCheckpointMerger{EngineID: WholeTableEngineID, Status: CheckpointStatusClosed}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusClosed,
 		engines: map[int32]engineCheckpointDiff{
@@ -71,7 +70,7 @@ func TestMergeStatusCheckpoint(t *testing.T) {
 	m = StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusAllWritten}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusClosed,
 		engines: map[int32]engineCheckpointDiff{
@@ -99,7 +98,7 @@ func TestMergeInvalidStatusCheckpoint(t *testing.T) {
 	m.SetInvalid()
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasStatus: true,
 		status:    CheckpointStatusAllWritten / 10,
 		engines: map[int32]engineCheckpointDiff{
@@ -131,7 +130,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 	}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		engines: map[int32]engineCheckpointDiff{
 			2: {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
@@ -154,7 +153,7 @@ func TestMergeChunkCheckpoint(t *testing.T) {
 	}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		engines: map[int32]engineCheckpointDiff{
 			2: {
 				chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
@@ -175,7 +174,7 @@ func TestRebaseCheckpoint(t *testing.T) {
 	m := RebaseCheckpointMerger{AllocBase: 10000}
 	m.MergeInto(cpd)
 
-	assert.Equal(t, &TableCheckpointDiff{
+	require.Equal(t, &TableCheckpointDiff{
 		hasRebase: true,
 		allocBase: 10000,
 		engines:   make(map[int32]engineCheckpointDiff),
@@ -249,7 +248,7 @@ func TestApplyDiff(t *testing.T) {
 
 	cp.Apply(cpd)
 
-	assert.Equal(t, TableCheckpoint{
+	require.Equal(t, TableCheckpoint{
 		Status:    CheckpointStatusAllWritten,
 		AllocBase: 11111,
 		Engines: map[int32]*EngineCheckpoint{
@@ -298,5 +297,5 @@ func TestCheckpointMarshallUnmarshall(t *testing.T) {
 
 	fileChkp2 := NewFileCheckpointsDB(path)
 	// if not recover empty map explicitly, it will become nil
-	assert.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
+	require.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
 }

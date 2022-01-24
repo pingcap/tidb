@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -156,8 +155,8 @@ func TestNormalOperations(t *testing.T) {
 		},
 	})
 	s.mock.MatchExpectationsInOrder(true)
-	assert.NoError(t, err)
-	assert.Nil(t, s.mock.ExpectationsWereMet())
+	require.NoError(t, err)
+	require.Nil(t, s.mock.ExpectationsWereMet())
 
 	// 4. update some checkpoints
 
@@ -224,7 +223,7 @@ func TestNormalOperations(t *testing.T) {
 	s.mock.MatchExpectationsInOrder(false)
 	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 	s.mock.MatchExpectationsInOrder(true)
-	assert.Nil(t, s.mock.ExpectationsWereMet())
+	require.Nil(t, s.mock.ExpectationsWereMet())
 
 	// 5. get back the checkpoints
 
@@ -262,8 +261,8 @@ func TestNormalOperations(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	assert.Nil(t, err)
-	assert.Equal(t, &checkpoints.TableCheckpoint{
+	require.Nil(t, err)
+	require.Equal(t, &checkpoints.TableCheckpoint{
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
 		TableID:   int64(2),
@@ -295,7 +294,7 @@ func TestNormalOperations(t *testing.T) {
 		},
 		Checksum: verification.MakeKVChecksum(4492, 686, 486070148910),
 	}, cp)
-	assert.Nil(t, s.mock.ExpectationsWereMet())
+	require.Nil(t, s.mock.ExpectationsWereMet())
 }
 
 func TestRemoveAllCheckpoints_SQL(t *testing.T) {
@@ -307,7 +306,7 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 	ctx := context.Background()
 
 	err := s.cpdb.RemoveCheckpoint(ctx, "all")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -330,8 +329,8 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 	s.mock.ExpectRollback()
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
-	assert.Nil(t, cp)
-	assert.True(t, errors.IsNotFound(err))
+	require.Nil(t, cp)
+	require.True(t, errors.IsNotFound(err))
 }
 
 func TestRemoveOneCheckpoint_SQL(t *testing.T) {
@@ -354,7 +353,7 @@ func TestRemoveOneCheckpoint_SQL(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	err := s.cpdb.RemoveCheckpoint(context.Background(), "`db1`.`t2`")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
@@ -373,7 +372,7 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	err := s.cpdb.IgnoreErrorCheckpoint(context.Background(), "all")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestIgnoreOneErrorCheckpoint(t *testing.T) {
@@ -392,7 +391,7 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	err := s.cpdb.IgnoreErrorCheckpoint(context.Background(), "`db1`.`t2`")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
@@ -422,8 +421,8 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "all")
-	assert.NoError(t, err)
-	assert.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
+	require.NoError(t, err)
+	require.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
@@ -457,8 +456,8 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "`db1`.`t2`")
-	assert.NoError(t, err)
-	assert.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
+	require.NoError(t, err)
+	require.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
@@ -489,8 +488,8 @@ func TestDump(t *testing.T) {
 
 	var csvBuilder strings.Builder
 	err := s.cpdb.DumpChunks(ctx, &csvBuilder)
-	assert.NoError(t, err)
-	assert.Equal(t,
+	require.NoError(t, err)
+	require.Equal(t,
 		"table_name,path,offset,type,compression,sort_key,file_size,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
 			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,456,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 		csvBuilder.String(),
@@ -506,8 +505,8 @@ func TestDump(t *testing.T) {
 
 	csvBuilder.Reset()
 	err = s.cpdb.DumpEngines(ctx, &csvBuilder)
-	assert.NoError(t, err)
-	assert.Equal(t, "table_name,engine_id,status,create_time,update_time\n"+
+	require.NoError(t, err)
+	require.Equal(t, "table_name,engine_id,status,create_time,update_time\n"+
 		"`db1`.`t2`,-1,30,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n"+
 		"`db1`.`t2`,0,120,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 		csvBuilder.String())
@@ -521,8 +520,8 @@ func TestDump(t *testing.T) {
 
 	csvBuilder.Reset()
 	err = s.cpdb.DumpTables(ctx, &csvBuilder)
-	assert.NoError(t, err)
-	assert.Equal(t, "task_id,table_name,hash,status,alloc_base,create_time,update_time\n"+
+	require.NoError(t, err)
+	require.Equal(t, "task_id,table_name,hash,status,alloc_base,create_time,update_time\n"+
 		"1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 		csvBuilder.String(),
 	)
@@ -550,5 +549,5 @@ func TestMoveCheckpoints(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
