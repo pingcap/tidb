@@ -235,6 +235,12 @@ func (s *sqlStats) tune() {
 		s.plans[""] = s.total
 		return
 	}
+	if len(s.plans) == 1 {
+		for k := range s.plans {
+			s.plans[k] = s.total
+			return
+		}
+	}
 	planTotal := int64(0)
 	for _, v := range s.plans {
 		planTotal += v
