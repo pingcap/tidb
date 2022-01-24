@@ -140,7 +140,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.statusToInstanceAddress = make(map[string]string)
 		var rows []chunk.Row
 		exec := sctx.(sqlexec.RestrictedSQLExecutor)
-		rows, _, err := exec.ExecRestrictedSQL(ctx, "select instance,status_address from information_schema.cluster_info;")
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,status_address from information_schema.cluster_info;")
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
 		}
@@ -247,13 +247,13 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"storage.block-cache.capacity",
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
 	}
 
 	generateDetail := func(tp, item string) string {
-		rows, _, err := exec.ExecRestrictedSQL(ctx, "select value, instance from information_schema.cluster_config where type=%? and `key`=%?;", tp, item)
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select value, instance from information_schema.cluster_config where type=%? and `key`=%?;", tp, item)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
 			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
@@ -332,7 +332,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		if !filter.enable(cas.key) {
 			continue
 		}
-		rows, _, err := exec.ExecRestrictedSQL(ctx, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 		}
@@ -359,7 +359,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 		return nil
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 	}
@@ -383,7 +383,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 		ipToCount[ip]++
 	}
 
-	rows, _, err = exec.ExecRestrictedSQL(ctx, "select instance, value from metrics_schema.node_total_memory where time=now()")
+	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select instance, value from metrics_schema.node_total_memory where time=now()")
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 	}
@@ -447,7 +447,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	// check the configuration consistent
-	rows, _, err := exec.ExecRestrictedSQL(ctx, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))
 	}
@@ -613,7 +613,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 			sql.Reset()
 			fmt.Fprintf(sql, "select `%[1]s`,sum(value) as total from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having total>=1.0",
 				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
-			rows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+			rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 				continue
@@ -664,7 +664,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	fmt.Fprintf(sql, `select t1.job,t1.instance, t2.min_time from
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
 		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 	}
@@ -689,7 +689,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	// Check from log.
 	sql.Reset()
 	fmt.Fprintf(sql, "select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
-	rows, _, err = exec.ExecRestrictedSQL(ctx, sql.String())
+	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 	}
@@ -822,7 +822,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 				(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1
 				where t1.cpu > %[2]f;`, rule.component, rule.threshold, condition)
 		}
-		rows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue
@@ -991,7 +991,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		} else {
 			fmt.Fprintf(sql, "select instance, max(value)/%.0f as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.factor, rule.tbl, cond, rule.threshold)
 		}
-		rows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue
@@ -1173,7 +1173,7 @@ func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionF
 			continue
 		}
 		sql := rule.genSQL(filter.timeRange)
-		rows, _, err := exec.ExecRestrictedSQL(ctx, sql)
+		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue
@@ -1192,7 +1192,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 	fmt.Fprintf(sql, `select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 		return nil
@@ -1203,7 +1203,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 		sql.Reset()
 		fmt.Fprintf(sql, `select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
 		var subRows []chunk.Row
-		subRows, _, err := exec.ExecRestrictedSQL(ctx, sql.String())
+		subRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue

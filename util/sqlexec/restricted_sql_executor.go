@@ -49,9 +49,7 @@ type RestrictedSQLExecutor interface {
 	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQL run sql string in ctx with internal session.
-	ExecRestrictedSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
-	// ExecRestrictedSQLWithSnapshot run sql string in ctx with internal session and some restrictions.
-	ExecRestrictedSQLWithSnapshot(ctx context.Context, snapshot uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt option.

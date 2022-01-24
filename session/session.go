@@ -1178,7 +1178,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	rows, fields, err := s.ExecRestrictedSQL(ctx, nil, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
 	}
@@ -1196,7 +1196,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
-	_, _, err := s.ExecRestrictedSQL(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
+	_, _, err := s.ExecRestrictedSQL(ctx, nil, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
@@ -1270,7 +1270,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	_, _, err := s.ExecRestrictedSQL(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	_, _, err := s.ExecRestrictedSQL(context.TODO(), nil, `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	return err
 }
 
@@ -1625,44 +1625,103 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	return rows, rs.Fields(), err
 }
 
-func (s *session) getInternalSession() (*session, func(), error) {
+func (s *session) getInternalSession(opts []sqlexec.OptionFuncAlias) (*session, func(), error) {
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	se := tmp.(*session)
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
+
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	prevStatsVer := se.sessionVars.AnalyzeVersion
+	if execOption.AnalyzeVer != 0 {
+		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
+	}
+
+	// for analyze stmt we need let worker session follow user session that executing stmt.
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+
 	return se, func() {
+		se.sessionVars.AnalyzeVersion = prevStatsVer
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+		}
+		se.sessionVars.SnapshotInfoschema = nil
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
+		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
+		se.sessionVars.OptimizerUseInvisibleIndexes = false
+		se.sessionVars.InspectionTableCache = nil
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
 
-func (s *session) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, clean, err := s.getInternalSession()
+func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, clean, err := s.getInternalSession(opts)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	defer clean()
-
 	return fn(ctx, se)
 }
 
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return se.ExecRestrictedStmt(ctx, stmt)
-	})
-}
 
-func (s *session) ExecRestrictedSQLWithSnapshot(ctx context.Context, snapshot uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := se.ParseWithParams(ctx, sql, params...)
+		startTime := time.Now()
+		metrics.SessionRestrictedSQLCounter.Inc()
+		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+		rs, err := se.ExecuteStmt(ctx, stmt)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			se.sessionVars.StmtCtx.AppendError(err)
 		}
-		return se.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		if rs == nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if closeErr := rs.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		var rows []chunk.Row
+		rows, err = drainRecordSet(ctx, se, rs, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+		return rows, rs.Fields(), err
 	})
 }
 

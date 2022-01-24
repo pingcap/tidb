@@ -506,7 +506,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			_, _, err := exec.ExecRestrictedSQL(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			if err != nil {
 				return err
 			}

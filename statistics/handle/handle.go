@@ -1404,9 +1404,9 @@ type statsReader struct {
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
 	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedSQLWithSnapshot(ctx, sr.snapshot, sql, args...)
+		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
-	return sr.ctx.ExecRestrictedSQL(ctx, sql, args...)
+	return sr.ctx.ExecRestrictedSQL(ctx, nil, sql, args...)
 }
 
 func (sr *statsReader) isHistory() bool {
