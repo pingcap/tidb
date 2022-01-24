@@ -439,6 +439,13 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	err = h.LoadNeededHistograms()
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, ErrorMatches, ".*getStatsReader panic.*")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, IsNil)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

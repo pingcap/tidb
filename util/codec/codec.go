@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -201,17 +202,13 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 		}
 		switch allTypes[i].Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if !mysql.HasUnsignedFlag(allTypes[i].Flag) {
+			if !mysql.HasUnsignedFlag(allTypes[i].Flag) && row.GetInt64(i) < 0 {
 				b = encodeSignedInt(b, row.GetInt64(i), comparable)
 				break
 			}
 			// encode unsigned integers.
 			integer := row.GetInt64(i)
-			if integer < 0 {
-				b = encodeUnsignedInt(b, uint64(integer), comparable)
-			} else {
-				b = encodeSignedInt(b, integer, comparable)
-			}
+			b = encodeUnsignedInt(b, uint64(integer), comparable)
 		case mysql.TypeFloat:
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(row.GetFloat32(i)))
@@ -251,9 +248,9 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			}
 			b = append(b, bin...)
 		case mysql.TypeEnum:
-			b = encodeUnsignedInt(b, uint64(row.GetEnum(i).ToNumber()), comparable)
+			b = encodeBytes(b, hack.Slice(allTypes[i].Elems[uint64(row.GetEnum(i).ToNumber())-1]), comparable)
 		case mysql.TypeSet:
-			b = encodeUnsignedInt(b, uint64(row.GetSet(i).ToNumber()), comparable)
+			b = encodeBytes(b, hack.Slice(allTypes[i].Elems[uint64(row.GetSet(i).ToNumber())-1]), comparable)
 		case mysql.TypeBit:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64

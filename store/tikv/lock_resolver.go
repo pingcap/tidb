@@ -214,7 +214,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			continue
 		}
 
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, l)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -377,7 +377,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, e
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, currentTS)
+	return lr.getTxnStatus(bo, txnID, primary, currentTS, nil)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock) (TxnStatus, error) {
@@ -386,17 +386,17 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock) (TxnStatus,
 	// In this case, TiKV set the lock TTL = 0, and TiDB use currentTS = 0 to call
 	// getTxnStatus, and getTxnStatus with currentTS = 0 would rollback the transaction.
 	if l.TTL == 0 {
-		return lr.getTxnStatus(bo, l.TxnID, l.Primary, 0)
+		return lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, l)
 	}
 
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return TxnStatus{}, err
 	}
-	return lr.getTxnStatus(bo, l.TxnID, l.Primary, currentTS)
+	return lr.getTxnStatus(bo, l.TxnID, l.Primary, currentTS, l)
 }
 
-func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, currentTS uint64) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte, currentTS uint64, lockInfo *Lock) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -453,7 +453,20 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		} else {
 			tikvLockResolverCountWithQueryTxnStatusRolledBack.Inc()
 		}
-		lr.saveResolved(txnID, status)
+		// If its status is certain:
+		//     If transaction is already committed, the result could be cached.
+		//     Otherwise:
+		//       If l.LockType is pessimistic lock type:
+		//           - if its primary lock is pessimistic too, the check txn status result should not be cached.
+		//           - if its primary lock is prewrite lock type, the check txn status could be cached, todo.
+		//       If l.lockType is prewrite lock type:
+		//           - always cache the check txn status result.
+		// For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+		if status.ttl == 0 {
+			if status.IsCommitted() || (lockInfo != nil && lockInfo.LockType != kvrpcpb.Op_PessimisticLock) {
+				lr.saveResolved(txnID, status)
+			}
+		}
 		return status, nil
 	}
 }

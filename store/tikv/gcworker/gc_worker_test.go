@@ -14,6 +14,7 @@
 package gcworker
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -38,12 +40,17 @@ func TestT(t *testing.T) {
 }
 
 type testGCWorkerSuite struct {
-	store    tikv.Storage
-	cluster  *mocktikv.Cluster
-	oracle   *mockoracle.MockOracle
-	gcWorker *GCWorker
-	dom      *domain.Domain
-	pdClient pd.Client
+	store      tikv.Storage
+	cluster    *mocktikv.Cluster
+	oracle     *mockoracle.MockOracle
+	gcWorker   *GCWorker
+	dom        *domain.Domain
+	pdClient   pd.Client
+	initRegion struct {
+		storeIDs []uint64
+		peerIDs  []uint64
+		regionID uint64
+	}
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -52,7 +59,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
 	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(s.cluster))
 
 	s.store = store.(tikv.Storage)
@@ -337,6 +344,107 @@ func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
 	}()
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
 	c.Assert(err, NotNil)
+}
+
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
+	var (
+		scanCnt       int
+		scanCntRef    = &scanCnt
+		resolveCnt    int
+		resolveCntRef = &resolveCnt
+	)
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+		*scanCntRef++
+		return []*tikv.Lock{
+			{
+				Key: []byte{1},
+			},
+			{
+				Key: []byte{1},
+			},
+		}
+	}
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+		*resolveCntRef++
+		if *resolveCntRef == 1 {
+			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
+			// mock the region cache miss error
+			return false, nil
+		}
+		return true, nil
+	}
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{10})
+	c.Assert(err, IsNil)
+	c.Assert(resolveCnt, Equals, 2)
+	c.Assert(scanCnt, Equals, 1)
+}
+
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(c *C) {
+	var (
+		firstAccess    = true
+		firstAccessRef = &firstAccess
+		resolvedLock   [][]byte
+	)
+
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := []uint64{s.cluster.AllocID(), s.cluster.AllocID(), s.cluster.AllocID()}
+	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
+
+	// init a, b lock in region1 and o, p locks in region2
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+		if regionID == s.initRegion.regionID {
+			return []*tikv.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
+		}
+		if regionID == region2 {
+			return []*tikv.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
+		}
+		return []*tikv.Lock{}
+	}
+
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
+			*firstAccessRef = false
+			// merge region2 into region1 and return EpochNotMatch error.
+			mCluster := s.cluster
+			mCluster.Merge(s.initRegion.regionID, region2)
+			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
+			s.store.GetRegionCache().OnRegionEpochNotMatch(
+				tikv.NewNoopBackoff(context.Background()),
+				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
+				[]*metapb.Region{regionMeta})
+			// also let region1 contains all 4 locks
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+				if regionID == s.initRegion.regionID {
+					locks := []*tikv.Lock{
+						{Key: []byte("a")},
+						{Key: []byte("b")},
+						{Key: []byte("o")},
+						{Key: []byte("p")},
+					}
+					for i, lock := range locks {
+						if bytes.Compare(key, lock.Key) <= 0 {
+							return locks[i:]
+						}
+					}
+				}
+				return []*tikv.Lock{}
+			}
+			return false, nil
+		}
+		for _, lock := range locks {
+			resolvedLock = append(resolvedLock, lock.Key)
+		}
+		return true, nil
+	}
+
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(len(resolvedLock), Equals, 4)
+	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
+	for i, l := range resolvedLock {
+		c.Assert(l, BytesEquals, expects[i])
+	}
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {

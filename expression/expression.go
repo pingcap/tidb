@@ -39,6 +39,9 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
+// RewriteAstExpr rewrite ast expression directly.
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error)
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
@@ -393,15 +396,23 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 	if arg.GetType().EvalType() == types.ETInt {
 		return arg, nil
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }

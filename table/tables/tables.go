@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
@@ -111,11 +112,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generateExpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generateExpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -601,6 +602,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
+			txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 		}
 		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
@@ -910,7 +912,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
 	if col.State != model.StatePublic {
@@ -1030,13 +1032,13 @@ func (t *tableCommon) canSkip(col *table.Column, value types.Datum) bool {
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that;
+// 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
 func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
-	if col.GetDefaultValue() == nil && value.IsNull() {
+	if col.GetDefaultValue() == nil && value.IsNull() && col.GetOriginDefaultValue() == nil {
 		return true
 	}
 	if col.IsGenerated() && !col.GeneratedStored {
@@ -1091,6 +1093,7 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(recordKey)
 	if err == nil {

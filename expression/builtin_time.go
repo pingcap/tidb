@@ -2574,7 +2574,7 @@ type baseDateArithmitical struct {
 
 func newDateArighmeticalUtil() baseDateArithmitical {
 	return baseDateArithmitical{
-		intervalRegexp: regexp.MustCompile(`[\d]+`),
+		intervalRegexp: regexp.MustCompile(`-?[\d]+`),
 	}
 }
 
@@ -2726,7 +2726,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, err
 	}
 
-	goTime, err := date.Time.GoTime(time.Local)
+	goTime, err := date.Time.GoTime(time.UTC)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
@@ -4287,7 +4287,9 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row chunk.Row) (int64, bool, er
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4326,7 +4328,9 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4393,7 +4397,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, evalTps...)

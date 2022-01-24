@@ -843,6 +843,7 @@ func (b *builtinLog1ArgSig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log(val), false, nil
@@ -872,6 +873,7 @@ func (b *builtinLog2ArgsSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 
 	if val1 <= 0 || val1 == 1 || val2 <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 
@@ -909,6 +911,7 @@ func (b *builtinLog2Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log2(val), false, nil
@@ -945,6 +948,7 @@ func (b *builtinLog10Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log10(val), false, nil
@@ -1840,6 +1844,9 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -1848,6 +1855,10 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
@@ -1870,6 +1881,9 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -1878,6 +1892,10 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil

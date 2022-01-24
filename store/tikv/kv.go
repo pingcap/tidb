@@ -305,6 +305,10 @@ func (s *tikvStore) Close() error {
 		s.txnLatches.Close()
 	}
 	s.regionCache.Close()
+
+	if err := s.kv.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

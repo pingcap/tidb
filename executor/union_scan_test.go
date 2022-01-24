@@ -280,3 +280,40 @@ func (s *testSuite4) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
+
+// See https://github.com/pingcap/tidb/issues/19136
+func (s *testSuite4) TestForApplyAndUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t ( c_int int, c_str varchar(40), primary key(c_int, c_str) )")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'amazing almeida'), (2, 'boring bardeen'), (3, 'busy wescoff')")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
+	tk.MustExec("commit")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
+
+	// See https://github.com/pingcap/tidb/issues/19435
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t1(c_int int)")
+	tk.MustExec("create table t(c_int int)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(18)")
+	tk.MustQuery("select (select min(t1.c_int) from t1 where t1.c_int > t.c_int), (select max(t1.c_int) from t1 where t1.c_int> t.c_int), (select sum(t1.c_int) from t1 where t1.c_int> t.c_int) from t").Check(testkit.Rows("18 18 18", "18 18 18", "18 18 18", "18 18 18", "18 18 18", "18 18 18", "18 18 18", "18 18 18", "18 18 18"))
+	tk.MustExec("rollback")
+
+	// See https://github.com/pingcap/tidb/issues/19431
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` ( `c_int` int(11) NOT NULL, `c_str` varchar(40) NOT NULL, `c_datetime` datetime NOT NULL, PRIMARY KEY (`c_int`,`c_str`,`c_datetime`), KEY `c_str` (`c_str`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; /*!40101 SET character_set_client = @saved_cs_client */")
+	tk.MustExec("INSERT INTO `t` VALUES (1,'cool pasteur','2020-04-21 19:01:04'),(3,'friendly stonebraker','2020-06-09 18:58:00'),(5,'happy shannon','2020-02-29 21:39:08'),(6,'competent torvalds','2020-05-24 04:18:45'),(7,'fervent kapitsa','2020-05-21 16:58:12'),(8,'quirky jennings','2020-03-12 12:52:58'),(9,'adoring swartz','2020-04-19 02:20:32'),(14,'intelligent keller','2020-01-08 09:47:42'),(15,'vibrant zhukovsky','2020-04-15 15:15:55'),(18,'keen chatterjee','2020-02-09 06:39:31'),(20,'elastic gauss','2020-03-01 13:34:06'),(21,'affectionate margulis','2020-06-20 10:20:29'),(27,'busy keldysh','2020-05-21 09:10:45'),(31,'flamboyant banach','2020-03-04 21:28:44'),(39,'keen banach','2020-06-09 03:07:57'),(41,'nervous gagarin','2020-06-12 23:43:04'),(47,'wonderful chebyshev','2020-04-15 14:51:17'),(50,'reverent brahmagupta','2020-06-25 21:50:52'),(52,'suspicious elbakyan','2020-05-28 04:55:34'),(55,'epic lichterman','2020-05-16 19:24:09'),(57,'determined taussig','2020-06-18 22:51:37')")
+	tk.MustExec("DROP TABLE IF EXISTS `t1`")
+	tk.MustExec("CREATE TABLE `t1` ( `c_int` int(11) DEFAULT NULL, `c_str` varchar(40) NOT NULL, `c_datetime` datetime DEFAULT NULL, PRIMARY KEY (`c_str`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("INSERT INTO `t1` VALUES (19,'nervous johnson','2020-05-04 13:15:19'),(22,'pedantic tu','2020-02-19 09:32:44'),(24,'wizardly robinson','2020-02-03 18:39:36'),(33,'eager stonebraker','2020-05-03 08:20:54'),(34,'zen taussig','2020-06-29 01:18:48'),(36,'epic ganguly','2020-04-23 17:25:13'),(38,'objective euclid','2020-05-21 01:04:27'),(40,'infallible hodgkin','2020-05-07 03:52:52'),(43,'wizardly hellman','2020-04-11 20:20:05'),(46,'inspiring hoover','2020-06-28 14:47:34'),(48,'amazing cerf','2020-05-15 08:04:32'),(49,'objective hermann','2020-04-25 18:01:06'),(51,'upbeat spence','2020-01-27 21:59:54'),(53,'hardcore nightingale','2020-01-20 18:57:37'),(54,'silly hellman','2020-06-24 00:22:47'),(56,'elastic driscoll','2020-02-27 22:46:57'),(58,'nifty buck','2020-03-12 03:56:16')")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (59, 'suspicious feistel', '2020-01-29 19:52:14')")
+	tk.MustExec("insert into t1 values (60, 'practical thompson', '2020-03-25 04:33:10')")
+	tk.MustQuery("select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2").Check(testkit.Rows())
+	tk.MustExec("rollback")
+}

@@ -459,3 +459,105 @@ func (s *testPrepareSuite) TestPrepareCacheForPartition(c *C) {
 	tk.MustExec("set @id=17")
 	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("hij"))
 }
+
+func (s *testPlanSuite) TestPlanCacheUnionScan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	pb := &dto.Metric{}
+	metrics.ResettablePlanCacheCounterFortTest = true
+	metrics.PlanCacheCounter.Reset()
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int not null)")
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustExec("prepare stmt1 from 'select * from t1 where a > ?'")
+	tk.MustExec("set @p0 = 0")
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
+	counter.Write(pb)
+	cnt := pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(1))
+	tk.MustExec("insert into t1 values(1)")
+	// Cached plan is invalid now, it is not chosen and removed.
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows(
+		"1",
+	))
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(1))
+	tk.MustExec("insert into t2 values(1)")
+	// Cached plan is chosen, modification on t2 does not impact plan of t1.
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows(
+		"1",
+	))
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(2))
+	tk.MustExec("rollback")
+	// Though cached plan contains UnionScan, it does not impact correctness, so it is reused.
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(3))
+
+	tk.MustExec("prepare stmt2 from 'select * from t1 left join t2 on true where t1.a > ?'")
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(4))
+	tk.MustExec("insert into t1 values(1)")
+	// Cached plan is invalid now, it is not chosen and removed.
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(4))
+	tk.MustExec("insert into t2 values(1)")
+	// Cached plan is invalid now, it is not chosen and removed.
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
+		"1 1",
+	))
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(4))
+	// Cached plan is reused.
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows(
+		"1 1",
+	))
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(5))
+	tk.MustExec("rollback")
+	// Though cached plan contains UnionScan, it does not impact correctness, so it is reused.
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
+	counter.Write(pb)
+	cnt = pb.GetCounter().GetValue()
+	c.Check(cnt, Equals, float64(6))
+}

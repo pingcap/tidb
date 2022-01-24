@@ -27,6 +27,7 @@ import (
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -599,9 +600,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		// Note: "show grants" result are different from "show grants for current_user",
 		// The former determine privileges with roles, while the later doesn't.
 		vars := e.ctx.GetSessionVars()
-		e.User = vars.User
-		e.User.Hostname = vars.User.AuthHostname
-		e.User.Username = vars.User.AuthUsername
+		e.User = &auth.UserIdentity{Username: vars.User.AuthUsername, Hostname: vars.User.AuthHostname}
 		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
@@ -800,7 +799,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	}
 	if v.Analyze {
 		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
-		explainExec.analyzeExec = b.build(v.ExecPlan)
+		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec
 }
@@ -1296,6 +1295,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
+		concurrency:  b.ctx.GetSessionVars().Concurrency.UnionConcurrency,
 	}
 	return e
 }

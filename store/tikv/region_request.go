@@ -104,6 +104,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -131,6 +132,16 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
+		// recheck whether the session/query is killed during the Next()
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return nil, nil, ErrQueryInterrupted
+		}
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				retry = true
+			}
+		})
 		if retry {
 			continue
 		}
@@ -164,6 +175,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -265,17 +277,19 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 
-		var boType backoffType
-		if notLeader.GetLeader() != nil {
-			boType = BoUpdateLeader
+		if notLeader.GetLeader() == nil {
+			// The peer doesn't know who is the current leader. Generally it's because
+			// the Raft group is in an election, but it's possible that the peer is
+			// isolated and removed from the Raft group. So it's necessary to reload
+			// the region from PD.
+			s.regionCache.InvalidateCachedRegion(ctx.Region)
+			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+				return false, errors.Trace(err)
+			}
 		} else {
-			boType = BoRegionMiss
-		}
-
-		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-			return false, errors.Trace(err)
+			// don't backoff if a new leader is returned.
+			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 		}
 
 		return true, nil

@@ -88,17 +88,19 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
+	found := false
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+		if child == oldChild {
+			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+			found = true
+			break
 		}
-
-		t.Consume(-oldChild.BytesConsumed())
+	}
+	t.mu.Unlock()
+	if found {
 		oldChild.parent = nil
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
+		t.Consume(-oldChild.BytesConsumed())
 	}
 }
 

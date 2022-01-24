@@ -361,10 +361,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount = oriMinLogCount
 	}()
 	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -513,4 +516,47 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
 	item = idxStats.CMSketch.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
+}
+
+func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	c.Skip("skip race test")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_default_val_for_analyze;")
+	tk.MustExec("create database test_default_val_for_analyze;")
+	tk.MustExec("use test_default_val_for_analyze")
+
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 20; i++ {
+		for j := 0; j < 4096; j++ {
+			tk.MustExec("insert into t values(?)", 2048+i)
+		}
+	}
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 4; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 612.00 root index:IndexScan_5",
+		"└─IndexScan_5 612.00 cop table:t, index:a, range:[1,1], keep order:false"))
+	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root index:IndexScan_5",
+		"└─IndexScan_5 0.00 cop table:t, index:a, range:[999,999], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 20; i++ {
+		for j := 0; j < 4096; j++ {
+			tk.MustExec("insert into t values(?)", 2048+i)
+		}
+	}
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 2049; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 2.00 root index:IndexScan_5",
+		"└─IndexScan_5 2.00 cop table:t, index:a, range:[1,1], keep order:false"))
 }

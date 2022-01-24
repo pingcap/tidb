@@ -384,7 +384,7 @@ Projection_9	10000.00	root	and(or(or(gt(col_count, 1), ne(test.t1.a, col_firstro
 └─HashLeftJoin_10	10000.00	root	CARTESIAN inner join, inner:StreamAgg_17
   ├─TableReader_13	10000.00	root	data:TableScan_12
   │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
+  └─StreamAgg_17	1.00	root	funcs:max(col_0), count(distinct col_1), sum(col_2), count(1)
     └─Projection_27	10000.00	root	test.t2.a, test.t2.a, cast(isnull(test.t2.a))
       └─TableReader_24	10000.00	root	data:TableScan_23
         └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

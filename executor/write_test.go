@@ -37,6 +37,7 @@ import (
 type testBypassSuite struct{}
 
 func (s *testBypassSuite) SetUpSuite(c *C) {
+	c.Skip("local latch is force disabled")
 }
 
 func (s *testSuite4) TestInsert(c *C) {
@@ -255,6 +256,8 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustExec("update t set a = -1 limit 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
@@ -1456,7 +1459,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
-	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
+	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(4, 0)'")
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
 

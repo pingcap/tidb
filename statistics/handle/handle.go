@@ -61,8 +61,8 @@ type Handle struct {
 		schemaVersion int64
 	}
 
-	// It can be read by multiply readers at the same time without acquire lock, but it can be
-	// written only after acquire the lock.
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
 	statsCache struct {
 		sync.Mutex
 		atomic.Value
@@ -78,7 +78,7 @@ type Handle struct {
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
-	feedback []*statistics.QueryFeedback
+	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
 }
@@ -90,7 +90,7 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback = h.feedback[:0]
+	h.feedback = statistics.NewQueryFeedbackMap()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().ProjectionConcurrency = 0
@@ -100,16 +100,13 @@ func (h *Handle) Clear() {
 	h.mu.Unlock()
 }
 
-// MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
-
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
+		feedback:   statistics.NewQueryFeedbackMap(),
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
@@ -132,10 +129,10 @@ func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
 }
 
-// GetQueryFeedback gets the query feedback. It is only use in test.
-func (h *Handle) GetQueryFeedback() []*statistics.QueryFeedback {
+// GetQueryFeedback gets the query feedback. It is only used in test.
+func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
 	defer func() {
-		h.feedback = h.feedback[:0]
+		h.feedback = statistics.NewQueryFeedbackMap()
 	}()
 	return h.feedback
 }
@@ -186,7 +183,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			logutil.Logger(context.Background()).Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -345,14 +342,14 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.Logger(context.Background()).Debug("[stats] handle ddl event fail", zap.Error(err))
+			logutil.Logger(context.Background()).Error("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.Logger(context.Background()).Debug("[stats] dump stats delta fail", zap.Error(err))
+		logutil.Logger(context.Background()).Error("[stats] dump stats delta fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.Logger(context.Background()).Debug("[stats] dump stats feedback fail", zap.Error(err))
+		logutil.Logger(context.Background()).Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
 }
 
@@ -772,7 +769,7 @@ func (sr *statsReader) isHistory() bool {
 	return sr.history != nil
 }
 
-func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsReader, error) {
+func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
@@ -782,7 +779,16 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsRe
 		return &statsReader{history: history}, nil
 	}
 	h.mu.Lock()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("getStatsReader panic %v", r)
+		}
+		if err != nil {
+			h.mu.Unlock()
+		}
+	}()
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
 	}

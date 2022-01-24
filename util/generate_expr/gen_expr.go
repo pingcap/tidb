@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tables
+package generateExpr
 
 import (
 	"fmt"
@@ -59,7 +59,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 // When TiDB loads infoschema from TiKV, `GeneratedExprString`
 // of `ColumnInfo` is a string field, so we need to parse
 // it into ast.ExprNode. This function is for that.
-func parseExpression(expr string) (node ast.ExprNode, err error) {
+func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
 	stmts, _, err := parser.New().Parse(expr, charset, collation)
@@ -70,7 +70,7 @@ func parseExpression(expr string) (node ast.ExprNode, err error) {
 }
 
 // SimpleResolveName resolves all column names in the expression node.
-func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
+func SimpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
 		return nil, errors.Trace(nr.err)

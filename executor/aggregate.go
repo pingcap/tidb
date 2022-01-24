@@ -329,7 +329,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
-	logutil.Logger(context.Background()).Error("parallel hash aggregation panicked", zap.Error(err))
+	logutil.Logger(context.Background()).Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {

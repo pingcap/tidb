@@ -184,11 +184,20 @@ type Executor interface {
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	sessVars := e.base().ctx.GetSessionVars()
-	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
 	}
+	err := e.Next(ctx, req)
 
-	return e.Next(ctx, req)
+	if err != nil {
+		return err
+	}
+	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		err = ErrQueryInterrupted
+	}
+	return err
+
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -797,6 +806,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
+		CheckKeyExists:        seVars.StmtCtx.CheckKeyExists,
 	}
 }
 
@@ -1280,16 +1290,17 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 //                              +-------------+
 type UnionExec struct {
 	baseExecutor
+	concurrency int
+	childIDChan chan int
 
 	stopFetchData atomic.Value
 	wg            sync.WaitGroup
 
 	finished      chan struct{}
+	results       []*chunk.Chunk
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 	initialized   bool
-
-	childrenResults []*chunk.Chunk
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1312,9 +1323,6 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1322,22 +1330,33 @@ func (e *UnionExec) Open(ctx context.Context) error {
 }
 
 func (e *UnionExec) initialize(ctx context.Context) {
-	e.resultPool = make(chan *unionWorkerResult, len(e.children))
-	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
-	for i := range e.children {
+	if e.concurrency > len(e.children) {
+		e.concurrency = len(e.children)
+	}
+	for i := 0; i < e.concurrency; i++ {
+		e.results = append(e.results, newFirstChunk(e.children[0]))
+	}
+	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
+	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
+	e.childIDChan = make(chan int, len(e.children))
+	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-		e.resourcePools[i] <- e.childrenResults[i]
+		e.resourcePools[i] <- e.results[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i)
 	}
+	for i := 0; i < len(e.children); i++ {
+		e.childIDChan <- i
+	}
+	close(e.childIDChan)
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
+func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
-		src: e.resourcePools[childID],
+		src: e.resourcePools[workerID],
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -1351,23 +1370,26 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 		}
 		e.wg.Done()
 	}()
-	for {
-		if e.stopFetchData.Load().(bool) {
-			return
-		}
-		select {
-		case <-e.finished:
-			return
-		case result.chk = <-e.resourcePools[childID]:
-		}
-		result.err = Next(ctx, e.children[childID], result.chk)
-		if result.err == nil && result.chk.NumRows() == 0 {
-			return
-		}
-		e.resultPool <- result
-		if result.err != nil {
-			e.stopFetchData.Store(true)
-			return
+	for childID := range e.childIDChan {
+		for {
+			if e.stopFetchData.Load().(bool) {
+				return
+			}
+			select {
+			case <-e.finished:
+				return
+			case result.chk = <-e.resourcePools[workerID]:
+			}
+			result.err = Next(ctx, e.children[childID], result.chk)
+			if result.err == nil && result.chk.NumRows() == 0 {
+				e.resourcePools[workerID] <- result.chk
+				break
+			}
+			e.resultPool <- result
+			if result.err != nil {
+				e.stopFetchData.Store(true)
+				return
+			}
 		}
 	}
 }
@@ -1405,12 +1427,16 @@ func (e *UnionExec) Close() error {
 	if e.finished != nil {
 		close(e.finished)
 	}
-	e.childrenResults = nil
+	e.results = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
 		}
 	}
 	e.resourcePools = nil
+	if e.childIDChan != nil {
+		for range e.childIDChan {
+		}
+	}
 	return e.baseExecutor.Close()
 }
 
@@ -1545,6 +1571,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
+	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	sc.CheckKeyExists = make(map[string]struct{})
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	err = vars.SetSystemVar("warning_count", warnCount)
 	if err != nil {

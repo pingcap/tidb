@@ -160,5 +160,13 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 		return
 	}
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
+	if err != nil {
+		return
+	}
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d", physicalID))
+	if err != nil {
+		return
+	}
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d", physicalID))
 	return
 }

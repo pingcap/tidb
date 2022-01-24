@@ -38,9 +38,6 @@ oom-action = "log"
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 
@@ -193,7 +190,7 @@ run-auto-analyze = true
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1024
+query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.

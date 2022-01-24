@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -63,8 +64,13 @@ func (s *mockStore) TLSConfig() *tls.Config {
 func (s *HelperTestSuite) SetUpSuite(c *C) {
 	go s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	mockTikvStore, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(func() *mocktikv.Cluster {
+			cluster := mocktikv.NewCluster()
+			mocktikv.BootstrapWithMultiRegions(cluster, []byte("x"))
+			return cluster
+		}()),
+	)
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
 		[]string{"127.0.0.1:10100/"},
@@ -79,7 +85,13 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	}
 	regionMetric, err := helper.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr("test"),
+	}
+	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[3:{100 1 0} 4:{200 2 0}]")
+	res, err := helper.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	c.Assert(err, IsNil, Commentf("err: %+v", err))
+	c.Assert(res[0].RegionMetric, Not(Equals), res[1].RegionMetric)
 }
 
 func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {
@@ -123,8 +135,13 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
-				RegionID:  1,
+				RegionID:  3,
 				HotDegree: 1,
+			},
+			{
+				FlowBytes: 200,
+				RegionID:  4,
+				HotDegree: 2,
 			},
 		},
 	}

@@ -208,6 +208,11 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1 (a year);`)
+	_, err = tk.Exec(`insert into t1 values(2156);`)
+	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -792,6 +797,17 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
+func (s *testSuite3) TestInsertFloatOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
+	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
+	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
+}
+
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
@@ -871,4 +887,20 @@ func (s *testSuite3) TestIssue16366(c *C) {
 	_, err := tk.Exec(`insert into t values(0);`)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite3) TestIssue20768(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a year, primary key(a))")
+	tk.MustExec("insert ignore into t1 values(null)")
+	tk.MustExec("create table t2(a int, key(a))")
+	tk.MustExec("insert into t2 values(0)")
+	tk.MustQuery("select /*+ hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }

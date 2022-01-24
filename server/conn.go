@@ -343,7 +343,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -652,6 +652,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
+			err := cc.writeError(errors.New(fmt.Sprintf("%v", r)))
+			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
@@ -682,6 +684,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -893,6 +896,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	defer func() {
+		// reset killed for each request
+		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+	}()
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
@@ -917,6 +924,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 
 	vars := cc.ctx.GetSessionVars()
+	// reset killed for each request
 	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
@@ -982,7 +990,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	sql, err := sqlexec.EscapeSQL("use %n", db)
+	if err != nil {
+		return err
+	}
+	_, err = cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		return err
 	}

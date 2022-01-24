@@ -86,6 +86,11 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
+	if childProj, ok := child.(*PhysicalProjection); ok {
+		if proj.AvoidColumnEvaluator {
+			childProj.AvoidColumnEvaluator = true
+		}
+	}
 	return child
 }
 
@@ -144,6 +149,12 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
+	}
+	child := p.Children()[0]
+	if childProj, ok := child.(*LogicalProjection); ok {
+		if proj.avoidColumnEvaluator {
+			childProj.avoidColumnEvaluator = true
+		}
 	}
 	return p.Children()[0]
 }

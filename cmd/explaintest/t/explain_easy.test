@@ -187,3 +187,9 @@ create table t(a int, b int, index idx_ab(a, b));
 explain select a, b from t where a in (1) order by b;
 explain select a, b from t where a = 1 order by b;
 drop table if exists t;
+
+# select / update should choose same access path for table t.
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+drop table if exists t;

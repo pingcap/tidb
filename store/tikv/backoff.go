@@ -46,24 +46,22 @@ const (
 )
 
 var (
-	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterStaleCmd       = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
-	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
+	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterStaleCmd     = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
+	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD         = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
 func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
@@ -78,8 +76,6 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
 		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
-	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
 		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
 	case boStaleCmd:
@@ -145,7 +141,6 @@ const (
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	BoUpdateLeader
 	boServerBusy
 	boStaleCmd
 )
@@ -166,8 +161,6 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoUpdateLeader:
-		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
@@ -188,8 +181,6 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case BoUpdateLeader:
-		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
 	case boStaleCmd:
@@ -206,7 +197,7 @@ func (t backoffType) TError() error {
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss, BoUpdateLeader:
+	case BoRegionMiss:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
@@ -335,7 +326,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	b.totalSleep += realSleep
 
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}
