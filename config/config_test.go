@@ -178,6 +178,7 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
+	conf.NewCollationsEnabledOnFirstBootstrap = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
