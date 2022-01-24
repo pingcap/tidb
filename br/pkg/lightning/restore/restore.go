@@ -1817,6 +1817,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
+	log.L().Info("new_collation_enabled", zap.Bool("enabled", enabled))
 
 	return nil
 }

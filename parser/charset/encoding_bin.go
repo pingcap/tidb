@@ -14,6 +14,8 @@
 package charset
 
 import (
+	"bytes"
+
 	"golang.org/x/text/encoding"
 )
 
@@ -61,6 +63,6 @@ func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *encodingBin) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingBin) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }

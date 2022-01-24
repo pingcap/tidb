@@ -33,6 +33,7 @@ func Test_tsItem_toProto(t *testing.T) {
 		stmtStats: stmtstats.StatementStatsItem{
 			ExecCount:     3,
 			SumDurationNs: 50000,
+			DurationCount: 2,
 			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
 		},
 	}
@@ -41,25 +42,8 @@ func Test_tsItem_toProto(t *testing.T) {
 	assert.Equal(t, uint32(2), pb.CpuTimeMs)
 	assert.Equal(t, uint64(3), pb.StmtExecCount)
 	assert.Equal(t, uint64(50000), pb.StmtDurationSumNs)
+	assert.Equal(t, uint64(2), pb.StmtDurationCount)
 	assert.Equal(t, uint64(4), pb.StmtKvExecCount[""])
-}
-
-func Test_tsItems_Sort(t *testing.T) {
-	items := tsItems{}
-	assert.True(t, items.sorted())
-	items = nil
-	assert.True(t, items.sorted())
-	items = tsItems{
-		{timestamp: 2},
-		{timestamp: 3},
-		{timestamp: 1},
-	}
-	assert.False(t, items.sorted())
-	sort.Sort(items)
-	assert.True(t, items.sorted())
-	assert.Equal(t, uint64(1), items[0].timestamp)
-	assert.Equal(t, uint64(2), items[1].timestamp)
-	assert.Equal(t, uint64(3), items[2].timestamp)
 }
 
 func Test_tsItems_toProto(t *testing.T) {
@@ -143,56 +127,6 @@ func Test_record_append(t *testing.T) {
 	assert.Equal(t, uint64(30000), r.tsItems[2].stmtStats.SumDurationNs)
 }
 
-func Test_record_merge(t *testing.T) {
-	r1 := record{
-		totalCPUTimeMs: 1 + 2 + 3,
-		tsItems: tsItems{
-			{timestamp: 1, cpuTimeMs: 1, stmtStats: *stmtstats.NewStatementStatsItem()},
-			{timestamp: 2, cpuTimeMs: 2, stmtStats: *stmtstats.NewStatementStatsItem()},
-			{timestamp: 3, cpuTimeMs: 3, stmtStats: *stmtstats.NewStatementStatsItem()},
-		},
-	}
-	r1.rebuildTsIndex()
-	r2 := record{
-		totalCPUTimeMs: 6 + 5 + 4,
-		tsItems: tsItems{
-			{timestamp: 6, cpuTimeMs: 6, stmtStats: *stmtstats.NewStatementStatsItem()},
-			{timestamp: 5, cpuTimeMs: 5, stmtStats: *stmtstats.NewStatementStatsItem()},
-			{timestamp: 4, cpuTimeMs: 4, stmtStats: *stmtstats.NewStatementStatsItem()},
-		},
-	}
-	r2.rebuildTsIndex()
-	r1.merge(&r2)
-	assert.Equal(t, uint64(4), r2.tsItems[0].timestamp)
-	assert.Equal(t, uint64(5), r2.tsItems[1].timestamp)
-	assert.Equal(t, uint64(6), r2.tsItems[2].timestamp)
-	assert.Len(t, r1.tsItems, 6)
-	assert.Len(t, r1.tsIndex, 6)
-	assert.Equal(t, uint64(1), r1.tsItems[0].timestamp)
-	assert.Equal(t, uint64(2), r1.tsItems[1].timestamp)
-	assert.Equal(t, uint64(3), r1.tsItems[2].timestamp)
-	assert.Equal(t, uint64(4), r1.tsItems[3].timestamp)
-	assert.Equal(t, uint64(5), r1.tsItems[4].timestamp)
-	assert.Equal(t, uint64(6), r1.tsItems[5].timestamp)
-	assert.Equal(t, uint64(1+2+3+4+5+6), r1.totalCPUTimeMs)
-}
-
-func Test_record_rebuildTsIndex(t *testing.T) {
-	r := record{tsIndex: map[uint64]int{1: 1}}
-	r.rebuildTsIndex()
-	assert.Empty(t, r.tsIndex)
-	r.tsItems = tsItems{
-		{timestamp: 1, cpuTimeMs: 1},
-		{timestamp: 2, cpuTimeMs: 2},
-		{timestamp: 3, cpuTimeMs: 3},
-	}
-	r.rebuildTsIndex()
-	assert.Len(t, r.tsIndex, 3)
-	assert.Equal(t, 0, r.tsIndex[1])
-	assert.Equal(t, 1, r.tsIndex[2])
-	assert.Equal(t, 2, r.tsIndex[3])
-}
-
 func Test_record_toProto(t *testing.T) {
 	r := record{
 		sqlDigest:      []byte("SQL-1"),
@@ -216,20 +150,6 @@ func Test_records_Sort(t *testing.T) {
 	assert.Equal(t, uint64(3), rs[0].totalCPUTimeMs)
 	assert.Equal(t, uint64(2), rs[1].totalCPUTimeMs)
 	assert.Equal(t, uint64(1), rs[2].totalCPUTimeMs)
-}
-
-func Test_records_topN(t *testing.T) {
-	rs := records{
-		{totalCPUTimeMs: 1},
-		{totalCPUTimeMs: 3},
-		{totalCPUTimeMs: 2},
-	}
-	top, evicted := rs.topN(2)
-	assert.Len(t, top, 2)
-	assert.Len(t, evicted, 1)
-	assert.Equal(t, uint64(3), top[0].totalCPUTimeMs)
-	assert.Equal(t, uint64(2), top[1].totalCPUTimeMs)
-	assert.Equal(t, uint64(1), evicted[0].totalCPUTimeMs)
 }
 
 func Test_records_toProto(t *testing.T) {
