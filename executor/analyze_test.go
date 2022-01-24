@@ -1013,10 +1013,8 @@ func TestAnalyzeIndex(t *testing.T) {
 }
 
 func TestAnalyzeIncremental(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1027,10 +1025,7 @@ func TestAnalyzeIncremental(t *testing.T) {
 
 func TestAnalyzeIncrementalStreaming(t *testing.T) {
 	t.Skip("unistore hasn't support streaming yet.")
-	store, clean := testkit.CreateMockStore(t)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
