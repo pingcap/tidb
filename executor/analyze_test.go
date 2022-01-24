@@ -182,12 +182,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
