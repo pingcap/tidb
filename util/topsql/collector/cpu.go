@@ -216,7 +216,7 @@ type sqlStats struct {
 // The `sqlStats` maybe:
 //     plans: {
 //         "table_scan": 200ms, // The cpu time of the sql that plan with `table_scan` is 200ms.
-//         "index_scan": 300ms, // The cpu time of the sql that plan with `table_scan` is 300ms.
+//         "index_scan": 300ms, // The cpu time of the sql that plan with `index_scan` is 300ms.
 //       },
 //     total:      600ms,       // The total cpu time of the sql is 600ms.
 // total_time - table_scan_time - index_scan_time = 100ms, and this 100ms means those sample data only contain the
