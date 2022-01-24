@@ -109,7 +109,7 @@ func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
 		pattern := show.Pattern
 		switch pattern.Pattern.(type) {
 		case *driver.ValueExpr:
-			// It is used in `SHOW TABLE FROM t LIKE `abc``.
+			// It is used in `SHOW TABLE in t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
 			if !collate.NewCollationEnabled() && stringutil.IsExactMatch(patTypes) {
