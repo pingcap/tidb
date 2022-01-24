@@ -92,3 +92,8 @@ func NeedFrame(name string) bool {
 	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
 	return !ok
 }
+
+// Clone makes a copy of SortItem.
+func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
+	return &WindowFuncDesc{*s.baseFuncDesc.clone()}
+}

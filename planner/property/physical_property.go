@@ -43,6 +43,11 @@ func (s *SortItem) String() string {
 	return fmt.Sprintf("{%s asc}", s.Col)
 }
 
+// Clone makes a copy of SortItem.
+func (s SortItem) Clone() SortItem {
+	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+}
+
 // MPPPartitionType is the way to partition during mpp data exchanging.
 type MPPPartitionType int
 

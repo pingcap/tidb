@@ -1305,6 +1305,32 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return corCols
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalWindow)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	cloned.Frame = p.Frame.Clone()
+
+	return cloned, nil
+}
+
 // PhysicalShuffle represents a shuffle plan.
 // `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.

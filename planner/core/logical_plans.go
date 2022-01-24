@@ -1074,6 +1074,17 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+func (wf *WindowFrame) Clone() *WindowFrame {
+	cloned := new(WindowFrame)
+	*cloned = *wf
+
+	cloned.Start = wf.Start.Clone()
+	cloned.End = wf.End.Clone()
+
+	return cloned
+}
+
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1086,6 +1097,23 @@ type FrameBound struct {
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
 }
+
+func (fb *FrameBound) Clone() *FrameBound {
+	cloned := new(FrameBound)
+	*cloned = *fb
+
+	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	for _, it := range fb.CalcFuncs {
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	}
+	cloned.CmpFuncs = make([]expression.CompareFunc, 0, len(fb.CmpFuncs))
+	for _, it := range fb.CmpFuncs {
+		cloned.CmpFuncs = append(cloned.CmpFuncs, it)
+	}
+
+	return cloned
+}
+
 
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
