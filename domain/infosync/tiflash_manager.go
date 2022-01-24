@@ -306,9 +306,6 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 		return errors.New("pd server is manually disabled, just quit")
 	}
 
-	j, _ := json.Marshal(rule)
-	buf := bytes.NewBuffer(j)
-	logutil.BgLogger().Info(fmt.Sprintf("!!!!! AAA %v", buf))
 	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
 	// Pd shall schedule TiFlash, we can mock here
 	tid := 0
