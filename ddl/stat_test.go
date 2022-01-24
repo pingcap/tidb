@@ -42,7 +42,7 @@ type testSerialStatSuiteToVerify struct {
 	suite.Suite
 }
 
-func TestSerialStatSuite(t *testing.T) {
+func ExportTestSerialStatSuite(t *testing.T) {
 	suite.Run(t, new(testSerialStatSuiteToVerify))
 }
 
