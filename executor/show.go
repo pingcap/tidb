@@ -426,7 +426,8 @@ func (e *ShowExec) fetchShowTables() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	schemaTables := e.is.SchemaTables(e.DBName)
+	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var (
 		tableTypes          = make(map[string]string)
@@ -442,7 +443,7 @@ func (e *ShowExec) fetchShowTables() error {
 		FieldFilterEnable = extractor.Field != ""
 		fieldFilter = extractor.Field
 	}
-	for _, v := range e.is.SchemaTables(e.DBName) {
+	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
