@@ -3559,3 +3559,40 @@ func TestCreateTables(t *testing.T) {
 
 	ddl.ExportTestRenameTables(t)
 }
+
+func (s *testIntegrationSuite1) TestDuplicatePartitionNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database DuplicatePartitionNames")
+	defer tk.MustExec("drop database DuplicatePartitionNames")
+	tk.MustExec("use DuplicatePartitionNames")
+
+	tk.MustExec("set @@tidb_enable_list_partition=on")
+	tk.MustExec("create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3))")
+	tk.MustExec("insert into t1 values (1),(2),(3)")
+	tk.MustExec("alter table t1 truncate partition p1,p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustExec("insert into t1 values (1)")
+	err := tk.ExecToErr("alter table t1 drop partition p1,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1507]Error in list of partitions to DROP")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1507]Error in list of partitions to DROP")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p1,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("alter table t1 drop partition p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("Show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p2` VALUES IN (2),\n" +
+		" PARTITION `p3` VALUES IN (3))"))
+}

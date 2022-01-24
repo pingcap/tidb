@@ -2755,15 +2755,12 @@
           "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 batchCop[tiflash]  Column#5",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct Column#4)->Column#5",
-          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "          └─HashAgg 1.00 batchCop[tiflash]  group by:Column#4, ",
-          "            └─Projection 1.00 batchCop[tiflash]  Column#4",
-          "              └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.t.value)->Column#4",
-          "                └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
-          "                  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "                    └─HashAgg 1.00 batchCop[tiflash]  group by:test.t.value, ",
-          "                      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─Projection 1.00 batchCop[tiflash]  Column#4",
+          "        └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.t.value)->Column#4",
+          "          └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "            └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 batchCop[tiflash]  group by:test.t.value, ",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
