@@ -40,14 +40,14 @@ type MDDatabaseMeta struct {
 
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
-	schemaStr := strings.TrimSpace(string(schema))
 	if err != nil {
 		log.L().Warn("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
-		schemaStr = ""
+		schema = nil
 	}
+	schemaStr := strings.TrimSpace(string(schema))
 	// set default if schema sql is empty
 	if len(schemaStr) == 0 {
 		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
