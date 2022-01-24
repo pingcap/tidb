@@ -2539,7 +2539,7 @@ func loadCollationParameter(se *session) (bool, error) {
 	logutil.BgLogger().Warn(
 		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
 		zap.String("value", para))
-	return false, nil
+	return true, nil
 }
 
 // loadDefMemQuotaQuery loads the default value of mem-quota-query.

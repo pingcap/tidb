@@ -80,7 +80,7 @@ type WildcardPattern interface {
 
 // EnableNewCollations enables the new collation.
 func EnableNewCollations() {
-	SetNewCollationEnabledForTest(true)
+	atomic.StoreInt32(&newCollationEnabled, 1)
 }
 
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
@@ -88,7 +88,7 @@ func EnableNewCollations() {
 func SetNewCollationEnabledForTest(flag bool) {
 	//switchDefaultCollation(flag)
 	//if flag {
-	//	atomic.StoreInt32(&newCollationEnabled, 1)
+	//	//atomic.StoreInt32(&newCollationEnabled, 1)
 	//	return
 	//}
 	//atomic.StoreInt32(&newCollationEnabled, 0)
