@@ -1586,7 +1586,7 @@ func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
 	s.testParallelExecSQL(c, "alter table test_exists drop index if exists idx_c")
 
 	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
-	_, err = s.se.Execute(context.Background(), "create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	_, err = s.se.Execute(context.Background(), "create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
 	c.Assert(err, IsNil)
 	s.testParallelExecSQL(c, "alter table test_exists_2 drop partition if exists p1")
 }
