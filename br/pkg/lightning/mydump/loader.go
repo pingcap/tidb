@@ -16,7 +16,6 @@ package mydump
 
 import (
 	"context"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
