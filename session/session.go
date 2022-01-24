@@ -1554,9 +1554,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
-	var tmp []sqlexec.OptionFuncAlias
-	tmp = append(tmp, opts...)
-	se, clean, err := s.getInternalSession(tmp)
+	se, clean, err := s.getInternalSession(opts)
 	if err != nil {
 		return nil, nil, err
 	}
