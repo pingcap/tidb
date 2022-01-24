@@ -2071,6 +2071,11 @@ error = '''
 %s variable '%s' is read-only. Use SET %s to assign the value
 '''
 
+["variable:3930"]
+error = '''
+TiDB general log is implemented differently, and changes on the parameter '%s' will not be honored. Please check 'tidb_general_log' for details
+'''
+
 ["variable:8047"]
 error = '''
 variable '%s' does not yet support value: %s
