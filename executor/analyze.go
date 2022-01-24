@@ -259,11 +259,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		idx += 1
 	}
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, sql.String())
-	if err != nil {
-		return err
-	}
-	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
 	if err != nil {
 		return err
 	}
@@ -1656,13 +1652,7 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParams(context.TODO(), true, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
-	if err != nil {
-		return
-	}
-	var rows []chunk.Row
-	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}
