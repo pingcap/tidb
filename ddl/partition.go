@@ -936,21 +936,30 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
+
+	// To be error compatible with MySQL, we need to do this first!
+	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
+	if len(oldDefs) <= len(partLowerNames) {
+		return errors.Trace(ErrDropLastPartition)
+	}
+
+	dupCheck := make(map[string]bool)
 	for _, pn := range partLowerNames {
 		found := false
 		for _, def := range oldDefs {
 			if def.Name.L == pn {
+				if _, ok := dupCheck[pn]; ok {
+					return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
+				}
+				dupCheck[pn] = true
 				found = true
 				break
 			}
 		}
 		if !found {
-			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(pn))
+			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
 		}
-	}
-	if len(oldDefs) == len(partLowerNames) {
-		return errors.Trace(ErrDropLastPartition)
 	}
 	return nil
 }
