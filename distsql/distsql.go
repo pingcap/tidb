@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -162,9 +163,14 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
-	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
-	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
+	isRestrict bool, sessionVars *variable.SessionVars) (SelectResult, error) {
+	ctx = WithSQLKvExecCounterInterceptor(ctx, sessionVars.StmtCtx)
+	option := &kv.ClientSendOption{
+		SessionMemTracker:          sessionVars.StmtCtx.MemTracker,
+		EnabledRateLimitAction:     sessionVars.EnabledRateLimitAction,
+		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+	}
+	resp := client.Send(ctx, kvReq, vars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
