@@ -1282,7 +1282,6 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			continue
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			log.Info("start import file", zap.String("file", file.Path))
 			fileStart := time.Now()
 			defer func() {
 				log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))

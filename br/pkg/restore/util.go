@@ -315,7 +315,21 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 	return nil
 }
 
-// Rewrites a raw key and returns a encoded key.
+// Rewrites an encoded key and returns a encoded key.
+func rewriteEncodedKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
+	if rewriteRules == nil {
+		return key, nil
+	}
+	if len(key) > 0 {
+		_, rawKey, _ := codec.DecodeBytes(key, nil)
+		rule := matchOldPrefix(rawKey, rewriteRules)
+		ret := bytes.Replace(rawKey, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
+		return codec.EncodeBytes([]byte{}, ret), rule
+	}
+	return nil, nil
+}
+
+// Rewrites a raw key with raw key rewrite rule and returns an encoded key.
 func rewriteRawKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
 	if rewriteRules == nil {
 		return codec.EncodeBytes([]byte{}, key), nil
@@ -369,7 +383,11 @@ func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb
 	if startID != endID {
 		return nil
 	}
-	_, rule := rewriteRawKey(file.GetStartKey(), rules)
+	err, rule := rewriteRawKey(file.GetStartKey(), rules)
+	if err != nil {
+		// fall back to encoded key
+		_, rule = rewriteEncodedKey(file.GetStartKey(), rules)
+	}
 	return rule
 }
 
@@ -380,15 +398,22 @@ func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, en
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			log.Error("cannot find rewrite rule",
+			// fall back to encoded key
+			log.Info("cannot find rewrite rule with raw key format",
 				logutil.Key("startKey", file.GetStartKey()),
 				zap.Reflect("rewrite data", rewriteRules.Data))
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			}
 			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+			endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+			}
 			return
 		}
 	} else {
