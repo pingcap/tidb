@@ -509,8 +509,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
-	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
-	// This could provide users a more flexable usage to configure different files with
+	// unescape the schema/table name only used in lightning's internal logic now.
+	Unescape bool `json:"-" toml:"-" yaml:"-"`
+	// TODO: DataCharacterSet here can override the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexible usage to configure different files with
 	// different data charsets.
 	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
@@ -1021,6 +1023,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	if cfg.TiDB.Port <= 0 {
 		return errors.New("invalid `tidb.port` setting")
 	}
+
 	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
 		return errors.New("invalid `tidb.pd-addr` setting")
 	}
