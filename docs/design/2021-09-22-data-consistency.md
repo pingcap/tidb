@@ -114,16 +114,16 @@ Regression tests are useful to check correctness since all tests should not repo
 
 Specific system test cases need to be constructed. Cases should at least involve the following parts
 
-- encoding related
-    - collation
-    - row format
-    - charset
-    - time zone
-- table structure
-    - concurrent DDL
-    - clustered index
-    - prefix index
-    - expression index
+- Encoding related
+    - Collation
+    - Row format
+    - Charset
+    - Time zone
+- Table structure
+    - Concurrent DDL
+    - Clustered index
+    - Prefix index
+    - Expression index
 
 ### Performance Tests
 
