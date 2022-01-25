@@ -102,7 +102,7 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	ddl.PollTiFlashInterval.Store(2 * time.Second)
+	ddl.PollTiFlashInterval = 2 * time.Second
 }
 
 func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime string) {
