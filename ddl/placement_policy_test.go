@@ -399,7 +399,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	// test for normal cases
 	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\" NULL"))
-	tk.MustQuery("select * from information_schema.placement_policies where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj,sh      0 0"))
+	tk.MustQuery("select * from information_schema.placement_policies where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj,sh      2 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -407,7 +407,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\" NULL"))
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj     EVEN 0 0"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj     EVEN 2 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -435,7 +435,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"CATALOG_NAME,POLICY_NAME," +
 		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
 		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_policies WHERE POLICY_NAME='x'").Check(
-		testkit.Rows("def x   [+disk=ssd]   [+region=sh]  0 3"),
+		testkit.Rows("def x   [+disk=ssd]   [+region=sh]  2 3"),
 	)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -514,24 +514,20 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 		c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 		c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
-		c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
 
 		c.Assert(tbl.Meta().Partition, NotNil)
 		c.Assert(len(tbl.Meta().Partition.Definitions), Equals, 3)
 
 		p0 := tbl.Meta().Partition.Definitions[0]
 		c.Assert(p0.PlacementPolicyRef, IsNil)
-		c.Assert(p0.DirectPlacementOpts, IsNil)
 
 		p1 := tbl.Meta().Partition.Definitions[1]
 		c.Assert(p1.PlacementPolicyRef, NotNil)
 		c.Assert(p1.PlacementPolicyRef.Name.L, Equals, "y")
 		c.Assert(p1.PlacementPolicyRef.ID, Equals, policyY.ID)
-		c.Assert(p1.DirectPlacementOpts, IsNil)
 
 		p2 := tbl.Meta().Partition.Definitions[2]
 		c.Assert(p2.PlacementPolicyRef, IsNil)
-		c.Assert(p2.DirectPlacementOpts, IsNil)
 	}
 
 	checkPartitionTableFunc("t_range_p")
@@ -545,10 +541,8 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
-	c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
 	for _, p := range tbl.Meta().Partition.Definitions {
 		c.Assert(p.PlacementPolicyRef, IsNil)
-		c.Assert(p.DirectPlacementOpts, IsNil)
 	}
 }
 
@@ -1020,7 +1014,6 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	db, ok := s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef.ID, Equals, policy1.ID)
-	c.Assert(db.DirectPlacementOpts, IsNil)
 
 	tk.MustExec("alter database db2 placement policy p2")
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
@@ -1030,7 +1023,6 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef.ID, Equals, policy2.ID)
-	c.Assert(db.DirectPlacementOpts, IsNil)
 
 	// reset with placement policy 'default'
 	tk.MustExec("alter database db2 placement policy default")
@@ -1041,7 +1033,6 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	db, ok = s.dom.InfoSchema().SchemaByName(model.NewCIStr("db2"))
 	c.Assert(ok, IsTrue)
 	c.Assert(db.PlacementPolicyRef, IsNil)
-	c.Assert(db.DirectPlacementOpts, IsNil)
 
 	// error invalid policy
 	err := tk.ExecToErr("alter database db2 placement policy px")
@@ -1209,7 +1200,6 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().PlacementPolicyRef.ID, Equals, policy.ID)
-	c.Assert(tb.Meta().DirectPlacementOpts, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	// reset with placement policy 'default'
@@ -1356,7 +1346,6 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().Partition.Definitions[0].PlacementPolicyRef.ID, Equals, policy.ID)
-	c.Assert(tb.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	// reset with placement policy 'default'
@@ -1813,12 +1802,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[0].ID, Equals, t1ID)
-	c.Assert(tp.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[0].PlacementPolicyRef, IsNil)
 	t1, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(t1.Meta().ID, Equals, par0ID)
-	c.Assert(t1.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t1.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -1840,12 +1827,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[0].ID, Equals, t2ID)
-	c.Assert(tp.Meta().Partition.Definitions[0].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[0].PlacementPolicyRef, IsNil)
 	t2, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	c.Assert(t2.Meta().ID, Equals, t1ID)
-	c.Assert(t2.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t2.Meta().PlacementPolicyRef, IsNil)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
@@ -1867,12 +1852,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
 	c.Assert(tp.Meta().Partition.Definitions[1].ID, Equals, par0ID)
-	c.Assert(tp.Meta().Partition.Definitions[1].DirectPlacementOpts, IsNil)
 	c.Assert(tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID, Equals, policy2.ID)
 	t1, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(t1.Meta().ID, Equals, par1ID)
-	c.Assert(t1.Meta().DirectPlacementOpts, IsNil)
 	c.Assert(t1.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 }
