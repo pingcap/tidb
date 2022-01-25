@@ -1496,13 +1496,27 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	}
 
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return b.forUpdateTS, nil
+		return b.getForUpdateTS()
 	}
 
 	return b.getSnapshotReadTS()
 }
 
-// getSnapshotReadTS returns the snapshot-read-ts
+// getSnapshotReadTS returns the ts used by insert/update/delete and select for update
+func (b *executorBuilder) getForUpdateTS() (uint64, error) {
+	ts, err := b.getSnapshotReadTS()
+	if err != nil {
+		return 0, err
+	}
+
+	if ts > b.forUpdateTS {
+		return ts, nil
+	}
+
+	return b.forUpdateTS, nil
+}
+
+// getSnapshotReadTS returns the ts used by select without for update
 func (b *executorBuilder) getSnapshotReadTS() (uint64, error) {
 	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
 	// ensure the correct value is returned even the `snapshotTS` field is already set by other
