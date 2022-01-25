@@ -178,10 +178,10 @@ func (rc *Client) Close() {
 	log.Info("Restore client closed")
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend) {
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, rc.backupMeta.IsRawKv, rc.rateLimit)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -190,7 +190,6 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-	rc.InitClients(backend)
 
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
@@ -214,6 +213,8 @@ func (rc *Client) InitBackupMeta(
 		rc.ddlJobs = ddlJobs
 	}
 	rc.backupMeta = backupMeta
+
+	rc.InitClients(backend, backupMeta.IsRawKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
