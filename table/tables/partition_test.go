@@ -623,3 +623,17 @@ func TestIssue31721(t *testing.T) {
 	tk.MustExec("insert into t_31721 values ('1')")
 	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
 }
+
+func TestIssue31784(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_list_partition=on;")
+	tk.MustExec("drop tables if exists t_31784")
+	_, err := tk.Exec("CREATE TABLE `t_31784` (a int, b int) partition by list columns(a,a) ( partition p values in ((1,1)));")
+	require.EqualError(t, err, ddl.ErrSameNamePartitionField.GenWithStackByArgs("a").Error())
+	tk.MustExec("drop tables if exists t_31784")
+	_, err = tk.Exec("CREATE TABLE `t_31784` (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1,1)));")
+	require.EqualError(t, err, ddl.ErrSameNamePartitionField.GenWithStackByArgs("b").Error())
+}
