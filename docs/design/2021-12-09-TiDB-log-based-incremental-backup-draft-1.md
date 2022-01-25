@@ -1,6 +1,42 @@
-## Structure
+# TiDB Log-based Incremental Backup
 
-<img src="../resources/log-backup-architecture.jpg" style="width:6.26772in;height:4.69444in" />
+- Author(s): @kennytm
+- Discussion: N/A
+- Tracking Issue: [#29501](https://github.com/pingcap/tidb/issues/29501)
+
+## Table of Contents
+
+* [Introduction](#introduction)
+* [Background](#background)
+* [Goals](#goals)
+    + [Non-Goals for Version 1](#non-goals-for-version-1)
+* [User Scenarios / Story](#user-scenarios--story)
+* [Design](#design)
+    + [BR](#br)
+        - [Start task](#start-task)
+        - [Check task status](#check-task-status)
+        - [Stop task](#stop-task)
+        - [TiKV](#tikv)
+    + [Stop](#stop)
+    + [Pause and Resume](#pause-and-resume)
+    + [Output format](#output-format)
+    + [Restore](#restore)
+        - [Restore backups](#restore-backups)
+    + [Merge (out of scope in v1)](#merge-out-of-scope-in-v1)
+        - [Merge backups](#merge-backups)
+    + [Error scenarios](#error-scenarios)
+        - [Scaling out](#scaling-out)
+        - [Crashing](#crashing)
+        - [Network partition](#network-partition)
+    + [Task management](#task-management)
+* [Alternatives & Rationale](#alternatives--rationale)
+* [Trivia](#trivia)
+
+## Introduction 
+
+<img src="imgs/log-backup-architecture.jpg" style="width:6.26772in;height:4.69444in" />
+
+This document introduces a novel solution for backing up incremental transactional data within the TiKV server.
 
 ## Background
 
@@ -32,7 +68,7 @@ The ability of commercial databases to handle emergencies and accidents is a bas
     - when the database fails and cannot be restored within a certain period of time. The user quickly deploys a database of the same version as the production database, and restores the backup data to the database to provide external services;
 * User services need to be able to restore the data at a certain point in the past to the new cluster to meet the business needs of judicial inspections or audits
 
-## Design
+## Detailed Design
 
 ### BR
 
@@ -40,7 +76,7 @@ A new subcommand is added to BR to control incremental backup tasks. (Provide a 
 
 #### Start task
 
-```shell
+```console
 $ br stream start [task_name] -u 10.0.0.1:2379 -s 's3://bucket/path' [-f '*.*' -f '!mysql.*'] [--lastbackupts 123456789] [--endts 999999999] ...
 
 Starting task <task_name> from ts=123456789...
@@ -55,7 +91,7 @@ Started!
 
 #### Check task status
 
-```shell
+```console
 $ br stream status task_name -u 10.0.0.1:2379
 
 Checking status of <task_name>...
@@ -68,7 +104,7 @@ Store 8: ok (next_backup_ts =922222222).
 
 #### Stop task
 
-```shell
+```console
 $ br stream stop task_name -u 10.0.0.1:2379
 
 Stopping task <task_name>...
@@ -143,7 +179,7 @@ Failed to stop the task, maybe it is already stopped. Check the TiKV logs for de
        * if backup to s3, we have a separate thread push data from local storage to s3 at every 5 minutes.
     - Need a flush control when the disk is full.
 
-<img src="../resources/log-backup-data-flow.jpg" style="width:6.26772in;height:4.69444in" />
+<img src="imgs/log-backup-data-flow.jpg" style="width:6.26772in;height:4.69444in" />
 
 * Rollback
     - The Rollbacks do the real delete in rocksdb according to the txn.
@@ -243,7 +279,7 @@ message DataFileInfo {
 
 #### Restore backups
 
-```shell
+```console
 $ br restore full -s 's3://bucket/snapshot-path' -u 10.0.5.1:2379
 
 $ br stream restore -u 10.0.5.1:2379 \
@@ -282,7 +318,7 @@ $ br stream restore -u 10.0.5.1:2379 \
 
 #### Merge backups
 
-```shell
+```console
 $ br stream merge \
    -s 's3://bucket/path/' \
    [--read-snapshot-storage 's3://bucket/snapshot-path'] \
@@ -411,7 +447,7 @@ NextBackupTS:\* to the ResolvedTS of the region.
     -   in some scenarios there may be a lot of rollbacks?
     -   The Rollback key will carry start ts. For each key with start ts we need to ensure the delete happened after the put.
 
-**Alternatives & Rationale**
+## Alternatives & Rationale
 
 **Scanning RaftDB**
 
@@ -434,7 +470,7 @@ performance.
 
 -   To support the interpretation of raftlog, I think I need to implement most of the logic of raftstore now, especially some operations such as split/merge/conf change. Due to the existence of these operations, the original total order raft log in a region has a sloping relationship between different regions. I think it is not easy to solve. This is also the reason why cdc did not use raftlog or wal at the time.
 
-**Trivia**
+## Trivia
 
 -   CDC only observes leaders.
 -   The tikv\_gc\_leader\_lease entry in mysql.tidb table is updated every few seconds (also tikv\_gc\_last\_run\_time every 10 minutes).
