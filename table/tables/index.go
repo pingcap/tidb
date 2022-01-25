@@ -16,6 +16,8 @@ package tables
 
 import (
 	"context"
+	"sync"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"sync"
 )
 
 // index is the data structure for index data in the KV store.
