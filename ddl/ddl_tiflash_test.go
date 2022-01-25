@@ -155,7 +155,7 @@ func CheckFlashback(s *tiflashDDLTestSuite, tk *testkit2.TestKit, t *testing.T) 
 	defer fCancel()
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("flashback table ddltiflash")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * 3)
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
