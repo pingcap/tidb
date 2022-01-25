@@ -30,7 +30,6 @@ alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_
 drop table if exists t;
 create table t(a char(2), b char(2), index idx_1(a));
 insert into t values("aa", "bb");
-set @@sql_mode="";
 select * from t where a = "aa";
 select * from t where a = "aab";
 # Test query with table alias
@@ -38,7 +37,6 @@ select * from t tmp where a = "aa";
 select * from t tmp where a = "aab";
 truncate table t;
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t where a = "a";
 select * from t where a = "a ";
 select * from t where a = "a  ";
@@ -46,7 +44,6 @@ drop table if exists t;
 create table t(a char(2) binary, b char(2), index idx_1(a));
 insert into t values("  ", "  ");
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t where a = "a";
 select * from t where a = "a ";
 select * from t where a = "a  ";
@@ -59,12 +56,10 @@ select * from t where a = "   ";
 drop table if exists t;
 create table t(a char(2) primary key, b char(2));
 insert into t values("aa", "bb");
-set @@sql_mode="";
 select * from t tmp where a = "aa";
 select * from t tmp where a = "aab";
 truncate table t;
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t tmp where a = "a";
 select * from t tmp where a = "a ";
 select * from t tmp where a = "a  ";
@@ -73,7 +68,6 @@ drop table if exists t;
 create table t(a char(2) binary primary key, b char(2));
 insert into t values("  ", "  ");
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t tmp where a = "a";
 select * from t tmp where a = "a ";
 select * from t tmp where a = "a  ";
@@ -81,7 +75,6 @@ select * from t tmp where a = "";
 select * from t tmp where a = "  ";
 select * from t tmp where a = "   ";
 # Test both wildcard and column name exist in select field list
-set @@sql_mode="";
 drop table if exists t;
 create table t(a char(2) primary key, b char(2));
 insert into t values("aa", "bb");
@@ -111,6 +104,51 @@ select t.a from t tmp where a = "aa";
 --error 1051
 select t.* from t tmp where a = "aa";
 
+# PointGetCharPK
+drop table if exists t;
+create table t(a char(4) primary key, b char(4));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+select * from t where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+# Test CHAR BINARY.
+drop table if exists t;
+create table t(a char(2) binary primary key, b char(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+select * from t where a = "";
+select * from t where a = "  ";
+select * from t where a = "   ";
+
+# PointGetVarcharPK
+drop table if exists t;
+create table t(a varchar(2) primary key, b varchar(2));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+select * from t where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+# Test VARCHAR BINARY.
+drop table if exists t;
+create table t(a varchar(2) binary primary key, b varchar(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+select * from t where a = "";
+select * from t where a = "  ";
+select * from t where a = "   ";
 
 # TestCharsetDatabase
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
@@ -123,5 +161,19 @@ select @@collation_database;
 use cd_test_latin1;
 select @@character_set_database;
 select @@collation_database;
+
+# DefaultDBAfterDropCurDB
+--error 1273
+create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+
+# CollationUnion
+select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;
+
+# Issue26989
+set names utf8mb4 collate utf8mb4_general_ci;
+select position('a' in 'AA');
+select locate('a', 'AA');
+select locate('a', 'a');
+set names utf8mb4;
 
 use test

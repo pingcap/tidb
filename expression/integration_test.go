@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/util/collate"
 	"math"
 	"math/rand"
 	"sort"
@@ -2773,6 +2774,8 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 }
 
 func TestTiDBDecodeKeyFunc(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -4764,6 +4767,7 @@ func TestIssue17287(t *testing.T) {
 }
 
 func TestIssue26989(t *testing.T) {
+	t.Skip("covered by explain test")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

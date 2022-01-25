@@ -30,7 +30,6 @@ Error 1273: Unsupported collation when new collation is enabled: 'latin1_general
 drop table if exists t;
 create table t(a char(2), b char(2), index idx_1(a));
 insert into t values("aa", "bb");
-set @@sql_mode="";
 select * from t where a = "aa";
 a	b
 aa	bb
@@ -43,7 +42,6 @@ select * from t tmp where a = "aab";
 a	b
 truncate table t;
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t where a = "a";
 a	b
 a	b
@@ -57,7 +55,6 @@ drop table if exists t;
 create table t(a char(2) binary, b char(2), index idx_1(a));
 insert into t values("  ", "  ");
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t where a = "a";
 a	b
 a	b
@@ -82,7 +79,6 @@ a	b
 drop table if exists t;
 create table t(a char(2) primary key, b char(2));
 insert into t values("aa", "bb");
-set @@sql_mode="";
 select * from t tmp where a = "aa";
 a	b
 aa	bb
@@ -90,7 +86,6 @@ select * from t tmp where a = "aab";
 a	b
 truncate table t;
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t tmp where a = "a";
 a	b
 a	b
@@ -104,7 +99,6 @@ drop table if exists t;
 create table t(a char(2) binary primary key, b char(2));
 insert into t values("  ", "  ");
 insert into t values("a ", "b ");
-set @@sql_mode="";
 select * from t tmp where a = "a";
 a	b
 a	b
@@ -123,7 +117,6 @@ a	b
 select * from t tmp where a = "   ";
 a	b
 	
-set @@sql_mode="";
 drop table if exists t;
 create table t(a char(2) primary key, b char(2));
 insert into t values("aa", "bb");
@@ -166,6 +159,88 @@ select t.a from t tmp where a = "aa";
 Error 1054: Unknown column 't.a' in 'field list'
 select t.* from t tmp where a = "aa";
 Error 1051: Unknown table 't'
+drop table if exists t;
+create table t(a char(4) primary key, b char(4));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+a	b
+aa	bb
+select * from t where a = "aab";
+a	b
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+a	b
+a	b
+select * from t where a = "a ";
+a	b
+a	b
+select * from t where a = "a  ";
+a	b
+a	b
+drop table if exists t;
+create table t(a char(2) binary primary key, b char(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+a	b
+a	b
+select * from t where a = "a ";
+a	b
+a	b
+select * from t where a = "a  ";
+a	b
+a	b
+select * from t where a = "";
+a	b
+	
+select * from t where a = "  ";
+a	b
+	
+select * from t where a = "   ";
+a	b
+	
+drop table if exists t;
+create table t(a varchar(2) primary key, b varchar(2));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+a	b
+aa	bb
+select * from t where a = "aab";
+a	b
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+a	b
+a 	b 
+select * from t where a = "a ";
+a	b
+a 	b 
+select * from t where a = "a  ";
+a	b
+a 	b 
+drop table if exists t;
+create table t(a varchar(2) binary primary key, b varchar(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+a	b
+a 	b 
+select * from t where a = "a ";
+a	b
+a 	b 
+select * from t where a = "a  ";
+a	b
+a 	b 
+select * from t where a = "";
+a	b
+  	  
+select * from t where a = "  ";
+a	b
+  	  
+select * from t where a = "   ";
+a	b
+  	  
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
 create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 Error 1273: Unsupported collation when new collation is enabled: 'latin1_swedish_ci'
@@ -184,4 +259,20 @@ utf8
 select @@collation_database;
 @@collation_database
 utf8_bin
+create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+Error 1273: Unsupported collation when new collation is enabled: 'latin1_swedish_ci'
+select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;
+a
+2010-09-09  
+set names utf8mb4 collate utf8mb4_general_ci;
+select position('a' in 'AA');
+position('a' in 'AA')
+1
+select locate('a', 'AA');
+locate('a', 'AA')
+1
+select locate('a', 'a');
+locate('a', 'a')
+1
+set names utf8mb4;
 use test

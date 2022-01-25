@@ -1451,6 +1451,7 @@ func TestLikeWithCollation(t *testing.T) {
 }
 
 func TestCollationUnion(t *testing.T) {
+	t.Skip("covered by explain test")
 	// For issue 19694.
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

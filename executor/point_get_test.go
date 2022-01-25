@@ -224,6 +224,7 @@ func (s *testPointGetSuite) TestDistinctPlan(c *C) {
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -371,6 +372,7 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 }
 
 func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
