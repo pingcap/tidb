@@ -1744,6 +1744,9 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	if err = checkAddPartitionOnTemporaryMode(tbInfo); err != nil {
 		return err
 	}
+	if err = checkPartitionColumnsUnique(tbInfo); err != nil {
+		return err
+	}
 
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
