@@ -31,7 +31,7 @@ import (
 	_ "go.uber.org/automaxprocs"
 )
 
-func usage() {
+func usage() bool {
 	msg := `// run all tests
 ut
 
@@ -59,6 +59,7 @@ ut build
 // build a test package
 ut build xxx`
 	fmt.Println(msg)
+	return true
 }
 
 const modulePath = "github.com/pingcap/tidb"
@@ -72,11 +73,11 @@ type task struct {
 var P int
 var workDir string
 
-func cmdList(args ...string) {
+func cmdList(args ...string) bool {
 	pkgs, err := listPackages()
 	if err != nil {
 		fmt.Println("list package error", err)
-		return
+		return false
 	}
 
 	// list all packages
@@ -84,7 +85,7 @@ func cmdList(args ...string) {
 		for _, pkg := range pkgs {
 			fmt.Println(pkg)
 		}
-		return
+		return false
 	}
 
 	// list test case of a single package
@@ -93,52 +94,51 @@ func cmdList(args ...string) {
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
 			fmt.Println("package not exist", pkg)
-			return
+			return false
 		}
 
 		err := buildTestBinary(pkg)
 		if err != nil {
 			fmt.Println("build package error", pkg, err)
-			return
+			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
 			fmt.Println("check test binary existance error", err)
-			return
+			return false
 		}
 		if !exist {
 			fmt.Println("no test case in ", pkg)
-			return
+			return false
 		}
 
 		res, err := listTestCases(pkg, nil)
 		if err != nil {
 			fmt.Println("list test cases for package error", err)
-			return
+			return false
 		}
 		for _, x := range res {
 			fmt.Println(x.test)
 		}
 	}
+	return true
 }
 
-func cmdBuild(args ...string) {
+func cmdBuild(args ...string) bool {
 	pkgs, err := listPackages()
 	if err != nil {
 		fmt.Println("list package error", err)
-		return
+		return false
 	}
 
 	// build all packages
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return
-			}
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
 		}
-		return
+		return true
 	}
 
 	// build test binary of a single package
@@ -147,33 +147,34 @@ func cmdBuild(args ...string) {
 		err := buildTestBinary(pkg)
 		if err != nil {
 			fmt.Println("build package error", pkg, err)
-			return
+			return false
 		}
 	}
+	return true
 }
 
-func cmdRun(args ...string) {
+func cmdRun(args ...string) bool {
 	var err error
 	pkgs, err := listPackages()
 	if err != nil {
 		fmt.Println("list packages error", err)
-		return
+		return false
 	}
 	tasks := make([]task, 0, 5000)
+	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			fmt.Println("handling package", pkg)
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return
-			}
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
+		}
 
+		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
 				fmt.Println("check test binary existance error", err)
-				return
+				return false
 			}
 			if !exist {
 				fmt.Println("no test case in ", pkg)
@@ -183,7 +184,7 @@ func cmdRun(args ...string) {
 			tasks, err = listTestCases(pkg, tasks)
 			if err != nil {
 				fmt.Println("list test cases error", err)
-				return
+				return false
 			}
 		}
 	}
@@ -194,22 +195,22 @@ func cmdRun(args ...string) {
 		err := buildTestBinary(pkg)
 		if err != nil {
 			fmt.Println("build package error", pkg, err)
-			return
+			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
 			fmt.Println("check test binary existance error", err)
-			return
+			return false
 		}
 
 		if !exist {
 			fmt.Println("no test case in ", pkg)
-			return
+			return false
 		}
 		tasks, err = listTestCases(pkg, tasks)
 		if err != nil {
 			fmt.Println("list test cases error", err)
-			return
+			return false
 		}
 	}
 
@@ -219,22 +220,22 @@ func cmdRun(args ...string) {
 		err := buildTestBinary(pkg)
 		if err != nil {
 			fmt.Println("build package error", pkg, err)
-			return
+			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
 			fmt.Println("check test binary existance error", err)
-			return
+			return false
 		}
 		if !exist {
 			fmt.Println("no test case in ", pkg)
-			return
+			return false
 		}
 
 		tasks, err = listTestCases(pkg, tasks)
 		if err != nil {
 			fmt.Println("list test cases error", err)
-			return
+			return false
 		}
 		// filter the test case to run
 		tmp := tasks[:0]
@@ -245,15 +246,16 @@ func cmdRun(args ...string) {
 		}
 		tasks = tmp
 	}
-	fmt.Println("building task finish...", len(tasks))
+	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
 	numactl := numactlExist()
 	taskCh := make(chan task, 100)
+	works := make([]numa, P)
 	var wg sync.WaitGroup
 	for i := 0; i < P; i++ {
-		n := numa{fmt.Sprintf("%d", i), numactl}
+		works[i] = numa{fmt.Sprintf("%d", i), numactl, false}
 		wg.Add(1)
-		go n.worker(&wg, taskCh)
+		go works[i].worker(&wg, taskCh)
 	}
 
 	shuffle(tasks)
@@ -262,6 +264,12 @@ func cmdRun(args ...string) {
 	}
 	close(taskCh)
 	wg.Wait()
+	for _, work := range works {
+		if work.Fail {
+			return false
+		}
+	}
+	return true
 }
 
 func main() {
@@ -281,15 +289,19 @@ func main() {
 	}
 
 	if len(os.Args) >= 2 {
+		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
-			cmdList(os.Args[2:]...)
+			isSucceed = cmdList(os.Args[2:]...)
 		case "build":
-			cmdBuild(os.Args[2:]...)
+			isSucceed = cmdBuild(os.Args[2:]...)
 		case "run":
-			cmdRun(os.Args[2:]...)
+			isSucceed = cmdRun(os.Args[2:]...)
 		default:
-			usage()
+			isSucceed = usage()
+		}
+		if !isSucceed {
+			os.Exit(1)
 		}
 	}
 }
@@ -339,6 +351,7 @@ func listPackages() ([]string, error) {
 type numa struct {
 	cpu     string
 	numactl bool
+	Fail    bool
 }
 
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
@@ -349,6 +362,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 		if res.err != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
 			io.Copy(os.Stderr, &res.output)
+			n.Fail = true
 		}
 	}
 }
@@ -426,8 +440,31 @@ func buildTestBinary(pkg string) error {
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	return withTrace(err)
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
+}
+
+// buildTestBinaryMulti is much faster than build the test packages one by one.
+func buildTestBinaryMulti(pkgs []string) error {
+       // go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+       xprogPath := path.Join(workDir, "tools/bin/xprog")
+       packages := make([]string, 0, len(pkgs))
+       for _, pkg := range pkgs {
+               packages = append(packages, path.Join(modulePath, pkg))
+       }
+
+       var cmd *exec.Cmd
+	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+       cmd.Args = append(cmd.Args, packages...)
+       cmd.Dir = workDir
+       cmd.Stdout = os.Stdout
+       cmd.Stderr = os.Stderr
+       if err := cmd.Run(); err != nil {
+               return withTrace(err)
+       }
+       return nil
 }
 
 func testBinaryExist(pkg string) (bool, error) {

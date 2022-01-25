@@ -1388,7 +1388,7 @@ func (s *testPrepareSerialSuite) TestCTE4PlanCache(c *C) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;")
 
 	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt using @a, @b, @a").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")

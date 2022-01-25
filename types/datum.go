@@ -1619,7 +1619,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
-		if j, err = json.ParseBinaryFromString(d.GetBinaryStringEncoded()); err == nil {
+		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:

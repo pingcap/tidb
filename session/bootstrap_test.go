@@ -32,6 +32,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// This test file have many problem.
+// 1. Please use testkit to create dom, session and store.
+// 2. Don't use createStoreAndBootstrap and BootstrapSession together. It will cause data race.
+// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
+// We will overwrite this file by update_test.go.
 func TestBootstrap(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -527,8 +532,6 @@ func TestStmtSummary(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-	mustExec(t, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	writeStmtSummaryVars(se)
 
 	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
@@ -771,13 +774,12 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err = getBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExec(t, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
 			row := req.GetRow(0)
 			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
-			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(1))
 		}()
 	}
 }

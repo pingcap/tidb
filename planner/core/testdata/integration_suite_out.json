@@ -355,8 +355,8 @@
       {
         "SQL": "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
         "Plan": [
-          "TableReader 8000.40 root  data:Selection",
-          "└─Selection 8000.40 cop[tikv]  or(1, or(eq(test.t.a, 1), eq(test.t.b, 2)))",
+          "TableReader 10000.00 root  data:Selection",
+          "└─Selection 10000.00 cop[tikv]  or(1, or(eq(test.t.a, 1), eq(test.t.b, 2)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
@@ -2077,11 +2077,11 @@
         "SQL": "select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;",
         "Plan": [
           "Projection 17.99 root  1->Column#5",
-          "└─Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
-          "  └─IndexMerge 19.99 root  ",
-          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
-          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─IndexMerge 0.04 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
+          "    └─TableRowIDScan 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "1"
@@ -2139,7 +2139,7 @@
         ],
         "Res": [
           "1"
-	]
+        ]
       }
     ]
   },
