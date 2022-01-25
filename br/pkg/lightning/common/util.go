@@ -120,7 +120,7 @@ outside:
 		case err == nil:
 			return nil
 		// do not retry NotFound error or ErrNoRows
-		case errors.IsNotFound(err), errors.ErrorEqual(err, sql.ErrNoRows):
+		case errors.IsNotFound(err):
 			break outside
 		case utils.IsRetryableError(err):
 			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
