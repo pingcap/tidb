@@ -497,10 +497,47 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
+// removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
+func (c *collecting) removeInvalidPlanRecord() {
+	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
+	for _, v := range c.records {
+		k := string(v.sqlDigest)
+		sql2PlansMap[k] = append(sql2PlansMap[k], v.planDigest)
+	}
+	for k, plans := range sql2PlansMap {
+		if len(plans) != 2 {
+			continue
+		}
+		if len(plans[0]) > 0 && len(plans[1]) > 0 {
+			continue
+		}
+
+		sqlDigest := []byte(k)
+		key0 := encodeKey(c.keyBuf, sqlDigest, plans[0])
+		key1 := encodeKey(c.keyBuf, sqlDigest, plans[1])
+		record0, ok0 := c.records[key0]
+		record1, ok1 := c.records[key1]
+		if !ok0 || !ok1 {
+			continue
+		}
+		if len(plans[0]) != 0 {
+			record0.merge(record1)
+			delete(c.records, key1)
+		} else {
+			record1.merge(record0)
+			delete(c.records, key0)
+		}
+	}
+}
+
 // getReportRecords returns all records, others record will be packed and appended to the end.
 func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
+
+	c.removeInvalidPlanRecord()
+
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)
