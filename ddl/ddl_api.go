@@ -6935,20 +6935,3 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 	err = d.doDDLJob(ctx, job)
 	return d.callHookOnChanged(err)
 }
-
-// IsValidIdentifier checks if the identifier is correct.
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
-func IsValidIdentifier(name string) bool {
-	if len(name) == 0 {
-		return false
-	}
-	if name[len(name)-1] == ' ' {
-		return false
-	}
-	for _, r := range name {
-		if r == rune(0) {
-			return false
-		}
-	}
-	return true
-}

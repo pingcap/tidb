@@ -3805,4 +3805,9 @@ func (s *testIntegrationSuite3) TestInvalidPartitionNameWhenCreateTable(c *C) {
 	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
+	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
 }

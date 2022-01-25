@@ -702,20 +702,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if !ddl.IsValidIdentifier(stmt.Name) {
+	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if !ddl.IsValidIdentifier(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if !ddl.IsValidIdentifier(stmt.Name) {
+	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
@@ -791,7 +791,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	tName := stmt.Table.Name.String()
-	if !ddl.IsValidIdentifier(tName) {
+	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -848,16 +848,26 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
 	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
+	}
 }
 
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	vName := stmt.ViewName.Name.String()
-	if !ddl.IsValidIdentifier(vName) {
+	if isIncorrectName(vName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(vName)
 		return
 	}
 	for _, col := range stmt.Cols {
-		if !ddl.IsValidIdentifier(col.String()) {
+		if isIncorrectName(col.String()) {
 			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
@@ -910,7 +920,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
-		if !ddl.IsValidIdentifier(t.Name.String()) {
+		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -941,7 +951,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 	for _, t := range tables {
-		if !ddl.IsValidIdentifier(t.Name.String()) {
+		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
@@ -1014,7 +1024,7 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
-	if !ddl.IsValidIdentifier(tName) {
+	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1048,12 +1058,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
-	if !ddl.IsValidIdentifier(oldTable) {
+	if isIncorrectName(oldTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
-	if !ddl.IsValidIdentifier(newTable) {
+	if isIncorrectName(newTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
@@ -1078,7 +1088,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
-	if !ddl.IsValidIdentifier(tName) {
+	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
@@ -1086,7 +1096,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	for _, spec := range specs {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
-			if !ddl.IsValidIdentifier(ntName) {
+			if isIncorrectName(ntName) {
 				p.err = ddl.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
@@ -1113,10 +1123,18 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			}
 		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
 			statsName := spec.Statistics.StatsName
-			if !ddl.IsValidIdentifier(statsName) {
+			if isIncorrectName(statsName) {
 				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
 				p.err = ErrInternal.GenWithStack(msg)
 				return
+			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
 			}
 		default:
 			// Nothing to do now.
@@ -1216,7 +1234,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
-	if !ddl.IsValidIdentifier(cName) {
+	if isIncorrectName(cName) {
 		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
@@ -1336,6 +1354,18 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 		}
 	}
 
+	return false
+}
+
+// isIncorrectName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isIncorrectName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
 	return false
 }
 
@@ -1544,7 +1574,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
-	if !ddl.IsValidIdentifier(sName) {
+	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}

@@ -655,9 +655,6 @@ func checkPartitionNameUnique(pi *model.PartitionInfo) error {
 	newPars := pi.Definitions
 	partNames := make(map[string]struct{}, len(newPars))
 	for _, newPar := range newPars {
-		if !IsValidIdentifier(newPar.Name.O) {
-			return ErrWrongPartitionName.GenWithStackByArgs()
-		}
 		if _, ok := partNames[newPar.Name.L]; ok {
 			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
 		}
@@ -678,9 +675,6 @@ func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInf
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
 			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
-		}
-		if !IsValidIdentifier(newPar.Name.O) {
-			return ErrWrongPartitionName.GenWithStackByArgs()
 		}
 		partNames[newPar.Name.L] = struct{}{}
 	}
