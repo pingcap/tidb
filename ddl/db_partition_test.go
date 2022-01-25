@@ -902,6 +902,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrMultipleDefConstInListPart,
 		},
 		{
+			"create table t1 (a int, b int) partition by list columns(a,a) ( partition p values in ((1,1)));",
+			ddl.ErrSameNamePartitionField,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1)));",
+			ddl.ErrSameNamePartitionField,
+		},
+		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list columns (id) (
 				    partition p0 values in (3,5,6,9,17),
 				    partition p1 values in (1,2,10,11,19,20),
