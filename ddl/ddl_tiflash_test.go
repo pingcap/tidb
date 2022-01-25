@@ -60,6 +60,8 @@ const (
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
+	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -91,8 +93,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
-	ddl.PollTiFlashInterval = 1000 * time.Millisecond
-	ddl.PullTiFlashPdTick = 60
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -213,11 +213,10 @@ func TempDisableEmulatorGC() func() {
 	return f
 }
 
-func (s *tiflashDDLTestSuite) SetPdLoop(tick int) func() {
-	originValue := ddl.PullTiFlashPdTick
-	ddl.PullTiFlashPdTick = tick
+func (s *tiflashDDLTestSuite) SetPdLoop(tick uint64) func() {
+	originValue := ddl.PullTiFlashPdTick.Swap(tick)
 	return func() {
-		ddl.PullTiFlashPdTick = originValue
+		ddl.PullTiFlashPdTick.Store(originValue)
 	}
 }
 
