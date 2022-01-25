@@ -2774,10 +2774,10 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 }
 
 func TestTiDBDecodeKeyFunc(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(false)
-	defer collate.SetNewCollationEnabledForTest(true)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result

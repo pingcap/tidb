@@ -233,10 +233,9 @@ select @@collation_database;
 @@collation_database
 latin1_swedish_ci
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
-select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;
-a
-2010-09-09
-2010-09-09  
+with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
+count(*)
+2
 set names utf8mb4 collate utf8mb4_general_ci;
 select position('a' in 'AA');
 position('a' in 'AA')
