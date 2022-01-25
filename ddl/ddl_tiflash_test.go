@@ -61,7 +61,8 @@ const (
 
 func SetUpHelper(s *tiflashDDLTestSuite) error {
 	var err error
-	ddl.PollTiFlashInterval.Store(1000 * time.Millisecond)
+
+	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
 	s.store, err = mockstore.NewMockStore(
@@ -97,6 +98,7 @@ func SetUpHelper(s *tiflashDDLTestSuite) error {
 	s.dom.SetStatsUpdating(true)
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
+
 	return nil
 }
 
@@ -110,9 +112,10 @@ func TearDownHelper(s *tiflashDDLTestSuite) error {
 	s.tiflash.Unlock()
 	s.dom.Close()
 	err := s.store.Close()
-	ddl.PollTiFlashInterval.Store(2 * time.Second)
+	ddl.PollTiFlashInterval = 2 * time.Second
 	return err
 }
+
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	TearDownHelper(s)
@@ -225,54 +228,59 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	tk.MustExec("create table ddltiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 
 	total := 0
+
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	total += 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
 	total += 3
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	lessThan := 40
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflashp ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 	total += 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflashp truncate partition p1")
 	total += 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	// Now gc will trigger, and will remove dropped partition.
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflashp drop partition p2")
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("truncate table ddltiflash")
 	total += 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("drop table ddltiflash")
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 }
@@ -296,7 +304,7 @@ func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 	lessThan := "40"
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	// Should get schema again
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
@@ -330,7 +338,7 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	// Make sure is available
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
 	lessThan := "40"
@@ -370,18 +378,18 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
 	tk.MustExec("drop table if exists ddltiflash2")
 	tk.MustExec("create table ddltiflash2 like ddltiflash")
 	tk.MustExec("alter table ddltiflash2 set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash2")
 
 	CheckFlashback(s, tk, t)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
@@ -399,10 +407,10 @@ func TestTiFlashTruncatePartition(t *testing.T) {
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
@@ -422,11 +430,11 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/FailTiFlashTruncatePartition")
 	}()
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]enforced error")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
@@ -441,10 +449,10 @@ func TestTiFlashDropPartition(t *testing.T) {
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 	tk.MustExec("alter table ddltiflash drop partition p1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable * 5)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable * 5)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
@@ -474,19 +482,19 @@ func TestTiFlashTruncateTable(t *testing.T) {
 	tk.MustExec("create table ddltiflashp(z int not null) partition by range (z) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	// Should get schema right now
 	tk.MustExec("truncate table ddltiflashp")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflashp")
 	tk.MustExec("drop table if exists ddltiflash2")
 	tk.MustExec("create table ddltiflash2(z int)")
 	tk.MustExec("alter table ddltiflash2 set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	// Should get schema right now
 
 	tk.MustExec("truncate table ddltiflash2")
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash2")
 }
 
@@ -504,7 +512,7 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
 	}
 
-	time.Sleep(ddl.PollTiFlashInterval.Load() * 10)
+	time.Sleep(ddl.PollTiFlashInterval * 10)
 	// Should get schema right now
 	for i := 0; i < 100; i++ {
 		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
@@ -543,6 +551,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 }
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
+
 func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
@@ -558,6 +567,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	}()
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
+
 	require.NoError(t, err)
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	require.NoError(t, err)
@@ -582,7 +592,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 
 	// Wait GC
-	time.Sleep(ddl.PollTiFlashInterval.Load() * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	res = CheckPlacementRule(s.tiflash, *expectRule)
 	require.Equal(t, false, res)
 }

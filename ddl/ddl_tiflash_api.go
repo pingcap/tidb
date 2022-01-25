@@ -76,7 +76,7 @@ func NewTiFlashManagementContext() *TiFlashManagementContext {
 
 var (
 	// PollTiFlashInterval is the interval between every pollTiFlashReplicaStatus call.
-	PollTiFlashInterval = atomicutil.NewDuration(2 * time.Second)
+	PollTiFlashInterval = 2 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
 	PullTiFlashPdTick = atomicutil.NewUint64(30 * 5)
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
@@ -440,7 +440,7 @@ func (d *ddl) PollTiFlashRoutine() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case <-time.After(PollTiFlashInterval.Load()):
+		case <-time.After(PollTiFlashInterval):
 		}
 	}
 }

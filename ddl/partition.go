@@ -257,7 +257,7 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, [
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 		partNames = append(partNames, one.Name.L)
-		if one.PlacementPolicyRef != nil || one.DirectPlacementOpts != nil {
+		if one.PlacementPolicyRef != nil {
 			rollbackBundles = append(rollbackBundles, placement.NewBundle(one.ID))
 		}
 	}
@@ -477,19 +477,6 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	// when policy x is altered.
 	for _, opt := range options {
 		switch opt.Tp {
-		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
-			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
-			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
-			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
-			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
-			ast.TableOptionPlacementVoterConstraints:
-			if partition.DirectPlacementOpts == nil {
-				partition.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
-			if err != nil {
-				return err
-			}
 		case ast.TableOptionPlacementPolicy:
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
@@ -949,21 +936,30 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
+
+	// To be error compatible with MySQL, we need to do this first!
+	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
+	if len(oldDefs) <= len(partLowerNames) {
+		return errors.Trace(ErrDropLastPartition)
+	}
+
+	dupCheck := make(map[string]bool)
 	for _, pn := range partLowerNames {
 		found := false
 		for _, def := range oldDefs {
 			if def.Name.L == pn {
+				if _, ok := dupCheck[pn]; ok {
+					return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
+				}
+				dupCheck[pn] = true
 				found = true
 				break
 			}
 		}
 		if !found {
-			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(pn))
+			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
 		}
-	}
-	if len(oldDefs) == len(partLowerNames) {
-		return errors.Trace(ErrDropLastPartition)
 	}
 	return nil
 }
@@ -1580,11 +1576,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ddlJobCtx, nil, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

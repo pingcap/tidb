@@ -60,20 +60,6 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
-func TestTxnMode(t *testing.T) {
-	seVar := NewSessionVars()
-	require.NotNil(t, seVar)
-	require.Equal(t, "", seVar.TxnMode)
-	err := seVar.setTxnMode("pessimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("optimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("something else")
-	require.Error(t, err)
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,
@@ -538,6 +524,43 @@ func TestIsNoop(t *testing.T) {
 
 	sv = GetSysVar(ReadOnly)
 	require.True(t, sv.IsNoop)
+}
+
+func TestTiDBReadOnly(t *testing.T) {
+	rro := GetSysVar(TiDBRestrictedReadOnly)
+	sro := GetSysVar(TiDBSuperReadOnly)
+
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
+	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "ON"))
+	result, err := mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "ON", result)
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err = mock.SetGlobalSysVar(sro.Name, "OFF")
+	require.Error(t, err)
+	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
+
+	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
+	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "OFF"))
+	result, err = mock.GetGlobalSysVar(rro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", result)
+
+	result, err = mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "ON", result)
+
+	// it is ok to turn off tidb_super_read_only now
+	require.NoError(t, mock.SetGlobalSysVar(sro.Name, "OFF"))
+	result, err = mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", result)
 }
 
 func TestInstanceScopedVars(t *testing.T) {
