@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/util/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"

@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/pools"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 

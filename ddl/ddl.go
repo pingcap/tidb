@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -48,6 +47,7 @@ import (
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/pools"
 	"go.etcd.io/etcd/clientv3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"

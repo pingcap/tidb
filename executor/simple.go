@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/util/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"

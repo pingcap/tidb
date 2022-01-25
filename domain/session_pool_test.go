@@ -17,7 +17,7 @@ package domain
 import (
 	"testing"
 
-	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/util/pools"
 	"github.com/stretchr/testify/require"
 )
 
