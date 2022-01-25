@@ -182,12 +182,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -243,12 +241,10 @@ func TestAnalyzeParameters(t *testing.T) {
 }
 
 func TestAnalyzeTooLongColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json)")
@@ -669,10 +665,9 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 }
 
 func TestExtractTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_extract_topn")
 	tk.MustExec("use test_extract_topn")
@@ -724,12 +719,10 @@ func TestExtractTopN(t *testing.T) {
 }
 
 func TestHashInTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
