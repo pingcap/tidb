@@ -5,17 +5,10 @@ package task
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/keepalive"
 )
-
-var defaultKeepaliveCfg = keepalive.ClientParameters{
-	Time:    3 * time.Second,
-	Timeout: 10 * time.Second,
-}
 
 func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
