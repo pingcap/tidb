@@ -15,21 +15,18 @@
 package core
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 // LogicalOptimize exports the `logicalOptimize` function for test packages and
 // doesn't affect the normal package and access control of Golang (tricky ^_^)
 var LogicalOptimize = logicalOptimize
 
-var _ = Suite(&testPlannerFunctionSuite{})
-
-type testPlannerFunctionSuite struct {
-}
-
-func testDecimalConvert(lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDec, cLen int, c *C) {
+func testDecimalConvert(t *testing.T, lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDec, cLen int) {
 	lType := types.NewFieldType(mysql.TypeNewDecimal)
 	lType.Decimal = lDec
 	lType.Flen = lLen
@@ -39,39 +36,40 @@ func testDecimalConvert(lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDe
 	rType.Flen = rLen
 
 	cType, lCon, rCon := negotiateCommonType(lType, rType)
-	c.Assert(cType.Tp, Equals, mysql.TypeNewDecimal)
-	c.Assert(cType.Decimal, Equals, cDec)
-	c.Assert(cType.Flen, Equals, cLen)
-	c.Assert(lConvert, Equals, lCon)
-	c.Assert(rConvert, Equals, rCon)
+	require.Equal(t, cType.Tp, mysql.TypeNewDecimal)
+	require.Equal(t, cType.Decimal, cDec)
+	require.Equal(t, cType.Flen, cLen)
+	require.Equal(t, lConvert, lCon)
+	require.Equal(t, rConvert, rCon)
 }
 
-func (t *testPlannerFunctionSuite) TestMPPDecimalConvert(c *C) {
-	testDecimalConvert(5, 9, 5, 8, false, false, 5, 9, c)
-	testDecimalConvert(5, 8, 5, 9, false, false, 5, 9, c)
-	testDecimalConvert(0, 8, 0, 11, true, false, 0, 11, c)
-	testDecimalConvert(0, 16, 0, 11, false, false, 0, 16, c)
-	testDecimalConvert(5, 9, 4, 9, true, true, 5, 10, c)
-	testDecimalConvert(5, 8, 4, 9, true, true, 5, 10, c)
-	testDecimalConvert(5, 9, 4, 8, false, true, 5, 9, c)
-	testDecimalConvert(10, 16, 0, 11, true, true, 10, 21, c)
-	testDecimalConvert(5, 19, 0, 20, false, true, 5, 25, c)
-	testDecimalConvert(20, 20, 0, 60, true, true, 20, 65, c)
-	testDecimalConvert(20, 40, 0, 60, false, true, 20, 65, c)
-	testDecimalConvert(0, 40, 0, 60, false, false, 0, 60, c)
+func TestMPPDecimalConvert(t *testing.T) {
+	testDecimalConvert(t, 5, 9, 5, 8, false, false, 5, 9)
+	testDecimalConvert(t, 5, 8, 5, 9, false, false, 5, 9)
+	testDecimalConvert(t, 0, 8, 0, 11, true, false, 0, 11)
+	testDecimalConvert(t, 0, 16, 0, 11, false, false, 0, 16)
+	testDecimalConvert(t, 5, 9, 4, 9, true, true, 5, 10)
+	testDecimalConvert(t, 5, 8, 4, 9, true, true, 5, 10)
+	testDecimalConvert(t, 5, 9, 4, 8, false, true, 5, 9)
+	testDecimalConvert(t, 10, 16, 0, 11, true, true, 10, 21)
+	testDecimalConvert(t, 5, 19, 0, 20, false, true, 5, 25)
+	testDecimalConvert(t, 20, 20, 0, 60, true, true, 20, 65)
+	testDecimalConvert(t, 20, 40, 0, 60, false, true, 20, 65)
+	testDecimalConvert(t, 0, 40, 0, 60, false, false, 0, 60)
 }
 
-func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldType, lConvert, rConvert bool, c *C) {
+func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.FieldType, lConvert, rConvert bool) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
-	c.Assert(cType.Tp, Equals, retType.Tp)
-	c.Assert(cType.Flen, Equals, retType.Flen)
-	c.Assert(cType.Decimal, Equals, retType.Decimal)
-	c.Assert(cType.Flag, Equals, retType.Flag)
-	c.Assert(lConvert, Equals, lCon)
-	c.Assert(rConvert, Equals, rCon)
+	require.Equal(t, cType.Tp, retType.Tp)
+	require.Equal(t, cType.Flen, retType.Flen)
+	require.Equal(t, cType.Decimal, retType.Decimal)
+	require.Equal(t, cType.Flag, retType.Flag)
+	require.Equal(t, lConvert, lCon)
+	require.Equal(t, rConvert, rCon)
+
 }
 
-func (t *testPlannerFunctionSuite) TestMPPJoinKeyTypeConvert(c *C) {
+func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	tinyIntType := &types.FieldType{
 		Tp: mysql.TypeTiny,
 	}
@@ -100,13 +98,13 @@ func (t *testPlannerFunctionSuite) TestMPPJoinKeyTypeConvert(c *C) {
 		Decimal: 0,
 	}
 
-	testJoinKeyTypeConvert(tinyIntType, tinyIntType, tinyIntType, false, false, c)
-	testJoinKeyTypeConvert(tinyIntType, unsignedTinyIntType, bigIntType, true, true, c)
-	testJoinKeyTypeConvert(tinyIntType, bigIntType, bigIntType, true, false, c)
-	testJoinKeyTypeConvert(bigIntType, tinyIntType, bigIntType, false, true, c)
-	testJoinKeyTypeConvert(unsignedBigIntType, tinyIntType, decimalType, true, true, c)
-	testJoinKeyTypeConvert(tinyIntType, unsignedBigIntType, decimalType, true, true, c)
-	testJoinKeyTypeConvert(bigIntType, bigIntType, bigIntType, false, false, c)
-	testJoinKeyTypeConvert(unsignedBigIntType, bigIntType, decimalType, true, true, c)
-	testJoinKeyTypeConvert(bigIntType, unsignedBigIntType, decimalType, true, true, c)
+	testJoinKeyTypeConvert(t, tinyIntType, tinyIntType, tinyIntType, false, false)
+	testJoinKeyTypeConvert(t, tinyIntType, unsignedTinyIntType, bigIntType, true, true)
+	testJoinKeyTypeConvert(t, tinyIntType, bigIntType, bigIntType, true, false)
+	testJoinKeyTypeConvert(t, bigIntType, tinyIntType, bigIntType, false, true)
+	testJoinKeyTypeConvert(t, unsignedBigIntType, tinyIntType, decimalType, true, true)
+	testJoinKeyTypeConvert(t, tinyIntType, unsignedBigIntType, decimalType, true, true)
+	testJoinKeyTypeConvert(t, bigIntType, bigIntType, bigIntType, false, false)
+	testJoinKeyTypeConvert(t, unsignedBigIntType, bigIntType, decimalType, true, true)
+	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
 }
