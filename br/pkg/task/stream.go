@@ -626,6 +626,8 @@ func RunStreamRestore(
 		SendCredentials: cfg.SendCreds,
 		SkipCheckPath:   cfg.SkipCheckPath,
 	}
+
+	client.InitClients(u)
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
 	}

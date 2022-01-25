@@ -745,12 +745,12 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	}
 
 	req := &import_sstpb.ApplyRequest{
-		Name: file.Path,
+		Name:           file.Path,
 		StorageBackend: importer.backend,
-		Cf: file.Cf,
-		RewriteRule: rule,
+		Cf:             file.Cf,
+		RewriteRule:    rule,
 	}
-	log.Debug("apply kv file",  logutil.Leader(leader))
+	log.Debug("apply kv file", logutil.Leader(leader))
 	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
 	return errors.Trace(err)
 }
