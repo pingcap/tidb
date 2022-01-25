@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
@@ -227,54 +228,82 @@ func setExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	_, _, resExpr := ColumnSubstituteImpl(expr, nil, schema, newExprs)
+	return resExpr
+}
+
+// ColumnSubstitute4PropagateConstantEQ substitutes the columns in filter to expressions in select fields for propagate constant EQ.
+func ColumnSubstitute4PropagateConstantEQ(expr Expression, originalColls []string, schema *Schema, newExprs []Expression) Expression {
+	_, _, resExpr := ColumnSubstituteImpl(expr, originalColls, schema, newExprs)
 	return resExpr
 }
 
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
-func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+func ColumnSubstituteImpl(expr Expression, originalColls []string, schema *Schema, newExprs []Expression) (bool, int, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
 		if id == -1 {
-			return false, v
+			return false, id, v
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
 		newExpr.SetCoercibility(v.Coercibility())
-		return true, newExpr
+		return true, id, newExpr
 	case *ScalarFunction:
 		substituted := false
 		if v.FuncName.L == ast.Cast {
+			var id int
 			newFunc := v.Clone().(*ScalarFunction)
-			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			substituted, id, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], originalColls, schema, newExprs)
 			if substituted {
 				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
 				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
 				e.SetCoercibility(v.Coercibility())
-				return true, e
+				return true, id, e
 			}
-			return false, newFunc
+			return false, id, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		substituted := false
+		var usedExprCollations []string
 		for idx, arg := range v.GetArgs() {
-			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			changed, id, newFuncExpr := ColumnSubstituteImpl(arg, originalColls, schema, newExprs)
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
+				if originalColls != nil && id != -1 {
+					usedExprCollations = append(usedExprCollations, originalColls[id])
+				}
 			}
 		}
 		if substituted {
-			return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			if err != nil {
+				return false, -1, expr
+			}
+			if !collate.NewCollationEnabled() || originalColls == nil {
+				return true, -1, newFunc
+			}
+			_, coll := expr.CharsetAndCollation()
+			_, newColl := newFunc.CharsetAndCollation()
+			if coll != newColl {
+				return false, -1, expr
+			}
+			for _, collation := range usedExprCollations {
+				if !((collation == charset.CollationBin) || (isBinCollation(collation) && coll != charset.CollationBin)) {
+					return false, -1, expr
+				}
+			}
+
+			return true, -1, newFunc
 		}
 	}
-	return false, expr
+	return false, -1, expr
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
