@@ -729,7 +729,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	file *backuppb.DataFileInfo,
 	rules *RewriteRules,
 	regionInfo *RegionInfo,
-) (*import_sstpb.ApplyResponse, error) {
+) error {
 	leader := regionInfo.Leader
 	if leader == nil {
 		leader = regionInfo.Region.GetPeers()[0]
@@ -737,7 +737,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	// Get the rewrite rule for the file.
 	fileRule := findMatchedRewriteRule(file, rules)
 	if fileRule == nil {
-		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
+		return errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
@@ -751,6 +751,6 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		RewriteRule: rule,
 	}
 	log.Debug("apply kv file",  logutil.Leader(leader))
-	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
-	return resp, errors.Trace(err)
+	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
+	return errors.Trace(err)
 }
