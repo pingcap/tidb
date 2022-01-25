@@ -906,7 +906,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrSameNamePartitionField,
 		},
 		{
-			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1)));",
+			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1,1)));",
 			ddl.ErrSameNamePartitionField,
 		},
 		{
