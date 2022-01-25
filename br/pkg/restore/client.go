@@ -1281,17 +1281,17 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			log.Info("skip file due to table id not matched", zap.String("file", file.Path))
 			continue
 		}
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				fileStart := time.Now()
-				defer func() {
-					log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
-				}()
-				return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
-			})
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			log.Info("start import file", zap.String("file", file.Path))
+			fileStart := time.Now()
+			defer func() {
+				log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+			}()
+			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
+		})
 	}
 
-	if err := eg.Wait(); err != nil {
+	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
 		log.Error(
 			"restore files failed",

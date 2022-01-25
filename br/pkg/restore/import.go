@@ -42,6 +42,12 @@ const (
 
 // ImporterClient is used to import a file to TiKV.
 type ImporterClient interface {
+	ApplyKVFile(
+		ctx context.Context,
+		storeID uint64,
+		req *import_sstpb.ApplyRequest,
+	) (*import_sstpb.ApplyResponse, error)
+
 	DownloadSST(
 		ctx context.Context,
 		storeID uint64,
@@ -90,6 +96,18 @@ func NewImportClient(metaClient SplitClient, tlsConf *tls.Config, keepaliveConf 
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 	}
+}
+
+func (ic *importClient) ApplyKVFile(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.ApplyRequest,
+) (*import_sstpb.ApplyResponse, error) {
+	client, err := ic.GetImportClient(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return client.Apply(ctx, req)
 }
 
 func (ic *importClient) DownloadSST(
@@ -711,6 +729,28 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	file *backuppb.DataFileInfo,
 	rules *RewriteRules,
 	regionInfo *RegionInfo,
-) error {
-	return nil
+) (*import_sstpb.ApplyResponse, error) {
+	leader := regionInfo.Leader
+	if leader == nil {
+		leader = regionInfo.Region.GetPeers()[0]
+	}
+	// Get the rewrite rule for the file.
+	fileRule := findMatchedRewriteRule(file, rules)
+	if fileRule == nil {
+		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
+	}
+	rule := import_sstpb.RewriteRule{
+		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
+		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
+	}
+
+	req := &import_sstpb.ApplyRequest{
+		Name: file.Path,
+		StorageBackend: importer.backend,
+		Cf: file.Cf,
+		RewriteRule: rule,
+	}
+	log.Debug("apply kv file",  logutil.Leader(leader))
+	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
+	return resp, errors.Trace(err)
 }

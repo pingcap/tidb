@@ -363,13 +363,13 @@ func SplitRanges(
 	})
 }
 
-func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_sstpb.RewriteRule {
+func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	if startID != endID {
 		return nil
 	}
-	_, rule := rewriteRawKey(file.StartKey, rules)
+	_, rule := rewriteRawKey(file.GetStartKey(), rules)
 	return rule
 }
 
