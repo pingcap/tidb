@@ -506,6 +506,11 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1652"]
+error = '''
+Duplicate partition field name '%-.192s'
+'''
+
 ["ddl:1654"]
 error = '''
 Partition column values of incorrect type
