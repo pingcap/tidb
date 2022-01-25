@@ -2883,7 +2883,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		var extractor ShowTablesTableExtractor
 		if extractor.Extract(show) {
 			p.Extractor = &extractor
-			// avoid to build Selection.
+			// Avoid building Selection.
 			show.Pattern = nil
 		}
 	case ast.ShowTableStatus:
