@@ -63,6 +63,10 @@ func (s *testDDLSuiteToVerify) TestPlacementPolicyInUse() {
 	ctx := context.Background()
 	d, err := testNewDDLAndStart(ctx, WithStore(store))
 	require.NoError(s.T(), err)
+	defer func() {
+		err := d.Stop()
+		require.NoError(s.T(), err)
+	}()
 	sctx := testNewContext(d)
 
 	db1, err := testSchemaInfo(d, "db1")
