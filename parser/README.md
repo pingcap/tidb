@@ -44,6 +44,7 @@ found you are one of the users but not listed here:
 - [XiaoMi/Gaea](https://github.com/XiaoMi/Gaea)
 - [sql-machine-learning/sqlflow](https://github.com/sql-machine-learning/sqlflow)
 - [nooncall/shazam](https://github.com/nooncall/shazam)
+- [bytebase/bytebase](https://github.com/bytebase/bytebase)
 
 ## Contributing
 

@@ -19,7 +19,6 @@ import (
 	"context"
 	"io"
 	"math"
-	"sort"
 	"sync"
 
 	"github.com/cockroachdb/pebble"
@@ -89,27 +88,6 @@ func (indexHandles *pendingIndexHandles) append(
 	indexHandles.rawHandles = append(indexHandles.rawHandles, rawHandle)
 }
 
-// appendAt pushes `other[i]` to the end of indexHandles.
-func (indexHandles *pendingIndexHandles) appendAt(
-	other *pendingIndexHandles,
-	i int,
-) {
-	indexHandles.append(
-		other.dataConflictInfos[i],
-		other.indexNames[i],
-		other.handles[i],
-		other.rawHandles[i],
-	)
-}
-
-// extends concatenates `other` to the end of indexHandles.
-func (indexHandles *pendingIndexHandles) extend(other *pendingIndexHandles) {
-	indexHandles.dataConflictInfos = append(indexHandles.dataConflictInfos, other.dataConflictInfos...)
-	indexHandles.indexNames = append(indexHandles.indexNames, other.indexNames...)
-	indexHandles.handles = append(indexHandles.handles, other.handles...)
-	indexHandles.rawHandles = append(indexHandles.rawHandles, other.rawHandles...)
-}
-
 // truncate resets all arrays in indexHandles to length zero, but keeping the allocated capacity.
 func (indexHandles *pendingIndexHandles) truncate() {
 	indexHandles.dataConflictInfos = indexHandles.dataConflictInfos[:0]
@@ -134,14 +112,6 @@ func (indexHandles *pendingIndexHandles) Swap(i, j int) {
 	indexHandles.indexNames[i], indexHandles.indexNames[j] = indexHandles.indexNames[j], indexHandles.indexNames[i]
 	indexHandles.dataConflictInfos[i], indexHandles.dataConflictInfos[j] = indexHandles.dataConflictInfos[j], indexHandles.dataConflictInfos[i]
 	indexHandles.rawHandles[i], indexHandles.rawHandles[j] = indexHandles.rawHandles[j], indexHandles.rawHandles[i]
-}
-
-// searchSortedRawHandle looks up for the index i such that `rawHandles[i] == rawHandle`.
-// This function assumes indexHandles is already sorted, and rawHandle does exist in it.
-func (indexHandles *pendingIndexHandles) searchSortedRawHandle(rawHandle []byte) int {
-	return sort.Search(indexHandles.Len(), func(i int) bool {
-		return bytes.Compare(indexHandles.rawHandles[i], rawHandle) >= 0
-	})
 }
 
 type pendingKeyRange tidbkv.KeyRange
@@ -572,11 +542,11 @@ type dupTask struct {
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
-	var tasks []dupTask
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tasks := make([]dupTask, 0, len(keyRanges))
 	for _, kr := range keyRanges {
 		tableID := tablecodec.DecodeTableID(kr.StartKey)
 		tasks = append(tasks, dupTask{
@@ -616,7 +586,7 @@ func (m *DuplicateManager) splitLocalDupTaskByKeys(
 		return nil, errors.Trace(err)
 	}
 	ranges := splitRangeBySizeProps(Range{start: task.StartKey, end: task.EndKey}, sizeProps, sizeLimit, keysLimit)
-	var newDupTasks []dupTask
+	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
 			KeyRange: tidbkv.KeyRange{

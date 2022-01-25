@@ -89,6 +89,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
+	b.curClause = fieldList
 	rewriter := b.getExpressionRewriter(ctx, mockPlan)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
 	// not nil means certain previous procedure has not handled this error.
@@ -1743,9 +1744,14 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll)
-	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll)
-	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll)
+	// Handle enum or set. We need to know their real type to decide whether to cast them.
+	lt := expression.GetAccurateCmpType(expr, lexp)
+	rt := expression.GetAccurateCmpType(expr, rexp)
+	enumOrSetRealTypeIsStr := lt != types.ETInt && rt != types.ETInt
+
+	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll, enumOrSetRealTypeIsStr)
+	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll, enumOrSetRealTypeIsStr)
+	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
 	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
@@ -2008,15 +2014,14 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
 	var val *expression.Constant
 	switch {
-	case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
-		// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
-		val = expression.NewNull()
-	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
-		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
+	case isCurrentTimestamp && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, int8(col.Decimal))
+		if err != nil {
+			return
+		}
 		val = &expression.Constant{
-			Value:   types.NewDatum(zero),
-			RetType: types.NewFieldType(mysql.TypeTimestamp),
+			Value:   t,
+			RetType: types.NewFieldType(col.Tp),
 		}
 	default:
 		// for other columns, just use what it is

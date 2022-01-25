@@ -2479,6 +2479,23 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 		"3 3 3 2 4 3 5"))
 }
 
+func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int,c varchar(11))")
+	tk.MustExec("insert into t(id,c) values (1,'abc')")
+	rows := [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "left(test.t.c, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+}
+
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2947,8 +2964,11 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
 	tk.MustExec("insert into tt(x) values (1)")
 	tk.MustExec("update tt set x=2, z = default")
+	tk.MustExec("update tt set x=2, z = default(z)")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
 
+	tk.MustGetErrMsg("update tt set x=2, z = default(x)",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt set z = 123",
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt as ss set z = 123",
@@ -5219,26 +5239,55 @@ func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
 	testKit.MustExec("insert into t1 value(1,1,1)")
 	testKit.MustExec("analyze table t1")
 
-	testKit.MustQuery("explain select * from t1 where a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
-		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
-		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where null or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
-		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where a=1 or false or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
-		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
-		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
-		"[└─Selection_6 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
-	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
-		"[└─Selection_6 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))]\n" +
-		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where null or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or false or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustExec("drop table if exists t1")
+}
+
+func (s *testIntegrationSuite) TestIssue31202(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31202(a int primary key, b int);")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+	tk.MustExec("drop table if exists t31202")
 }
