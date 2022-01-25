@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -7674,7 +7675,7 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testDBSuite2) TestCreateTables(c *C) {
+func (s *testDBSuite2) TestBatchCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
@@ -7710,6 +7711,33 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	infos[1].Name = model.NewCIStr("tables_1")
 	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
 	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
+
+	newinfo := &model.TableInfo{
+		Name: model.NewCIStr("tables_4"),
+	}
+	{
+		colNum := 2
+		cols := make([]*model.ColumnInfo, colNum)
+		viewCols := make([]model.CIStr, colNum)
+		var stmtBuffer bytes.Buffer
+		stmtBuffer.WriteString("SELECT ")
+		for i := range cols {
+			col := &model.ColumnInfo{
+				Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+				Offset: i,
+				State:  model.StatePublic,
+			}
+			cols[i] = col
+			viewCols[i] = col.Name
+			stmtBuffer.WriteString(cols[i].Name.L + ",")
+		}
+		stmtBuffer.WriteString("1 FROM t")
+		newinfo.Columns = cols
+		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
+	}
+
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
+	c.Check(err, IsNil)
 }
 
 func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
