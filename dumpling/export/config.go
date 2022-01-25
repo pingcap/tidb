@@ -550,7 +550,8 @@ func GetConfTables(conf *Config, tablesList []string) (DatabaseTables, error) {
 			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", name)
 		}
 		schema = parts[0]
-		dbTables[schema] = append(dbTables[schema], &TableInfo{name, avgRowLength, tableType})
+		tbname := parts[1]
+		dbTables[schema] = append(dbTables[schema], &TableInfo{tbname, avgRowLength, tableType})
 	}
 	return dbTables, nil
 }

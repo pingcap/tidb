@@ -19,9 +19,9 @@ run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (1), (2);"
 # Test for specifying --tables-list with non-existing tables, should report an error
 set +e
 rm -rf "$DUMPLING_TEST_DIR"
-run_dumpling --tables-list "$DB_NAME1.$TABLE_NAME1" -L ${DUMPLING_TEST_DIR}/dumpling.log
+run_dumpling --consistency=lock --tables-list "$DB_NAME.$TABLE_NAME1" -L ${DUMPLING_TEST_DIR}/dumpling.log
 set -e
 
-actual=$(grep -w "Error 1046: No database selected" ${DUMPLING_TEST_DIR}/dumpling.log|wc -l)
+actual=$(grep -w "Error 1146: Table 'non_exist_tables.tb2' doesn't exist" ${DUMPLING_TEST_DIR}/dumpling.log|wc -l)
 echo "expected 1 return error when specifying --tables-list with non-existing tables, actual ${actual}"
 [ $actual = 1 ]
