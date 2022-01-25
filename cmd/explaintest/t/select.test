@@ -244,3 +244,8 @@ insert into precise_types values (
     18446744073709551614
 );
 SELECT a, b, c, d FROM precise_types;
+
+create table t3(a char(10), primary key (a));
+insert into t3 values ('a');
+--error ER_CANNOT_CONVERT_STRING
+select * from t3 where a > 0x80;

@@ -28,8 +28,6 @@ import (
 )
 
 func TestList(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 	}
@@ -85,8 +83,6 @@ func TestList(t *testing.T) {
 }
 
 func TestListMemoryUsage(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})

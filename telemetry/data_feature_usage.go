@@ -36,6 +36,7 @@ type featureUsage struct {
 	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
 	TemporaryTable bool               `json:"temporaryTable"`
 	CTE            *m.CTEUsageCounter `json:"cte"`
+	CachedTable    bool               `json:"cachedTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -49,11 +50,13 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	txnUsage := getTxnUsageInfo(ctx)
 
 	// Avoid the circle dependency.
-	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
+	temporaryTable := ctx.(TemporaryOrCacheTableFeatureChecker).TemporaryTableExists()
 
 	cteUsage := getCTEUsageInfo()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
+	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
+
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -74,16 +77,12 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
-	stmt, err := exec.ParseWithParams(context.TODO(), `
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
 		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
 		ORDER BY table_name_hash
 		limit 10000`)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -138,10 +137,11 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	return &usage, nil
 }
 
-// TemporaryTableFeatureChecker is defined to avoid package circle dependency.
+// TemporaryOrCacheTableFeatureChecker is defined to avoid package circle dependency.
 // The session struct implements this interface.
-type TemporaryTableFeatureChecker interface {
+type TemporaryOrCacheTableFeatureChecker interface {
 	TemporaryTableExists() bool
+	CachedTableExists() bool
 }
 
 // TxnUsage records the usage info of transaction related features, including

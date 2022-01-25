@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -33,14 +34,23 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Builder builds a new InfoSchema.
 type Builder struct {
 	is *infoSchema
+	// dbInfos do not need to be copied everytime applying a diff, instead,
+	// they can be copied only once over the whole lifespan of Builder.
+	// This map will indicate which DB has been copied, so that they
+	// don't need to be copied again.
+	dirtyDB map[string]bool
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
 	store kv.Storage
+	// TODO: renewLeaseCh is only used to pass data between table and domain
+	renewLeaseCh chan func()
+	factory      func() (pools.Resource, error)
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -62,13 +72,124 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropPolicy(diff.SchemaID), nil
 	case model.ActionAlterPlacementPolicy:
 		return b.applyAlterPolicy(m, diff)
+	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
+		return b.applyTruncateTableOrPartition(m, diff)
+	case model.ActionDropTable, model.ActionDropTablePartition:
+		return b.applyDropTableOrParition(m, diff)
+	case model.ActionRecoverTable:
+		return b.applyRecoverTable(m, diff)
+	case model.ActionCreateTables:
+		return b.applyCreateTables(m, diff)
+	default:
+		return b.applyDefaultAction(m, diff)
 	}
+}
+
+func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        model.ActionCreateTable,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		if diff.Type == model.ActionTruncateTablePartition {
+			// Reduce the impact on DML when executing partition DDL. eg.
+			// While session 1 performs the DML operation associated with partition 1,
+			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
+			tblIDs = append(tblIDs, opt.OldTableID)
+		}
+		b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+		err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		var err error
+		affectedDiff := &model.SchemaDiff{
+			Version:     diff.Version,
+			Type:        diff.Type,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+	}
+
+	return tblIDs, nil
+}
+
+func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
 	var oldTableID, newTableID int64
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
@@ -104,14 +225,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
-	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs := make([]int64, 0, 2)
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
 			diff.Type != model.ActionExchangeTablePartition &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
@@ -132,7 +252,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
 			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
 		} else {
 			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
@@ -149,63 +269,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-	}
-	if diff.AffectedOpts != nil {
-		for _, opt := range diff.AffectedOpts {
-			switch diff.Type {
-			case model.ActionAlterTableAlterPartition:
-				partitionID := opt.TableID
-				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
-			case model.ActionTruncateTablePartition:
-				// Reduce the impact on DML when executing partition DDL. eg.
-				// While session 1 performs the DML operation associated with partition 1,
-				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
-				tblIDs = append(tblIDs, opt.OldTableID)
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			case model.ActionDropTable, model.ActionDropTablePartition:
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				continue
-			case model.ActionTruncateTable:
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			case model.ActionRecoverTable:
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			}
-			var err error
-			affectedDiff := &model.SchemaDiff{
-				Version:     diff.Version,
-				Type:        diff.Type,
-				SchemaID:    opt.SchemaID,
-				TableID:     opt.TableID,
-				OldSchemaID: opt.OldSchemaID,
-				OldTableID:  opt.OldTableID,
-			}
-			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tblIDs = append(tblIDs, affectedIDs...)
-		}
-	} else {
-		switch diff.Type {
-		case model.ActionAlterTableAlterPartition:
-			// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
-			return []int64{}, nil
 		}
 	}
 	return tblIDs, nil
@@ -311,7 +374,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -328,9 +391,8 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
-	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
 }
 
@@ -448,7 +510,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo)
+	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -582,20 +644,25 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	}
 }
 
-// copySchemaTables creates a new schemaTables instance when a table in the database has changed.
+// getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
-// Note: please make sure the dbName is in lowercase.
-func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
-	oldSchemaTables := b.is.schemaMap[dbName]
-	newSchemaTables := &schemaTables{
-		dbInfo: oldSchemaTables.dbInfo.Copy(),
-		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
+// And it will only copy the changed database once in the lifespan of the Builder.
+// NOTE: please make sure the dbName is in lowercase.
+func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
+	if !b.dirtyDB[dbName] {
+		b.dirtyDB[dbName] = true
+		oldSchemaTables := b.is.schemaMap[dbName]
+		newSchemaTables := &schemaTables{
+			dbInfo: oldSchemaTables.dbInfo.Copy(),
+			tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
+		}
+		for k, v := range oldSchemaTables.tables {
+			newSchemaTables.tables[k] = v
+		}
+		b.is.schemaMap[dbName] = newSchemaTables
+		return newSchemaTables.dbInfo
 	}
-	for k, v := range oldSchemaTables.tables {
-		newSchemaTables.tables[k] = v
-	}
-	b.is.schemaMap[dbName] = newSchemaTables
-	return newSchemaTables.dbInfo
+	return b.is.schemaMap[dbName].dbInfo
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
@@ -611,7 +678,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -630,6 +697,26 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 		sort.Sort(v)
 	}
 	return b, nil
+}
+
+func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	ret, err := tables.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if t, ok := ret.(table.CachedTable); ok {
+		var tmp pools.Resource
+		tmp, err = b.factory()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		err = t.Init(b.renewLeaseCh, tmp.(sqlexec.SQLExecutor))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ret, nil
 }
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
@@ -668,7 +755,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage) *Builder {
+func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -677,6 +764,9 @@ func NewBuilder(store kv.Storage) *Builder {
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
+		dirtyDB:      make(map[string]bool),
+		renewLeaseCh: renewCh,
+		factory:      factory,
 	}
 }
 

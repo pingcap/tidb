@@ -20,12 +20,23 @@ check_cluster_version 4 0 0 'local backend' || exit 0
 
 ENGINE_COUNT=6
 
-# First, verify that inject with not leader error is fine.
-rm -f "$TEST_DIR/lightning-local.log"
+# Test check table contains data
 rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
+rm -rf $TEST_DIR/lightning.log
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=1*return("notleader")'
+run_sql 'CREATE DATABASE cpeng;'
+run_sql 'CREATE TABLE cpeng.a (c int);'
+run_sql 'CREATE TABLE cpeng.b (c int);'
+run_sql "INSERT INTO cpeng.a values (1), (2);"
+run_sql "INSERT INTO cpeng.b values (3);"
+! run_lightning --backend local --enable-checkpoint=0
+grep -Fq 'table(s) [`cpeng`.`a`, `cpeng`.`b`] are not empty' $TEST_DIR/lightning.log
 
+
+# First, verify that inject with not leader error is fine.
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=1*return("notleader")'
+rm -f "$TEST_DIR/lightning-local.log"
+run_sql 'DROP DATABASE IF EXISTS cpeng;'
 run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml"
 
 # Check that everything is correctly imported

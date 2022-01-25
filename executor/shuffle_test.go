@@ -15,20 +15,17 @@
 package executor
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testPartitionSuite{})
-
-type testPartitionSuite struct {
-}
-
-func (s *testPartitionSuite) TestPartitionRangeSplitter(c *C) {
+func TestPartitionRangeSplitter(t *testing.T) {
 	ctx := mock.NewContext()
 	concurrency := 2
 
@@ -60,9 +57,9 @@ func (s *testPartitionSuite) TestPartitionRangeSplitter(c *C) {
 
 	splitter := buildPartitionRangeSplitter(ctx, concurrency, byItems)
 	obtained, err := splitter.split(ctx, input, obtained)
-	c.Assert(err, IsNil)
-	c.Assert(len(obtained), Equals, len(expected))
+	require.NoError(t, err)
+	require.Len(t, obtained, len(expected))
 	for i := 0; i < len(obtained); i++ {
-		c.Assert(obtained[i], Equals, expected[i])
+		require.Equal(t, expected[i], obtained[i])
 	}
 }

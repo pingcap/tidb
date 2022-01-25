@@ -21,12 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
-
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -151,12 +150,10 @@ func compareForTest(a, b interface{}) (int, error) {
 	sc.IgnoreTruncate = true
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
-	return aDatum.CompareDatum(sc, &bDatum)
+	return aDatum.Compare(sc, &bDatum, collate.GetBinaryCollator())
 }
 
 func TestCompareDatum(t *testing.T) {
-	t.Parallel()
-
 	cmpTbl := []struct {
 		lhs Datum
 		rhs Datum
@@ -174,19 +171,17 @@ func TestCompareDatum(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for i, tt := range cmpTbl {
-		ret, err := tt.lhs.CompareDatum(sc, &tt.rhs)
+		ret, err := tt.lhs.Compare(sc, &tt.rhs, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 
-		ret, err = tt.rhs.CompareDatum(sc, &tt.lhs)
+		ret, err = tt.rhs.Compare(sc, &tt.lhs, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, -tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 	}
 }
 
 func TestVecCompareIntAndUint(t *testing.T) {
-	t.Parallel()
-
 	cmpTblUU := []struct {
 		lhs []uint64
 		rhs []uint64

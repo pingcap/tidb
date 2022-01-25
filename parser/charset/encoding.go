@@ -13,215 +13,137 @@
 
 package charset
 
-import (
-	"bytes"
-	"fmt"
-	"reflect"
-	"strings"
-	"unicode"
-	"unsafe"
+import "bytes"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/transform"
+// Make sure all of them implement Encoding interface.
+var (
+	_ Encoding = &encodingUTF8{}
+	_ Encoding = &encodingUTF8MB3Strict{}
+	_ Encoding = &encodingASCII{}
+	_ Encoding = &encodingLatin1{}
+	_ Encoding = &encodingBin{}
+	_ Encoding = &encodingGBK{}
 )
 
-const encodingLegacy = "utf-8" // utf-8 encoding is compatible with old default behavior.
-
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
-
-type EncodingLabel string
-
-// Format trim and change the label to lowercase.
-func Format(label string) EncodingLabel {
-	return EncodingLabel(strings.ToLower(strings.Trim(label, "\t\n\r\f ")))
+// IsSupportedEncoding checks if the charset is fully supported.
+func IsSupportedEncoding(charset string) bool {
+	_, ok := encodingMap[charset]
+	return ok
 }
 
-// Formatted is used when the label is already trimmed and it is lowercase.
-func Formatted(label string) EncodingLabel {
-	return EncodingLabel(label)
-}
-
-// Encoding provide a interface to encode/decode a string with specific encoding.
-type Encoding struct {
-	enc         encoding.Encoding
-	name        string
-	charLength  func([]byte) int
-	specialCase unicode.SpecialCase
-}
-
-// enabled indicates whether the non-utf8 encoding is used.
-func (e *Encoding) enabled() bool {
-	return e.enc != nil && e.charLength != nil
-}
-
-// Name returns the name of the current encoding.
-func (e *Encoding) Name() string {
-	return e.name
-}
-
-// NewEncoding creates a new Encoding.
-func NewEncoding(label string) *Encoding {
-	if len(label) == 0 {
-		return &Encoding{}
+// FindEncodingTakeUTF8AsNoop finds the encoding according to the charset
+// except that utf-8 is treated as no-operation encoding. This is used to
+// reduce the overhead of utf-8 validation in some cases.
+func FindEncodingTakeUTF8AsNoop(charset string) Encoding {
+	enc := FindEncoding(charset)
+	if enc.Tp() == EncodingTpUTF8 {
+		return EncodingBinImpl
 	}
-	e, name := Lookup(label)
-	if e != nil && name != encodingLegacy {
-		return &Encoding{
-			enc:         e,
-			name:        name,
-			charLength:  FindNextCharacterLength(name),
-			specialCase: LookupSpecialCase(name),
+	return enc
+}
+
+// FindEncoding finds the encoding according to charset.
+func FindEncoding(charset string) Encoding {
+	if len(charset) == 0 {
+		return EncodingBinImpl
+	}
+	if e, exist := encodingMap[charset]; exist {
+		return e
+	}
+	return EncodingBinImpl
+}
+
+var encodingMap = map[string]Encoding{
+	CharsetUTF8MB4: EncodingUTF8Impl,
+	CharsetUTF8:    EncodingUTF8Impl,
+	CharsetGBK:     EncodingGBKImpl,
+	CharsetLatin1:  EncodingLatin1Impl,
+	CharsetBin:     EncodingBinImpl,
+	CharsetASCII:   EncodingASCIIImpl,
+}
+
+// Encoding provide encode/decode functions for a string with a specific charset.
+type Encoding interface {
+	// Name is the name of the encoding.
+	Name() string
+	// Tp is the type of the encoding.
+	Tp() EncodingTp
+	// Peek returns the next char.
+	Peek(src []byte) []byte
+	// MbLen returns multiple byte length, if the next character is single byte, return 0.
+	MbLen(string) int
+	// IsValid checks whether the utf-8 bytes can be convert to valid string in current encoding.
+	IsValid(src []byte) bool
+	// Foreach iterates the characters in in current encoding.
+	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
+	// Transform map the bytes in src to dest according to Op.
+	// **the caller should initialize the dest if it wants to avoid memory alloc every time, or else it will always make a new one**
+	// **the returned array may be the alias of `src`, edit the returned array on your own risk**
+	Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error)
+	// ToUpper change a string to uppercase.
+	ToUpper(src string) string
+	// ToLower change a string to lowercase.
+	ToLower(src string) string
+}
+
+type EncodingTp int8
+
+const (
+	EncodingTpNone EncodingTp = iota
+	EncodingTpUTF8
+	EncodingTpUTF8MB3Strict
+	EncodingTpASCII
+	EncodingTpLatin1
+	EncodingTpBin
+	EncodingTpGBK
+)
+
+// Op is used by Encoding.Transform.
+type Op int16
+
+const (
+	opFromUTF8 Op = 1 << iota
+	opToUTF8
+	opTruncateTrim
+	opTruncateReplace
+	opCollectFrom
+	opCollectTo
+	opSkipError
+)
+
+const (
+	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
+	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
+	OpEncodeNoErr   = OpEncode | opSkipError
+	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
+	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeNoErr   = OpDecode | opSkipError
+	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
+)
+
+// CountValidBytes counts the first valid bytes in src that
+// can be encoded to the current encoding.
+func CountValidBytes(e Encoding, src []byte) int {
+	nSrc := 0
+	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
+		if ok {
+			nSrc += len(from)
 		}
-	}
-	return &Encoding{name: name}
+		return ok
+	})
+	return nSrc
 }
 
-// UpdateEncoding updates to a new Encoding.
-func (e *Encoding) UpdateEncoding(label EncodingLabel) {
-	enc, name := lookup(label)
-	e.name = name
-	if enc != nil && name != encodingLegacy {
-		e.enc = enc
-		e.charLength = FindNextCharacterLength(name)
-	} else {
-		e.enc = nil
-		e.charLength = nil
-	}
-	e.specialCase = LookupSpecialCase(e.name)
-}
-
-// Encode convert bytes from utf-8 charset to a specific charset.
-func (e *Encoding) Encode(dest, src []byte) ([]byte, error) {
-	if !e.enabled() {
-		return src, nil
-	}
-	return e.transform(e.enc.NewEncoder(), dest, src, false)
-}
-
-// EncodeString convert a string from utf-8 charset to a specific charset.
-func (e *Encoding) EncodeString(src string) (string, error) {
-	if !e.enabled() {
-		return src, nil
-	}
-	bs, err := e.transform(e.enc.NewEncoder(), nil, Slice(src), false)
-	return string(bs), err
-}
-
-// EncodeInternal convert bytes from utf-8 charset to a specific charset, we actually do not do the real convert, just find the inconvertible character and use ? replace.
-// The code below is equivalent to
-//		expr, _ := e.Encode(dest, src)
-//		ret, _ := e.Decode(nil, expr)
-//		return ret
-func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
-	if !e.enabled() {
-		return src
-	}
-	if dest == nil {
-		dest = make([]byte, 0, len(src))
-	}
-	var srcOffset int
-
-	var buf [4]byte
-	transformer := e.enc.NewEncoder()
-	for srcOffset < len(src) {
-		length := characterLengthUTF8(src[srcOffset:])
-		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
-		if err != nil {
-			dest = append(dest, byte('?'))
-		} else {
-			dest = append(dest, src[srcOffset:srcOffset+length]...)
+// CountValidBytesDecode counts the first valid bytes in src that
+// can be decoded to utf-8.
+func CountValidBytesDecode(e Encoding, src []byte) int {
+	nSrc := 0
+	e.Foreach(src, opToUTF8, func(from, to []byte, ok bool) bool {
+		if ok {
+			nSrc += len(from)
 		}
-		srcOffset += length
-	}
-
-	return dest
-}
-
-// Decode convert bytes from a specific charset to utf-8 charset.
-func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
-	if !e.enabled() {
-		return src, nil
-	}
-	return e.transform(e.enc.NewDecoder(), dest, src, true)
-}
-
-// DecodeString convert a string from a specific charset to utf-8 charset.
-func (e *Encoding) DecodeString(src string) (string, error) {
-	if !e.enabled() {
-		return src, nil
-	}
-	bs, err := e.transform(e.enc.NewDecoder(), nil, Slice(src), true)
-	return string(bs), err
-}
-
-func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
-	if len(dest) < len(src) {
-		dest = make([]byte, len(src)*2)
-	}
-	var destOffset, srcOffset int
-	var encodingErr error
-	for {
-		srcNextLen := e.nextCharLenInSrc(src[srcOffset:], isDecoding)
-		srcEnd := mathutil.Min(srcOffset+srcNextLen, len(src))
-		nDest, nSrc, err := transformer.Transform(dest[destOffset:], src[srcOffset:srcEnd], false)
-		if err == transform.ErrShortDst {
-			dest = enlargeCapacity(dest)
-		} else if err != nil || isDecoding && beginWithReplacementChar(dest[destOffset:destOffset+nDest]) {
-			if encodingErr == nil {
-				encodingErr = e.generateErr(src[srcOffset:], srcNextLen)
-			}
-			dest[destOffset] = byte('?')
-			nDest, nSrc = 1, srcNextLen // skip the source bytes that cannot be decoded normally.
-		}
-		destOffset += nDest
-		srcOffset += nSrc
-		// The source bytes are exhausted.
-		if srcOffset >= len(src) {
-			return dest[:destOffset], encodingErr
-		}
-	}
-}
-
-func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
-	if isDecoding {
-		if e.charLength != nil {
-			return e.charLength(srcRest)
-		}
-		return len(srcRest)
-	}
-	return characterLengthUTF8(srcRest)
-}
-
-func enlargeCapacity(dest []byte) []byte {
-	newDest := make([]byte, len(dest)*2)
-	copy(newDest, dest)
-	return newDest
-}
-
-func (e *Encoding) generateErr(srcRest []byte, srcNextLen int) error {
-	cutEnd := mathutil.Min(srcNextLen, len(srcRest))
-	invalidBytes := fmt.Sprintf("%X", string(srcRest[:cutEnd]))
-	return errInvalidCharacterString.GenWithStackByArgs(e.name, invalidBytes)
-}
-
-// replacementBytes are bytes for the replacement rune 0xfffd.
-var replacementBytes = []byte{0xEF, 0xBF, 0xBD}
-
-// beginWithReplacementChar check if dst has the prefix '0xEFBFBD'.
-func beginWithReplacementChar(dst []byte) bool {
-	return bytes.HasPrefix(dst, replacementBytes)
-}
-
-// Slice converts string to slice without copy.
-// Use at your own risk.
-func Slice(s string) (b []byte) {
-	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pBytes.Data = pString.Data
-	pBytes.Len = pString.Len
-	pBytes.Cap = pString.Len
-	return
+		return ok
+	})
+	return nSrc
 }

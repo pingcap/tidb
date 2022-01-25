@@ -30,7 +30,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -73,10 +73,22 @@ func TestStoreGlobalConfig(t *testing.T) {
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
 	require.NoError(t, err)
 
-	resp, err := cluster.RandClient().Get(context.Background(), "/global/config/enable_resource_metering")
-	require.NoError(t, err)
-	require.NotNil(t, resp, nil)
-	require.Equal(t, len(resp.Kvs), 1)
-	require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
-	require.Equal(t, resp.Kvs[0].Value, []byte("true"))
+	for i := 0; i < 20; i++ {
+		resp, err := cluster.RandClient().Get(context.Background(), "/global/config/enable_resource_metering")
+		require.NoError(t, err)
+		require.NotNil(t, resp, nil)
+
+		if len(resp.Kvs) == 0 {
+			// writing to ectd is async, so we should retry if not synced yet
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		require.Equal(t, len(resp.Kvs), 1)
+		require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
+		require.Equal(t, resp.Kvs[0].Value, []byte("true"))
+		return
+	}
+
+	require.Fail(t, "timeout for waiting etcd synced")
 }

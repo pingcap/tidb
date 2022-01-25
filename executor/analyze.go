@@ -67,9 +67,10 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks []*analyzeTask
-	wg    *sync.WaitGroup
-	opts  map[ast.AnalyzeOptionType]uint64
+	tasks      []*analyzeTask
+	wg         *sync.WaitGroup
+	opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]core.V2AnalyzeOptions
 }
 
 var (
@@ -177,6 +178,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			finishJobWithLogFn(ctx, results.Job, true)
 		} else {
 			finishJobWithLogFn(ctx, results.Job, false)
+			// Dump stats to historical storage.
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			}
 		}
 	}
 	for _, task := range e.tasks {
@@ -187,7 +192,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
+			globalOpts := e.opts
+			if e.OptionsMap != nil {
+				if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
+					globalOpts = v2Options.FilledOpts
+				}
+			}
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -203,10 +214,82 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
+				// Dump stats to historical storage.
+				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+				}
 			}
 		}
 	}
+	err = e.saveAnalyzeOptsV2()
+	if err != nil {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+}
+
+func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+		return nil
+	}
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	idx := 0
+	for _, opts := range e.OptionsMap {
+		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
+		sampleRate := float64(0)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
+			sampleRate = math.Float64frombits(val)
+		}
+		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
+		topn := int64(-1)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
+			topn = int64(val)
+		}
+		colChoice := opts.ColChoice.String()
+		colIDs := make([]string, len(opts.ColumnList))
+		for i, colInfo := range opts.ColumnList {
+			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		}
+		colIDStrs := strings.Join(colIDs, ",")
+		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		if idx < len(e.OptionsMap)-1 {
+			sqlexec.MustFormatSQL(sql, ",")
+		}
+		idx += 1
+	}
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
+	if err != nil {
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+	}
+	if !historicalStatsEnabled {
+		return nil
+	}
+
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, existed := is.TableByID(tableID)
+	if !existed {
+		return errors.Errorf("cannot get table by id %d", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, existed := is.SchemaByTable(tblInfo)
+	if !existed {
+		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
+	}
+	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
+	}
+	return nil
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -389,7 +472,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
-	kvReqBuilder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(e.snapshot).
@@ -400,7 +483,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		return err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return err
 	}
@@ -750,7 +833,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
-	builder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -763,7 +846,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -1569,13 +1652,7 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
-	if err != nil {
-		return
-	}
-	var rows []chunk.Row
-	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}
@@ -1620,7 +1697,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			return
 		}
 		defer terror.Call(rs.Close)
-		chk := rs.NewChunk()
+		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return
@@ -1853,7 +1930,8 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
@@ -1874,7 +1952,8 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
 	if readReplicaType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, readReplicaType)
@@ -2048,7 +2127,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, err error) {
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
-	if RandSeed == 1 {
+	if atomic.LoadInt64(&RandSeed) == 1 {
 		atomic.StoreInt64(&e.randSeed, time.Now().UnixNano())
 	} else {
 		atomic.StoreInt64(&e.randSeed, RandSeed)
@@ -2117,7 +2196,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) *statistics.A
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
-	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}}
+	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hist, cms, fms, topN, err := idxExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
@@ -2172,7 +2251,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		maxVal = types.NewIntDatum(math.MaxInt64)
 	}
 	startPos := *colExec.oldHist.GetUpper(colExec.oldHist.Len() - 1)
-	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hists, _, _, _, _, err := colExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: colExec.job}

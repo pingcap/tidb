@@ -200,11 +200,11 @@ type AbstractBackend interface {
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error)
+	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
 
 	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error)
+	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
 
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
@@ -364,12 +364,12 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
-	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName)
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName, opts)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
-	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName)
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
 }
 
 func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -426,7 +427,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	require.NoError(t, err)
 
 	var mu sync.Mutex
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	m := map[int64]struct{}{}
 	count := 10
 	errCh := make(chan error, count)
@@ -476,12 +477,11 @@ func TestConcurrentAlloc(t *testing.T) {
 		}
 	}
 	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(num int) {
-			defer wg.Done()
+		num := 1
+		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			allocIDs()
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -529,7 +529,6 @@ func TestRollbackAlloc(t *testing.T) {
 
 // TestNextStep tests generate next auto id step.
 func TestNextStep(t *testing.T) {
-	t.Parallel()
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
 	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)

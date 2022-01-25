@@ -36,7 +36,6 @@ func genColumn(tp byte, id int64) *expression.Column {
 }
 
 func TestAggFunc2Pb(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 

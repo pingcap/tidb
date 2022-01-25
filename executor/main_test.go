@@ -12,21 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package executor_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper)
+var prepareMergeSuiteData testdata.TestData
+var aggMergeSuiteData testdata.TestData
+
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
+
+	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
+	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
+	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	aggMergeSuiteData = testDataMap["agg_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -45,5 +58,19 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func fillData(tk *testkit.TestKit, table string) {
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
+
+	// insert data
+	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
+	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,11 +17,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
+
+	"github.com/pingcap/tidb/br/pkg/version"
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -45,54 +49,7 @@ const (
 	table    = "bar"
 )
 
-func TestDetectServerInfo(t *testing.T) {
-	t.Parallel()
-
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		_ = db.Close()
-	}()
-
-	mkVer := makeVersion
-	data := [][]interface{}{
-		{1, "8.0.18", ServerTypeMySQL, mkVer(8, 0, 18, "")},
-		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
-		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
-		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
-		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
-		{6, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
-	}
-	dec := func(d []interface{}) (tag int, verStr string, tp ServerType, v *semver.Version) {
-		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
-	}
-
-	for _, datum := range data {
-		tag, r, serverTp, expectVer := dec(datum)
-		comment := fmt.Sprintf("test case number: %d", tag)
-		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
-		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
-
-		verStr, err := SelectVersion(db)
-		require.NoError(t, err, comment)
-
-		info := ParseServerInfo(tcontext.Background(), verStr)
-		require.Equal(t, serverTp, info.ServerType, comment)
-		require.Equal(t, expectVer == nil, info.ServerVersion == nil, comment)
-
-		if info.ServerVersion == nil {
-			require.Nil(t, expectVer, comment)
-		} else {
-			require.True(t, info.ServerVersion.Equal(*expectVer), comment)
-		}
-
-		require.NoError(t, mock.ExpectationsWereMet(), comment)
-	}
-}
-
 func TestBuildSelectAllQuery(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -106,7 +63,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
-	mockConf.ServerInfo.ServerType = ServerTypeTiDB
+	mockConf.ServerInfo.ServerType = version.ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
 	require.NoError(t, err)
@@ -140,7 +97,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Test other servers.
-	otherServers := []ServerType{ServerTypeUnknown, ServerTypeMySQL, ServerTypeMariaDB}
+	otherServers := []version.ServerType{version.ServerTypeUnknown, version.ServerTypeMySQL, version.ServerTypeMariaDB}
 
 	// Test table with primary key.
 	for _, serverTp := range otherServers {
@@ -196,8 +153,8 @@ func TestBuildSelectAllQuery(t *testing.T) {
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
-	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp++ {
-		mockConf.ServerInfo.ServerType = ServerType(tp)
+	for tp := version.ServerTypeUnknown; tp < version.ServerTypeAll; tp++ {
+		mockConf.ServerInfo.ServerType = version.ServerType(tp)
 		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -214,8 +171,6 @@ func TestBuildSelectAllQuery(t *testing.T) {
 }
 
 func TestBuildOrderByClause(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -229,7 +184,7 @@ func TestBuildOrderByClause(t *testing.T) {
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
-	mockConf.ServerInfo.ServerType = ServerTypeTiDB
+	mockConf.ServerInfo.ServerType = version.ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
 	require.NoError(t, err)
@@ -278,8 +233,6 @@ func TestBuildOrderByClause(t *testing.T) {
 }
 
 func TestBuildSelectField(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -326,8 +279,6 @@ func TestBuildSelectField(t *testing.T) {
 }
 
 func TestParseSnapshotToTSO(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -356,8 +307,6 @@ func TestParseSnapshotToTSO(t *testing.T) {
 }
 
 func TestShowCreateView(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -382,9 +331,56 @@ func TestShowCreateView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestGetSuitableRows(t *testing.T) {
-	t.Parallel()
+func TestShowCreatePolicy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `policy_x`").
+		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
+			AddRow("policy_x", "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1"))
+
+	createPolicySQL, err := ShowCreatePlacementPolicy(conn, "policy_x")
+	require.NoError(t, err)
+	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+}
+
+func TestListPolicyNames(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
+		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
+			AddRow("policy_x"))
+	policies, err := ListAllPlacementPolicyNames(conn)
+	require.NoError(t, err)
+	require.Equal(t, []string{"policy_x"}, policies)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// some old tidb version doesn't support placement rules returns error
+	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_policies' doesn't exist"}
+	mock.ExpectExec("select distinct policy_name from information_schema.placement_policies where policy_name is not null;").
+		WillReturnError(expectedErr)
+	_, err = ListAllPlacementPolicyNames(conn)
+	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
+		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
+	}
+}
+
+func TestGetSuitableRows(t *testing.T) {
 	testCases := []struct {
 		avgRowLength uint64
 		expectedRows uint64
@@ -413,8 +409,6 @@ func TestGetSuitableRows(t *testing.T) {
 }
 
 func TestSelectTiDBRowID(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -450,8 +444,6 @@ func TestSelectTiDBRowID(t *testing.T) {
 }
 
 func TestBuildTableSampleQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -469,9 +461,9 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: tableSampleVersion,
 	}
 
@@ -769,8 +761,6 @@ func TestBuildTableSampleQueries(t *testing.T) {
 }
 
 func TestBuildPartitionClauses(t *testing.T) {
-	t.Parallel()
-
 	const (
 		dbName        = "test"
 		tbName        = "t"
@@ -829,8 +819,6 @@ func TestBuildPartitionClauses(t *testing.T) {
 }
 
 func TestBuildWhereCondition(t *testing.T) {
-	t.Parallel()
-
 	conf := DefaultConfig()
 	testCases := []struct {
 		confWhere     string
@@ -866,8 +854,6 @@ func TestBuildWhereCondition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -885,9 +871,9 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: gcSafePointVersion,
 	}
 	d.conf.Rows = 200000
@@ -1027,8 +1013,6 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 }
 
 func TestBuildRegionQueriesWithPartitions(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1046,9 +1030,9 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: gcSafePointVersion,
 	}
 	partitions := []string{"p0", "p1", "p2"}
@@ -1264,8 +1248,6 @@ func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
 }
 
 func TestBuildVersion3RegionQueries(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -1285,9 +1267,9 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	}
 
 	conf := DefaultConfig()
-	conf.ServerInfo = ServerInfo{
+	conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: decodeRegionVersion,
 	}
 	database := "test"
@@ -1540,12 +1522,240 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	}
 }
 
-func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
-	return &semver.Version{
-		Major:      major,
-		Minor:      minor,
-		Patch:      patch,
-		PreRelease: semver.PreRelease(preRelease),
-		Metadata:   "",
+func TestCheckTiDBWithTiKV(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	tidbConf := dbconfig.NewConfig()
+	stores := []string{"unistore", "mocktikv", "tikv"}
+	for _, store := range stores {
+		tidbConf.Store = store
+		tidbConfBytes, err := json.Marshal(tidbConf)
+		require.NoError(t, err)
+		mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
+			sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
+		hasTiKV, err := CheckTiDBWithTiKV(db)
+		require.NoError(t, err)
+		if store == "tikv" {
+			require.True(t, hasTiKV)
+		} else {
+			require.False(t, hasTiKV)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
 	}
+
+	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
+	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	for i, res := range expectedResults {
+		t.Logf("case #%d", i)
+		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)
+		expectedErr, ok := res.(error)
+		if ok {
+			mock.ExpectQuery("SELECT COUNT").WillReturnError(expectedErr)
+			hasTiKV, err := CheckTiDBWithTiKV(db)
+			require.ErrorIs(t, err, expectedErr)
+			require.True(t, hasTiKV)
+		} else if cnt, ok := res.(int); ok {
+			mock.ExpectQuery("SELECT COUNT").WillReturnRows(
+				sqlmock.NewRows([]string{"c"}).AddRow(cnt))
+			hasTiKV, err := CheckTiDBWithTiKV(db)
+			require.NoError(t, err)
+			require.Equal(t, cnt > 0, hasTiKV)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
+	}
+}
+
+func TestPickupPossibleField(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	meta := &mockTableIR{
+		dbName:   database,
+		tblName:  table,
+		colNames: []string{"string1", "int1", "int2", "float1", "bin1", "int3", "bool1", "int4"},
+		colTypes: []string{"VARCHAR", "INT", "BIGINT", "FLOAT", "BINARY", "MEDIUMINT", "BOOL", "TINYINT"},
+		specCmt: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
+	}
+
+	testCases := []struct {
+		expectedErr      error
+		expectedField    string
+		hasImplicitRowID bool
+		showIndexResults [][]driver.Value
+	}{
+		{
+			errors.New("show index error"),
+			"",
+			false,
+			nil,
+		}, {
+			nil,
+			"_tidb_rowid",
+			true,
+			nil,
+		}, // both primary and unique key columns are integers, use primary key first
+		{
+			nil,
+			"int1",
+			false,
+			[][]driver.Value{
+				{table, 0, "PRIMARY", 1, "int1", "A", 2, nil, nil, "", "BTREE", "", ""},
+				{table, 0, "PRIMARY", 2, "float1", "A", 2, nil, nil, "", "BTREE", "", ""},
+				{table, 0, "int2", 1, "int2", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "string1", 1, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "int3", 1, "int3", "A", 20, nil, nil, "YES", "BTREE", "", ""},
+			},
+		}, // primary key doesn't have integer at seq 1, use unique key with integer
+		{
+			nil,
+			"int2",
+			false,
+			[][]driver.Value{
+				{table, 0, "PRIMARY", 1, "float1", "A", 2, nil, nil, "", "BTREE", "", ""},
+				{table, 0, "PRIMARY", 2, "int1", "A", 2, nil, nil, "", "BTREE", "", ""},
+				{table, 0, "int2", 1, "int2", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "string1", 1, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "int3", 1, "int3", "A", 20, nil, nil, "YES", "BTREE", "", ""},
+			},
+		}, // several unique keys, use unique key who has a integer in seq 1
+		{
+			nil,
+			"int1",
+			false,
+			[][]driver.Value{
+				{table, 0, "u1", 1, "int1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 2, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 3, "bin1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 1, "float1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 2, "int2", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+			},
+		}, // several unique keys and ordinary keys, use unique key who has a integer in seq 1
+		{
+			nil,
+			"int1",
+			false,
+			[][]driver.Value{
+				{table, 0, "u1", 1, "float1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 2, "int2", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 1, "int1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 2, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 3, "bin1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "int3", 1, "int3", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+			},
+		}, // several unique keys and ordinary keys, use unique key who has less columns
+		{
+			nil,
+			"int2",
+			false,
+			[][]driver.Value{
+				{table, 0, "u1", 1, "int1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 2, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 3, "bin1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 1, "int2", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u2", 2, "string1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "int3", 1, "int3", "A", 20, nil, nil, "YES", "BTREE", "", ""},
+			},
+		}, // several unique keys and ordinary keys, use key who has max cardinality
+		{
+			nil,
+			"int2",
+			false,
+			[][]driver.Value{
+				{table, 0, "PRIMARY", 1, "string1", "A", 2, nil, nil, "", "BTREE", "", ""},
+				{table, 0, "u1", 1, "float1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 0, "u1", 2, "int3", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "i1", 1, "int1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "i2", 1, "int2", "A", 5, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "i2", 2, "bool1", "A", 2, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "i3", 1, "bin1", "A", 10, nil, nil, "YES", "BTREE", "", ""},
+				{table, 1, "i3", 2, "int4", "A", 10, nil, nil, "YES", "BTREE", "", ""},
+			},
+		},
+	}
+
+	query := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)
+	for i, testCase := range testCases {
+		t.Logf("case #%d", i)
+
+		meta.hasImplicitRowID = testCase.hasImplicitRowID
+		expectedErr := testCase.expectedErr
+		if expectedErr != nil {
+			mock.ExpectQuery(query).WillReturnError(expectedErr)
+		} else if !testCase.hasImplicitRowID {
+			rows := sqlmock.NewRows(showIndexHeaders)
+			for _, showIndexResult := range testCase.showIndexResults {
+				rows.AddRow(showIndexResult...)
+			}
+			mock.ExpectQuery(query).WillReturnRows(rows)
+		}
+
+		field, err := pickupPossibleField(meta, conn)
+		if expectedErr != nil {
+			require.ErrorIs(t, err, expectedErr)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, testCase.expectedField, field)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
+	}
+}
+
+func TestCheckIfSeqExists(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("1"))
+
+	exists, err := CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, true, exists)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("0"))
+
+	exists, err = CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, false, exists)
+}
+
+func TestGetCharsetAndDefaultCollation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW CHARACTER SET").
+		WillReturnRows(sqlmock.NewRows([]string{"Charset", "Description", "Default collation", "Maxlen"}).
+			AddRow("utf8mb4", "UTF-8 Unicode", "utf8mb4_0900_ai_ci", 4).
+			AddRow("latin1", "cp1252 West European", "latin1_swedish_ci", 1))
+
+	charsetAndDefaultCollation, err := GetCharsetAndDefaultCollation(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
+	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
 }

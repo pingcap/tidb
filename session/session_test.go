@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"runtime"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -689,6 +691,59 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+
+	// Set the global var to a non canonical form of the value
+	// i.e. implying that it was set from an earlier version of TiDB.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF")
+}
+
+func (s *testSessionSuite) TestMatchIdentity(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("CREATE USER `useridentity`@`%`")
+	tk.MustExec("CREATE USER `useridentity`@`localhost`")
+	tk.MustExec("CREATE USER `useridentity`@`192.168.1.1`")
+	tk.MustExec("CREATE USER `useridentity`@`example.com`")
+
+	// The MySQL matching rule is most specific to least specific.
+	// So if I log in from 192.168.1.1 I should match that entry always.
+	identity, err := tk.Se.MatchIdentity("useridentity", "192.168.1.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "192.168.1.1")
+
+	// If I log in from localhost, I should match localhost
+	identity, err = tk.Se.MatchIdentity("useridentity", "localhost")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// If I log in from 192.168.1.2 I should match wildcard.
+	identity, err = tk.Se.MatchIdentity("useridentity", "192.168.1.2")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "%")
+
+	identity, err = tk.Se.MatchIdentity("useridentity", "127.0.0.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// This uses the lookup of example.com to get an IP address.
+	// We then login with that IP address, but expect it to match the example.com
+	// entry in the privileges table (by reverse lookup).
+	ips, err := net.LookupHost("example.com")
+	c.Assert(err, IsNil)
+	identity, err = tk.Se.MatchIdentity("useridentity", ips[0])
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	// FIXME: we *should* match example.com instead
+	// as long as skip-name-resolve is not set (DEFAULT)
+	c.Assert(identity.Hostname, Equals, "%")
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -705,9 +760,11 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	tk.MustExec("select @@max_connections")
 	tk.MustExec("select @@global.max_connections")
 	_, err = tk.Exec("select @@session.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 	_, err = tk.Exec("select @@local.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
@@ -715,6 +772,10 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// For issue 19524, test
 	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
 	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
+
+	_, err = tk.Exec("select @@global.last_insert_id")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -1528,7 +1589,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
@@ -1702,31 +1763,24 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk3.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk1.MustExec("update t set c = 1;")
 		}
-	}
-	f2 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk2.MustExec("update t set c = ?;", 1)
 		}
-	}
-	f3 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk3.MustExec("begin")
 			tk3.MustExec("update t set c = 1;")
 			tk3.MustExec("commit")
 		}
-	}
-	go f1()
-	go f2()
-	go f3()
+	})
 	wg.Wait()
 }
 
@@ -2108,11 +2162,13 @@ func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	originalRetryTime := domain.SchemaOutOfDateRetryTimes.Load()
+	originalRetryInterval := domain.SchemaOutOfDateRetryInterval.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(3)
+	domain.SchemaOutOfDateRetryInterval.Store(20 * time.Millisecond)
 	defer func() {
-		atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTime)
+		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2156,6 +2212,22 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	tk.MustExec("insert t values (100);")
 	// Make sure insert to table t2 transaction executes.
 	tk2.MustExec("commit")
+}
+
+func (s *testSchemaSerialSuite) TestValidationRecursion(c *C) {
+	// We have to expect that validation functions will call GlobalVarsAccessor.GetGlobalSysVar().
+	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
+	// function because it might cause infinite recursion.
+	// See: https://github.com/pingcap/tidb/issues/30255
+	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
+	}}
+	variable.RegisterSysVar(&sv)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	val, err := sv.Validate(tk.Se.GetSessionVars(), "test2", variable.ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "test")
 }
 
 func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
@@ -2433,7 +2505,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	var numChunks int
 	for {
@@ -2470,7 +2542,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2504,7 +2576,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2539,7 +2611,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
@@ -2571,7 +2643,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
@@ -2591,7 +2663,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
@@ -2615,7 +2687,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2635,7 +2707,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	count = 0
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2988,7 +3060,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.PrepareTxnCtx(context.Background())
+	err = tk1.Se.PrepareTxnCtx(context.Background())
+	c.Assert(err, IsNil)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// AutoCommit update will retry, so it would not fail.
@@ -3655,6 +3728,7 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")
 	c.Assert(len(result.Rows()), Equals, 2)
 
+	timeBeforeWriting := time.Now()
 	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
@@ -3667,7 +3741,9 @@ PARTITION BY RANGE (c) (
 	result.Check(testkit.Rows("local"))
 
 	// test local txn auto commit
-	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	tk.MustExec("insert into t1 (c) values (1)")          // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c = 1") // point get dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 3)
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
@@ -3703,7 +3779,16 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	tk.MustExec("begin")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
@@ -3729,6 +3814,30 @@ PARTITION BY RANGE (c) (
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 4)
+
+	// Stale Read will ignore the cross-dc txn scope.
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows("local"))
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	// Read dc-2 with Stale Read (in dc-1 scope)
+	timestamp := timeBeforeWriting.Format(time.RFC3339Nano)
+	// TODO: check the result of Stale Read when we figure out how to make the time precision more accurate.
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c = 101", timestamp))
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
+	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
+	tk.MustExec("select * from t1 where c > 100")
+	tk.MustExec("commit")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
+	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
+	tk.MustExec("select * from t1 where c > 100")
+	tk.MustExec("commit")
+
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
@@ -3947,7 +4056,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -4293,12 +4402,10 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
-		wg.Done()
-	}()
+	})
 	time.Sleep(2 * time.Second)
 	pi := tk.Se.ShowProcess()
 	c.Assert(pi, NotNil)
@@ -4313,11 +4420,6 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	origin := se.GetSessionVars().InRestrictedSQL
-	se.GetSessionVars().InRestrictedSQL = true
-	defer func() {
-		se.GetSessionVars().InRestrictedSQL = origin
-	}()
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
@@ -5354,7 +5456,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	doModify := func() {
@@ -5393,7 +5495,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	assertSelectAsUnModified()
@@ -5718,26 +5820,28 @@ func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 0.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
 	c.Assert(err, NotNil)
-	if *withTiKV {
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = -1;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = 11;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-	} else {
-		// Because the PD client in the unit test may be nil, so we only check the warning here.
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
-	}
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -0.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")
@@ -5810,4 +5914,64 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
 			"  `cs1` int(11) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ct1, ct2")
+	tk.MustExec("create table ct1 (id int, c int)")
+	tk.MustExec("create table ct2 (id int, c int)")
+	tk.MustExec("alter table ct1 cache")
+	tk.MustExec("alter table ct2 cache")
+	tk.MustQuery("select * from ct1").Check(testkit.Rows())
+	tk.MustQuery("select * from ct2").Check(testkit.Rows())
+
+	cached := false
+	for i := 0; i < 50; i++ {
+		if tk.HasPlan("select * from ct1", "Union") {
+			if tk.HasPlan("select * from ct2", "Union") {
+				cached = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(cached, IsTrue)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into ct1 values (3, 4)")
+	tk.MustExec("insert into ct2 values (5, 6)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
+	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+}
+
+func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Set tidb_snapshot and assert tidb_read_staleness
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	_, err := tk.Exec("set @@tidb_read_staleness='-5'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_snapshot should be clear before setting tidb_read_staleness")
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+
+	// Set tidb_read_staleness and assert tidb_snapshot
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	_, err = tk.Exec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
+	tk.MustExec("set @@tidb_read_staleness = ''")
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 }

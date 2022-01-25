@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -45,7 +46,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -703,6 +706,9 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		startKey, endKey := r.Range()
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+			err = nil
+		})
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
@@ -1115,9 +1121,9 @@ retryScanAndResolve:
 			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
-		locks := make([]*txnlock.Lock, len(locksInfo))
-		for i := range locksInfo {
-			locks[i] = txnlock.NewLock(locksInfo[i])
+		locks := make([]*txnlock.Lock, 0, len(locksInfo))
+		for _, li := range locksInfo {
+			locks = append(locks, txnlock.NewLock(li))
 		}
 		if w.testingKnobs.scanLocks != nil {
 			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
@@ -1820,7 +1826,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -1885,23 +1891,40 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
-	// Get the partition ID from the job and DelRangeTask.
+	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
+	var physicalTableIDs []int64
 	switch historyJob.Type {
 	case model.ActionDropTable, model.ActionTruncateTable:
-		var physicalTableIDs []int64
 		var startKey kv.Key
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
 		}
-		// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-		for _, id := range physicalTableIDs {
-			bundles = append(bundles, placement.NewBundle(id))
+	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
+			return
 		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
-	return
+
+	if len(physicalTableIDs) == 0 {
+		return
+	}
+
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		bundles = append(bundles, placement.NewBundle(id))
+	}
+
+	for _, id := range physicalTableIDs {
+		// Delete pd rule
+		logutil.BgLogger().Info("try delete TiFlash pd rule", zap.String("endKey", string(dr.EndKey)))
+		ruleID := fmt.Sprintf("table-%v-r", id)
+		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
+			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
+			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc", zap.Error(err), zap.String("ruleID", ruleID))
+		}
+	}
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
@@ -1938,15 +1961,49 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			startKey         kv.Key
 			physicalTableIDs []int64
 			ruleIDs          []string
+			rules            map[string]*label.Rule
 		)
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
 			return
 		}
 
+		// TODO: Here we need to get rules from PD and filter the rules which is not elegant. We should find a better way.
+		rules, err = infosync.GetLabelRules(context.TODO(), ruleIDs)
+		if err != nil {
+			return
+		}
+
+		ruleIDs = getGCRules(append(physicalTableIDs, historyJob.TableID), rules)
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	}
 	return
+}
+
+func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
+	oldRange := make(map[string]struct{})
+	for _, id := range ids {
+		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id)))
+		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1)))
+		oldRange[startKey+endKey] = struct{}{}
+	}
+
+	var gcRules []string
+	for _, rule := range rules {
+		find := false
+		for _, d := range rule.Data {
+			if r, ok := d.(map[string]interface{}); ok {
+				nowRange := fmt.Sprintf("%s%s", r["start_key"], r["end_key"])
+				if _, ok := oldRange[nowRange]; ok {
+					find = true
+				}
+			}
+		}
+		if find {
+			gcRules = append(gcRules, rule.ID)
+		}
+	}
+	return gcRules
 }
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
@@ -2053,6 +2110,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
+		pdClient:    store.(tikv.Storage).GetRegionCache().PDClient(),
 	}
 	return &MockGCWorker{worker: worker}, nil
 }

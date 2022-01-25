@@ -144,7 +144,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
 	ctx := context.TODO()
-	chk := s.RecordSet.NewChunk()
+	chk := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(chk)
 	for {
 		err := s.RecordSet.Next(ctx, chk)

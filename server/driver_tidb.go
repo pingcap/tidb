@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // TiDBDriver implements IDriver.
@@ -164,7 +165,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
 				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
@@ -290,6 +291,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	return
 }
 
+// GetStmtStats implements the sessionctx.Context interface.
+func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
+	return tc.Session.GetStmtStats()
+}
+
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo
@@ -298,12 +304,8 @@ type tidbResultSet struct {
 	preparedStmt *core.CachedPrepareStmt
 }
 
-func (trs *tidbResultSet) NewChunkFromAllocator(alloc chunk.Allocator) *chunk.Chunk {
-	return trs.recordSet.NewChunkFromAllocator(alloc)
-}
-
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	return trs.recordSet.NewChunk(alloc)
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -376,9 +378,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen == types.UnspecifiedLength {
-		ci.ColumnLength = 0
-	} else {
+	if fld.Column.Flen != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {

@@ -142,6 +142,7 @@ const (
 	LblDb          = "db"
 	LblResult      = "result"
 	LblSQLType     = "sql_type"
+	LblCoprType    = "copr_type"
 	LblGeneral     = "general"
 	LblInternal    = "internal"
 	LbTxnMode      = "txn_mode"

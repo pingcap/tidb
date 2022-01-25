@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -278,6 +279,7 @@ package expression
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
@@ -328,7 +330,7 @@ func (g inGener) gen() interface{} {
 		}
 		return *j
 	case types.ETString:
-		return fmt.Sprint(randNum)
+		return strconv.FormatInt(randNum, 10)
 	}
 	return randNum
 }

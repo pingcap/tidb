@@ -44,7 +44,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog = false
+		cfg.Log.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -100,7 +100,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {

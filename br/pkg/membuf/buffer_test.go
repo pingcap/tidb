@@ -21,10 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func init() {
-	allocBufLen = 1024
-}
-
 type testAllocator struct {
 	allocs int
 	frees  int
@@ -40,10 +36,14 @@ func (t *testAllocator) Free(_ []byte) {
 }
 
 func TestBufferPool(t *testing.T) {
-	t.Parallel()
-
 	allocator := &testAllocator{}
-	pool := NewPool(2, allocator)
+	pool := NewPool(
+		WithPoolSize(2),
+		WithAllocator(allocator),
+		WithBlockSize(1024),
+		WithLargeAllocThreshold(512),
+	)
+	defer pool.Destroy()
 
 	bytesBuf := pool.NewBuffer()
 	bytesBuf.AllocBytes(256)
@@ -53,6 +53,10 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.AllocBytes(257)
 	require.Equal(t, 2, allocator.allocs)
 	bytesBuf.AllocBytes(767)
+	require.Equal(t, 2, allocator.allocs)
+
+	largeBytes := bytesBuf.AllocBytes(513)
+	require.Equal(t, 513, len(largeBytes))
 	require.Equal(t, 2, allocator.allocs)
 
 	require.Equal(t, 0, allocator.frees)
@@ -69,9 +73,9 @@ func TestBufferPool(t *testing.T) {
 }
 
 func TestBufferIsolation(t *testing.T) {
-	t.Parallel()
-
-	bytesBuf := NewBuffer()
+	pool := NewPool(WithBlockSize(1024))
+	defer pool.Destroy()
+	bytesBuf := pool.NewBuffer()
 	defer bytesBuf.Destroy()
 
 	b1 := bytesBuf.AllocBytes(16)
@@ -84,4 +88,5 @@ func TestBufferIsolation(t *testing.T) {
 	b3 := append([]byte(nil), b2...)
 	b1 = append(b1, 0, 1, 2, 3)
 	require.Equal(t, b3, b2)
+	require.NotEqual(t, b2, b1)
 }
