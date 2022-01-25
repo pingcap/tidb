@@ -52,8 +52,6 @@ type tiflashDDLTestSuite struct {
 	cluster *unistore.Cluster
 }
 
-var _ = SerialSuites(&tiflashDDLTestSuite{})
-
 const (
 	RoundToBeAvailable               = 2
 	RoundToBeAvailablePartitionTable = 3
@@ -102,10 +100,6 @@ func SetUpHelper(s *tiflashDDLTestSuite) error {
 	return nil
 }
 
-func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
-	c.Assert(SetUpHelper(s), IsNil)
-}
-
 func TearDownHelper(s *tiflashDDLTestSuite) error {
 	s.tiflash.Lock()
 	s.tiflash.StatusServer.Close()
@@ -114,10 +108,6 @@ func TearDownHelper(s *tiflashDDLTestSuite) error {
 	err := s.store.Close()
 	ddl.PollTiFlashInterval = 2 * time.Second
 	return err
-}
-
-func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
-	TearDownHelper(s)
 }
 
 func ChangeGCSafePoint(tk *testkit2.TestKit, t time.Time, enable string, lifeTime string) {
