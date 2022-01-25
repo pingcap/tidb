@@ -119,7 +119,7 @@ outside:
 		switch {
 		case err == nil:
 			return nil
-		// do not retry NotFound error or ErrNoRows
+		// do not retry NotFound error
 		case errors.IsNotFound(err):
 			break outside
 		case utils.IsRetryableError(err):
