@@ -1247,10 +1247,9 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	for i := 0; i < 12; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
 		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-<<<<<<< HEAD
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)
@@ -1263,22 +1262,6 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
 		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
 
-=======
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
-		require.NoError(t, err1)
-		require.NoError(t, err2)
-		require.NoError(t, err3)
-		require.NoError(t, err4)
-
-		require.True(t, hasNull[0])
-		require.True(t, hasNull[1])
-		require.True(t, hasNull[2])
-		require.Equal(t, rowHash[0].Sum64(), vecHash[0].Sum64())
-		require.Equal(t, rowHash[1].Sum64(), vecHash[1].Sum64())
-		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
 	}
 
 	// Test hash value of every single column that is not `Null`
@@ -1289,10 +1272,9 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
 		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-<<<<<<< HEAD
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)
@@ -1304,22 +1286,5 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
 		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
 		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
-=======
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
-
-		require.NoError(t, err1)
-		require.NoError(t, err2)
-		require.NoError(t, err3)
-		require.NoError(t, err4)
-
-		require.False(t, hasNull[0])
-		require.False(t, hasNull[1])
-		require.False(t, hasNull[2])
-		require.Equal(t, rowHash[0].Sum64(), vecHash[0].Sum64())
-		require.Equal(t, rowHash[1].Sum64(), vecHash[1].Sum64())
-		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
 	}
 }

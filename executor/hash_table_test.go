@@ -118,12 +118,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-<<<<<<< HEAD:executor/hash_table_test.go
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
-=======
 	rowContainer := newHashRowContainer(sctx, 0, hCtx, hCtx.allTypes)
-	copiedRC = rowContainer.ShallowCopy()
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375):executor/hash_table_serial_test.go
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
