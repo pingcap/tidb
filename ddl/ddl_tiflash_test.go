@@ -116,7 +116,6 @@ func TearDownHelper(s *tiflashDDLTestSuite) error {
 	return err
 }
 
-
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	TearDownHelper(s)
 }
