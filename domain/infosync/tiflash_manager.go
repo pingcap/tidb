@@ -184,6 +184,8 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 
 type mockTiFlashPlacementManager struct {
 	sync.Mutex
+	// Set to nil if there is no need to set up a mock TiFlash server.
+	// Otherwise use NewMockTiFlash to create one.
 	tiflash *MockTiFlash
 }
 
@@ -241,6 +243,7 @@ func (m *mockTiFlashTableInfo) String() string {
 
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
+	sync.Mutex
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
@@ -250,7 +253,9 @@ type MockTiFlash struct {
 	StartTime                   time.Time
 }
 
-func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() (*httptest.Server, string) {
+func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	// mock TiFlash http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
@@ -259,6 +264,8 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() (*httptest.Server, stri
 	statusAddrVec := strings.Split(statusAddr, ":")
 	statusPort, _ := strconv.Atoi(statusAddrVec[1])
 	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
+		tiflash.Lock()
+		defer tiflash.Unlock()
 		params := mux.Vars(req)
 		tableID, err := strconv.Atoi(params["tableid"])
 		if err != nil {
@@ -276,11 +283,14 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() (*httptest.Server, stri
 		_, _ = w.Write([]byte(table.String()))
 	})
 	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
+		tiflash.Lock()
+		defer tiflash.Unlock()
 		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(s))
 	})
-	return server, statusAddr
+	tiflash.StatusServer = server
+	tiflash.StatusAddr = statusAddr
 }
 
 // NewMockTiFlash creates a MockTiFlash with a mocked TiFlash server.
@@ -294,14 +304,14 @@ func NewMockTiFlash() *MockTiFlash {
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
 	}
-	server, addr := tiflash.setUpMockTiFlashHTTPServer()
-	tiflash.StatusAddr = addr
-	tiflash.StatusServer = server
+	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
 }
 
 // HandleSetPlacementRule is mock function for SetTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	if !tiflash.PdEnabled {
 		return errors.New("pd server is manually disabled, just quit")
 	}
@@ -339,11 +349,15 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 
 // HandleDeletePlacementRule is mock function for DeleteTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleDeletePlacementRule(group string, ruleID string) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
 }
 
 // HandleGetGroupRules is mock function for GetTiFlashGroupRules.
 func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFlashRule, error) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	var result = make([]placement.TiFlashRule, 0)
 	for _, item := range tiflash.GlobalTiFlashPlacementRules {
 		result = append(result, item)
@@ -351,8 +365,10 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFla
 	return result, nil
 }
 
-// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule.
+// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
 	table, ok := tiflash.SyncStatus[int(tableID)]
@@ -384,6 +400,8 @@ func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegio
 // HandleGetStoresStat is mock function for GetStoresStat.
 // It returns address of our mocked TiFlash server.
 func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
+	tiflash.Lock()
+	defer tiflash.Unlock()
 	return &helper.StoresStat{
 		Count: 1,
 		Stores: []helper.StoreStat{
@@ -407,6 +425,98 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
+// Compare supposed rule, and we actually get from TableInfo
+func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
+	// Compute startKey
+	if rule.StartKeyHex == startKey && rule.EndKeyHex == endKey {
+		ok := false
+		for _, c := range rule.Constraints {
+			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+
+		if len(rule.LocationLabels) == len(labels) {
+			for i, lb := range labels {
+				if lb != rule.LocationLabels[i] {
+					return false
+				}
+			}
+		} else {
+			return false
+		}
+
+		if rule.Count != count {
+			return false
+		}
+		if rule.Role != placement.Learner {
+			return false
+		}
+	} else {
+		return false
+	}
+	return true
+}
+
+// CheckPlacementRule find if a given rule precisely matches already set rules.
+func (tiflash *MockTiFlash) CheckPlacementRule(rule placement.TiFlashRule) bool {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	for _, r := range tiflash.GlobalTiFlashPlacementRules {
+		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPlacementRule find a rule by name.
+func (tiflash *MockTiFlash) GetPlacementRule(ruleName string) (*placement.TiFlashRule, bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	if r, ok := tiflash.GlobalTiFlashPlacementRules[ruleName]; ok {
+		p := r
+		return &p, ok
+	}
+	return nil, false
+}
+
+// CleanPlacementRules cleans all placement rules.
+func (tiflash *MockTiFlash) CleanPlacementRules() {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.GlobalTiFlashPlacementRules = make(map[string]placement.TiFlashRule)
+}
+
+// PlacementRulesLen gets length of all currently set placement rules.
+func (tiflash *MockTiFlash) PlacementRulesLen() int {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	return len(tiflash.GlobalTiFlashPlacementRules)
+}
+
+// GetTableSyncStatus returns table sync status by given tableID.
+func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableInfo, bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	if r, ok := tiflash.SyncStatus[tableID]; ok {
+		p := r
+		return &p, ok
+	}
+	return nil, false
+}
+
+// PdSwitch controls if pd is enabled.
+func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.PdEnabled = enabled
+}
+
 // SetPlacementRule is a helper function to set placement rule.
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()
@@ -424,6 +534,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	if m.tiflash == nil {
 		return errors.New("MockTiFlash is not accessible")
 	}
+	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }
@@ -475,6 +586,9 @@ func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helpe
 func (m *mockTiFlashPlacementManager) Close(ctx context.Context) {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return
+	}
 	if m.tiflash.StatusServer != nil {
 		m.tiflash.StatusServer.Close()
 	}

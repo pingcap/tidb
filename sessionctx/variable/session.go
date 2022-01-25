@@ -747,9 +747,6 @@ type SessionVars struct {
 	//   ignore: Ignore all placement settings in ddl operations
 	PlacementMode string
 
-	// EnableDirectPlacement is used to control whether the direct placement should be enabled
-	EnableDirectPlacement bool
-
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -1649,20 +1646,6 @@ func (s *SessionVars) GetReadableTxnMode() string {
 		txnMode = ast.Optimistic
 	}
 	return txnMode
-}
-
-func (s *SessionVars) setTxnMode(val string) error {
-	switch strings.ToUpper(val) {
-	case ast.Pessimistic:
-		s.TxnMode = ast.Pessimistic
-	case ast.Optimistic:
-		s.TxnMode = ast.Optimistic
-	case "":
-		s.TxnMode = ""
-	default:
-		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
-	}
-	return nil
 }
 
 // SetPrevStmtDigest sets the digest of the previous statement.

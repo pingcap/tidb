@@ -179,6 +179,8 @@ var (
 	ErrDropPartitionNonExistent = dbterror.ClassDDL.NewStd(mysql.ErrDropPartitionNonExistent)
 	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartition)
+	// ErrSameNamePartitionField returns duplicate partition field.
+	ErrSameNamePartitionField = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartitionField)
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
 	ErrRangeNotIncreasing = dbterror.ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
