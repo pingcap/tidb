@@ -86,8 +86,8 @@ var (
 type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
-	forUpdateTS      uint64 // the ts for for-update read
-	snapshotTS       uint64 // The ts for snapshot-read
+	forUpdateTS      uint64 // the ts for for-update read, insert/update/delete or select for update will use this ts
+	snapshotTS       uint64 // The ts for snapshot-read, if a select statement without for update will use this ts
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
@@ -103,7 +103,7 @@ type executorBuilder struct {
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
 	// dataReaderBuilder can be used in concurrent goroutines, so we must ensure that getting the ts should be thread safe and
-	// can return a correct value even if the session context has already been destoryed
+	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
 }
