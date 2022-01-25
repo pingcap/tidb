@@ -16,44 +16,22 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testStatsSuite{})
-
-type testStatsSuite struct {
-	*parser.Parser
-	testData testutil.TestData
-}
-
-func (s *testStatsSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "stats_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testStatsSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testStatsSuite) TestGroupNDVs(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	tk := testkit.NewTestKit(c, store)
+func TestGroupNDVs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
@@ -64,29 +42,31 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 	tk.MustExec("analyze table t2")
 
 	ctx := context.Background()
+	p := parser.New()
 	var input []string
 	var output []struct {
 		SQL       string
 		AggInput  string
 		JoinInput string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	statsSuiteData := core.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		comment := Commentf("case:%v sql: %s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
+		stmt, err := p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(tk.Se, stmt, core.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil)
-		tk.Se.GetSessionVars().PlanColumnID = 0
-		builder, _ := core.NewPlanBuilder().Init(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})
+		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		tk.Session().GetSessionVars().PlanColumnID = 0
+		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		lp := p.(core.LogicalPlan)
 		_, err = core.RecursiveDeriveStats4Test(lp)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		var agg *core.LogicalAggregation
 		var join *core.LogicalJoin
 		stack := make([]core.LogicalPlan, 0, 2)
@@ -130,24 +110,20 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 			r := core.GetStats4Test(join.Children()[1])
 			joinInput = property.ToString(l.GroupNDVs) + ";" + property.ToString(r.GroupNDVs)
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].AggInput = aggInput
 			output[i].JoinInput = joinInput
 		})
-		c.Assert(aggInput, Equals, output[i].AggInput, comment)
-		c.Assert(joinInput, Equals, output[i].JoinInput, comment)
+		require.Equal(t, aggInput, output[i].AggInput, comment)
+		require.Equal(t, joinInput, output[i].JoinInput, comment)
 	}
 }
 
-func (s *testStatsSuite) TestNDVGroupCols(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	tk := testkit.NewTestKit(c, store)
+func TestNDVGroupCols(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
@@ -162,11 +138,12 @@ func (s *testStatsSuite) TestNDVGroupCols(c *C) {
 		SQL  string
 		Plan []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	statsSuiteData := core.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
 		// The test point is the row count estimation for aggregations and joins.
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
