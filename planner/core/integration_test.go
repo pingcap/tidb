@@ -2482,8 +2482,8 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int,c varchar(11))")
-	tk.MustExec("insert into t(id,c) values (1,'abc')")
+	tk.MustExec("create table t(id int signed,id2 int unsigned, c varchar(11))")
+	tk.MustExec("insert into t(id, id2, c) values (-1, 1, 'abc')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
@@ -2494,8 +2494,17 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	rows[1][2] = "left(test.t.c, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
-	rows[1][2] = "mod(test.t.id, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id,1);").
+	rows[1][2] = "mod(test.t.id, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id2);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id2);").
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
