@@ -119,3 +119,17 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
 }
+
+func TestSchema(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSchema(t)
+}
+
+func TestTestSerialStatSuite(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSerialStatSuite(t)
+}
