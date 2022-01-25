@@ -86,8 +86,8 @@ var (
 type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
-	forUpdateTS      uint64 // the ts for for-update read, insert/update/delete or select for update will use this ts
 	snapshotTS       uint64 // The ts for snapshot-read, if a select statement without for update will use this ts
+	minForUpdateTS   uint64 // The min ts should be used by insert/update/delete/select-for-update statement
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
@@ -648,7 +648,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return nil
 	}
 	// Build 'select for update' using the 'for update' ts.
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -835,7 +835,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 			return nil
 		}
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1509,11 +1509,11 @@ func (b *executorBuilder) getForUpdateTS() (uint64, error) {
 		return 0, err
 	}
 
-	if ts > b.forUpdateTS {
-		return ts, nil
+	if b.minForUpdateTS > ts {
+		return b.minForUpdateTS, nil
 	}
 
-	return b.forUpdateTS, nil
+	return ts, nil
 }
 
 // getSnapshotReadTS returns the ts used by select without for update
@@ -2040,7 +2040,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2097,7 +2097,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
