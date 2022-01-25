@@ -87,7 +87,7 @@ type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
 	forUpdateTS      uint64 // the ts for for-update read
-	snapshotTS       uint64 // The consistent snapshot timestamp for the executor to read data.
+	snapshotTS       uint64 // The ts for snapshot-read
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
