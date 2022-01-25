@@ -264,7 +264,7 @@ func cmdRun(args ...string) bool {
 		}
 		tasks = tmp
 	}
-	fmt.Println("building task finish, count=", len(tasks), "takes=", time.Since(start))
+	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)

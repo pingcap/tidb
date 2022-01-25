@@ -125,13 +125,8 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-# build_test_binary: tools/bin/xprog failpoint-enable
-# 	@echo "building test binary"
-# 	@export TZ='Asia/Shanghai'; \
-# 	CGO_ENABLE=1 $(GOTEST) --exec=$(CURDIR)/tools/bin/xprog -cover -vet=off --count=0 $(PACKAGES_TIDB_TESTS_WITHOUT_BR) || { $(FAILPOINT_DISABLE); exit 1; }
-# 	@$(FAILPOINT_DISABLE)
 
-ut: failpoint-enable tools/bin/xprog tools/bin/ut
+ut: failpoint-enable tools/bin/ut tools/bin/xprog
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
@@ -228,6 +223,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
 	$(GO) build -o ../bin/ut ut.go
+
+tools/bin/xprog: tools/check/xprog.go
+	cd tools/check; \
+	$(GO) build -o ../bin/xprog xprog.go
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
@@ -434,6 +433,3 @@ dumpling_bins:
 
 tools/bin/gotestsum: tools/check/go.mod
 	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
-
-tools/bin/xprog: tools/check/xprog.go
-	cd tools/check && $(GO) build -o ../bin/xprog xprog.go
