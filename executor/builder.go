@@ -2795,8 +2795,7 @@ func (b *executorBuilder) newDataReaderBuilder(p plannercore.PhysicalPlan) (*dat
 		return nil, err
 	}
 
-	var builderForDataReader executorBuilder
-	builderForDataReader = *b
+	builderForDataReader := *b
 	builderForDataReader.forDataReaderBuilder = true
 	builderForDataReader.dataReaderTS = ts
 
