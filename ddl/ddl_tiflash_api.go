@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -58,8 +59,8 @@ type TiFlashReplicaStatus struct {
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
 	TiFlashStores             map[int64]helper.StoreStat
-	HandlePdCounter           int
-	UpdateTiFlashStoreCounter int
+	HandlePdCounter           uint64
+	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
 }
 
@@ -77,9 +78,9 @@ var (
 	// PollTiFlashInterval is the interval between every pollTiFlashReplicaStatus call.
 	PollTiFlashInterval = 2 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
-	PullTiFlashPdTick = 30 * 5
+	PullTiFlashPdTick = atomicutil.NewUint64(30 * 5)
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
-	UpdateTiFlashStoreTick = 5
+	UpdateTiFlashStoreTick = atomicutil.NewUint64(5)
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -206,10 +207,10 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
-		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick
+		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
 
-	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick == 0
+	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
 	if updateTiFlash {
 		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
 			// If we failed to get from pd, retry everytime.
@@ -218,7 +219,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 	pollTiFlashContext.UpdateTiFlashStoreCounter += 1
-	pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick
+	pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick.Load()
 
 	// The following loop updates TiFlash store's status address.
 	for _, store := range pollTiFlashContext.TiFlashStores {

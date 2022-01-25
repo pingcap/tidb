@@ -20,18 +20,13 @@ import "fmt"
 type PlanTrace struct {
 	ID         int          `json:"id"`
 	TP         string       `json:"type"`
-	Children   []*PlanTrace `json:"children"`
-	ChildrenID []int        `json:"childrenID"`
+	Children   []*PlanTrace `json:"-"`
+	ChildrenID []int        `json:"children"`
 	Cost       float64      `json:"cost"`
 	Selected   bool         `json:"selected"`
 	ProperType string       `json:"property"`
-	// ExplainInfo should be implemented by each implemented LogicalPlan
+	// ExplainInfo should be implemented by each implemented Plan
 	ExplainInfo string `json:"info"`
-}
-
-// SetCost sets cost for PhysicalPlanTrace
-func (t *PlanTrace) SetCost(cost float64) {
-	t.Cost = cost
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
@@ -161,26 +156,14 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 	return ret
 }
 
-// PhysicalOptimizeTraceInfo indicates for the PhysicalOptimize trace information
-// The essence of the physical optimization stage is a Dynamic Programming(DP).
-// So, PhysicalOptimizeTraceInfo is to record the transfer and status information in the DP.
-// Each (logicalPlan, property), the so-called state in DP, has its own PhysicalOptimizeTraceInfo.
-// The Candidates are possible transfer paths.
-// Because DP is performed on the plan tree,
-// we need to record the state of each candidate's child node, namely Children.
-type PhysicalOptimizeTraceInfo struct {
-	Property   string       `json:"property"`
-	Candidates []*PlanTrace `json:"candidates"`
-}
-
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
 	// final indicates the final physical plan trace
 	Final               []*PlanTrace          `json:"final"`
 	SelectedCandidates  []*CandidatePlanTrace `json:"selected_candidates"`
 	DiscardedCandidates []*CandidatePlanTrace `json:"discarded_candidates"`
-	// (logical plan) -> property hashCode -> physical plan candidates
-	State map[string]map[string]*PhysicalOptimizeTraceInfo `json:"-"`
+	// (logical plan) -> physical plan codename -> physical plan
+	State map[string]map[string]*PlanTrace `json:"-"`
 }
 
 // RecordFinalPlanTrace records final physical plan trace
@@ -225,15 +208,13 @@ func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
 	for _, node := range tracer.Final {
 		bestKeys[CodecPlanName(node.TP, node.ID)] = struct{}{}
 	}
-	for logicalKey, tasksInfo := range tracer.State {
-		for _, taskInfo := range tasksInfo {
-			for _, candidate := range taskInfo.Candidates {
-				c := newCandidatePlanTrace(candidate, logicalKey, bestKeys)
-				if c.Selected {
-					sCandidates = append(sCandidates, c)
-				} else {
-					dCandidates = append(dCandidates, c)
-				}
+	for logicalKey, pps := range tracer.State {
+		for _, pp := range pps {
+			c := newCandidatePlanTrace(pp, logicalKey, bestKeys)
+			if c.Selected {
+				sCandidates = append(sCandidates, c)
+			} else {
+				dCandidates = append(dCandidates, c)
 			}
 		}
 	}
@@ -252,4 +233,11 @@ type OptimizeTracer struct {
 	Logical *LogicalOptimizeTracer `json:"logical"`
 	// Physical indicates physical plan
 	Physical *PhysicalOptimizeTracer `json:"physical"`
+	// FinalPlan indicates the plan after post optimize
+	FinalPlan []*PlanTrace `json:"final"`
+}
+
+// RecordFinalPlan records plan after post optimize
+func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
+	tracer.FinalPlan = toFlattenLogicalPlanTrace(final)
 }
