@@ -88,6 +88,13 @@ type StreamConfig struct {
 	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
+func (sc *StreamConfig) adjustRestoreConfig() {
+	sc.Config.adjust()
+	if sc.Concurrency == 0 {
+		sc.Concurrency = 32
+	}
+}
+
 // DefineStreamStartFlags defines flags used for `stream start`
 func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamStartTS, "",
@@ -583,6 +590,8 @@ func RunStreamRestore(
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
+	cfg.adjustRestoreConfig()
+
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
