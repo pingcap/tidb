@@ -768,8 +768,6 @@ func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
 func TestTxnAssertion(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	// TODO: Locks produced by this test may be left without cleaning up, causing the test runs longer than expected.
-	// This is caused by that client-go didn't clean up the transaction when `initKeysAndMutations` returns error.
 
 	se, err := session.CreateSession4Test(store)
 	se.SetConnectionID(1)
