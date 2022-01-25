@@ -17,9 +17,11 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -28,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
-	"strings"
-	"testing"
 )
 
 func TestPreferRangeScan(t *testing.T) {
@@ -111,7 +111,7 @@ func TestNormalizedPlan(t *testing.T) {
 		normalized, _ := core.NormalizePlan(p)
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
@@ -121,16 +121,15 @@ func TestNormalizedPlan(t *testing.T) {
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
-	dom := domain.GetDomain(tk.Session())
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
@@ -152,7 +151,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		normalized, digest := core.NormalizePlan(ep.TargetPlan)
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
@@ -183,7 +182,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		return planTree
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
@@ -271,10 +270,10 @@ func TestNormalizedDigest(t *testing.T) {
 	);`)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/planner/mockRandomPlanID", "return(true)")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err = failpoint.Disable("github.com/pingcap/tidb/planner/mockRandomPlanID")
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	normalizedDigestCases := []struct {
@@ -443,14 +442,13 @@ func TestExplainFormatHint(t *testing.T) {
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
@@ -564,7 +562,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := plancodec.DecodePlan(encodedPlanStr)
-		require.Nil(b, err)
+		require.NoError(b, err)
 	}
 }
 
