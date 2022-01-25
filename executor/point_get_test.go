@@ -260,6 +260,7 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 }
 
 func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -329,6 +330,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 }
 
 func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)

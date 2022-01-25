@@ -960,7 +960,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().Charset, Equals, "utf8")
-	c.Assert(tbl.Meta().Collate, Equals, "utf8_danish_ci")
+	c.Assert(tbl.Meta().Collate, Equals, "utf8_unicode_ci")
 	for _, col := range tbl.Meta().Columns {
 		c.Assert(col.Charset, Equals, "utf8")
 		// Column collate should remain unchanged.

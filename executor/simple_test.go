@@ -39,6 +39,7 @@ import (
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)

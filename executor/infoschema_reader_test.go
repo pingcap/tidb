@@ -219,6 +219,7 @@ func (s *testInfoschemaTableSuite) TestEngines(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
+	c.Skip("covered by explain test")
 	tk := testkit.NewTestKit(c, s.store)
 
 	// The description column is not important
