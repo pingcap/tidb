@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,11 +124,6 @@ func IsJobRollbackable(job *model.Job) bool {
 	return true
 }
 
-// MayNeedBackfill returns whether the action type may need to backfill the data.
-func MayNeedBackfill(tp model.ActionType) bool {
-	return tp == model.ActionAddIndex || tp == model.ActionAddPrimaryKey || tp == model.ActionModifyColumn
-}
-
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -179,7 +173,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if MayNeedBackfill(job.Type) {
+			if j >= len(generalJobs) {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
@@ -293,8 +287,14 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 	return IterHistoryDDLJobs(txn, finishFn)
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
-	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+// RecordData is the record data composed of a handle and values.
+type RecordData struct {
+	Handle kv.Handle
+	Values []types.Datum
+}
+
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
+	rows, _, err := exec.ExecRestrictedSQL(context.Background(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -322,12 +322,6 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	defer func() {
 		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
-	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
 
 	var snapshot uint64
 	txn, err := ctx.Txn(false)
@@ -341,16 +335,14 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		snapshot = ctx.GetSessionVars().SnapshotTS
 	}
 
-	tblCnt, err := getCount(exec, stmt, snapshot)
+	// Add `` for some names like `table name`.
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
-		if err != nil {
-			return 0, i, errors.Trace(err)
-		}
-		idxCnt, err := getCount(exec, stmt, snapshot)
+		idxCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}

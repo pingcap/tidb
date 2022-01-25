@@ -1061,7 +1061,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 	ErrAsOf:                            mysql.Message("invalid as of timestamp: %s", nil),
 	ErrVariableNoLongerSupported:       mysql.Message("option '%s' is no longer supported. Reason: %s", nil),
-	ErrInvalidAttributesSpec:           mysql.Message("Invalid attributes '%s': %s", nil),
+	ErrInvalidAttributesSpec:           mysql.Message("Invalid attributes: %s", nil),
 	ErrPlacementPolicyExists:           mysql.Message("Placement policy '%-.192s' already exists", nil),
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),

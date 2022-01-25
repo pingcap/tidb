@@ -459,7 +459,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_stmt_summary = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	se := tk.Session()
 
 	// This line is a hack, if auth user string is "", the statement summary is skipped,

@@ -444,6 +444,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
 	if e.isStaleness {
 		return nil
 	}

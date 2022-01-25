@@ -122,7 +122,7 @@ type lockEntryHdr struct {
 
 func (store *MVCCStore) dumpMemLocks() error {
 	tmpFileName := store.dir + "/lock_store.tmp"
-	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return errors.Trace(err)
 	}
