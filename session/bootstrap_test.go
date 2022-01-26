@@ -302,7 +302,6 @@ func TestIssue17979_1(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
 	// test issue 20900, upgrade from v3.0 to v4.0.11+
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -319,10 +318,9 @@ func TestIssue17979_1(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(58), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV4.Close()
 	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
@@ -332,6 +330,7 @@ func TestIssue17979_1(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "log", req.GetRow(0).GetString(0))
 	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
