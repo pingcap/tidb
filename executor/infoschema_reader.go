@@ -190,11 +190,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, count from mysql.stats_meta")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +211,7 @@ type tableHistID struct {
 
 func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -2892,6 +2884,12 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 		// also convert them to LeaderConstraints and FollowerConstraints
 		// for better user experience searching for particular constraints
 
+		// Followers == 0 means not set, so the default value 2 will be used
+		followerCnt := policy.PlacementSettings.Followers
+		if followerCnt == 0 {
+			followerCnt = 2
+		}
+
 		row := types.MakeDatums(
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
@@ -2903,7 +2901,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.FollowerConstraints,
 			policy.PlacementSettings.LearnerConstraints,
 			policy.PlacementSettings.Schedule,
-			policy.PlacementSettings.Followers,
+			followerCnt,
 			policy.PlacementSettings.Learners,
 		)
 		rows = append(rows, row)

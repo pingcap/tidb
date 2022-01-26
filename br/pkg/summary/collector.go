@@ -51,7 +51,7 @@ type LogCollector interface {
 
 type logFunc func(msg string, fields ...zap.Field)
 
-var collector LogCollector = NewLogCollector(log.Info)
+var collector = NewLogCollector(log.Info)
 
 // InitCollector initilize global collector instance.
 func InitCollector( // revive:disable-line:flag-parameter
