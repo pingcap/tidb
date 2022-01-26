@@ -67,7 +67,7 @@ func TestParseFrac(t *testing.T) {
 	require.NoError(t, err)
 
 	a := 200
-	obtained, overflow, err = ParseFrac("999", a)
+	obtained, overflow, err = ParseFrac("999", int(int8(a)))
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
