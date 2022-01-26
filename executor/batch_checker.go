@@ -250,8 +250,18 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	gIdx := 0
 	for _, col := range cols {
-		if col.IsGenerated() {
-			// Only the virtual column needs filling back.
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		if col.IsGenerated() && col.State == model.StatePublic {
+			// only the virtual column needs fill back.
+			// Insert doesn't fill the generated columns at non-public state.
 			if !col.GeneratedStored {
 				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {

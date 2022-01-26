@@ -91,13 +91,13 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 
 	// test multiple intervals
 	ssMap.Clear()
-	err = ssMap.SetRefreshInterval("60", false)
+	err = ssMap.SetRefreshInterval(60)
 	interval = ssMap.refreshInterval()
 	require.NoError(t, err)
-	err = ssMap.SetMaxStmtCount("1", false)
+	err = ssMap.SetMaxStmtCount(1)
 	require.NoError(t, err)
 
-	err = ssMap.SetHistorySize("100", false)
+	err = ssMap.SetHistorySize(100)
 	require.NoError(t, err)
 
 	ssMap.beginTimeForCurInterval = now + interval
@@ -112,7 +112,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	digest := val.(*stmtSummaryByDigest)
 	require.Equal(t, 50, digest.history.Len())
 
-	err = ssMap.SetHistorySize("25", false)
+	err = ssMap.SetHistorySize(25)
 	require.NoError(t, err)
 	// update begin time
 	ssMap.beginTimeForCurInterval += interval * 2
@@ -249,9 +249,9 @@ func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
 func TestEvictedCountDetailed(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
-	err := ssMap.SetRefreshInterval("60", false)
+	err := ssMap.SetRefreshInterval(60)
 	require.NoError(t, err)
-	err = ssMap.SetHistorySize("100", false)
+	err = ssMap.SetHistorySize(100)
 	require.NoError(t, err)
 	now := time.Now().Unix()
 	interval := int64(60)

@@ -86,7 +86,7 @@ func nextInt64Value(column *column, min int64, max int64) int64 {
 }
 
 func intToDecimalString(intValue int64, decimal int) string {
-	data := fmt.Sprintf("%d", intValue)
+	data := strconv.FormatInt(intValue, 10)
 
 	// add leading zero
 	if len(data) < decimal {
@@ -117,7 +117,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte
+	var values []byte // nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {
