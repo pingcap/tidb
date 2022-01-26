@@ -39,8 +39,8 @@ func testDecimalConvert(t *testing.T, lDec, lLen, rDec, rLen int, lConvert, rCon
 	require.Equal(t, mysql.TypeNewDecimal, cType.Tp)
 	require.Equal(t, cDec, cType.Decimal)
 	require.Equal(t, cLen, cType.Flen)
-	require.Equal(t, lCon, lConvert)
-	require.Equal(t, rCon, rConvert)
+	require.Equal(t, lConvert, lCon)
+	require.Equal(t, rConvert, rCon)
 }
 
 func TestMPPDecimalConvert(t *testing.T) {
@@ -64,8 +64,8 @@ func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.Fi
 	require.Equal(t, retType.Flen, cType.Flen)
 	require.Equal(t, retType.Decimal, cType.Decimal)
 	require.Equal(t, retType.Flag, cType.Flag)
-	require.Equal(t, lCon, lConvert)
-	require.Equal(t, rCon, rConvert)
+	require.Equal(t, lConvert, lCon)
+	require.Equal(t, rConvert, rCon)
 
 }
 
