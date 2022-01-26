@@ -291,7 +291,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
-func TestIssue17979_1(t *testing.T) {
+func (t *testing.T) {
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -388,7 +388,6 @@ func TestIssue20900_1(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
 	// test issue 20900, upgrade from v3.0 to v4.0.9+
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -405,7 +404,7 @@ func TestIssue20900_1(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(38), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV4.Close()
