@@ -115,8 +115,8 @@ func TestGroupNDVs(t *testing.T) {
 			output[i].AggInput = aggInput
 			output[i].JoinInput = joinInput
 		})
-		require.Equal(t, aggInput, output[i].AggInput, comment)
-		require.Equal(t, joinInput, output[i].JoinInput, comment)
+		require.Equal(t, output[i].AggInput, aggInput, comment)
+		require.Equal(t, output[i].JoinInput, joinInput, comment)
 	}
 }
 
