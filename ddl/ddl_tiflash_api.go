@@ -411,8 +411,14 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 }
 
 func (d *ddl) PollTiFlashRoutine() {
+	defer d.wg.Done()
 	pollTiflashContext := NewTiFlashManagementContext()
 	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(PollTiFlashInterval):
+		}
 		if d.IsTiFlashPollEnabled() {
 			if d.sessPool == nil {
 				logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
@@ -436,11 +442,6 @@ func (d *ddl) PollTiFlashRoutine() {
 				}
 				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}
-		}
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-time.After(PollTiFlashInterval):
 		}
 	}
 }
