@@ -298,7 +298,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		}
 	case *driver.ValueExpr:
 		if node.Datum.Kind() == types.KindNull {
-			c.otherErr = errWrongKeyColumnFunctionalIndex
+			c.otherErr = errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
 			return inNode, true
 		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
@@ -368,7 +368,7 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 				case "concat", "md5":
 					return nil
 				default:
-					return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
+					return c.otherErr
 				}
 			}
 		}
