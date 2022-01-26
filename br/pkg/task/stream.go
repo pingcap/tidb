@@ -17,8 +17,6 @@ package task
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"sort"
 	"strings"
 
@@ -31,6 +29,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -699,7 +699,7 @@ func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *St
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tables := make(map[string]*metautil.Table, 0)
+	tables := make(map[string]*metautil.Table)
 	for _, db := range databases {
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {

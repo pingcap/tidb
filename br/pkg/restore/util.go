@@ -414,7 +414,7 @@ func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, en
 				logutil.Key("startKey", file.GetStartKey()),
 				zap.Reflect("rewrite data", rewriteRules.Data))
 			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
-			if rewriteRules != nil && rule == nil {
+			if rule == nil {
 				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
 			}
 			return
