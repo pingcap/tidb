@@ -1091,6 +1091,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	stringColumn := genColumn(mysql.TypeString, 5)
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
+	dateColumn := genColumn(mysql.TypeDate, 8)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 
 	// Test exprs that cannot be pushed.
@@ -1142,49 +1143,103 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		exprs = append(exprs, function)
 	}
 
-	function, err = NewFunction(mock.NewContext(), ast.CharLength, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
+	testcases := []struct {
+		functionName string
+		retType      *types.FieldType
+		args         []Expression
+	}{
+		{
+			functionName: ast.CharLength,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Right,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Left,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Sin,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Asin,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Cos,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Acos,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Tan,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Atan,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Cot,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Atan2,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.DateFormat,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn, stringColumn},
+		},
+		{
+			functionName: ast.Hour,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Minute,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Second,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Month,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.MicroSecond,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+	}
 
-	function, err = NewFunction(mock.NewContext(), ast.Right, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Left, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Sin, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Asin, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Cos, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Acos, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Tan, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Atan, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Atan2, types.NewFieldType(mysql.TypeString), intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.Cot, types.NewFieldType(mysql.TypeString), intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
+	for _, tc := range testcases {
+		function, err = NewFunction(mock.NewContext(), tc.functionName, tc.retType, tc.args...)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
