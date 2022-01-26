@@ -102,7 +102,7 @@ type LogicalRuleOptimizeTraceStep struct {
 	Index  int    `json:"index"`
 }
 
-// toFlattenLogicalPlanTrace transform LogicalPlanTrace into FlattenLogicalPlanTrace
+// toFlattenPlanTrace transform plan into PlanTrace
 func toFlattenPlanTrace(root *PlanTrace) []*PlanTrace {
 	wrapper := &flattenWrapper{flatten: make([]*PlanTrace, 0)}
 	flattenLogicalPlanTrace(root, wrapper)
