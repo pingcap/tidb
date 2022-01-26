@@ -2290,6 +2290,8 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 			mpp = mpp.enforceExchanger(prop)
 		}
+		mpp.cst = mpp.cost() * 0.05
+		p.cost = mpp.cost()
 		return attachPlan2Task(p, mpp)
 	}
 	t := tasks[0].convertToRootTask(p.ctx)
