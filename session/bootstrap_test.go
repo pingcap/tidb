@@ -291,7 +291,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
-func (t *testing.T) {
+func TestIssue17979_1(t *testing.T) {
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
