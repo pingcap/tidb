@@ -16,39 +16,48 @@ package ddl
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-var _ = Suite(&testStatSuite{})
-var _ = SerialSuites(&testSerialStatSuite{})
-
-type testStatSuite struct {
+type testStatSuiteToVerify struct {
+	suite.Suite
 }
 
-func (s *testStatSuite) SetUpSuite(c *C) {
+func TestStatSuite(t *testing.T) {
+	suite.Run(t, new(testStatSuiteToVerify))
 }
 
-func (s *testStatSuite) TearDownSuite(c *C) {
+func (s *testStatSuiteToVerify) SetupSuite() {
 }
 
-type testSerialStatSuite struct {
+func (s *testStatSuiteToVerify) TearDownSuite() {
 }
 
-func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
+type testSerialStatSuiteToVerify struct {
+	suite.Suite
+}
+
+func ExportTestSerialStatSuite(t *testing.T) {
+	suite.Run(t, new(testSerialStatSuiteToVerify))
+}
+
+func (s *testStatSuiteToVerify) getDDLSchemaVer(d *ddl) int64 {
 	m, err := d.Stats(nil)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	v := m[ddlSchemaVersion]
 	return v.(int64)
 }
 
-func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
-	store := testCreateStore(c, "test_stat")
+func (s *testSerialStatSuiteToVerify) TestDDLStatsInfo() {
+	store := testCreateStore(s.T(), "test_stat")
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 
 	d, err := testNewDDLAndStart(
@@ -56,38 +65,38 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 
 	dbInfo, err := testSchemaInfo(d, "test_stat")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	require.NoError(s.T(), err)
+	testCreateSchema(s.T(), testNewContext(d), d, dbInfo)
 	tblInfo, err := testTableInfo(d, "t", 2)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateTable(s.T(), ctx, d, dbInfo, tblInfo)
 
-	t := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	t := testGetTable(s.T(), d, dbInfo.ID, tblInfo.ID)
 	// insert t values (1, 1), (2, 2), (3, 3)
 	_, err = t.AddRecord(ctx, types.MakeDatums(1, 1))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	_, err = t.AddRecord(ctx, types.MakeDatums(2, 2))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	_, err = t.AddRecord(ctx, types.MakeDatums(3, 3))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
+	require.Nil(s.T(), failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
+		require.Nil(s.T(), failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	}()
 
 	done := make(chan error, 1)
@@ -99,12 +108,12 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 	for !exit {
 		select {
 		case err := <-done:
-			c.Assert(err, IsNil)
+			require.NoError(s.T(), err)
 			exit = true
 		case <-TestCheckWorkerNumCh:
 			varMap, err := d.Stats(nil)
-			c.Assert(err, IsNil)
-			c.Assert(varMap[ddlJobReorgHandle], Equals, "1")
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), varMap[ddlJobReorgHandle], "1")
 		}
 	}
 }

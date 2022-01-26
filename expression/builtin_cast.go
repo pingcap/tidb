@@ -1848,6 +1848,11 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	argType := expr.GetType()
+	// If source argument's nullable, then target type should be nullable
+	if !mysql.HasNotNullFlag(argType.Flag) {
+		tp.Flag &= ^mysql.NotNullFlag
+	}
 	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
