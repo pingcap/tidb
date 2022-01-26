@@ -1063,24 +1063,32 @@ func (o *oneStrColumnTable) handleOneRow(rows *sql.Rows) error {
 	return nil
 }
 
-func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error) error {
-	return simpleQueryWithArgs(context.Background(), conn, handleOneRow, sql)
+func simpleQuery(conn *sql.Conn, query string, handleOneRow func(*sql.Rows) error) error {
+	return simpleQueryWithArgs(context.Background(), conn, handleOneRow, query)
 }
 
-func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
-	rows, err := conn.QueryContext(ctx, sql, args...)
+func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, query string, args ...interface{}) error {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if len(args) > 0 {
+		rows, err = conn.QueryContext(ctx, query, args...)
+	} else {
+		rows, err = conn.QueryContext(ctx, query)
+	}
 	if err != nil {
-		return errors.Annotatef(err, "sql: %s, args: %s", sql, args)
+		return errors.Annotatef(err, "sql: %s, args: %s", query, args)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		if err := handleOneRow(rows); err != nil {
 			rows.Close()
-			return errors.Annotatef(err, "sql: %s, args: %s", sql, args)
+			return errors.Annotatef(err, "sql: %s, args: %s", query, args)
 		}
 	}
-	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", sql, args)
+	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", query, args)
 }
 
 func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) (string, error) {
