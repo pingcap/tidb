@@ -2386,6 +2386,15 @@ func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 	tk.MustGetErrCode("create table t1 (col1 int, index c((null)));", errno.ErrWrongKeyColumnFunctionalIndex)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
+	tk.MustGetErrMsg("create table tt1 (col1 int, index c((concat(null,'3'))));", "[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk.MustExec("create table tt (col1 int, index c((concat(null,'3'))));")
+	tk.MustExec("create table tt2(col1 int, index c((md5(null))));")
 	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
 
 	// For issue 26349

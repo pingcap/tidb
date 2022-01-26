@@ -298,7 +298,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		}
 	case *driver.ValueExpr:
 		if node.Datum.Kind() == types.KindNull {
-			c.otherErr = errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
+			c.otherErr = errWrongKeyColumnFunctionalIndex
 			return inNode, true
 		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
@@ -356,14 +356,23 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	if c.hasWindowFunc {
 		return errWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
 	}
-	if c.otherErr != nil {
-		if terror.ErrorEqual(c.otherErr, errWrongKeyColumnFunctionalIndex) && genType == typeColumn {
-			return nil
-		}
-		return c.otherErr
-	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
 		return ErrUnsupportedExpressionIndex
+	}
+	if c.otherErr != nil {
+		if terror.ErrorEqual(c.otherErr, errWrongKeyColumnFunctionalIndex) {
+			if genType == typeColumn {
+				return nil
+			} else if f, ok := expr.(*ast.FuncCallExpr); ok {
+				switch f.FnName.L {
+				case "concat", "md5":
+					return nil
+				default:
+					return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
+				}
+			}
+		}
+		return c.otherErr
 	}
 	return nil
 }
