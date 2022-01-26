@@ -1154,6 +1154,38 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.Sin, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Asin, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Cos, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Acos, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Tan, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Atan, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Atan2, types.NewFieldType(mysql.TypeString), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Cot, types.NewFieldType(mysql.TypeString), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)

@@ -2494,6 +2494,34 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	rows[1][2] = "left(test.t.c, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "sin(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where sin(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "asin(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where asin(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "cos(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where cos(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "acos(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where acos(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "tan(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where tan(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "atan(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "atan2(cast(test.t.id, double BINARY), cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan2(id,id);").
+		CheckAt([]int{0, 3, 6}, rows)
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {

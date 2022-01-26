@@ -958,7 +958,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
-		// ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 
 		// control flow functions.
