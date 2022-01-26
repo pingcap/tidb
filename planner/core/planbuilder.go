@@ -2872,7 +2872,28 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	isView := false
 	isSequence := false
 	switch show.Tp {
+<<<<<<< HEAD
 	case ast.ShowTables, ast.ShowTableStatus:
+=======
+	case ast.ShowColumns:
+		var extractor ShowColumnsTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// avoid to build Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowTables:
+		if p.DBName == "" {
+			return nil, ErrNoDB
+		}
+		var extractor ShowTablesTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowTableStatus:
+>>>>>>> 93454da4c... *: add show push down for ShowTables (#31919)
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
