@@ -36,11 +36,11 @@ func testDecimalConvert(t *testing.T, lDec, lLen, rDec, rLen int, lConvert, rCon
 	rType.Flen = rLen
 
 	cType, lCon, rCon := negotiateCommonType(lType, rType)
-	require.Equal(t, cType.Tp, mysql.TypeNewDecimal)
-	require.Equal(t, cType.Decimal, cDec)
-	require.Equal(t, cType.Flen, cLen)
-	require.Equal(t, lConvert, lCon)
-	require.Equal(t, rConvert, rCon)
+	require.Equal(t, mysql.TypeNewDecimal, cType.Tp)
+	require.Equal(t, cDec, cType.Decimal)
+	require.Equal(t, cLen, cType.Flen)
+	require.Equal(t, lCon, lConvert)
+	require.Equal(t, rCon, rConvert)
 }
 
 func TestMPPDecimalConvert(t *testing.T) {
@@ -60,12 +60,12 @@ func TestMPPDecimalConvert(t *testing.T) {
 
 func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.FieldType, lConvert, rConvert bool) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
-	require.Equal(t, cType.Tp, retType.Tp)
-	require.Equal(t, cType.Flen, retType.Flen)
-	require.Equal(t, cType.Decimal, retType.Decimal)
-	require.Equal(t, cType.Flag, retType.Flag)
-	require.Equal(t, lConvert, lCon)
-	require.Equal(t, rConvert, rCon)
+	require.Equal(t, retType.Tp, cType.Tp)
+	require.Equal(t, retType.Flen, cType.Flen)
+	require.Equal(t, retType.Decimal, cType.Decimal)
+	require.Equal(t, retType.Flag, cType.Flag)
+	require.Equal(t, lCon, lConvert)
+	require.Equal(t, rCon, rConvert)
 
 }
 
