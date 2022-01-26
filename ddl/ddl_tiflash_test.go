@@ -99,14 +99,13 @@ func SetUpHelper(s *tiflashDDLTestSuite) error {
 	return nil
 }
 
-func TearDownHelper(s *tiflashDDLTestSuite) error {
+func TearDownHelper(s *tiflashDDLTestSuite) {
 	s.tiflash.Lock()
 	s.tiflash.StatusServer.Close()
 	s.tiflash.Unlock()
 	s.dom.Close()
-	err := s.store.Close()
+	s.store.Close()
 	ddl.PollTiFlashInterval = 2 * time.Second
-	return err
 }
 
 func ChangeGCSafePoint(tk *testkit2.TestKit, t time.Time, enable string, lifeTime string) {
@@ -190,6 +189,8 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	defer TearDownHelper(s)
 
 	rpcClient, pdClient, cluster, err := unistore.New("")
+	require.NoError(t, err)
+
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()
