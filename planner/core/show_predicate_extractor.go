@@ -112,7 +112,7 @@ func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
 			// It is used in `SHOW TABLE in t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if !collate.NewCollationEnabled() && stringutil.IsExactMatch(patTypes) {
+			if stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
