@@ -204,6 +204,31 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
+func updateBestTask(bestTask, curTask task, mppEnforced bool) task {
+	if bestTask.invalid() {
+		return curTask
+	}
+	if curTask.invalid() {
+		return bestTask
+	}
+
+	if mppEnforced {
+		_, bestIsMpp := bestTask.(*mppTask)
+		_, curIsMpp := curTask.(*mppTask)
+
+		if curIsMpp && !bestIsMpp {
+			return curTask
+		}
+		if !curIsMpp && bestIsMpp {
+			return bestTask
+		}
+	}
+	if curTask.cost() < bestTask.cost() {
+		bestTask = curTask
+	}
+	return bestTask
+}
+
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
@@ -278,9 +303,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if !curTask.invalid() && (bestTask.invalid() || curTask.cost() < bestTask.cost()) {
-			bestTask = curTask
-		}
+		bestTask = updateBestTask(bestTask, curTask, p.ctx.GetSessionVars().IsMPPEnforced())
 	}
 	return bestTask, cntPlan, nil
 }
@@ -372,6 +395,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
+		newProp.SortItemsForPartition = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
 		newProp.MPPPartitionCols = nil
 		newProp.MPPPartitionTp = property.AnyType
@@ -415,9 +439,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if !curTask.invalid() && (bestTask.invalid() || curTask.cost() < bestTask.cost()) {
-		bestTask = curTask
-	}
+	bestTask = updateBestTask(bestTask, curTask, p.ctx.GetSessionVars().IsMPPEnforced())
 
 END:
 	p.storeTask(prop, bestTask)
