@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"sort"
@@ -1452,22 +1451,7 @@ LOOP:
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	it, err := nidx.SeekFirst(txn)
-	c.Assert(err, IsNil)
-	defer it.Close()
-
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
-		c.Assert(err, IsNil)
-		_, ok := handles.Get(h)
-		c.Assert(ok, IsTrue, Commentf("handle: %v", h.String()))
-		handles.Delete(h)
-	}
-	c.Assert(handles.Len(), Equals, 0)
+	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
 
