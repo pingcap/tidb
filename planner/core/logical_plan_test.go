@@ -2087,6 +2087,26 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestTraceFastPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = false
+	}()
+	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
+	sql := "select * from t where a=1"
+	comment := Commentf("sql:%s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	c.Assert(err, IsNil, comment)
+	plan := TryFastPlan(s.ctx, stmt)
+	c.Assert(plan, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan, IsTrue)
+}
+
 func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {
 	sql := "select a, max(a) over(), sum(a) over() from t"
 	var planString string
