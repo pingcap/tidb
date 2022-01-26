@@ -411,7 +411,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 }
 
 func (d *ddl) PollTiFlashRoutine() {
-	defer d.wg.Done()
 	pollTiflashContext := NewTiFlashManagementContext()
 	for {
 		select {
