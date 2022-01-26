@@ -44,7 +44,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog = false
+		cfg.Log.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()

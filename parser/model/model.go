@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -213,7 +214,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 			return col
 		}
 	}
+	return nil
+}
 
+// FindColumnInfoByID finds ColumnInfo in cols by id.
+func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
+	for _, col := range cols {
+		if col.ID == id {
+			return col
+		}
+	}
 	return nil
 }
 
@@ -339,8 +349,7 @@ type TableInfo struct {
 
 	TempTableType        `json:"temp_table_type"`
 	TableCacheStatusType `json:"cache_table_status"`
-	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+	PlacementPolicyRef   *PolicyRefInfo `json:"policy_ref_info"`
 
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
@@ -628,6 +637,7 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.Charset, colInfo.Collate = charset.CharsetBin, charset.CollationBin
 	return colInfo
 }
 
@@ -652,6 +662,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// HasClusteredIndex checks whether the table has a clustered index.
+func (t *TableInfo) HasClusteredIndex() bool {
+	return t.PKIsHandle || t.IsCommonHandle
 }
 
 // IsView checks if TableInfo is a view.
@@ -831,17 +846,6 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	return ""
 }
 
-// GetPlacementByID gets the partition placement by ID.
-func (pi *PartitionInfo) GetPlacementByID(id int64) (*PolicyRefInfo, *PlacementSettings) {
-	definitions := pi.Definitions
-	for i := range definitions {
-		if id == definitions[i].ID {
-			return definitions[i].PlacementPolicyRef, definitions[i].DirectPlacementOpts
-		}
-	}
-	return nil, nil
-}
-
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
 	for _, pstate := range pi.States {
 		if pstate.ID == id {
@@ -892,13 +896,12 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                  int64              `json:"id"`
-	Name                CIStr              `json:"name"`
-	LessThan            []string           `json:"less_than"`
-	InValues            [][]string         `json:"in_values"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
-	Comment             string             `json:"comment,omitempty"`
+	ID                 int64          `json:"id"`
+	Name               CIStr          `json:"name"`
+	LessThan           []string       `json:"less_than"`
+	InValues           [][]string     `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	Comment            string         `json:"comment,omitempty"`
 }
 
 // Clone clones ConstraintInfo.
@@ -1078,14 +1081,13 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                  int64              `json:"id"`      // Database ID
-	Name                CIStr              `json:"db_name"` // DB name.
-	Charset             string             `json:"charset"`
-	Collate             string             `json:"collate"`
-	Tables              []*TableInfo       `json:"-"` // Tables in the DB.
-	State               SchemaState        `json:"state"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+	ID                 int64          `json:"id"`      // Database ID
+	Name               CIStr          `json:"db_name"` // DB name.
+	Charset            string         `json:"charset"`
+	Collate            string         `json:"collate"`
+	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	State              SchemaState    `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 }
 
 // Clone clones DBInfo.
@@ -1249,7 +1251,7 @@ type StatsOptions struct {
 func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
 		AutoRecalc:   true,
-		ColumnChoice: AllColumns,
+		ColumnChoice: DefaultChoice,
 		ColumnList:   []CIStr{},
 		SampleNum:    uint64(0),
 		SampleRate:   0.0,
@@ -1262,7 +1264,8 @@ func NewStatsOptions() *StatsOptions {
 type ColumnChoice byte
 
 const (
-	AllColumns ColumnChoice = iota
+	DefaultChoice ColumnChoice = iota
+	AllColumns
 	PredicateColumns
 	ColumnList
 )
@@ -1270,13 +1273,13 @@ const (
 func (s ColumnChoice) String() string {
 	switch s {
 	case AllColumns:
-		return "AllColumns"
+		return "ALL"
 	case PredicateColumns:
-		return "PredicateColumns"
+		return "PREDICATE"
 	case ColumnList:
-		return "ColumnList"
+		return "LIST"
 	default:
-		return ""
+		return "DEFAULT"
 	}
 }
 

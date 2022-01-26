@@ -15,14 +15,40 @@
 package server
 
 import (
+	"fmt"
+	"os"
+	"reflect"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
+
+	RunInGoTest = true // flag for NewServer to known it is running in test environment
+
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// Set schema lease to avoid it from making CI slow.
+	session.SetSchemaLease(0)
+
+	tikv.EnableFailpoints()
+
+	metrics.RegisterMetrics()
+
+	// sanity check: the global config should not be changed by other pkg init function.
+	// see also https://github.com/pingcap/tidb/issues/22162
+	defaultConfig := config.NewConfig()
+	globalConfig := config.GetGlobalConfig()
+	if !reflect.DeepEqual(defaultConfig, globalConfig) {
+		_, _ = fmt.Fprintf(os.Stderr, "server: the global config has been changed.\n")
+		_, _ = fmt.Fprintf(os.Stderr, "default: %#v\nglobal: %#v", defaultConfig, globalConfig)
+	}
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),
@@ -35,7 +61,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUProfiler).startAnalyzeProfileWorker"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

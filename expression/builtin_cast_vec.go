@@ -1700,6 +1700,14 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 			result.SetNull(i, true)
 			continue
 		}
+		if tm.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, tm.String()))
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.

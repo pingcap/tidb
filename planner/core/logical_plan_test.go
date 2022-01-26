@@ -59,7 +59,22 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable()})
+	tblInfos := []*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable(),
+		MockRangePartitionTable(), MockHashPartitionTable(), MockListPartitionTable()}
+	id := int64(0)
+	for _, tblInfo := range tblInfos {
+		tblInfo.ID = id
+		id += 1
+		pi := tblInfo.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			def.ID = id
+			id += 1
+		}
+	}
+	s.is = infoschema.MockInfoSchema(tblInfos)
 	s.ctx = MockContext()
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
@@ -93,6 +108,24 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		})
 		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", ca, ith))
 	}
+}
+
+// Issue: 31399
+func (s *testPlanSuite) TestImplicitCastNotNullFlag(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	ca := "select count(*) from t3 group by a having bit_and(b) > 1;"
+	comment := Commentf("for %s", ca)
+	stmt, err := s.ParseOneStmt(ca, "", "")
+	c.Assert(err, IsNil, comment)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
+	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
+	var nullableFlag uint = 0
+	c.Assert(castNotNullFlag, Equals, nullableFlag)
 }
 
 func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
@@ -624,6 +657,9 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		{
 			sql:  "select 1+num from (select 1+a as num from t) t1;",
 			best: "DataScan(t)->Projection",
+		}, {
+			sql:  "select count(*) from t where a in (select b from t2 where  a is null);",
+			best: "Join{DataScan(t)->Dual->Aggr(firstrow(test.t2.b))}(test.t.a,test.t2.b)->Aggr(count(1))->Projection",
 		},
 	}
 
@@ -639,6 +675,29 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
 	}
+}
+
+func (s *testPlanSuite) TestCS3389(c *C) {
+	defer testleak.AfterTest(c)()
+
+	ctx := context.Background()
+	stmt, err := s.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+
+	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
+	proj, isProj := p.(*LogicalProjection)
+	c.Assert(isProj, IsTrue)
+	c.Assert(len(proj.Exprs) > 0, IsTrue)
+	child := proj.Children()[0]
+	agg, isAgg := child.(*LogicalAggregation)
+	c.Assert(isAgg, IsTrue)
+	child = agg.Children()[0]
+	_, isJoin := child.(*LogicalJoin)
+	c.Assert(isJoin, IsTrue)
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {

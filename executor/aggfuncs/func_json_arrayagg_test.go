@@ -27,11 +27,9 @@ import (
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
-	var tests []aggTest
+	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
 		entries1 := make([]interface{}, 0)
@@ -66,11 +64,9 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestJsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
-	var tests []aggTest
+	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
 
 	for _, argType := range typeList {
@@ -131,11 +127,9 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 }
 
 func TestMemJsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
-	var tests []aggMemTest
+	tests := make([]aggMemTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
 		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))

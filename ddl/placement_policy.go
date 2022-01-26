@@ -124,6 +124,32 @@ func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job,
 	return nil, err
 }
 
+func checkPlacementPolicyRefValidAndCanNonValidJob(t *meta.Meta, job *model.Job, ref *model.PolicyRefInfo) (*model.PolicyInfo, error) {
+	if ref == nil {
+		return nil, nil
+	}
+
+	return checkPlacementPolicyExistAndCancelNonExistJob(t, job, ref.ID)
+}
+
+func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) error {
+	if _, err := checkPlacementPolicyRefValidAndCanNonValidJob(t, job, tblInfo.PlacementPolicyRef); err != nil {
+		return errors.Trace(err)
+	}
+
+	if tblInfo.Partition == nil {
+		return nil
+	}
+
+	for _, def := range tblInfo.Partition.Definitions {
+		if _, err := checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
@@ -236,7 +262,7 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 			cp := bundle.Clone()
 			bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
 		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -305,7 +331,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
-					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == part.ID {
+					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == policy.ID {
 						partIDs = append(partIDs, part.ID)
 					}
 				}
@@ -354,4 +380,20 @@ func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.
 	}
 
 	return nil
+}
+
+func tableHasPlacementSettings(tblInfo *model.TableInfo) bool {
+	if tblInfo.PlacementPolicyRef != nil {
+		return true
+	}
+
+	if tblInfo.Partition != nil {
+		for _, def := range tblInfo.Partition.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+
+	return false
 }

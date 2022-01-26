@@ -6,20 +6,23 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
-
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 )
 
 const (
@@ -82,6 +85,21 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
 	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(table))
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return oneRow[1], nil
+}
+
+// ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
+// returns (createPoilicySQL, error)
+func ShowCreatePlacementPolicy(db *sql.Conn, policy string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`", escapeString(policy))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", query)
@@ -233,7 +251,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 			}
 		}
 	default:
-		queryTemplate := "SHOW TABLE STATUS FROM `%s`"
+		const queryTemplate = "SHOW TABLE STATUS FROM `%s`"
 		selectedTableType := make(map[TableType]struct{})
 		for _, tableType = range tableTypes {
 			selectedTableType[tableType] = struct{}{}
@@ -263,7 +281,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 				if engine == "" && (comment == "" || comment == TableTypeViewStr) {
 					tableType = TableTypeView
 				} else if engine == "" {
-					tctx.L().Warn("Invalid table without engine found", zap.String("database", schema), zap.String("table", table))
+					tctx.L().Warn("invalid table without engine found", zap.String("database", schema), zap.String("table", table))
 					continue
 				}
 				if _, ok := selectedTableType[tableType]; !ok {
@@ -274,6 +292,25 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		}
 	}
 	return dbTables, nil
+}
+
+func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
+	var policyList []string
+	var policy string
+	const query = "select distinct policy_name from information_schema.placement_policies where policy_name is not null;"
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		return policyList, errors.Annotatef(err, "sql: %s", query)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&policy)
+		if err != nil {
+			return policyList, errors.Trace(err)
+		}
+		policyList = append(policyList, policy)
+	}
+	return policyList, errors.Annotatef(rows.Err(), "sql: %s", query)
 }
 
 // SelectVersion gets the version information from the database server
@@ -350,11 +387,11 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasI
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
+		if strings.Contains(errMsg, strconv.Itoa(errBadFieldCode)) {
 			return false, nil
 		}
 		return false, errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
@@ -432,6 +469,9 @@ func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error
 	return cols, nil
 }
 
+// getNumericIndex picks up indices according to the following priority:
+// primary key > unique key with the smallest count > key with the max cardinality
+// primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
 	database, table := meta.DatabaseName(), meta.TableName()
 	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
@@ -440,22 +480,64 @@ func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", keyQuery)
 	}
-	results, err := GetSpecifiedColumnValuesAndClose(rows, "NON_UNIQUE", "KEY_NAME", "COLUMN_NAME")
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "NON_UNIQUE", "SEQ_IN_INDEX", "KEY_NAME", "COLUMN_NAME", "CARDINALITY")
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", keyQuery)
 	}
-	uniqueColumnName := ""
+	type keyColumnPair struct {
+		colName string
+		count   uint64
+	}
+	var (
+		uniqueKeyMap   = map[string]keyColumnPair{} // unique key name -> key column name, unique key columns count
+		keyColumn      string
+		maxCardinality int64 = -1
+	)
+
 	// check primary key first, then unique key
 	for _, oneRow := range results {
-		var ok bool
-		if _, ok = dataTypeNum[colName2Type[oneRow[2]]]; ok && oneRow[1] == "PRIMARY" {
-			return oneRow[2], nil
+		nonUnique, seqInIndex, keyName, colName, cardinality := oneRow[0], oneRow[1], oneRow[2], oneRow[3], oneRow[4]
+		// only try pick the first column, because the second column of pk/uk in where condition will trigger a full table scan
+		if seqInIndex != "1" {
+			if pair, ok := uniqueKeyMap[keyName]; ok {
+				seqInIndexInt, err := strconv.ParseUint(seqInIndex, 10, 64)
+				if err == nil && seqInIndexInt > pair.count {
+					uniqueKeyMap[keyName] = keyColumnPair{pair.colName, seqInIndexInt}
+				}
+			}
+			continue
 		}
-		if uniqueColumnName != "" && oneRow[0] == "0" && ok {
-			uniqueColumnName = oneRow[2]
+		_, numberColumn := dataTypeInt[colName2Type[colName]]
+		if numberColumn {
+			switch {
+			case keyName == "PRIMARY":
+				return colName, nil
+			case nonUnique == "0":
+				uniqueKeyMap[keyName] = keyColumnPair{colName, 1}
+			// pick index column with max cardinality when there is no unique index
+			case len(uniqueKeyMap) == 0:
+				cardinalityInt, err := strconv.ParseInt(cardinality, 10, 64)
+				if err == nil && cardinalityInt > maxCardinality {
+					keyColumn = colName
+					maxCardinality = cardinalityInt
+				}
+			}
 		}
 	}
-	return uniqueColumnName, nil
+	if len(uniqueKeyMap) > 0 {
+		var (
+			minCols         uint64 = math.MaxUint64
+			uniqueKeyColumn string
+		)
+		for _, pair := range uniqueKeyMap {
+			if pair.count < minCols {
+				uniqueKeyColumn = pair.colName
+				minCols = pair.count
+			}
+		}
+		return uniqueKeyColumn, nil
+	}
+	return keyColumn, nil
 }
 
 // FlushTableWithReadLock flush tables with read lock
@@ -583,7 +665,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 
 // GetPdAddrs gets PD address from TiDB
 func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
+	const query = "SELECT * FROM information_schema.cluster_info where type = 'pd';"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -594,7 +676,7 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 
 // GetTiDBDDLIDs gets DDL IDs from TiDB
 func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.tidb_servers_info;"
+	const query = "SELECT * FROM information_schema.tidb_servers_info;"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -603,18 +685,66 @@ func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	return ddlIDs, errors.Annotatef(err, "sql: %s", query)
 }
 
+// getTiDBConfig gets tidb config from TiDB server
+// @@tidb_config details doc https://docs.pingcap.com/tidb/stable/system-variables#tidb_config
+// this variable exists at least from v2.0.0, so this works in most existing tidb instances
+func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
+	const query = "SELECT @@tidb_config;"
+	var (
+		tidbConfig      dbconfig.Config
+		tidbConfigBytes []byte
+	)
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&tidbConfigBytes)
+	if err != nil {
+		return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+	}
+	err = json.Unmarshal(tidbConfigBytes, &tidbConfig)
+	return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+}
+
 // CheckTiDBWithTiKV use sql to check whether current TiDB has TiKV
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
+	conn, err := db.Conn(context.Background())
+	if err == nil {
+		defer conn.Close()
+		tidbConfig, err := getTiDBConfig(conn)
+		if err == nil {
+			return tidbConfig.Store == "tikv", nil
+		}
+	}
 	var count int
-	query := "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
+	const query = "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
 	row := db.QueryRow(query)
-	err := row.Scan(&count)
+	err = row.Scan(&count)
 	if err != nil {
 		// still return true here. Because sometimes users may not have privileges for MySQL.TiDB database
 		// In most production cases TiDB has TiKV
 		return true, errors.Annotatef(err, "sql: %s", query)
 	}
 	return count > 0, nil
+}
+
+// CheckIfSeqExists use sql to check whether sequence exists
+func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+	var count int
+	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&count)
+	if err != nil {
+		return false, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	return count > 0, nil
+}
+
+// CheckTiDBEnableTableLock use sql variable to check whether current TiDB has TiKV
+func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
+	tidbConfig, err := getTiDBConfig(db)
+	if err != nil {
+		return false, err
+	}
+	return tidbConfig.EnableTableLock, nil
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
@@ -948,7 +1078,7 @@ func pickupPossibleField(meta TableMeta, db *sql.Conn) (string, error) {
 	if meta.HasImplicitRowID() {
 		return "_tidb_rowid", nil
 	}
-	// try to use pk
+	// try to use pk or uk
 	fieldName, err := getNumericIndex(db, meta)
 	if err != nil {
 		return "", err
@@ -1003,7 +1133,7 @@ func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *sql.Con
 func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fieldNames []string) uint64 {
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		tctx.L().Warn("can't detect estimate rows from db",
+		tctx.L().Info("can't estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
@@ -1011,13 +1141,13 @@ func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fiel
 	rows.Next()
 	columns, err := rows.Columns()
 	if err != nil {
-		tctx.L().Warn("can't get columns from db",
+		tctx.L().Info("can't get columns when estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	err = rows.Err()
 	if err != nil {
-		tctx.L().Warn("rows meet some error during the query",
+		tctx.L().Info("rows meet some error during the query when estimate rows",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
@@ -1038,17 +1168,18 @@ found:
 	}
 	err = rows.Scan(addr...)
 	if err != nil || fieldIndex < 0 {
-		tctx.L().Warn("can't get estimate count from db",
-			zap.String("query", query), log.ShortError(err))
+		tctx.L().Info("can't estimate rows from db",
+			zap.String("query", query), zap.Int("fieldIndex", fieldIndex), log.ShortError(err))
 		return 0
 	}
 
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
-		tctx.L().Warn("can't get parse rows from db",
+		tctx.L().Info("can't get parse estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
+
 	return uint64(estRows)
 }
 
@@ -1268,4 +1399,47 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 		return nil
 	})
 	return regionsInfo, err
+}
+
+// GetCharsetAndDefaultCollation gets charset and default collation map.
+func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
+	charsetAndDefaultCollation := make(map[string]string)
+	query := "SHOW CHARACTER SET"
+
+	// Show an example.
+	/*
+		mysql> SHOW CHARACTER SET;
+		+----------+---------------------------------+---------------------+--------+
+		| Charset  | Description                     | Default collation   | Maxlen |
+		+----------+---------------------------------+---------------------+--------+
+		| armscii8 | ARMSCII-8 Armenian              | armscii8_general_ci |      1 |
+		| ascii    | US ASCII                        | ascii_general_ci    |      1 |
+		| big5     | Big5 Traditional Chinese        | big5_chinese_ci     |      2 |
+		| binary   | Binary pseudo charset           | binary              |      1 |
+		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
+		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
+	*/
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var charset, description, collation string
+		var maxlen int
+		if scanErr := rows.Scan(&charset, &description, &collation, &maxlen); scanErr != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	if rows.Err() != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	return charsetAndDefaultCollation, err
 }

@@ -34,7 +34,6 @@ const (
 )
 
 func TestPrefix(t *testing.T) {
-	t.Parallel()
 	s, err := mockstore.NewMockStore()
 	require.Nil(t, err)
 	defer func() {
@@ -75,7 +74,6 @@ func TestPrefix(t *testing.T) {
 }
 
 func TestPrefixFilter(t *testing.T) {
-	t.Parallel()
 	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00

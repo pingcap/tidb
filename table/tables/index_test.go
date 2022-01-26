@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,65 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSingleColumnCommonHandle(t *testing.T) {
-	t.Parallel()
-	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
-	var idxUnique, idxNonUnique table.Index
-	for _, idxInfo := range tblInfo.Indices {
-		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-		if idxInfo.Name.L == "u" {
-			idxUnique = idx
-		} else if idxInfo.Name.L == "nu" {
-			idxNonUnique = idx
-		}
-	}
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	mockCtx := mock.NewContext()
-	sc := mockCtx.GetSessionVars().StmtCtx
-	// create index for "insert t values ('abc', 1, 1)"
-	idxColVals := types.MakeDatums(1)
-	handleColVals := types.MakeDatums("abc")
-	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
-	require.NoError(t, err)
-	commonHandle, err := kv.NewCommonHandle(encodedHandle)
-	require.NoError(t, err)
-
-	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
-		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
-		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
-		require.NoError(t, err)
-		val, err := txn.Get(context.Background(), key)
-		require.NoError(t, err)
-		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
-			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		require.NoError(t, err)
-		require.Len(t, colVals, 2)
-		_, d, err := codec.DecodeOne(colVals[0])
-		require.NoError(t, err)
-		require.Equal(t, int64(1), d.GetInt64())
-		_, d, err = codec.DecodeOne(colVals[1])
-		require.NoError(t, err)
-		require.Equal(t, "abc", d.GetString())
-		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
-		require.NoError(t, err)
-		require.False(t, handle.IsInt())
-		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
-
-		unTouchedVal := append([]byte{1}, val[1:]...)
-		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
-		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
-			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		require.NoError(t, err)
-	}
-}
-
 func TestMultiColumnCommonHandle(t *testing.T) {
-	t.Parallel()
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
@@ -165,6 +107,62 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, handle.IsInt())
 		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
+	}
+}
+
+func TestSingleColumnCommonHandle(t *testing.T) {
+	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
+	var idxUnique, idxNonUnique table.Index
+	for _, idxInfo := range tblInfo.Indices {
+		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		if idxInfo.Name.L == "u" {
+			idxUnique = idx
+		} else if idxInfo.Name.L == "nu" {
+			idxNonUnique = idx
+		}
+	}
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	mockCtx := mock.NewContext()
+	sc := mockCtx.GetSessionVars().StmtCtx
+	// create index for "insert t values ('abc', 1, 1)"
+	idxColVals := types.MakeDatums(1)
+	handleColVals := types.MakeDatums("abc")
+	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	require.NoError(t, err)
+	commonHandle, err := kv.NewCommonHandle(encodedHandle)
+	require.NoError(t, err)
+
+	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
+		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		require.NoError(t, err)
+		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		require.NoError(t, err)
+		val, err := txn.Get(context.Background(), key)
+		require.NoError(t, err)
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
+		require.NoError(t, err)
+		require.Len(t, colVals, 2)
+		_, d, err := codec.DecodeOne(colVals[0])
+		require.NoError(t, err)
+		require.Equal(t, int64(1), d.GetInt64())
+		_, d, err = codec.DecodeOne(colVals[1])
+		require.NoError(t, err)
+		require.Equal(t, "abc", d.GetString())
+		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
+		require.NoError(t, err)
+		require.False(t, handle.IsInt())
+		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
+
+		unTouchedVal := append([]byte{1}, val[1:]...)
+		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
+		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
+		require.NoError(t, err)
 	}
 }
 

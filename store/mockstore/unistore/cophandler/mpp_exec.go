@@ -180,8 +180,8 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 							}
 							return nil, nil
 						}
-						for _, tipbChunk := range tipbChunks {
-							tunnel.DataCh <- &tipbChunk
+						for j := range tipbChunks {
+							tunnel.DataCh <- &tipbChunks[j]
 						}
 					}
 				}
@@ -194,8 +194,8 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 						}
 						return nil, nil
 					}
-					for _, tipbChunk := range tipbChunks {
-						tunnel.DataCh <- &tipbChunk
+					for i := range tipbChunks {
+						tunnel.DataCh <- &tipbChunks[i]
 					}
 				}
 			}

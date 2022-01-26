@@ -15,19 +15,22 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestBatchPointGetExec(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -76,8 +79,6 @@ func TestBatchPointGetExec(t *testing.T) {
 }
 
 func TestBatchPointGetInTxn(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -108,8 +109,6 @@ func TestBatchPointGetInTxn(t *testing.T) {
 }
 
 func TestBatchPointGetCache(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -124,8 +123,6 @@ func TestBatchPointGetCache(t *testing.T) {
 }
 
 func TestIssue18843(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -141,8 +138,6 @@ func TestIssue18843(t *testing.T) {
 }
 
 func TestIssue24562(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -156,8 +151,6 @@ func TestIssue24562(t *testing.T) {
 }
 
 func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -173,8 +166,6 @@ func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
 }
 
 func TestBatchPointGetLockExistKey(t *testing.T) {
-	t.Parallel()
-
 	var wg sync.WaitGroup
 	errCh := make(chan error)
 	store, clean := testkit.CreateMockStore(t)
@@ -320,8 +311,6 @@ func TestBatchPointGetLockExistKey(t *testing.T) {
 }
 
 func TestBatchPointGetIssue25167(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -336,4 +325,58 @@ func TestBatchPointGetIssue25167(t *testing.T) {
 	tk.MustExec("set @a=(select current_timestamp(3))")
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
+}
+
+func TestCacheSnapShot(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	ctx := context.Background()
+	txn, err := se.GetStore().Begin(tikv.WithStartTS(0))
+	memBuffer := txn.GetMemBuffer()
+	require.NoError(t, err)
+	var keys []kv.Key
+	for i := 0; i < 2; i++ {
+		keys = append(keys, []byte(string(rune(i))))
+	}
+	err = memBuffer.Set(keys[0], []byte("1111"))
+	require.NoError(t, err)
+	err = memBuffer.Set(keys[1], []byte("2222"))
+	require.NoError(t, err)
+	cacheTableSnapShot := executor.MockNewCacheTableSnapShot(nil, memBuffer)
+	get, err := cacheTableSnapShot.Get(ctx, keys[0])
+	require.NoError(t, err)
+	require.Equal(t, get, []byte("1111"))
+	batchGet, err := cacheTableSnapShot.BatchGet(ctx, keys)
+	require.NoError(t, err)
+	require.Equal(t, batchGet[string(keys[0])], []byte("1111"))
+	require.Equal(t, batchGet[string(keys[1])], []byte("2222"))
+}
+
+func TestPointGetForTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
+		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+	}()
+
+	// Batch point get.
+	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
+
+	// Point get.
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
 }

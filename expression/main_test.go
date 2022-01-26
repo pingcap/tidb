@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -28,8 +29,10 @@ import (
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper)
+
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -45,12 +48,19 @@ func TestMain(m *testing.M) {
 	// Note, SetSystemTZ() is a sync.Once operation.
 	timeutil.SetSystemTZ("system")
 
+	testDataMap.LoadTestSuiteData("testdata", "flag_simplify")
+	testDataMap.LoadTestSuiteData("testdata", "expression_suite")
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
 func createContext(t *testing.T) *mock.Context {
@@ -61,4 +71,12 @@ func createContext(t *testing.T) *mock.Context {
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
 	ctx.GetSessionVars().PlanColumnID = 0
 	return ctx
+}
+
+func GetFlagSimplifyData() testdata.TestData {
+	return testDataMap["flag_simplify"]
+}
+
+func GetExpressionSuiteData() testdata.TestData {
+	return testDataMap["expression_suite"]
 }

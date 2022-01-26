@@ -46,7 +46,7 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
+	_, collation := scalar.CharsetAndCollation()
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
@@ -111,7 +111,17 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 }
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
-	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
+	_, collation := scalar.CharsetAndCollation()
+	if collate.NewCollationEnabled() && !collate.IsBinCollation(collation) {
+		// The algorithm constructs the range in byte-level: for example, ab% is mapped to [ab, ac] by adding 1 to the last byte.
+		// However, this is incorrect for non-binary collation strings because the sort key order is not the same as byte order.
+		// For example, "`%" is mapped to the range [`, a](where ` is 0x60 and a is 0x61).
+		// Because the collation utf8_general_ci is case-insensitive, a and A have the same sort key.
+		// Finally, the range comes to be [`, A], which is actually an empty range.
+		// See https://github.com/pingcap/tidb/issues/31174 for more details.
+		// In short, when the column type is non-binary collation string, we cannot use `like` expressions to generate the range.
+		return false
+	}
 	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
 		return false
 	}

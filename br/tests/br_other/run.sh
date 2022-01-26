@@ -95,6 +95,8 @@ run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-siz
 run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
 
 backup_fail=0
+# generate 1.sst to make another backup failed.
+touch "$TEST_DIR/$DB/lock/1.sst"
 echo "another backup start expect to fail due to last backup add a lockfile"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/lock" --concurrency 4 || backup_fail=1
 if [ "$backup_fail" -ne "1" ];then

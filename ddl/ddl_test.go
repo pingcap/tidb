@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/stretchr/testify/require"
 )
 
 type DDLForTest interface {
@@ -84,7 +84,6 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	tikv.EnableFailpoints()
 
 	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	if err != nil {
@@ -96,21 +95,25 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
-	c.Assert(err, IsNil)
-
-	return d
+	return d, err
 }
 
-func testCreateStore(c *C, name string) kv.Storage {
+func testCreateStore(t *testing.T, name string) kv.Storage {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	return store
+}
+
+func testCreateStoreT(t *testing.T, name string) kv.Storage {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
 	return store
 }
 
@@ -120,14 +123,25 @@ func testNewContext(d *ddl) sessionctx.Context {
 	return ctx
 }
 
-func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
+func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	return ver
+}
+
+func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.GetSchemaVersion()
+	require.NoError(t, err)
 	return ver
 }
 
@@ -138,37 +152,70 @@ type historyJobArgs struct {
 	tblIDs map[int64]struct{}
 }
 
-func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
-	c.Assert(t1.ID, Equals, t2.ID)
-	c.Assert(t1.Name, Equals, t2.Name)
-	c.Assert(t1.Charset, Equals, t2.Charset)
-	c.Assert(t1.Collate, Equals, t2.Collate)
-	c.Assert(t1.PKIsHandle, DeepEquals, t2.PKIsHandle)
-	c.Assert(t1.Comment, DeepEquals, t2.Comment)
-	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
+func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
+	require.Equal(t, t1.ID, t2.ID)
+	require.Equal(t, t1.Name, t2.Name)
+	require.Equal(t, t1.Charset, t2.Charset)
+	require.Equal(t, t1.Collate, t2.Collate)
+	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.Equal(t, t1.Comment, t2.Comment)
+	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJob(c *C, job *model.Job) {
-	c.Assert(job.State, Equals, model.JobStateSynced)
+func checkEqualTableT(t *testing.T, t1, t2 *model.TableInfo) {
+	require.Equal(t, t1.ID, t2.ID)
+	require.Equal(t, t1.Name, t2.Name)
+	require.Equal(t, t1.Charset, t2.Charset)
+	require.Equal(t, t1.Collate, t2.Collate)
+	require.EqualValues(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.EqualValues(t, t1.Comment, t2.Comment)
+	require.EqualValues(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+func checkHistoryJob(t *testing.T, job *model.Job) {
+	require.Equal(t, job.State, model.JobStateSynced)
+}
+
+func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	historyJob, err := t.GetHistoryDDLJob(id)
-	c.Assert(err, IsNil)
-	c.Assert(historyJob.BinlogInfo.FinishedTS, Greater, uint64(0))
+	require.NoError(t, err)
+	tran := meta.NewMeta(txn)
+	historyJob, err := tran.GetHistoryDDLJob(id)
+	require.NoError(t, err)
+	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
 	if args.tbl != nil {
-		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
-		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
+		require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
+		checkEqualTable(t, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
 
 	// for handling schema job
-	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
-	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
+	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
+	// only for creating schema job
+	if args.db != nil && len(args.tblIDs) == 0 {
+		return
+	}
+}
+
+func checkHistoryJobArgsT(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	tt := meta.NewMeta(txn)
+	historyJob, err := tt.GetHistoryDDLJob(id)
+	require.NoError(t, err)
+	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
+
+	if args.tbl != nil {
+		require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
+		checkEqualTableT(t, historyJob.BinlogInfo.TableInfo, args.tbl)
+		return
+	}
+
+	// for handling schema job
+	require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
+	require.EqualValues(t, args.db, historyJob.BinlogInfo.DBInfo)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
@@ -188,37 +235,26 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 	}
 }
 
-func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	newCol := table.ToColumn(tblInfo.Columns[0])
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
-	}
-}
-
-func testCreatePrimaryKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
+func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
 	job.Type = model.ActionAddPrimaryKey
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
+func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -227,13 +263,13 @@ func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testAddColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
+func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -242,9 +278,9 @@ func testAddColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -262,12 +298,12 @@ func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName s
 	}
 }
 
-func testDropIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -281,7 +317,7 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 	}
 }
 
-func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
+func (s *testDDLSuiteToVerify) TestGetIntervalFromPolicy() {
 	policy := []time.Duration{
 		1 * time.Second,
 		2 * time.Second,
@@ -292,18 +328,18 @@ func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
 	)
 
 	val, changed = getIntervalFromPolicy(policy, 0)
-	c.Assert(val, Equals, 1*time.Second)
-	c.Assert(changed, Equals, true)
+	require.Equal(s.T(), val, 1*time.Second)
+	require.Equal(s.T(), changed, true)
 
 	val, changed = getIntervalFromPolicy(policy, 1)
-	c.Assert(val, Equals, 2*time.Second)
-	c.Assert(changed, Equals, true)
+	require.Equal(s.T(), val, 2*time.Second)
+	require.Equal(s.T(), changed, true)
 
 	val, changed = getIntervalFromPolicy(policy, 2)
-	c.Assert(val, Equals, 2*time.Second)
-	c.Assert(changed, Equals, false)
+	require.Equal(s.T(), val, 2*time.Second)
+	require.Equal(s.T(), changed, false)
 
 	val, changed = getIntervalFromPolicy(policy, 3)
-	c.Assert(val, Equals, 2*time.Second)
-	c.Assert(changed, Equals, false)
+	require.Equal(s.T(), val, 2*time.Second)
+	require.Equal(s.T(), changed, false)
 }

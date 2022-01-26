@@ -23,8 +23,6 @@ import (
 )
 
 func TestMVMap(t *testing.T) {
-	t.Parallel()
-
 	m := NewMVMap()
 	m.Put([]byte("abc"), []byte("abc1"))
 	m.Put([]byte("abc"), []byte("abc2"))
@@ -52,8 +50,6 @@ func TestMVMap(t *testing.T) {
 }
 
 func TestFNVHash(t *testing.T) {
-	t.Parallel()
-
 	b := []byte{0xcb, 0xf2, 0x9c, 0xe4, 0x84, 0x22, 0x23, 0x25}
 	sum1 := fnvHash64(b)
 	hash := fnv.New64()

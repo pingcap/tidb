@@ -15,15 +15,23 @@
 package executor
 
 import (
+	"archive/zip"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -51,6 +59,10 @@ type TraceExec struct {
 
 	builder *executorBuilder
 	format  string
+
+	// optimizerTrace indicates 'trace plan statement'
+	optimizerTrace       bool
+	optimizerTraceTarget string
 }
 
 // Next executes real query and collects span later.
@@ -71,12 +83,97 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.ctx.GetSessionVars().StmtCtx = stmtCtx
 	}()
 
+	if e.optimizerTrace {
+		if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+			return e.nextOptimizerCEPlanTrace(ctx, e.ctx, req)
+		}
+		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
+	}
+
 	switch e.format {
 	case core.TraceFormatLog:
 		return e.nextTraceLog(ctx, se, req)
 	default:
 		return e.nextRowJSON(ctx, se, req)
 	}
+}
+
+func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizerCETrace
+	stmtCtx.EnableOptimizerCETrace = true
+	defer func() {
+		stmtCtx.EnableOptimizerCETrace = origin
+	}()
+
+	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
+	}
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	res := []byte(writer.String())
+
+	req.AppendBytes(0, res)
+	e.exhausted = true
+	return nil
+}
+
+func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+	zf, fileName, err := generateOptimizerTraceFile()
+	if err != nil {
+		return err
+	}
+	zw := zip.NewWriter(zf)
+	defer func() {
+		err := zw.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
+		}
+		err = zf.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
+		}
+	}()
+	traceZW, err := zw.Create("trace.json")
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizeTrace
+	stmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		stmtCtx.EnableOptimizeTrace = origin
+	}()
+	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
+	}
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.OptimizeTracer)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	res := []byte(writer.String())
+
+	_, err = traceZW.Write(res)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	req.AppendString(0, fileName)
+	e.exhausted = true
+	return nil
 }
 
 func (e *TraceExec) nextTraceLog(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
@@ -251,4 +348,27 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 			}
 		}
 	}
+}
+
+func generateOptimizerTraceFile() (*os.File, string, error) {
+	dirPath := domain.GetOptimizerTraceDirName()
+	// Create path
+	err := os.MkdirAll(dirPath, os.ModePerm)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	// Generate key and create zip file
+	time := time.Now().UnixNano()
+	b := make([]byte, 16)
+	_, err = rand.Read(b)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	fileName := fmt.Sprintf("optimizer_trace_%v_%v.zip", key, time)
+	zf, err := os.Create(filepath.Join(dirPath, fileName))
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	return zf, fileName, nil
 }

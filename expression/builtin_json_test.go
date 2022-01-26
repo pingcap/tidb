@@ -29,7 +29,6 @@ import (
 )
 
 func TestJSONType(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
@@ -55,7 +54,6 @@ func TestJSONType(t *testing.T) {
 }
 
 func TestJSONQuote(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
@@ -85,7 +83,6 @@ func TestJSONQuote(t *testing.T) {
 }
 
 func TestJSONUnquote(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
@@ -119,13 +116,13 @@ func TestJSONUnquote(t *testing.T) {
 			require.Equal(t, tt.Result, d.GetString())
 			require.NoError(t, err)
 		} else {
-			require.Regexp(t, ".*The document root must not be followed by other values.*", err.Error())
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "The document root must not be followed by other values")
 		}
 	}
 }
 
 func TestJSONExtract(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
@@ -164,7 +161,6 @@ func TestJSONExtract(t *testing.T) {
 
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
 func TestJSONSetInsertReplace(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		fc           functionClass
@@ -211,7 +207,6 @@ func TestJSONSetInsertReplace(t *testing.T) {
 }
 
 func TestJSONMerge(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
@@ -243,7 +238,6 @@ func TestJSONMerge(t *testing.T) {
 }
 
 func TestJSONMergePreserve(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
@@ -275,7 +269,6 @@ func TestJSONMergePreserve(t *testing.T) {
 }
 
 func TestJSONArray(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
@@ -301,7 +294,6 @@ func TestJSONArray(t *testing.T) {
 }
 
 func TestJSONObject(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
@@ -346,7 +338,6 @@ func TestJSONObject(t *testing.T) {
 }
 
 func TestJSONRemove(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
@@ -397,7 +388,6 @@ func TestJSONRemove(t *testing.T) {
 }
 
 func TestJSONContains(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
@@ -478,7 +468,6 @@ func TestJSONContains(t *testing.T) {
 }
 
 func TestJSONContainsPath(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContainsPath]
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
@@ -538,7 +527,6 @@ func TestJSONContainsPath(t *testing.T) {
 }
 
 func TestJSONLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
@@ -611,7 +599,6 @@ func TestJSONLength(t *testing.T) {
 }
 
 func TestJSONKeys(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
@@ -683,7 +670,6 @@ func TestJSONKeys(t *testing.T) {
 }
 
 func TestJSONDepth(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
@@ -743,7 +729,6 @@ func TestJSONDepth(t *testing.T) {
 }
 
 func TestJSONArrayAppend(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sampleJSON, err := json.ParseBinaryFromString(`{"b": 2}`)
 	require.NoError(t, err)
@@ -823,7 +808,6 @@ func TestJSONArrayAppend(t *testing.T) {
 }
 
 func TestJSONSearch(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONSearch]
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
@@ -899,7 +883,6 @@ func TestJSONSearch(t *testing.T) {
 }
 
 func TestJSONArrayInsert(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
@@ -973,7 +956,6 @@ func TestJSONArrayInsert(t *testing.T) {
 }
 
 func TestJSONValid(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONValid]
 	tbl := []struct {
@@ -1005,7 +987,6 @@ func TestJSONValid(t *testing.T) {
 }
 
 func TestJSONStorageSize(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONStorageSize]
 	tbl := []struct {
@@ -1049,7 +1030,6 @@ func TestJSONStorageSize(t *testing.T) {
 }
 
 func TestJSONPretty(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONPretty]
 	tbl := []struct {
@@ -1124,7 +1104,6 @@ func TestJSONPretty(t *testing.T) {
 }
 
 func TestJSONMergePatch(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMergePatch]
 	tbl := []struct {

@@ -176,11 +176,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 			paramNames = append(paramNames, name)
 		}
 		buf.WriteString(")")
-		stmt, err := e.ParseWithParams(ctx, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rows, _, err := e.ExecRestrictedStmt(ctx, stmt)
+		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}

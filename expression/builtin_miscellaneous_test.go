@@ -29,7 +29,6 @@ import (
 )
 
 func TestInetAton(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Input    interface{}
@@ -62,7 +61,6 @@ func TestInetAton(t *testing.T) {
 }
 
 func TestIsIPv4(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -97,8 +95,42 @@ func TestIsIPv4(t *testing.T) {
 	trequire.DatumEqual(t, types.NewDatum(0), r)
 }
 
+func TestIsUUID(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		uuid   string
+		expect interface{}
+	}{
+		{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
+		{"6CCD780C-BABA-1026-9564-5B8C656024DB", 1},
+		{"6ccd780cbaba102695645b8c656024db", 1},
+		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
+		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
+		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
+		// This is a bug in google/uuid#60
+		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
+		// This is a format google/uuid support, while mysql doesn't
+		{"urn:uuid:99a9ad03-5298-11ec-8f5c-00ff90147ac3", 1},
+	}
+
+	fc := funcs[ast.IsUUID]
+	for _, test := range tests {
+		uuid := types.NewStringDatum(test.uuid)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{uuid}))
+		require.NoError(t, err)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	r, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
+}
+
 func TestUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
@@ -125,7 +157,6 @@ func TestUUID(t *testing.T) {
 }
 
 func TestAnyValue(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
@@ -148,7 +179,6 @@ func TestAnyValue(t *testing.T) {
 }
 
 func TestIsIPv6(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -178,7 +208,6 @@ func TestIsIPv6(t *testing.T) {
 }
 
 func TestInetNtoa(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     int
@@ -209,7 +238,6 @@ func TestInetNtoa(t *testing.T) {
 }
 
 func TestInet6NtoA(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -248,7 +276,6 @@ func TestInet6NtoA(t *testing.T) {
 }
 
 func TestInet6AtoN(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -280,7 +307,6 @@ func TestInet6AtoN(t *testing.T) {
 }
 
 func TestIsIPv4Mapped(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -310,7 +336,6 @@ func TestIsIPv4Mapped(t *testing.T) {
 }
 
 func TestIsIPv4Compat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -341,7 +366,6 @@ func TestIsIPv4Compat(t *testing.T) {
 }
 
 func TestNameConst(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
@@ -385,7 +409,6 @@ func TestNameConst(t *testing.T) {
 }
 
 func TestUUIDToBin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -485,7 +508,6 @@ func TestUUIDToBin(t *testing.T) {
 }
 
 func TestBinToUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}

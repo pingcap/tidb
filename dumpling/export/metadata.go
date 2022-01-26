@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 type globalMetadata struct {
@@ -56,7 +58,7 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error { // revive:disable-line:flag-parameter
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType version.ServerType, afterConn bool) error { // revive:disable-line:flag-parameter
 	if afterConn {
 		m.afterConnBuffer.Reset()
 		return recordGlobalMetaData(m.tctx, db, &m.afterConnBuffer, serverType, afterConn, m.snapshot)
@@ -64,7 +66,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	return recordGlobalMetaData(m.tctx, db, &m.buffer, serverType, afterConn, m.snapshot)
 }
 
-func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverType ServerType, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
+func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverType version.ServerType, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
 	writeMasterStatusHeader := func() {
 		buffer.WriteString("SHOW MASTER STATUS:")
 		if afterConn {
@@ -93,14 +95,14 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	// | tidb-binlog | 415195906970746880 |              |                  |                   |
 	// +-------------+--------------------+--------------+------------------+-------------------+
 	// 1 row in set (0.00 sec)
-	case ServerTypeMySQL, ServerTypeTiDB:
+	case version.ServerTypeMySQL, version.ServerTypeTiDB:
 		str, err := ShowMasterStatus(db)
 		if err != nil {
 			return err
 		}
 		logFile := getValidStr(str, fileFieldIndex)
 		var pos string
-		if serverType == ServerTypeTiDB && snapshot != "" {
+		if serverType == version.ServerTypeTiDB && snapshot != "" {
 			pos = snapshot
 		} else {
 			pos = getValidStr(str, posFieldIndex)
@@ -125,7 +127,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	// | 0-1-2                    |
 	// +--------------------------+
 	// 1 row in set (0.00 sec)
-	case ServerTypeMariaDB:
+	case version.ServerTypeMariaDB:
 		str, err := ShowMasterStatus(db)
 		if err != nil {
 			return err
@@ -135,7 +137,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		var gtidSet string
 		err = db.QueryRowContext(context.Background(), "SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
-			tctx.L().Error("fail to get gtid for mariaDB", zap.Error(err))
+			tctx.L().Warn("fail to get gtid for mariaDB", zap.Error(err))
 		}
 
 		if logFile != "" {
@@ -146,7 +148,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		return errors.Errorf("unsupported serverType %s for recordGlobalMetaData", serverType.String())
 	}
 	buffer.WriteString("\n")
-	if serverType == ServerTypeTiDB {
+	if serverType == version.ServerTypeTiDB {
 		return nil
 	}
 
