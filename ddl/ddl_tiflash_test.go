@@ -189,7 +189,12 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	require.NoError(t, SetUpHelper(s))
 	defer TearDownHelper(s)
 
-	_, _, cluster, _ := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
@@ -216,7 +221,6 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	tk.MustExec("create table ddltiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 
 	total := 0
-
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
@@ -232,7 +236,6 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	lessThan := 40
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflashp ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 	total += 1
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
@@ -240,18 +243,15 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
-
 	// Now gc will trigger, and will remove dropped partition.
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("alter table ddltiflashp drop partition p2")
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
@@ -259,10 +259,8 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
-
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
@@ -545,7 +543,12 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, SetUpHelper(s))
 	defer TearDownHelper(s)
 
-	_, _, cluster, err := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
