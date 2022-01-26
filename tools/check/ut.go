@@ -248,12 +248,10 @@ func cmdRun(args ...string) bool {
 	}
 	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
-	numactl := numactlExist()
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
 	var wg sync.WaitGroup
 	for i := 0; i < P; i++ {
-		works[i] = numa{fmt.Sprintf("%d", i), numactl, false}
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
@@ -349,8 +347,6 @@ func listPackages() ([]string, error) {
 }
 
 type numa struct {
-	cpu     string
-	numactl bool
 	Fail    bool
 }
 
@@ -374,12 +370,7 @@ type testResult struct {
 
 func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	exe := "./" + testFileName(pkg)
-	var cmd *exec.Cmd
-	if n.numactl {
-		cmd = n.testCommandWithNumaCtl(exe, fn, old)
-	} else {
-		cmd = n.testCommand(exe, fn, old)
-	}
+	cmd := n.testCommand(exe, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	cmd.Stdout = &res.output
@@ -388,24 +379,6 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 		res.err = withTrace(err)
 	}
 	return res
-}
-
-func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
-	if old {
-		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			"numactl", "--physcpubind", n.cpu, "--",
-			exe,
-			"-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
-	}
-
-	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		"numactl", "--physcpubind", n.cpu, "--",
-		exe,
-		"-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
 }
 
 func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
@@ -476,14 +449,6 @@ func testBinaryExist(pkg string) (bool, error) {
 	}
 	return true, withTrace(err)
 }
-func numactlExist() bool {
-	find, err := exec.Command("which", "numactl").Output()
-	if err == nil && len(find) > 0 {
-		return true
-	}
-	return false
-}
-
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
 	return file + ".test.bin"
