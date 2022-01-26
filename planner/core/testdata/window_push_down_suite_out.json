@@ -10,9 +10,9 @@
       {
         "SQL": "explain select *, row_number() over () FROM employee -- 1. empty partition",
         "Plan": [
-          "TableReader_14 10000.00 root  data:ExchangeSender_13",
-          "└─ExchangeSender_13 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "TableReader_22 10000.00 root  data:ExchangeSender_21",
+          "└─ExchangeSender_21 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_19 10000.00 cop[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "    └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
           "      └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: PassThrough",
           "        └─TableFullScan_10 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
@@ -22,9 +22,9 @@
       {
         "SQL": "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
         "Plan": [
-          "TableReader_15 10000.00 root  data:ExchangeSender_14",
-          "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_8 10000.00 cop[tiflash]  row_number()->Column#6 over(order by test.employee.salary rows between current row and current row)",
+          "TableReader_24 10000.00 root  data:ExchangeSender_23",
+          "└─ExchangeSender_23 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_21 10000.00 cop[tiflash]  row_number()->Column#6 over(order by test.employee.salary rows between current row and current row)",
           "    └─Sort_13 10000.00 cop[tiflash]  test.employee.salary",
           "      └─ExchangeReceiver_12 10000.00 cop[tiflash]  ",
           "        └─ExchangeSender_11 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -89,18 +89,43 @@
       {
         "SQL": "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 6. different kinds, multi funcitons, same window",
         "Plan": [
-          "Projection_8 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, Column#8, Column#7",
-          "└─Shuffle_31 10000.00 root  execution info: concurrency:5, data sources:[TableReader_28]",
-          "  └─Window_11 10000.00 root  row_number()->Column#8 over(partition by test.employee.deptid rows between current row and current row)",
-          "    └─Sort_29 10000.00 root  test.employee.deptid",
-          "      └─TableReader_28 10000.00 root  data:ExchangeSender_27",
-          "        └─ExchangeSender_27 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "          └─Window_25 10000.00 cop[tiflash]  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
-          "            └─Window_12 10000.00 cop[tiflash]  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
-          "              └─Sort_18 10000.00 cop[tiflash]  test.employee.deptid",
-          "                └─ExchangeReceiver_17 10000.00 cop[tiflash]  ",
-          "                  └─ExchangeSender_16 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
-          "                    └─TableFullScan_15 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_38 10000.00 root  data:ExchangeSender_37",
+          "└─ExchangeSender_37 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_9 10000.00 cop[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#8, Column#7",
+          "    └─Window_34 10000.00 cop[tiflash]  row_number()->Column#8 over(partition by test.employee.deptid rows between current row and current row)",
+          "      └─Window_12 10000.00 cop[tiflash]  max(test.employee.deptid)->Column#7 over(partition by test.employee.deptid)",
+          "        └─Sort_18 10000.00 cop[tiflash]  test.employee.deptid",
+          "          └─ExchangeReceiver_17 10000.00 cop[tiflash]  ",
+          "            └─ExchangeSender_16 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "              └─TableFullScan_15 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *, sum(a) over () FROM  (select *, row_number() over () a from employee) tmp -- 7. multi window from sub query",
+        "Plan": [
+          "TableReader_26 10000.00 root  data:ExchangeSender_25",
+          "└─ExchangeSender_25 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_12 10000.00 cop[tiflash]  sum(cast(Column#6, decimal(20,0) BINARY))->Column#8 over()",
+          "    └─Window_14 10000.00 cop[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "      └─ExchangeReceiver_20 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_19 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "          └─TableFullScan_18 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 7.1 multi window from sub query",
+        "Plan": [
+          "Shuffle_28 10000.00 root  execution info: concurrency:5, data sources:[TableReader_25]",
+          "└─Window_13 10000.00 root  sum(cast(Column#6, decimal(20,0) BINARY))->Column#8 over(partition by test.employee.deptid)",
+          "  └─Sort_26 10000.00 root  test.employee.deptid",
+          "    └─TableReader_25 10000.00 root  data:ExchangeSender_24",
+          "      └─ExchangeSender_24 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "        └─Window_19 10000.00 cop[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "          └─ExchangeReceiver_23 10000.00 cop[tiflash]  ",
+          "            └─ExchangeSender_22 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "              └─TableFullScan_21 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       }

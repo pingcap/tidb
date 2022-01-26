@@ -2290,6 +2290,7 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 			mpp = mpp.enforceExchanger(prop)
 		}
+		// TODO: find a better way to solve the cost problem.
 		mpp.cst = mpp.cost() * 0.05
 		p.cost = mpp.cost()
 		return attachPlan2Task(p, mpp)
