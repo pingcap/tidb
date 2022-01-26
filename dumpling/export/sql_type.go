@@ -11,10 +11,9 @@ import (
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
 
 var (
-	nullValue           = "NULL"
-	quotationMark       = []byte{'\''}
-	twoQuotationMarks   = []byte{'\'', '\''}
-	doubleQuotationMark = []byte{'"'}
+	nullValue         = "NULL"
+	quotationMark     = []byte{'\''}
+	twoQuotationMarks = []byte{'\'', '\''}
 )
 
 // There are two kinds of scenes to use this dataType
