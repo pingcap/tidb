@@ -1,0 +1,129 @@
+# prepare database
+create database collation_point_get;
+use collation_point_get;
+
+# pointGet IndexLookupChar
+drop table if exists t;
+create table t(a char(2), b char(2), index idx_1(a));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+select * from t where a = "aab";
+# Test query with table alias
+select * from t tmp where a = "aa";
+select * from t tmp where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+drop table if exists t;
+create table t(a char(2) binary, b char(2), index idx_1(a));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+select * from t where a = "";
+select * from t where a = " ";
+select * from t where a = "  ";
+select * from t where a = "   ";
+
+# pointGet PK
+drop table if exists t;
+create table t(a char(2) primary key, b char(2));
+insert into t values("aa", "bb");
+select * from t tmp where a = "aa";
+select * from t tmp where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t tmp where a = "a";
+select * from t tmp where a = "a ";
+select * from t tmp where a = "a  ";
+# Test CHAR BINARY.
+drop table if exists t;
+create table t(a char(2) binary primary key, b char(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t tmp where a = "a";
+select * from t tmp where a = "a ";
+select * from t tmp where a = "a  ";
+select * from t tmp where a = "";
+select * from t tmp where a = "  ";
+select * from t tmp where a = "   ";
+# Test both wildcard and column name exist in select field list
+drop table if exists t;
+create table t(a char(2) primary key, b char(2));
+insert into t values("aa", "bb");
+select *, a from t tmp where a = "aa";
+# Test using table alias in field list
+select tmp.* from t tmp where a = "aa";
+select tmp.a, tmp.b from t tmp where a = "aa";
+select tmp.*, tmp.a, tmp.b from t tmp where a = "aa";
+select tmp.* from t tmp where a = "aab";
+select tmp.a, tmp.b from t tmp where a = "aab";
+select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";
+select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";
+# Test using table alias in where clause
+select * from t tmp where tmp.a = "aa";
+select a, b from t tmp where tmp.a = "aa";
+select *, a, b from t tmp where tmp.a = "aa";
+# Unknown table name in where clause and field list
+--error 1054
+select a from t where xxxxx.a = "aa";
+--error 1054
+select xxxxx.a from t where a = "aa";
+# When an alias is provided, it completely hides the actual name of the table.
+--error 1054
+select a from t tmp where t.a = "aa";
+--error 1054
+select t.a from t tmp where a = "aa";
+--error 1051
+select t.* from t tmp where a = "aa";
+
+# PointGetCharPK
+drop table if exists t;
+create table t(a char(4) primary key, b char(4));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+select * from t where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+# Test CHAR BINARY.
+drop table if exists t;
+create table t(a char(2) binary primary key, b char(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+select * from t where a = "";
+select * from t where a = "  ";
+select * from t where a = "   ";
+
+# PointGetVarcharPK
+drop table if exists t;
+create table t(a varchar(2) primary key, b varchar(2));
+insert into t values("aa", "bb");
+select * from t where a = "aa";
+select * from t where a = "aab";
+truncate table t;
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+# Test VARCHAR BINARY.
+drop table if exists t;
+create table t(a varchar(2) binary primary key, b varchar(2));
+insert into t values("  ", "  ");
+insert into t values("a ", "b ");
+select * from t where a = "a";
+select * from t where a = "a ";
+select * from t where a = "a  ";
+select * from t where a = "";
+select * from t where a = "  ";
+select * from t where a = "   ";
+
+use mysql;
