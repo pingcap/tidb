@@ -15,6 +15,8 @@
 package aggregation
 
 import (
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tipb/go-tipb"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -96,4 +98,73 @@ func NeedFrame(name string) bool {
 // Clone makes a copy of SortItem.
 func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 	return &WindowFuncDesc{*s.baseFuncDesc.clone()}
+}
+
+// WindowFuncToPBExpr converts aggregate function to pb.
+// TODO before review: merge this function and AggFuncToPBExpr.
+// TODO before review: add all window functions and control them in planner.
+func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+
+	var tp tipb.ExprType
+	switch desc.Name {
+	case ast.AggFuncCount:
+		tp = tipb.ExprType_Count
+	case ast.AggFuncApproxCountDistinct:
+		tp = tipb.ExprType_ApproxCountDistinct
+	case ast.AggFuncFirstRow:
+		tp = tipb.ExprType_First
+	//case ast.AggFuncGroupConcat:
+	//	tp = tipb.ExprType_GroupConcat
+	case ast.AggFuncMax:
+		tp = tipb.ExprType_Max
+	case ast.AggFuncMin:
+		tp = tipb.ExprType_Min
+	case ast.AggFuncSum:
+		tp = tipb.ExprType_Sum
+	case ast.AggFuncAvg:
+		tp = tipb.ExprType_Avg
+	case ast.AggFuncBitOr:
+		tp = tipb.ExprType_Agg_BitOr
+	case ast.AggFuncBitXor:
+		tp = tipb.ExprType_Agg_BitXor
+	case ast.AggFuncBitAnd:
+		tp = tipb.ExprType_Agg_BitAnd
+	case ast.AggFuncVarPop:
+		tp = tipb.ExprType_VarPop
+	case ast.AggFuncJsonArrayagg:
+		tp = tipb.ExprType_JsonArrayAgg
+	case ast.AggFuncJsonObjectAgg:
+		tp = tipb.ExprType_JsonObjectAgg
+	case ast.AggFuncStddevPop:
+		tp = tipb.ExprType_StddevPop
+	case ast.AggFuncVarSamp:
+		tp = tipb.ExprType_VarSamp
+	case ast.AggFuncStddevSamp:
+		tp = tipb.ExprType_StddevSamp
+
+	case ast.WindowFuncRowNumber:
+		tp = tipb.ExprType_RowNumber
+	case ast.WindowFuncRank:
+		tp = tipb.ExprType_Rank
+	case ast.WindowFuncDenseRank:
+		tp = tipb.ExprType_DenseRank
+	case ast.WindowFuncLag:
+		tp = tipb.ExprType_Lag
+	case ast.WindowFuncLead:
+		tp = tipb.ExprType_Lead
+	}
+	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+
+	children := make([]*tipb.Expr, 0, len(desc.Args))
+	for _, arg := range desc.Args {
+		pbArg := pc.ExprToPB(arg)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(desc.RetTp)}
 }

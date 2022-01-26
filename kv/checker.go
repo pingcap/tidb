@@ -14,7 +14,9 @@
 
 package kv
 
-import "github.com/pingcap/tipb/go-tipb"
+import (
+	"github.com/pingcap/tipb/go-tipb"
+)
 
 // RequestTypeSupportedChecker is used to check expression can be pushed down.
 type RequestTypeSupportedChecker struct{}
@@ -47,6 +49,9 @@ func (d RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 	// NOTE: tipb.ExprType_GroupConcat is only supported by TiFlash, So checking it for TiKV case outside.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
 		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_ApproxCountDistinct, tipb.ExprType_GroupConcat:
+		return true
+	// window functions.
+	case tipb.ExprType_RowNumber, tipb.ExprType_Rank, tipb.ExprType_DenseRank, tipb.ExprType_Lag, tipb.ExprType_Lead:
 		return true
 	case ReqSubTypeDesc:
 		return true

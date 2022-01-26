@@ -454,6 +454,60 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorID}, nil
 }
 
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+
+	windowExec := &tipb.Window{}
+
+	windowExec.FuncDesc = make([]*tipb.Expr, 0, len(p.WindowFuncDescs))
+	for _, desc := range p.WindowFuncDescs {
+		windowExec.FuncDesc = append(windowExec.FuncDesc, aggregation.WindowFuncToPBExpr(ctx, client, desc))
+	}
+	for _, item := range p.PartitionBy {
+		windowExec.PartitionBy = append(windowExec.PartitionBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
+	for _, item := range p.OrderBy {
+		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
+
+	// TODO before review: add fame protobufs.
+
+	var err error
+	windowExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeWindow, Window: windowExec, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	if !p.IsPartialSort {
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort.", p.basePlan.ExplainID())
+	}
+
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+
+	sortExec := &tipb.Sort{}
+	for _, item := range p.ByItems {
+		sortExec.ByItems = append(sortExec.ByItems, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
+	}
+	isPartialSort := p.IsPartialSort
+	sortExec.IsPartialSort = &isPartialSort
+
+	var err error
+	sortExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeSort, Sort: sortExec, ExecutorId: &executorID}, nil
+}
+
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
 func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
