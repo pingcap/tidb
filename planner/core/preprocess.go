@@ -789,9 +789,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
 			// Try to convert to BLOB or TEXT, see issue #30328
-			if terror.ErrorEqual(err, types.ErrTooBigFieldLength) && p.tryAutoConvert(colDef) {
-				err = nil
-			} else {
+			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.tryAutoConvert(colDef) {
 				p.err = err
 				return
 			}
