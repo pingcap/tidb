@@ -566,24 +566,12 @@ func buildColumnAndConstraint(
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	// Some column checks are performed before convert, so varchar auto convert is checked here, see issue #30328
-	sessVars := ctx.GetSessionVars()
-	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
-		err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, colDef.Tp.Charset)
-		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
-			colDef.Tp.Tp = mysql.TypeBlob
-			if err = adjustBlobTypesFlen(colDef.Tp, colDef.Tp.Charset); err != nil {
-				return nil, nil, err
-			}
-			if colDef.Tp.Charset == charset.CharsetBin {
-				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
-			} else {
-				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
-			}
-		}
+	if err = checkTooBigFieldLengthAndTryAutoConvert(colDef.Tp, colDef.Name.Name.O, ctx.GetSessionVars()); err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
@@ -4284,6 +4272,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
+	if err = checkTooBigFieldLengthAndTryAutoConvert(&newCol.FieldType, newCol.Name.O, sctx.GetSessionVars()); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Check the column with foreign key, waiting for the default flen and decimal.
 	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
 		// For now we strongly ban the all column type change for column with foreign key.
@@ -6882,4 +6874,25 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 
 	err = d.doDDLJob(ctx, job)
 	return d.callHookOnChanged(err)
+}
+
+// checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
+// in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
+func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
+	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.Tp == mysql.TypeVarchar {
+		err := IsTooBigFieldLength(tp.Flen, colName, tp.Charset)
+		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
+			tp.Tp = mysql.TypeBlob
+			if err = adjustBlobTypesFlen(tp, tp.Charset); err != nil {
+				return err
+			}
+			if tp.Charset == charset.CharsetBin {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARBINARY", "BLOB"))
+			} else {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARCHAR", "TEXT"))
+			}
+		}
+		return nil
+	}
+	return nil
 }

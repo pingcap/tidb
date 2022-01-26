@@ -7772,3 +7772,26 @@ func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
 	c.Assert(checkErr, IsNil)
 }
+
+// for issue #30328
+func (s *testDBSuite5) TestTooBigFieldLengthAutoConvert(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	err := tk.ExecToErr("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	c.Assert(types.ErrTooBigFieldLength.Equal(err), IsTrue)
+
+	// save previous sql_mode and change
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists i30328_1")
+		tk.MustExec("drop table if exists i30328_2")
+	}(r.Rows()[0][0].(string))
+	tk.MustExec("set @@sql_mode='NO_ENGINE_SUBSTITUTION'")
+
+	tk.MustExec("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARBINARY to BLOB", "Warning 1246 Converting column 'b' from VARCHAR to TEXT"))
+	tk.MustExec("create table i30328_2(a varchar(200))")
+	tk.MustExec("alter table i30328_2 modify a varchar(70000000);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARCHAR to TEXT"))
+}
