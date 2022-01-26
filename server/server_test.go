@@ -462,14 +462,6 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Ser
 }
 
 func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
-	// fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	// require.NoError(t, err)
-	// require.NotNil(t, fp)
-	// defer func() {
-	// 	err = fp.Close()
-	// 	require.NoError(t, err)
-	// }()
-
 	err := fp.Truncate(0)
 	require.NoError(t, err)
 	_, err = fp.Seek(0, 0)
@@ -478,16 +470,15 @@ func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows
 	for _, row := range rows {
 		fields := strings.Split(row, " ")
 		_, err = fp.WriteString(strings.Join(fields, "\t"))
+		require.NoError(t, err)
 		_, err = fp.WriteString("\n")
+		require.NoError(t, err)
 	}
-	require.NoError(t, err)
 	require.NoError(t, fp.Sync())
 }
 
 func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 	fp, err := os.CreateTemp("", "load_data_txn_error.csv")
-
-	// fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
 
@@ -865,12 +856,9 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 }
 
 func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
-	// create a file and write data.
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
-	// fp, err := os.Create(path)
-	// require.NoError(t, err)
 	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
