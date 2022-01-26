@@ -41,8 +41,11 @@ type ApplyedFile interface {
 }
 
 // GetRewriteRules returns the rewrite rule of the new table and the old table.
+// getDetailRule is used for normal backup & restore.
+// if set to true, means we collect the rules like tXXX_r, tYYY_i.
+// if set to false, means we only collect the rules contain table_id, tXXX, tYYY.
 func GetRewriteRules(
-	newTable, oldTable *model.TableInfo, newTimeStamp uint64,
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
 ) *RewriteRules {
 	tableIDs := make(map[int64]int64)
 	tableIDs[oldTable.ID] = newTable.ID
@@ -66,15 +69,23 @@ func GetRewriteRules(
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
-		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
-			NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
-			NewTimestamp: newTimeStamp,
-		})
-		for oldIndexID, newIndexID := range indexIDs {
+		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
-				NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+				OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
+				NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
+				NewTimestamp: newTimeStamp,
+			})
+			for oldIndexID, newIndexID := range indexIDs {
+				dataRules = append(dataRules, &import_sstpb.RewriteRule{
+					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+					NewTimestamp: newTimeStamp,
+				})
+			}
+		} else {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
 				NewTimestamp: newTimeStamp,
 			})
 		}

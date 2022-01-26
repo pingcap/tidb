@@ -724,7 +724,8 @@ func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0)
+		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
+		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0, false)
 	}
 	return rules, nil
 }
