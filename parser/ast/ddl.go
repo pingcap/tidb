@@ -74,18 +74,7 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
-	DatabaseOptionPlacementPrimaryRegion       = DatabaseOptionType(PlacementOptionPrimaryRegion)
-	DatabaseOptionPlacementRegions             = DatabaseOptionType(PlacementOptionRegions)
-	DatabaseOptionPlacementFollowerCount       = DatabaseOptionType(PlacementOptionFollowerCount)
-	DatabaseOptionPlacementVoterCount          = DatabaseOptionType(PlacementOptionVoterCount)
-	DatabaseOptionPlacementLearnerCount        = DatabaseOptionType(PlacementOptionLearnerCount)
-	DatabaseOptionPlacementSchedule            = DatabaseOptionType(PlacementOptionSchedule)
-	DatabaseOptionPlacementConstraints         = DatabaseOptionType(PlacementOptionConstraints)
-	DatabaseOptionPlacementLeaderConstraints   = DatabaseOptionType(PlacementOptionLeaderConstraints)
-	DatabaseOptionPlacementLearnerConstraints  = DatabaseOptionType(PlacementOptionLearnerConstraints)
-	DatabaseOptionPlacementFollowerConstraints = DatabaseOptionType(PlacementOptionFollowerConstraints)
-	DatabaseOptionPlacementVoterConstraints    = DatabaseOptionType(PlacementOptionVoterConstraints)
-	DatabaseOptionPlacementPolicy              = DatabaseOptionType(PlacementOptionPolicy)
+	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
 // DatabaseOption represents database option.
@@ -111,9 +100,9 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Value)
-	case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
+	case DatabaseOptionPlacementPolicy:
 		placementOpt := PlacementOption{
-			Tp:        PlacementOptionType(n.Tp),
+			Tp:        PlacementOptionPolicy,
 			UintValue: n.UintValue,
 			StrValue:  n.Value,
 		}
@@ -211,7 +200,7 @@ func (n *AlterDatabaseStmt) Accept(v Visitor) (Node, bool) {
 func (n *AlterDatabaseStmt) isAllPlacementOptions() bool {
 	for _, n := range n.Options {
 		switch n.Tp {
-		case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
+		case DatabaseOptionPlacementPolicy:
 		default:
 			return false
 		}
@@ -2043,23 +2032,12 @@ const (
 	TableOptionTableCheckSum
 	TableOptionUnion
 	TableOptionEncryption
-	TableOptionPlacementPrimaryRegion       = TableOptionType(PlacementOptionPrimaryRegion)
-	TableOptionPlacementRegions             = TableOptionType(PlacementOptionRegions)
-	TableOptionPlacementFollowerCount       = TableOptionType(PlacementOptionFollowerCount)
-	TableOptionPlacementVoterCount          = TableOptionType(PlacementOptionVoterCount)
-	TableOptionPlacementLearnerCount        = TableOptionType(PlacementOptionLearnerCount)
-	TableOptionPlacementSchedule            = TableOptionType(PlacementOptionSchedule)
-	TableOptionPlacementConstraints         = TableOptionType(PlacementOptionConstraints)
-	TableOptionPlacementLeaderConstraints   = TableOptionType(PlacementOptionLeaderConstraints)
-	TableOptionPlacementLearnerConstraints  = TableOptionType(PlacementOptionLearnerConstraints)
-	TableOptionPlacementFollowerConstraints = TableOptionType(PlacementOptionFollowerConstraints)
-	TableOptionPlacementVoterConstraints    = TableOptionType(PlacementOptionVoterConstraints)
-	TableOptionPlacementPolicy              = TableOptionType(PlacementOptionPolicy)
-	TableOptionStatsBuckets                 = TableOptionType(StatsOptionBuckets)
-	TableOptionStatsTopN                    = TableOptionType(StatsOptionTopN)
-	TableOptionStatsColsChoice              = TableOptionType(StatsOptionColsChoice)
-	TableOptionStatsColList                 = TableOptionType(StatsOptionColList)
-	TableOptionStatsSampleRate              = TableOptionType(StatsOptionSampleRate)
+	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
@@ -2332,9 +2310,9 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case TableOptionPlacementPrimaryRegion, TableOptionPlacementRegions, TableOptionPlacementFollowerCount, TableOptionPlacementLeaderConstraints, TableOptionPlacementLearnerCount, TableOptionPlacementVoterCount, TableOptionPlacementSchedule, TableOptionPlacementConstraints, TableOptionPlacementFollowerConstraints, TableOptionPlacementVoterConstraints, TableOptionPlacementLearnerConstraints, TableOptionPlacementPolicy:
+	case TableOptionPlacementPolicy:
 		placementOpt := PlacementOption{
-			Tp:        PlacementOptionType(n.Tp),
+			Tp:        PlacementOptionPolicy,
 			UintValue: n.UintValue,
 			StrValue:  n.StrValue,
 		}

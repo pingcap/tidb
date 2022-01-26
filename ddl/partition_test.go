@@ -27,6 +27,10 @@ import (
 
 func ExportTestDropAndTruncatePartition(t *testing.T) {
 	store := testCreateStoreT(t, "test_store")
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),

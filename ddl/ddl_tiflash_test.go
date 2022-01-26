@@ -60,6 +60,8 @@ const (
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
+	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -91,53 +93,16 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
-	ddl.PollTiFlashInterval = 1000 * time.Millisecond
-	ddl.PullTiFlashPdTick = 60
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
+	s.tiflash.Lock()
 	s.tiflash.StatusServer.Close()
+	s.tiflash.Unlock()
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 	ddl.PollTiFlashInterval = 2 * time.Second
-}
-
-// Compare supposed rule, and we actually get from TableInfo
-func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
-	// Compute startKey
-	if rule.StartKeyHex == startKey && rule.EndKeyHex == endKey {
-		ok := false
-		for _, c := range rule.Constraints {
-			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false
-		}
-
-		if len(rule.LocationLabels) == len(labels) {
-			for i, lb := range labels {
-				if lb != rule.LocationLabels[i] {
-					return false
-				}
-			}
-		} else {
-			return false
-		}
-
-		if rule.Count != count {
-			return false
-		}
-		if rule.Role != placement.Learner {
-			return false
-		}
-	} else {
-		return false
-	}
-	return true
 }
 
 func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime string) {
@@ -161,12 +126,7 @@ func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime
 }
 
 func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.TiFlashRule) bool {
-	for _, r := range s.tiflash.GlobalTiFlashPlacementRules {
-		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
-			return true
-		}
-	}
-	return false
+	return s.tiflash.CheckPlacementRule(rule)
 }
 
 func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
@@ -190,12 +150,12 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	if tb.Meta().Partition != nil {
 		for _, e := range tb.Meta().Partition.Definitions {
 			ruleName := fmt.Sprintf("table-%v-r", e.ID)
-			_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
+			_, ok := s.tiflash.GetPlacementRule(ruleName)
 			c.Assert(ok, Equals, true)
 		}
 	} else {
 		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
-		_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
+		_, ok := s.tiflash.GetPlacementRule(ruleName)
 		c.Assert(ok, Equals, true)
 	}
 }
@@ -213,17 +173,22 @@ func TempDisableEmulatorGC() func() {
 	return f
 }
 
-func (s *tiflashDDLTestSuite) SetPdLoop(tick int) func() {
-	originValue := ddl.PullTiFlashPdTick
-	ddl.PullTiFlashPdTick = tick
+func (s *tiflashDDLTestSuite) SetPdLoop(tick uint64) func() {
+	originValue := ddl.PullTiFlashPdTick.Swap(tick)
 	return func() {
-		ddl.PullTiFlashPdTick = originValue
+		ddl.PullTiFlashPdTick.Store(originValue)
 	}
 }
 
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
 func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
-	_, _, cluster, _ := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
@@ -242,7 +207,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	defer fCancelPD()
 
 	// Clean all rules
-	s.tiflash.GlobalTiFlashPlacementRules = make(map[string]placement.TiFlashRule)
+	s.tiflash.CleanPlacementRules()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("drop table if exists ddltiflashp")
@@ -250,56 +215,56 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	tk.MustExec("create table ddltiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 
 	total := 0
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
 	total += 3
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	lessThan := 40
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflashp ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("alter table ddltiflashp truncate partition p1")
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	// Now gc will trigger, and will remove dropped partition.
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
 	total -= 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("alter table ddltiflashp drop partition p2")
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
 	total -= 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("truncate table ddltiflash")
 	total += 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
 	total -= 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 
 	tk.MustExec("drop table ddltiflash")
 	total -= 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
-	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+	c.Assert(s.tiflash.PlacementRulesLen(), Equals, total)
 }
 
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
@@ -330,7 +295,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	for _, p := range pi.Definitions {
 		c.Assert(tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
-			table, ok := s.tiflash.SyncStatus[int(p.ID)]
+			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			c.Assert(ok, Equals, true)
 			c.Assert(table.Accel, Equals, true)
 		}
@@ -368,7 +333,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	for _, p := range pi.Definitions {
 		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
-			table, ok := s.tiflash.SyncStatus[int(p.ID)]
+			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			c.Assert(ok, Equals, true)
 			c.Assert(table.Accel, Equals, true)
 		}
@@ -535,7 +500,13 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
-	_, _, cluster, err := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
@@ -545,7 +516,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	}()
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
-	c.Assert(err, IsNil)
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
 	// Make SetPdLoop take effects.
@@ -579,9 +549,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
-	s.tiflash.PdEnabled = false
+	s.tiflash.PdSwitch(false)
 	defer func() {
-		s.tiflash.PdEnabled = true
+		s.tiflash.PdSwitch(true)
 	}()
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))

@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -4899,13 +4900,13 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 
 	// DROP PARTITION
 	s.mustExec(tk, c, "drop table if exists t2")
-	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 drop partition p1"
 	s.mustExec(tk, c, sql)
 	tk.MustGetErrCode(sql, errno.ErrDropPartitionNonExistent)
 	s.mustExec(tk, c, "alter table t2 drop partition if exists p1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to DROP"))
 }
 
 func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testDBSuite5, c *C) {
@@ -6869,8 +6870,8 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
-	domain.SchemaOutOfDateRetryTimes = int32(50)
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
 }
 
 func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
@@ -7674,7 +7675,7 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testDBSuite2) TestCreateTables(c *C) {
+func (s *testDBSuite2) TestBatchCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
@@ -7710,4 +7711,80 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	infos[1].Name = model.NewCIStr("tables_1")
 	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
 	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
+
+	newinfo := &model.TableInfo{
+		Name: model.NewCIStr("tables_4"),
+	}
+	{
+		colNum := 2
+		cols := make([]*model.ColumnInfo, colNum)
+		viewCols := make([]model.CIStr, colNum)
+		var stmtBuffer bytes.Buffer
+		stmtBuffer.WriteString("SELECT ")
+		for i := range cols {
+			col := &model.ColumnInfo{
+				Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+				Offset: i,
+				State:  model.StatePublic,
+			}
+			cols[i] = col
+			viewCols[i] = col.Name
+			stmtBuffer.WriteString(cols[i].Name.L + ",")
+		}
+		stmtBuffer.WriteString("1 FROM t")
+		newinfo.Columns = cols
+		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
+	}
+
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
+	c.Check(err, IsNil)
+}
+
+func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
+	// For issue #31735.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, unique kye(a))")
+	tk.MustExec("insert into t1 value (1), (10)")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	_, checkErr = tk1.Exec("use test_db")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	times := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (1) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (2)")
+			}
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (2) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (3)")
+			}
+		case model.StateWriteReorganization:
+			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("insert into t1 values (3) on duplicate key update a=a+1")
+				if checkErr == nil {
+					_, checkErr = tk1.Exec("replace into t1 values (4)")
+				}
+				times++
+			}
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t1 add column gc int as ((a+1))")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
+	c.Assert(checkErr, IsNil)
 }
