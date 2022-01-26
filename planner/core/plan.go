@@ -75,7 +75,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
 			return mpp.enforceExchanger(p)
 		}
-		return &mppTask{}
+		return invalidTask
 	}
 	if p.IsEmpty() || tsk.plan() == nil {
 		return tsk
