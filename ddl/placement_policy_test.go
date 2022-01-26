@@ -399,7 +399,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	// test for normal cases
 	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\" NULL"))
-	tk.MustQuery("select * from information_schema.placement_policies where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj,sh      0 0"))
+	tk.MustQuery("select * from information_schema.placement_policies where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj,sh      2 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -407,7 +407,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\" NULL"))
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj     EVEN 0 0"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_POLICIES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x bj bj     EVEN 2 0"))
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
 	tk.MustExec("alter placement policy x " +
@@ -435,7 +435,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"CATALOG_NAME,POLICY_NAME," +
 		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
 		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_policies WHERE POLICY_NAME='x'").Check(
-		testkit.Rows("def x   [+disk=ssd]   [+region=sh]  0 3"),
+		testkit.Rows("def x   [+disk=ssd]   [+region=sh]  2 3"),
 	)
 	checkExistTableBundlesInPD(c, s.dom, "test", "tp")
 
