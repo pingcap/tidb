@@ -22,7 +22,6 @@ import (
 )
 
 func TestCheckFsp(t *testing.T) {
-	t.Parallel()
 	obtained, err := CheckFsp(UnspecifiedFsp)
 	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
@@ -62,7 +61,6 @@ func TestCheckFsp(t *testing.T) {
 }
 
 func TestParseFrac(t *testing.T) {
-	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
@@ -73,13 +71,13 @@ func TestParseFrac(t *testing.T) {
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "Invalid fsp .*", err.Error())
+	require.Regexp(t, "^Invalid fsp ", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
+	require.Regexp(t, "^strconv.ParseInt:", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
 	require.Equal(t, 123500, obtained)
@@ -121,7 +119,6 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestAlignFrac(t *testing.T) {
-	t.Parallel()
 	obtained := alignFrac("100", 6)
 	require.Equal(t, "100000", obtained)
 	obtained = alignFrac("10000000000", 6)

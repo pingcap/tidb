@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -300,6 +301,64 @@ func (s *restoreSuite) TestDiskQuotaLock(c *C) {
 	}
 }
 
+// failMetaMgrBuilder mocks meta manager init failure
+type failMetaMgrBuilder struct {
+	metaMgrBuilder
+}
+
+func (b failMetaMgrBuilder) Init(context.Context) error {
+	return errors.New("mock init meta failure")
+}
+
+type panicCheckpointDB struct {
+	checkpoints.DB
+}
+
+func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints.TidbDBInfo) error {
+	panic("should not reach here")
+}
+
+func (s *restoreSuite) TestPreCheckFailed(c *C) {
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.App.CheckRequirements = false
+
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+
+	ctl := &Controller{
+		cfg:            cfg,
+		saveCpCh:       make(chan saveCp),
+		checkpointsDB:  panicCheckpointDB{},
+		metaMgrBuilder: failMetaMgrBuilder{},
+		checkTemplate:  NewSimpleTemplate(),
+		tidbGlue:       g,
+		errorMgr:       errormanager.New(nil, cfg),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	// precheck failed, will not do init checkpoint.
+	err = ctl.Run(context.Background())
+	c.Assert(err, ErrorMatches, ".*mock init meta failure")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	ctl.saveCpCh = make(chan saveCp)
+	// precheck failed, will not do init checkpoint.
+	err1 := ctl.Run(context.Background())
+	c.Assert(err1.Error(), Equals, err.Error())
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
 var _ = Suite(&tableRestoreSuite{})
 
 type tableRestoreSuiteBase struct {
@@ -364,7 +423,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 			FileMeta: mydump.SourceFileMeta{
 				Path:     fakeFileName,
 				Type:     mydump.SourceTypeSQL,
-				SortKey:  fmt.Sprintf("%d", i),
+				SortKey:  strconv.Itoa(i),
 				FileSize: 37,
 			},
 		})
@@ -532,6 +591,93 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
+}
+
+type errorLocalWriter struct{}
+
+func (w errorLocalWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+	return errors.New("mock write rows failed")
+}
+
+func (w errorLocalWriter) IsSynced() bool {
+	return true
+}
+
+func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, nil
+}
+
+func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(c)
+	mockBackend := mock.NewMockBackend(ctrl)
+	rc := &Controller{
+		cfg:            s.cfg,
+		pauser:         DeliverPauser,
+		ioWorkers:      worker.NewPool(ctx, 1, "io"),
+		regionWorkers:  worker.NewPool(ctx, 10, "region"),
+		store:          s.store,
+		backend:        backend.MakeBackend(mockBackend),
+		errorSummaries: makeErrorSummaries(log.L()),
+		saveCpCh:       make(chan saveCp, 1),
+		diskQuotaLock:  newDiskQuotaLock(),
+	}
+	defer close(rc.saveCpCh)
+	go func() {
+		for cp := range rc.saveCpCh {
+			cp.waitCh <- nil
+		}
+	}()
+
+	cp := &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
+	}
+	err := s.tr.populateChunks(ctx, rc, cp)
+	c.Assert(err, IsNil)
+
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
+	c.Assert(err, IsNil)
+	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
+	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
+	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(tbl, &kv.SessionOptions{})).
+		AnyTimes()
+	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
+		Return(nil, errors.New("mock open index local writer failed"))
+	openedIdxEngine, err := rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	c.Assert(err, IsNil)
+
+	// open the first engine meet error, should directly return the error
+	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	c.Assert(err, ErrorMatches, "mock open index local writer failed")
+
+	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, errors.New("mock open index local writer failed after ctx.Done")
+		default:
+			return noop.Writer{}, nil
+		}
+	}
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(errorLocalWriter{}, nil).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
+		DoAndReturn(localWriter).AnyTimes()
+
+	openedIdxEngine, err = rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	c.Assert(err, IsNil)
+
+	// open engine failed after write rows failed, should return write rows error
+	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	c.Assert(err, ErrorMatches, "mock write rows failed")
 }
 
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
@@ -745,30 +891,124 @@ func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp := &checkpoints.ChunkCheckpoint{}
-	c.Assert(s.tr.initializeColumns(nil, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{0, 1, 2, -1})
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b", "c", "a"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 0, 1, -1})
+	defer func() {
+		s.tr.ignoreColumns = nil
+	}()
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{-1, 0, -1, -1})
+	cases := []struct {
+		columns             []string
+		ignoreColumns       map[string]struct{}
+		expectedPermutation []int
+		errPat              string
+	}{
+		{
+			nil,
+			nil,
+			[]int{0, 1, 2, -1},
+			"",
+		},
+		{
+			nil,
+			map[string]struct{}{"b": {}},
+			[]int{0, -1, 2, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			nil,
+			[]int{2, 0, 1, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			map[string]struct{}{"b": {}},
+			[]int{2, -1, 1, -1},
+			"",
+		},
+		{
+			[]string{"b"},
+			nil,
+			[]int{-1, 0, -1, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			nil,
+			[]int{2, 1, 3, 0},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			map[string]struct{}{"b": {}, "_tidb_rowid": {}},
+			[]int{2, -1, 3, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[d\]`,
+		},
+		{
+			[]string{"e", "b", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[e d\]`,
+		},
+	}
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 1, 3, 0})
+	for _, testCase := range cases {
+		ccp.ColumnPermutation = nil
+		s.tr.ignoreColumns = testCase.ignoreColumns
+		err := s.tr.initializeColumns(testCase.columns, ccp)
+		if len(testCase.errPat) > 0 {
+			c.Assert(err, NotNil)
+			c.Assert(err, ErrorMatches, testCase.errPat)
+		} else {
+			c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+		}
+	}
+}
 
-	ccp.ColumnPermutation = nil
-	err := s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[d\]`)
+func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	se := tmock.NewContext()
 
-	ccp.ColumnPermutation = nil
-	err = s.tr.initializeColumns([]string{"e", "b", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[e d\]`)
+	cases := []struct {
+		schema              string
+		columns             []string
+		expectedPermutation []int
+	}{
+		{
+			"CREATE TABLE `table` (a INT, b INT, C INT, d INT AS (a * 2))",
+			[]string{"b", "c", "a"},
+			[]int{2, 0, 1, -1, -1},
+		},
+		// all generated columns and none input columns
+		{
+			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', a))) stored)",
+			[]string{},
+			[]int{-1, -1, -1},
+		},
+	}
+
+	for _, testCase := range cases {
+		node, err := p.ParseOneStmt(testCase.schema, "", "")
+		c.Assert(err, IsNil)
+		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+		c.Assert(err, IsNil)
+		core.State = model.StatePublic
+		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		c.Assert(err, IsNil)
+		ccp := &checkpoints.ChunkCheckpoint{}
+
+		err = s.tr.initializeColumns(testCase.columns, ccp)
+		c.Assert(err, IsNil)
+		c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+	}
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
@@ -975,6 +1215,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		diskQuotaLock:     newDiskQuotaLock(),
+		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {
 		for scp := range chptCh {
@@ -986,8 +1227,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	db, sqlMock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
-	sqlMock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"version()"}).
-		AddRow("5.7.25-TiDB-v5.0.1"))
+	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
+		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
@@ -997,7 +1238,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	c.Assert(chunkPending-chunkPendingBase, Equals, float64(7))
-	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending)
+	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending-chunkPendingBase)
 
 	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	c.Assert(engineFinished-engineFinishedBase, Equals, float64(8))
@@ -1024,6 +1265,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
 		saveCpCh:      saveCpCh,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
+	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates()
 
 	start := time.Now()
@@ -1234,6 +1476,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	c.Assert(kvs, HasLen, 1)
 	c.Assert(kvs[0].rowID, Equals, int64(19))
 	c.Assert(kvs[0].offset, Equals, int64(36))
+	c.Assert(kvs[0].columns, DeepEquals, []string(nil))
 
 	kvs = <-kvsCh
 	c.Assert(len(kvs), Equals, 0)
@@ -1306,6 +1549,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit(c *C) {
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	c.Assert(failpoint.Enable(
 		"github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size", "return(110000000)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size")
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 
@@ -1355,7 +1599,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 	dir := c.MkDir()
 	fileName := "db.table.000.csv"
-	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0o644)
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2\r\n4,5,6,7\r\n"), 0o644)
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(dir)
@@ -1385,10 +1629,114 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 			Timestamp: 1234567895,
 		})
 	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
+	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2")
 	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
+	cases := []struct {
+		s             string
+		ignoreColumns []*config.IgnoreColumns
+		kvs           deliveredKVs
+		header        bool
+	}{
+		{
+			"1,2,3\r\n4,5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "table",
+					Columns: []string{"a"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  6,
+				columns: []string{"b", "c"},
+			},
+			false,
+		},
+		{
+			"b,c\r\n2,3\r\n5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					TableFilter: []string{"db*.tab*"},
+					Columns:     []string{"b"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  9,
+				columns: []string{"c"},
+			},
+			true,
+		},
+	}
+
+	for _, cs := range cases {
+		// reset test
+		s.SetUpTest(c)
+		s.testEncodeLoopIgnoreColumnsCSV(c, cs.s, cs.ignoreColumns, cs.kvs, cs.header)
+	}
+}
+
+func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
+	c *C,
+	f string,
+	ignoreColumns []*config.IgnoreColumns,
+	deliverKV deliveredKVs,
+	header bool,
+) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte(f), 0o644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	cfg.Mydumper.IgnoreColumns = ignoreColumns
+	cfg.Mydumper.CSV.Header = header
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	c.Assert(err, IsNil)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
+		s.tr.encTable,
+		&kv.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		})
+	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, IsNil)
+	c.Assert(kvsCh, HasLen, 2)
+
+	kvs := <-kvsCh
+	c.Assert(kvs, HasLen, 2)
+	c.Assert(kvs[0].rowID, Equals, deliverKV.rowID)
+	c.Assert(kvs[0].offset, Equals, deliverKV.offset)
+	c.Assert(kvs[0].columns, DeepEquals, deliverKV.columns)
+
+	kvs = <-kvsCh
+	c.Assert(len(kvs), Equals, 0)
 }
 
 func (s *chunkRestoreSuite) TestRestore(c *C) {
@@ -1553,8 +1901,23 @@ func (s *restoreSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	// before restore, if sysVars is initialized by other test, the time_zone should be default value
+	if len(s.rc.sysVars) > 0 {
+		tz, ok := s.rc.sysVars["time_zone"]
+		c.Assert(ok, IsTrue)
+		c.Assert(tz, Equals, "SYSTEM")
+	}
+
+	s.rc.cfg.TiDB.Vars = map[string]string{
+		"time_zone": "UTC",
+	}
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, IsNil)
+
+	// test after restore schema, sysVars has been updated
+	tz, ok := s.rc.sysVars["time_zone"]
+	c.Assert(ok, IsTrue)
+	c.Assert(tz, Equals, "UTC")
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
@@ -1718,6 +2081,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
+		c.Assert(err, IsNil)
 		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
@@ -1763,7 +2127,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 	testCases := []testCase{
 		{
 			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 200}},
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: api.RegionsInfo{
 				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
@@ -1774,9 +2138,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 2000}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3100}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 2000}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3100}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: api.RegionsInfo{
 				Regions: append(append(append([]api.RegionInfo(nil),
@@ -1794,9 +2158,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 1200}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3000}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 1200}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3000}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
@@ -1804,9 +2168,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		},
 		{
 			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 0}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 2800}},
-				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 0}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 2800}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,

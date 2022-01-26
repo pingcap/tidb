@@ -23,7 +23,6 @@ import (
 )
 
 func TestGlobalConnID(t *testing.T) {
-	t.Parallel()
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Experimental.EnableGlobalKill = true

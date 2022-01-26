@@ -25,8 +25,6 @@ import (
 )
 
 func TestTxnUsageInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -70,8 +68,6 @@ func TestTxnUsageInfo(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -86,4 +82,26 @@ func TestTemporaryTable(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.TemporaryTable)
+}
+
+func TestCachedTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.CachedTable)
+	tk.MustExec("drop table if exists tele_cache_t")
+	tk.MustExec("create table tele_cache_t (id int)")
+	tk.MustExec("alter table tele_cache_t cache")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.CachedTable)
+	tk.MustExec("alter table tele_cache_t nocache")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.CachedTable)
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -59,7 +60,8 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(s.ctx, con)
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().Collate))
+		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
 	return true, false
@@ -152,7 +154,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
-			_, coll := cond.CharsetAndCollation(ctx)
+			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().Collate != coll {
 				continue
 			}
@@ -349,6 +351,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
 	return s.conditions
 }
 

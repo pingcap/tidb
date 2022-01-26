@@ -5,58 +5,59 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"testing"
 
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type utilSuite struct{}
-
-var _ = Suite(&utilSuite{})
-
-func (s *utilSuite) TestIsRetryableError(c *C) {
-	c.Assert(IsRetryableError(context.Canceled), IsFalse)
-	c.Assert(IsRetryableError(context.DeadlineExceeded), IsFalse)
-	c.Assert(IsRetryableError(io.EOF), IsFalse)
-	c.Assert(IsRetryableError(&net.AddrError{}), IsFalse)
-	c.Assert(IsRetryableError(&net.DNSError{}), IsFalse)
-	c.Assert(IsRetryableError(&net.DNSError{IsTimeout: true}), IsTrue)
+func TestIsRetryableError(t *testing.T) {
+	require.False(t, IsRetryableError(context.Canceled))
+	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	require.False(t, IsRetryableError(io.EOF))
+	require.False(t, IsRetryableError(&net.AddrError{}))
+	require.False(t, IsRetryableError(&net.DNSError{}))
+	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 
 	// MySQL Errors
-	c.Assert(IsRetryableError(&mysql.MySQLError{}), IsFalse)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}), IsTrue)
+	require.False(t, IsRetryableError(&mysql.MySQLError{}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}))
+	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}))
 
 	// gRPC Errors
-	c.Assert(IsRetryableError(status.Error(codes.Canceled, "")), IsFalse)
-	c.Assert(IsRetryableError(status.Error(codes.Unknown, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.DeadlineExceeded, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.NotFound, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.AlreadyExists, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.PermissionDenied, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.ResourceExhausted, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.Aborted, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.OutOfRange, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.Unavailable, "")), IsTrue)
-	c.Assert(IsRetryableError(status.Error(codes.DataLoss, "")), IsTrue)
+	require.False(t, IsRetryableError(status.Error(codes.Canceled, "")))
+	require.True(t, IsRetryableError(status.Error(codes.Unknown, "")))
+	require.True(t, IsRetryableError(status.Error(codes.DeadlineExceeded, "")))
+	require.True(t, IsRetryableError(status.Error(codes.NotFound, "")))
+	require.True(t, IsRetryableError(status.Error(codes.AlreadyExists, "")))
+	require.True(t, IsRetryableError(status.Error(codes.PermissionDenied, "")))
+	require.True(t, IsRetryableError(status.Error(codes.ResourceExhausted, "")))
+	require.True(t, IsRetryableError(status.Error(codes.Aborted, "")))
+	require.True(t, IsRetryableError(status.Error(codes.OutOfRange, "")))
+	require.True(t, IsRetryableError(status.Error(codes.Unavailable, "")))
+	require.True(t, IsRetryableError(status.Error(codes.DataLoss, "")))
 
 	// sqlmock errors
-	c.Assert(IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
-	c.Assert(IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
+	require.False(t, IsRetryableError(fmt.Errorf("call to database Close was not expected")))
+	require.True(t, IsRetryableError(errors.New("call to database Close was not expected")))
 
 	// multierr
-	c.Assert(IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)), IsFalse)
-	c.Assert(IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})), IsTrue)
-	c.Assert(IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})), IsFalse)
+	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)))
+	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
+	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 }

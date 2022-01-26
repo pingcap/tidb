@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -161,7 +161,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
-		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
 
 	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
@@ -175,7 +175,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>"))
 
 	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
@@ -184,7 +184,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustExec("set role r_mysql_priv")
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>", "def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
 }
 
 func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
@@ -223,12 +223,12 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 
 	// The description column is not important
 	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
-		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
+		testkit.Rows("ascii_bin 1", "binary 1", "gbk_bin 2", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
 
 	// The is_default column is not important
 	// but the id's are used by client libraries and must be stable
 	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
-		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
+		testkit.Rows("ascii 65 1", "binary 63 1", "gbk 87 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))
@@ -587,7 +587,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1.")) // 1 note.
 	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
@@ -711,12 +711,13 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
+			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
@@ -917,7 +918,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 26)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 29)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -943,14 +944,14 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("29"))
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("29"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
@@ -968,9 +969,9 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 }
 
 func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {

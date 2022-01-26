@@ -122,7 +122,7 @@ type lockEntryHdr struct {
 
 func (store *MVCCStore) dumpMemLocks() error {
 	tmpFileName := store.dir + "/lock_store.tmp"
-	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -240,7 +240,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
 		if err != nil {
-			var resourceGroupTag []byte = nil
+			var resourceGroupTag []byte
 			if req.Context != nil {
 				resourceGroupTag = req.Context.ResourceGroupTag
 			}
@@ -1098,34 +1098,56 @@ func (store *MVCCStore) checkCommitted(reader *dbreader.DBReader, key []byte, st
 	return 0, nil
 }
 
-func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
-	if isResolved(lock.StartTS, resolved) {
-		return nil
+// LockPair contains a pair of key and lock. It's used for reading through locks.
+type LockPair struct {
+	key  []byte
+	lock *mvcc.Lock
+}
+
+func getValueFromLock(lock *mvcc.Lock) []byte {
+	if lock.Op == byte(kvrpcpb.Op_Put) {
+		// lock owns the value so needn't to safeCopy it.
+		return lock.Value
+	}
+	return nil
+}
+
+// *LockPair is not nil if the lock in the committed timestamp set. Read operations can get value from it without deep copy.
+func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64, committed []uint64) (*LockPair, error) {
+	if inTSSet(lock.StartTS, resolved) {
+		return nil, nil
 	}
 	lockVisible := lock.StartTS <= startTS
 	isWriteLock := lock.Op == uint8(kvrpcpb.Op_Put) || lock.Op == uint8(kvrpcpb.Op_Del)
 	isPrimaryGet := startTS == maxSystemTS && bytes.Equal(lock.Primary, key) && !lock.UseAsyncCommit
 	if lockVisible && isWriteLock && !isPrimaryGet {
-		return BuildLockErr(safeCopy(key), &lock)
+		if inTSSet(lock.StartTS, committed) {
+			return &LockPair{safeCopy(key), &lock}, nil
+		}
+		return nil, BuildLockErr(safeCopy(key), &lock)
 	}
-	return nil
+	return nil, nil
 }
 
 // CheckKeysLock implements the MVCCStore interface.
-func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved []uint64, keys ...[]byte) error {
+func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved, committed []uint64, keys ...[]byte) ([]*LockPair, error) {
 	var buf []byte
+	var lockPairs []*LockPair
 	for _, key := range keys {
 		buf = store.lockStore.Get(key, buf)
 		if len(buf) == 0 {
 			continue
 		}
 		lock := mvcc.DecodeLock(buf)
-		err := checkLock(lock, key, startTS, resolved)
+		lockPair, err := checkLock(lock, key, startTS, resolved, committed)
+		if lockPair != nil {
+			lockPairs = append(lockPairs, lockPair)
+		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return lockPairs, nil
 }
 
 // CheckRangeLock implements the MVCCStore interface.
@@ -1136,7 +1158,7 @@ func (store *MVCCStore) CheckRangeLock(startTS uint64, startKey, endKey []byte, 
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		err := checkLock(lock, it.Key(), startTS, resolved)
+		_, err := checkLock(lock, it.Key(), startTS, resolved, nil)
 		if err != nil {
 			return err
 		}
@@ -1386,17 +1408,45 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 	store.db.DeleteFilesInRange(start, end)
 }
 
+// Get implements the MVCCStore interface.
+func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
+	if reqCtx.isSnapshotIsolation() {
+		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		if err != nil {
+			return nil, err
+		}
+		if len(lockPairs) != 0 {
+			return getValueFromLock(lockPairs[0].lock), nil
+		}
+	}
+	val, err := reqCtx.getDBReader().Get(key, version)
+	if val == nil {
+		return nil, err
+	}
+	return safeCopy(val), err
+}
+
 // BatchGet implements the MVCCStore interface.
 func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint64) []*kvrpcpb.KvPair {
 	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
-	remain := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, key)
-		if err != nil {
-			pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
-		} else {
-			remain = append(remain, key)
+	var remain [][]byte
+	if reqCtx.isSnapshotIsolation() {
+		remain = make([][]byte, 0, len(keys))
+		for _, key := range keys {
+			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+			if err != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
+			} else if len(lockPairs) != 0 {
+				value := getValueFromLock(lockPairs[0].lock)
+				if value != nil {
+					pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+				}
+			} else {
+				remain = append(remain, key)
+			}
 		}
+	} else {
+		remain = keys
 	}
 	batchGetFunc := func(key, value []byte, err error) {
 		if len(value) != 0 {
@@ -1411,7 +1461,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	return pairs
 }
 
-func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved []uint64) []*kvrpcpb.KvPair {
+func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64) []*kvrpcpb.KvPair {
 	var pairs []*kvrpcpb.KvPair
 	it := store.lockStore.NewIterator()
 	for it.Seek(startKey); it.Valid(); it.Next() {
@@ -1419,8 +1469,14 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		err := checkLock(lock, it.Key(), startTS, resolved)
-		if err != nil {
+		lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
+		if lockPair != nil {
+			pairs = append(pairs, &kvrpcpb.KvPair{
+				Key: lockPair.key,
+				// deleted key's value is nil
+				Value: getValueFromLock(lockPair.lock),
+			})
+		} else if err != nil {
 			pairs = append(pairs, &kvrpcpb.KvPair{
 				Error: convertToKeyError(err),
 				Key:   safeCopy(it.Key()),
@@ -1430,8 +1486,8 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 	return pairs
 }
 
-func isResolved(startTS uint64, resolved []uint64) bool {
-	for _, v := range resolved {
+func inTSSet(startTS uint64, tsSet []uint64) bool {
+	for _, v := range tsSet {
 		if startTS == v {
 			return true
 		}
@@ -1486,7 +1542,9 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
 	if req.SampleStep == 0 {
-		lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, req.Context.ResolvedLocks)
+		if reqCtx.isSnapshotIsolation() {
+			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		}
 	} else {
 		limit = req.SampleStep * limit
 	}
@@ -1506,31 +1564,26 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 		})
 		return scanProc.pairs
 	}
-	pairs := append(scanProc.pairs, lockPairs...)
-	sort.Slice(pairs, func(i, j int) bool {
+	pairs := append(lockPairs, scanProc.pairs...)
+	sort.SliceStable(pairs, func(i, j int) bool {
 		cmp := bytes.Compare(pairs[i].Key, pairs[j].Key)
 		if req.Reverse {
 			cmp = -cmp
 		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
-		}
-		return pairs[i].Error != nil
+		return cmp < 0
 	})
 	validPairs := pairs[:0]
-	var prevErr *kvrpcpb.KvPair
+	var prev *kvrpcpb.KvPair
 	for _, pair := range pairs {
-		if prevErr != nil && bytes.Equal(prevErr.Key, pair.Key) {
+		if prev != nil && bytes.Equal(prev.Key, pair.Key) {
 			continue
 		}
-		if pair.Error != nil {
-			prevErr = pair
-		}
-		validPairs = append(validPairs, pair)
-		if len(validPairs) >= int(limit) {
-			break
+		prev = pair
+		if pair.Error != nil || len(pair.Value) != 0 {
+			validPairs = append(validPairs, pair)
+			if len(validPairs) >= int(limit) {
+				break
+			}
 		}
 	}
 	return validPairs

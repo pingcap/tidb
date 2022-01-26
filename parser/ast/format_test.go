@@ -3,22 +3,18 @@ package ast_test
 import (
 	"bytes"
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testAstFormatSuite{})
-
-type testAstFormatSuite struct {
-}
 
 func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
-func (ts *testAstFormatSuite) TestAstFormat(c *C) {
+func TestAstFormat(t *testing.T) {
 	var testcases = []struct {
 		input  string
 		output string
@@ -93,10 +89,10 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		charset, collation := getDefaultCharsetAndCollate()
 		stmts, _, err := parser.New().Parse(expr, charset, collation)
 		node := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		writer := bytes.NewBufferString("")
 		node.Format(writer)
-		c.Assert(writer.String(), Equals, tt.output)
+		require.Equal(t, tt.output, writer.String())
 	}
 }

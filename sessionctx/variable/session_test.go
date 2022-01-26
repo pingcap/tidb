@@ -54,14 +54,13 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", false},
+		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
 	}
 
 	for _, tc := range testCases {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			mtx.Lock()
 			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
 			mtx.Unlock()
@@ -155,6 +154,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
+	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
@@ -234,7 +234,9 @@ func TestSlowLogFormat(t *testing.T) {
 # Backoff_total: 12
 # Write_sql_response_total: 1
 # Result_rows: 12345
-# Succ: true`
+# Succ: true
+# IsExplicitTxn: true
+# IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -267,8 +269,10 @@ func TestSlowLogFormat(t *testing.T) {
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
-		ExecRetryCount: 3,
-		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		ExecRetryCount:    3,
+		ExecRetryTime:     5*time.Second + time.Millisecond*100,
+		IsExplicitTxn:     true,
+		IsWriteCacheTable: true,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)

@@ -31,6 +31,7 @@ import (
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -42,9 +43,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -78,7 +80,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
+	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -100,11 +102,92 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
-	} else if runInGoTest && s.cfg.Status.StatusPort == 0 {
+	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
 	return nil
+}
+
+// Ballast try to reduce the GC frequency by using Ballast Object
+type Ballast struct {
+	ballast     []byte
+	ballastLock sync.Mutex
+
+	maxSize int
+}
+
+func newBallast(maxSize int) *Ballast {
+	var b Ballast
+	b.maxSize = 1024 * 1024 * 1024 * 2
+	if maxSize > 0 {
+		b.maxSize = maxSize
+	} else {
+		// we try to use the total amount of ram as a reference to set the default ballastMaxSz
+		// since the fatal throw "runtime: out of memory" would never yield to `recover`
+		totalRAMSz, err := memory.MemTotal()
+		if err != nil {
+			logutil.BgLogger().Error("failed to get the total amount of RAM on this system", zap.Error(err))
+		} else {
+			maxSzAdvice := totalRAMSz >> 2
+			if uint64(b.maxSize) > maxSzAdvice {
+				b.maxSize = int(maxSzAdvice)
+			}
+		}
+	}
+	return &b
+}
+
+// GetSize get the size of ballast object
+func (b *Ballast) GetSize() int {
+	var sz int
+	b.ballastLock.Lock()
+	sz = len(b.ballast)
+	b.ballastLock.Unlock()
+	return sz
+}
+
+// SetSize set the size of ballast object
+func (b *Ballast) SetSize(newSz int) error {
+	if newSz < 0 {
+		return fmt.Errorf("newSz cannot be negative: %d", newSz)
+	}
+	if newSz > b.maxSize {
+		return fmt.Errorf("newSz cannot be bigger than %d but it has value %d", b.maxSize, newSz)
+	}
+	b.ballastLock.Lock()
+	b.ballast = make([]byte, newSz)
+	b.ballastLock.Unlock()
+	return nil
+}
+
+// GenHTTPHandler generate a HTTP handler to get/set the size of this ballast object
+func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(b.GetSize())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+			newSz, err := strconv.Atoi(string(body))
+			if err == nil {
+				err = b.SetSize(newSz)
+			}
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				errStr := err.Error()
+				if _, err := w.Write([]byte(errStr)); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+		}
+	}
 }
 
 func (s *Server) startHTTPServer() {
@@ -117,6 +200,10 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
+
+	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+
+	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
@@ -145,7 +232,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
 	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica", flashReplicaHandler{tikvHandlerTool})
+	router.Handle("/tiflash/replica-deprecated", flashReplicaHandler{tikvHandlerTool})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
@@ -191,9 +278,19 @@ func (s *Server) startHTTPServer() {
 
 	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
 	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
+	serverMux.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	ballast := newBallast(s.cfg.MaxBallastObjectSize)
+	{
+		err := ballast.SetSize(s.cfg.BallastObjectSize)
+		if err != nil {
+			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
+		}
+	}
+	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -258,7 +355,8 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
 			return
 		}
-		if err := tracecpu.StartCPUProfile(fw); err != nil {
+		pc := cpuprofile.NewCollector()
+		if err := pc.StartCPUProfile(fw); err != nil {
 			serveError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
@@ -268,9 +366,10 @@ func (s *Server) startHTTPServer() {
 			sec = 10
 		}
 		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
-		err = tracecpu.StopCPUProfile()
+		err = pc.StopCPUProfile()
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			serveError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
 		}
 

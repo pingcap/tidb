@@ -27,7 +27,6 @@ import (
 )
 
 func TestColumnToProto(t *testing.T) {
-	t.Parallel()
 	// Make sure the Flag is set in tipb.ColumnInfo
 	tp := types.NewFieldType(mysql.TypeLong)
 	tp.Flag = 10

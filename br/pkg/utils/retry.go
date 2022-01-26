@@ -58,11 +58,6 @@ func WithRetry(
 		err := retryableFunc()
 		if err != nil {
 			allErrors = multierr.Append(allErrors, err)
-			retry := IsRetryableError(err)
-			if !retry { // exited retry
-				return allErrors
-			}
-
 			select {
 			case <-ctx.Done():
 				return allErrors // nolint:wrapcheck
@@ -122,7 +117,9 @@ func isSingleRetryableError(err error) bool {
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflictInTiDB, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
+		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
+			tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout,
+			tmysql.ErrRegionUnavailable, tmysql.ErrInfoSchemaExpired, tmysql.ErrInfoSchemaChanged, tmysql.ErrTxnRetryable:
 			return true
 		default:
 			return false

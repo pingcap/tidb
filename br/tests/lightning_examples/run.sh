@@ -16,7 +16,7 @@
 
 set -eu
 
-EXAMPLES_PATH=${EXAMPLES_PATH:-pkg/lightning/mydump/examples}
+EXAMPLES_PATH=${EXAMPLES_PATH:-br/pkg/lightning/mydump/examples}
 
 # Because of issue JENKINS-45544 we can't use the Unicode filename in the
 # examples. We are going to rename it in-place.

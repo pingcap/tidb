@@ -28,7 +28,6 @@ import (
 )
 
 func TestProfiles(t *testing.T) {
-	t.Parallel()
 	var err error
 	var store kv.Storage
 	var dom *domain.Domain

@@ -179,16 +179,16 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 		dur = -dur
 	}
 	days := dur / (24 * time.Hour)
-	dur -= days * 24 * time.Hour
+	dur -= days * 24 * time.Hour //nolint:durationcheck
 	data[2] = byte(days)
 	hours := dur / time.Hour
-	dur -= hours * time.Hour
+	dur -= hours * time.Hour //nolint:durationcheck
 	data[6] = byte(hours)
 	minutes := dur / time.Minute
-	dur -= minutes * time.Minute
+	dur -= minutes * time.Minute //nolint:durationcheck
 	data[7] = byte(minutes)
 	seconds := dur / time.Second
-	dur -= seconds * time.Second
+	dur -= seconds * time.Second //nolint:durationcheck
 	data[8] = byte(seconds)
 	if dur == 0 {
 		data[0] = 8
@@ -236,7 +236,7 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
 	if d == nil {
-		d = &resultEncoder{}
+		d = newResultEncoder(charset.CharsetUTF8MB4)
 	}
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
@@ -281,13 +281,33 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 			d.updateDataEncoding(columns[i].Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(columns[i].Charset)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil
+}
+
+type inputDecoder struct {
+	encoding charset.Encoding
+}
+
+func newInputDecoder(chs string) *inputDecoder {
+	return &inputDecoder{
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
+	}
+}
+
+func (i *inputDecoder) decodeInput(src []byte) []byte {
+	result, err := i.encoding.Transform(nil, src, charset.OpDecode)
+	if err != nil {
+		return src
+	}
+	return result
 }
 
 type resultEncoder struct {
@@ -299,18 +319,19 @@ type resultEncoder struct {
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
-	buffer []byte
+	buffer *bytes.Buffer
 
-	isBinary bool
-	isNull   bool
+	isBinary     bool
+	isNull       bool
+	dataIsBinary bool
 }
 
 // newResultEncoder creates a new resultEncoder.
 func newResultEncoder(chs string) *resultEncoder {
 	return &resultEncoder{
 		chsName:  chs,
-		encoding: *charset.NewEncoding(chs),
-		buffer:   nil,
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
+		buffer:   &bytes.Buffer{},
 		isBinary: chs == charset.CharsetBinary,
 		isNull:   len(chs) == 0,
 	}
@@ -326,7 +347,8 @@ func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
-	d.dataEncoding.UpdateEncoding(charset.Formatted(chs))
+	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
+	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 
 func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
@@ -341,29 +363,38 @@ func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
 	return uint16(mysql.CharsetNameToID(d.chsName))
 }
 
+// encodeMeta encodes bytes for meta info like column names.
+// Note that the result should be consumed immediately.
 func (d *resultEncoder) encodeMeta(src []byte) []byte {
-	return d.encodeWith(src, &d.encoding)
+	return d.encodeWith(src, d.encoding)
 }
 
+// encodeData encodes bytes for row data.
+// Note that the result should be consumed immediately.
 func (d *resultEncoder) encodeData(src []byte) []byte {
-	if d.isNull || d.isBinary {
+	// For the following cases, TiDB encodes the results with column charset
+	// instead of @@character_set_results:
+	//   - @@character_set_result = null.
+	//   - @@character_set_result = binary.
+	//   - The column is binary type like blob, binary char/varchar.
+	if d.isNull || d.isBinary || d.dataIsBinary {
 		// Use the column charset to encode.
-		return d.encodeWith(src, &d.dataEncoding)
+		return d.encodeWith(src, d.dataEncoding)
 	}
-	return d.encodeWith(src, &d.encoding)
+	return d.encodeWith(src, d.encoding)
 }
 
-func (d *resultEncoder) encodeWith(src []byte, enc *charset.Encoding) []byte {
-	result, err := enc.Encode(d.buffer, src)
+func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
+	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
-	return result
+	return data
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
 	if d == nil {
-		d = &resultEncoder{}
+		d = newResultEncoder(charset.CharsetUTF8MB4)
 	}
 	tmp := make([]byte, 0, 20)
 	for i, col := range columns {
@@ -423,7 +454,9 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 			d.updateDataEncoding(col.Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(col.Charset)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)

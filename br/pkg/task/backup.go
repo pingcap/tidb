@@ -257,7 +257,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
@@ -316,6 +315,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		Concurrency:      defaultBackupConcurrency,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
+		CipherInfo:       &cfg.CipherInfo,
 	}
 	brVersion := g.GetVersion()
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -329,7 +329,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// Metafile size should be less than 64MB.
-	metawriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, cfg.UseBackupMetaV2)
+	metawriter := metautil.NewMetaWriter(client.GetStorage(),
+		metautil.MetaFileSize, cfg.UseBackupMetaV2, &cfg.CipherInfo)
 	// Hack way to update backupmeta.
 	metawriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
@@ -466,7 +467,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	if !skipChecksum {
 		// Check if checksum from files matches checksum from coprocessor.
-		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage())
+		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

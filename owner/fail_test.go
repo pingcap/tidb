@@ -21,12 +21,12 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
@@ -52,14 +52,12 @@ func TestFailNewSession(t *testing.T) {
 	require.NoError(t, err)
 
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
-	var stop sync.WaitGroup
-	stop.Add(1)
 
-	go func() {
-		defer stop.Done()
+	var stop util.WaitGroupWrapper
+	stop.Run(func() {
 		err = srv.Serve(ln)
 		assert.NoError(t, err)
-	}()
+	})
 
 	defer func() {
 		srv.Stop()

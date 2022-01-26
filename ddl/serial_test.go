@@ -703,20 +703,13 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
 	defer tk.MustExec("drop placement policy p1")
-	tk.MustExec("drop table if exists placement_table1, placement_table1")
+	tk.MustExec("drop table if exists placement_table1")
 	tk.MustExec("create table placement_table1(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists placement_table1")
-	tk.MustExec("create table placement_table2(id int) LEADER_CONSTRAINTS='[+region=hz]' FOLLOWERS=3")
-	defer tk.MustExec("drop table if exists placement_table2")
 
 	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create global temporary table g_tmp_placement2 like placement_table2 on commit delete rows")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-
 	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create temporary table l_tmp_placement2 like placement_table2")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
 }
 
@@ -1120,7 +1113,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	})
 
 	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("unlock tables")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 }
 
 func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
@@ -1645,6 +1641,7 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
 	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t2(a int auto_increment, unique key (a) invisible);", errno.ErrPKIndexCantBeInvisible)
 	// Column `a` become implicit primary key after DDL statement on itself
 	tk.MustExec("create table t2(a int not null)")
 	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)

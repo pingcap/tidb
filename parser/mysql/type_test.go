@@ -14,24 +14,22 @@
 package mysql
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTypeSuite{})
-
-type testTypeSuite struct{}
-
-func (s *testTypeSuite) TestFlags(c *C) {
-	c.Assert(HasNotNullFlag(NotNullFlag), IsTrue)
-	c.Assert(HasUniKeyFlag(UniqueKeyFlag), IsTrue)
-	c.Assert(HasNotNullFlag(NotNullFlag), IsTrue)
-	c.Assert(HasNoDefaultValueFlag(NoDefaultValueFlag), IsTrue)
-	c.Assert(HasAutoIncrementFlag(AutoIncrementFlag), IsTrue)
-	c.Assert(HasUnsignedFlag(UnsignedFlag), IsTrue)
-	c.Assert(HasZerofillFlag(ZerofillFlag), IsTrue)
-	c.Assert(HasBinaryFlag(BinaryFlag), IsTrue)
-	c.Assert(HasPriKeyFlag(PriKeyFlag), IsTrue)
-	c.Assert(HasMultipleKeyFlag(MultipleKeyFlag), IsTrue)
-	c.Assert(HasTimestampFlag(TimestampFlag), IsTrue)
-	c.Assert(HasOnUpdateNowFlag(OnUpdateNowFlag), IsTrue)
+func TestFlags(t *testing.T) {
+	require.True(t, HasNotNullFlag(NotNullFlag))
+	require.True(t, HasUniKeyFlag(UniqueKeyFlag))
+	require.True(t, HasNotNullFlag(NotNullFlag))
+	require.True(t, HasNoDefaultValueFlag(NoDefaultValueFlag))
+	require.True(t, HasAutoIncrementFlag(AutoIncrementFlag))
+	require.True(t, HasUnsignedFlag(UnsignedFlag))
+	require.True(t, HasZerofillFlag(ZerofillFlag))
+	require.True(t, HasBinaryFlag(BinaryFlag))
+	require.True(t, HasPriKeyFlag(PriKeyFlag))
+	require.True(t, HasMultipleKeyFlag(MultipleKeyFlag))
+	require.True(t, HasTimestampFlag(TimestampFlag))
+	require.True(t, HasOnUpdateNowFlag(OnUpdateNowFlag))
 }

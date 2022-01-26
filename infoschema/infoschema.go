@@ -317,9 +317,8 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	return
 }
 
-// SequenceByName implements the interface of SequenceSchema defined in util package.
-// It could be used in expression package without import cycle problem.
-func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+// GetSequenceByName gets the sequence by name.
+func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
 	if err != nil {
 		return nil, err
@@ -354,6 +353,9 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
+	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
+		return GetSequenceByName(is.(InfoSchema), schema, sequence)
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -455,20 +457,19 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
 
-type schemaLocalTempSchemaTables struct {
-	tables map[string]table.Table
-}
-
 // LocalTemporaryTables store local temporary tables
 type LocalTemporaryTables struct {
-	schemaMap map[string]*schemaLocalTempSchemaTables
+	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
+	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
+	// But it's fine because we only need its name.
+	schemaMap map[string]*schemaTables
 	idx2table map[int64]table.Table
 }
 
 // NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
 func NewLocalTemporaryTables() *LocalTemporaryTables {
 	return &LocalTemporaryTables{
-		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
+		schemaMap: make(map[string]*schemaTables),
 		idx2table: make(map[int64]table.Table),
 	}
 }
@@ -496,8 +497,8 @@ func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
 }
 
 // AddTable add a table
-func (is *LocalTemporaryTables) AddTable(schema model.CIStr, tbl table.Table) error {
-	schemaTables := is.ensureSchema(schema)
+func (is *LocalTemporaryTables) AddTable(db *model.DBInfo, tbl table.Table) error {
+	schemaTables := is.ensureSchema(db)
 
 	tblMeta := tbl.Meta()
 	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
@@ -528,37 +529,40 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 
 	delete(tbls.tables, table.L)
 	delete(is.idx2table, oldTable.Meta().ID)
+	if len(tbls.tables) == 0 {
+		delete(is.schemaMap, schema.L)
+	}
 	return true
 }
 
 // SchemaByTable get a table's schema name
-func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (string, bool) {
+func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
-		return "", false
+		return nil, false
 	}
 
-	for schema, v := range is.schemaMap {
+	for _, v := range is.schemaMap {
 		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
 			if tbl.Meta().ID == tableInfo.ID {
-				return schema, true
+				return v.dbInfo, true
 			}
 		}
 	}
 
-	return "", false
+	return nil, false
 }
 
-func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
-	if tbls, ok := is.schemaMap[schema.L]; ok {
+func (is *LocalTemporaryTables) ensureSchema(db *model.DBInfo) *schemaTables {
+	if tbls, ok := is.schemaMap[db.Name.L]; ok {
 		return tbls
 	}
 
-	tbls := &schemaLocalTempSchemaTables{tables: make(map[string]table.Table)}
-	is.schemaMap[schema.L] = tbls
+	tbls := &schemaTables{dbInfo: db, tables: make(map[string]table.Table)}
+	is.schemaMap[db.Name.L] = tbls
 	return tbls
 }
 
-func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTempSchemaTables {
+func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaTables {
 	if is.schemaMap == nil {
 		return nil
 	}
@@ -572,8 +576,7 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTem
 
 // TemporaryTableAttachedInfoSchema implements InfoSchema
 // Local temporary table has a loose relationship with database.
-// So when a database is dropped, its temporary tables still exist and can be return by TableByName/TableByID.
-// However SchemaByTable will return nil if database is dropped.
+// So when a database is dropped, its temporary tables still exist and can be returned by TableByName/TableByID.
 type TemporaryTableAttachedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTables *LocalTemporaryTables
@@ -597,14 +600,14 @@ func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bo
 	return ts.InfoSchema.TableByID(id)
 }
 
-// SchemaByTable implements InfoSchema.SchemaByTable
+// SchemaByTable implements InfoSchema.SchemaByTable, it returns a stale DBInfo even if it's dropped.
 func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
 
-	if schemaName, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
-		return ts.SchemaByName(model.NewCIStr(schemaName))
+	if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+		return db, true
 	}
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)

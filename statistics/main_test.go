@@ -18,6 +18,7 @@ import (
 	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -28,21 +29,29 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
+var testDataMap = make(testdata.BookKeeper, 3)
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	if !flag.Parsed() {
 		flag.Parse()
 	}
 
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "trace_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
+
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
 		return i
@@ -54,15 +63,34 @@ func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
 }
 
-func TestStatistics(t *testing.T) {
-	s := createTestStatisticsSuite(t)
-	t.Run("TestSketch", SubTestSketch(s))
-	t.Run("TestSketchProtoConversion", SubTestSketchProtoConversion(s))
-	t.Run("TestFMSketchCoding", SubTestFMSketchCoding(s))
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
 }
 
-func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
-	s := new(testStatisticsSuite)
+func GetTraceSuiteData() testdata.TestData {
+	return testDataMap["trace_suite"]
+}
+
+// TestStatistics batches tests sharing a test suite to reduce the setups
+// overheads.
+func TestStatistics(t *testing.T) {
+	// fmsketch_test.go
+	t.Run("SubTestSketch", SubTestSketch())
+	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion())
+	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding())
+
+	// statistics_test.go
+	t.Run("SubTestColumnRange", SubTestColumnRange())
+	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges())
+	t.Run("SubTestIndexRanges", SubTestIndexRanges())
+
+	// statistics_serial_test.go
+	t.Run("SubTestBuild", SubTestBuild())
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion())
+}
+
+func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
+	s := new(testStatisticsSamples)
 
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)

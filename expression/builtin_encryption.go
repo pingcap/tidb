@@ -528,7 +528,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, err
+		return "", isNull, err
 	}
 
 	if len(pass) == 0 {
@@ -724,6 +724,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
