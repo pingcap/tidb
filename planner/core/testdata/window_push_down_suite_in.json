@@ -7,11 +7,12 @@
       "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
       "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
       "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
-      "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 4. with sort key",
-      "explain select *, min(deptid) over w, max(deptid) over w from employee window w as (partition by deptid) -- 5. same kinds, multi function, same window",
-      "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 6. different kinds, multi funcitons, same window",
-      "explain select *, sum(a) over () FROM  (select *, row_number() over () a from employee) tmp -- 7. multi window from sub query",
-      "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 7.1 multi window from sub query"
+      "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
+      "explain select *, min(deptid) over w, max(deptid) over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
+      "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
+      "explain select *, sum(a) over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
+      "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
+      "explain select *,  max(salary) over (), max(salary) over (partition by deptid order by salary), row_number() over (partition by deptid order by salary), max(salary) over (partition by deptid order by empid), row_number() over (partition by deptid order by empid), count(empid) over (partition by salary order by deptid) from employee; -- 7. complex"
     ]
   }
 ]

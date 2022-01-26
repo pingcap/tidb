@@ -61,7 +61,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 4. with sort key",
+        "SQL": "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
         "Plan": [
           "TableReader_15 10000.00 root  data:ExchangeSender_14",
           "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -74,7 +74,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, min(deptid) over w, max(deptid) over w from employee window w as (partition by deptid) -- 5. same kinds, multi function, same window",
+        "SQL": "explain select *, min(deptid) over w, max(deptid) over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
         "Plan": [
           "TableReader_15 10000.00 root  data:ExchangeSender_14",
           "└─ExchangeSender_14 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -87,7 +87,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 6. different kinds, multi funcitons, same window",
+        "SQL": "explain select *, row_number() over w, max(deptid) over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
         "Plan": [
           "TableReader_40 10000.00 root  data:ExchangeSender_39",
           "└─ExchangeSender_39 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -102,7 +102,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, sum(a) over () FROM  (select *, row_number() over () a from employee) tmp -- 7. multi window from sub query",
+        "SQL": "explain select *, sum(a) over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
         "Plan": [
           "TableReader_38 10000.00 root  data:ExchangeSender_37",
           "└─ExchangeSender_37 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -115,7 +115,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 7.1 multi window from sub query",
+        "SQL": "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
         "Plan": [
           "TableReader_27 10000.00 root  data:ExchangeSender_26",
           "└─ExchangeSender_26 10000.00 cop[tiflash]  ExchangeType: PassThrough",
@@ -127,6 +127,31 @@
           "            └─ExchangeReceiver_18 10000.00 cop[tiflash]  ",
           "              └─ExchangeSender_17 10000.00 cop[tiflash]  ExchangeType: PassThrough",
           "                └─TableFullScan_16 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *,  max(salary) over (), max(salary) over (partition by deptid order by salary), row_number() over (partition by deptid order by salary), max(salary) over (partition by deptid order by empid), row_number() over (partition by deptid order by empid), count(empid) over (partition by salary order by deptid) from employee; -- 7. complex",
+        "Plan": [
+          "TableReader_96 10000.00 root  data:ExchangeSender_95",
+          "└─ExchangeSender_95 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_17 10000.00 cop[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#16, Column#13, Column#12, Column#15, Column#14, Column#11",
+          "    └─Window_91 10000.00 cop[tiflash]  max(test.employee.salary)->Column#16 over()",
+          "      └─ExchangeReceiver_94 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_93 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "          └─Window_20 10000.00 cop[tiflash]  max(test.employee.salary)->Column#15 over(partition by test.employee.deptid order by test.employee.empid range between unbounded preceding and current row)",
+          "            └─Window_24 10000.00 cop[tiflash]  row_number()->Column#14 over(partition by test.employee.deptid order by test.employee.empid rows between current row and current row)",
+          "              └─Sort_55 10000.00 cop[tiflash]  test.employee.deptid, test.employee.empid",
+          "                └─Window_28 10000.00 cop[tiflash]  max(test.employee.salary)->Column#13 over(partition by test.employee.deptid order by test.employee.salary range between unbounded preceding and current row)",
+          "                  └─Window_30 10000.00 cop[tiflash]  row_number()->Column#12 over(partition by test.employee.deptid order by test.employee.salary rows between current row and current row)",
+          "                    └─Sort_42 10000.00 cop[tiflash]  test.employee.deptid, test.employee.salary",
+          "                      └─ExchangeReceiver_41 10000.00 cop[tiflash]  ",
+          "                        └─ExchangeSender_40 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: N/A]",
+          "                          └─Window_34 10000.00 cop[tiflash]  count(test.employee.empid)->Column#11 over(partition by test.employee.salary order by test.employee.deptid range between unbounded preceding and current row)",
+          "                            └─Sort_39 10000.00 cop[tiflash]  test.employee.salary, test.employee.deptid",
+          "                              └─ExchangeReceiver_38 10000.00 cop[tiflash]  ",
+          "                                └─ExchangeSender_37 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.salary, collate: N/A]",
+          "                                  └─TableFullScan_36 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
