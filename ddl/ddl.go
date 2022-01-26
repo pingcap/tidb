@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -185,7 +186,7 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
-	wg         sync.WaitGroup // It's only used to deal with data race in restart_test.
+	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -406,7 +407,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	// Start some background routine to manage TiFlash replica.
-	go d.PollTiFlashRoutine()
+	d.wg.Run(d.PollTiFlashRoutine)
 
 	return nil
 }
