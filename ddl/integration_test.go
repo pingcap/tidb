@@ -91,6 +91,7 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	tk.MustExec("use test;")
 	needReorg := false
 	dom := domain.GetDomain(tk.Session())
+	defer dom.Close()
 	dom.DDL().SetHook(&ddl.TestDDLCallback{
 		Do: dom,
 		OnJobUpdatedExported: func(job *model.Job) {
