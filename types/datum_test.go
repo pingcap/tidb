@@ -169,8 +169,6 @@ func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bo
 }
 
 func TestToUint32(t *testing.T) {
-	t.Parallel()
-
 	// test overflow
 	testDatumToUInt32(t, 5000000000, 4294967295, true)
 	testDatumToUInt32(t, int64(-1), 4294967295, true)
@@ -181,32 +179,6 @@ func TestToUint32(t *testing.T) {
 	testDatumToUInt32(t, 2147483648, 2147483648, false)
 	testDatumToUInt32(t, Enum{Name: "a", Value: 1}, 1, false)
 	testDatumToUInt32(t, Set{Name: "a", Value: 1}, 1, false)
-}
-
-func TestToFloat32(t *testing.T) {
-	ft := NewFieldType(mysql.TypeFloat)
-	var datum = NewFloat64Datum(281.37)
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err := datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat32, converted.Kind())
-	require.Equal(t, float32(281.37), converted.GetFloat32())
-
-	datum.SetString("281.37", mysql.DefaultCollationName)
-	converted, err = datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat32, converted.Kind())
-	require.Equal(t, float32(281.37), converted.GetFloat32())
-
-	ft = NewFieldType(mysql.TypeDouble)
-	datum = NewFloat32Datum(281.37)
-	converted, err = datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat64, converted.Kind())
-	// Convert to float32 and convert back to float64, we will get a different value.
-	require.NotEqual(t, 281.37, converted.GetFloat64())
-	require.Equal(t, datum.GetFloat64(), converted.GetFloat64())
 }
 
 func TestConvertToFloat(t *testing.T) {
