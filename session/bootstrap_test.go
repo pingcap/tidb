@@ -344,7 +344,7 @@ func TestIssue17979_2(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	// test issue 20900, upgrade from v4.0.11 to v4.0.11
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -361,7 +361,7 @@ func TestIssue17979_2(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(59), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV4.Close()
