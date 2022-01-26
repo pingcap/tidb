@@ -16,12 +16,9 @@ package tables
 
 import (
 	"context"
-	"io"
 	"sync"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -32,54 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
-
-// indexIter is for KV store index iterator.
-type indexIter struct {
-	it       kv.Iterator
-	idx      *index
-	prefix   kv.Key
-	colInfos []rowcodec.ColInfo
-	tps      []*types.FieldType
-}
-
-// Close does the clean up works when KV store index iterator is closed.
-func (c *indexIter) Close() {
-	if c.it != nil {
-		c.it.Close()
-		c.it = nil
-	}
-}
-
-// Next returns current key and moves iterator to the next step.
-func (c *indexIter) Next() (indexData []types.Datum, h kv.Handle, err error) {
-	if !c.it.Valid() {
-		return nil, nil, errors.Trace(io.EOF)
-	}
-	if !c.it.Key().HasPrefix(c.prefix) {
-		return nil, nil, errors.Trace(io.EOF)
-	}
-	vals, err := tablecodec.DecodeIndexKV(c.it.Key(), c.it.Value(), len(c.colInfos), tablecodec.HandleNotNeeded, c.colInfos)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	handle, err := tablecodec.DecodeIndexHandle(c.it.Key(), c.it.Value(), len(c.colInfos))
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	for i, v := range vals {
-		d, err := tablecodec.DecodeColumnValue(v, c.tps[i], time.Local)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		indexData = append(indexData, d)
-	}
-	// update new iter to next
-	err = c.it.Next()
-	if err != nil {
-		return nil, nil, err
-	}
-	return indexData, handle, nil
-}
 
 // index is the data structure for index data in the KV store.
 type index struct {
@@ -253,65 +202,6 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		err = txn.GetMemBuffer().Delete(key)
 	}
 	return err
-}
-
-// Drop removes the KV index from store.
-func (c *index) Drop(txn kv.Transaction) error {
-	it, err := txn.Iter(c.prefix, c.prefix.PrefixNext())
-	if err != nil {
-		return err
-	}
-	defer it.Close()
-
-	// remove all indices
-	for it.Valid() {
-		if !it.Key().HasPrefix(c.prefix) {
-			break
-		}
-		err := txn.GetMemBuffer().Delete(it.Key())
-		if err != nil {
-			return err
-		}
-		err = it.Next()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Seek searches KV index for the entry with indexedValues.
-func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter table.IndexIterator, hit bool, err error) {
-	key, _, err := c.GenIndexKey(sc, indexedValues, nil, nil)
-	if err != nil {
-		return nil, false, err
-	}
-
-	upperBound := c.prefix.PrefixNext()
-	it, err := r.Iter(key, upperBound)
-	if err != nil {
-		return nil, false, err
-	}
-	// check if hit
-	hit = false
-	if it.Valid() && it.Key().Cmp(key) == 0 {
-		hit = true
-	}
-	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
-	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
-	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, hit, nil
-}
-
-// SeekFirst returns an iterator which points to the first entry of the KV index.
-func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) {
-	upperBound := c.prefix.PrefixNext()
-	it, err := r.Iter(c.prefix, upperBound)
-	if err != nil {
-		return nil, err
-	}
-	colInfos := BuildRowcodecColInfoForIndexColumns(c.idxInfo, c.tblInfo)
-	tps := BuildFieldTypesForIndexColumns(c.idxInfo, c.tblInfo)
-	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, nil
 }
 
 func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
