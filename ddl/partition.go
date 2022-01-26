@@ -1576,11 +1576,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ddlJobCtx, nil, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1679,6 +1675,20 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
 	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
 		return ErrPartitionNoTemporary
+	}
+	return nil
+}
+
+func checkPartitionColumnsUnique(tbInfo *model.TableInfo) error {
+	if len(tbInfo.Partition.Columns) <= 1 {
+		return nil
+	}
+	var columnsMap = make(map[string]struct{})
+	for _, col := range tbInfo.Partition.Columns {
+		if _, ok := columnsMap[col.L]; ok {
+			return ErrSameNamePartitionField.GenWithStackByArgs(col.L)
+		}
+		columnsMap[col.L] = struct{}{}
 	}
 	return nil
 }
