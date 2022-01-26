@@ -3642,6 +3642,7 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		// This query should block.
 		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
 		ch <- struct{}{}
+		tk1.MustExec("rollback")
 	}()
 
 	select {
