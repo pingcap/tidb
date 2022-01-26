@@ -28,7 +28,7 @@ select * from t where a = " ";
 select * from t where a = "  ";
 select * from t where a = "   ";
 
-# pointGet PK
+# pointGet AliasTableCharPK
 drop table if exists t;
 create table t(a char(2) primary key, b char(2));
 insert into t values("aa", "bb");
