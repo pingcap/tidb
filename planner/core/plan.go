@@ -74,11 +74,11 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*mppTask)
 		if !ok || mpp.invalid() {
-			return &mppTask{}
+			return invalidTask
 		}
 		if !p.IsSortItemAllForPartition() {
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return &mppTask{}
+			return invalidTask
 		}
 		tsk = mpp.enforceExchanger(p)
 	}

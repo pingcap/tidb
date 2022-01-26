@@ -211,7 +211,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
-
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
@@ -279,7 +278,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		if !curTask.invalid() && (bestTask.invalid() || curTask.cost() < bestTask.cost()) {
 			bestTask = curTask
 		}
 	}
@@ -416,7 +415,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+	if !curTask.invalid() && (bestTask.invalid() || curTask.cost() < bestTask.cost()) {
 		bestTask = curTask
 	}
 
@@ -1802,17 +1801,17 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {
-			return &mppTask{}, nil
+			return invalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
-			return &mppTask{}, nil
+			return invalidTask, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
 				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return &mppTask{}, nil
+				return invalidTask, nil
 			}
 		}
 		mppTask := &mppTask{
