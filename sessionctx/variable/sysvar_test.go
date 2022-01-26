@@ -60,20 +60,6 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
-func TestTxnMode(t *testing.T) {
-	seVar := NewSessionVars()
-	require.NotNil(t, seVar)
-	require.Equal(t, "", seVar.TxnMode)
-	err := seVar.setTxnMode("pessimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("optimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("something else")
-	require.Error(t, err)
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,
