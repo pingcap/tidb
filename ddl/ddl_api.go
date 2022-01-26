@@ -566,9 +566,24 @@ func buildColumnAndConstraint(
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
 		return nil, nil, errors.Trace(err)
+	}
+	// Some column checks are performed before convert, so varchar auto convert is checked here, see issue #30328
+	sessVars := ctx.GetSessionVars()
+	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
+		err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, colDef.Tp.Charset)
+		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
+			colDef.Tp.Tp = mysql.TypeBlob
+			if err = adjustBlobTypesFlen(colDef.Tp, colDef.Tp.Charset); err != nil {
+				return nil, nil, err
+			}
+			if colDef.Tp.Charset == charset.CharsetBin {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+			} else {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+			}
+		}
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -787,8 +788,13 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = err
-			return
+			// Try to convert to BLOB or TEXT, see issue #30328
+			if terror.ErrorEqual(err, types.ErrTooBigFieldLength) && p.tryAutoConvert(colDef) {
+				err = nil
+			} else {
+				p.err = err
+				return
+			}
 		}
 		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
@@ -1734,4 +1740,19 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})
+}
+
+func (p *preprocessor) tryAutoConvert(colDef *ast.ColumnDef) bool {
+	sessVars := p.ctx.GetSessionVars()
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar &&
+		colDef.Tp.Charset != "" {
+		colDef.Tp.Tp = mysql.TypeBlob
+		if colDef.Tp.Charset == charset.CharsetBin {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+		} else {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+		}
+		return true
+	}
+	return false
 }
