@@ -899,7 +899,6 @@ func TestCastFuncSig(t *testing.T) {
 			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 	}
-
 	for i, c := range castToTimeCases2 {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(c.tp)
