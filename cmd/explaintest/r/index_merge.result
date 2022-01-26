@@ -322,7 +322,7 @@ drop view if exists v2;
 create view v2 as select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10;
 show create view v2;
 View	Create View	character_set_client	collation_connection
-v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_general_ci
+v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_bin
 select * from v2 order by 1;
 c1	c2	c3
 1	1	1

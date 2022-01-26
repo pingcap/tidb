@@ -44,8 +44,7 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
-	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(BR_PACKAGE_DIRECTORIES)) --config .golangci_br.yml
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
@@ -126,7 +125,7 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-ut: failpoint-enable tools/bin/ut
+ut: failpoint-enable tools/bin/ut tools/bin/xprog
 	tools/bin/ut $(X);
 	@$(FAILPOINT_DISABLE)
 
@@ -216,6 +215,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
 	$(GO) build -o ../bin/ut ut.go
+
+tools/bin/xprog: tools/check/xprog.go
+	cd tools/check; \
+	$(GO) build -o ../bin/xprog xprog.go
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
