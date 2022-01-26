@@ -1450,23 +1450,6 @@ func TestLikeWithCollation(t *testing.T) {
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
 }
 
-func TestCollationUnion(t *testing.T) {
-	t.Skip("covered by explain test")
-	// For issue 19694.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;").Check(testkit.Rows("2010-09-09", "2010-09-09  "))
-	res := tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 2)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	res = tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 1)
-}
-
 func TestCollationPrefixClusteredIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

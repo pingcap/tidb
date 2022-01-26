@@ -1,5 +1,5 @@
-create database collation_diff;
-use collation_diff;
+create database collation_misc;
+use collation_misc;
 create table t1(a varchar(20) charset utf8);
 insert into t1 values ("t1_value");
 alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN;
@@ -24,11 +24,12 @@ Error 8200: Unsupported modify charset from latin1 to utf8mb4
 alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin;
 [ddl:1273]Unknown collation: 'utf8bin'
 alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin;
-Error 1302: Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8'
+Error 1273: Unsupported collation when new collation is enabled: 'latin1_general_ci'
 alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin;
-Error 1253: COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'latin1'
+Error 1273: Unsupported collation when new collation is enabled: 'latin1_general_ci'
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
 create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+Error 1273: Unsupported collation when new collation is enabled: 'latin1_swedish_ci'
 use cd_test_utf8;
 select @@character_set_database;
 @@character_set_database
@@ -37,25 +38,51 @@ select @@collation_database;
 @@collation_database
 utf8_bin
 use cd_test_latin1;
+Error 1049: Unknown database 'cd_test_latin1'
 select @@character_set_database;
 @@character_set_database
-latin1
+utf8
 select @@collation_database;
 @@collation_database
-latin1_swedish_ci
+utf8_bin
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+Error 1273: Unsupported collation when new collation is enabled: 'latin1_swedish_ci'
 with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
 count(*)
-2
+1
 set names utf8mb4 collate utf8mb4_general_ci;
 select position('a' in 'AA');
 position('a' in 'AA')
-0
+1
 select locate('a', 'AA');
 locate('a', 'AA')
-0
+1
 select locate('a', 'a');
 locate('a', 'a')
 1
 set names utf8mb4;
-use test
+SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
+default_collate_name	maxlen
+ascii_bin	1
+binary	1
+gbk_chinese_ci	2
+latin1_bin	1
+utf8_bin	3
+utf8mb4_bin	4
+SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
+character_set_name	id	sortlen
+ascii	65	1
+binary	63	1
+gbk	87	1
+gbk	28	1
+latin1	47	1
+utf8	83	1
+utf8	33	1
+utf8	192	1
+utf8mb4	46	1
+utf8mb4	45	1
+utf8mb4	224	1
+select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
+COLLATION_NAME	CHARACTER_SET_NAME
+utf8mb4_bin	utf8mb4
+use test;

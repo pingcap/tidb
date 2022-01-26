@@ -1,7 +1,8 @@
 # prepare database
-create database collation_diff;
-use collation_diff;
+create database collation_misc;
+use collation_misc;
 
+# ChangingCharsetToUtf8
 create table t1(a varchar(20) charset utf8);
 insert into t1 values ("t1_value");
 alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN;
@@ -52,4 +53,9 @@ select locate('a', 'AA');
 select locate('a', 'a');
 set names utf8mb4;
 
-use test
+# CharacterSetCollations
+SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
+SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
+select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
+
+use test;

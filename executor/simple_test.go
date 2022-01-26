@@ -38,26 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite3) TestCharsetDatabase(c *C) {
-	c.Skip("covered by explain test")
-	tk := testkit.NewTestKit(c, s.store)
-	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
-	tk.MustExec(testSQL)
-
-	testSQL = `create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
-	tk.MustExec(testSQL)
-
-	testSQL = `use cd_test_utf8;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_bin"))
-
-	testSQL = `use cd_test_latin1;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-}
-
 func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")

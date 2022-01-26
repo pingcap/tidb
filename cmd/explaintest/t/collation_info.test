@@ -1,8 +1,0 @@
-create database collation_info;
-use collation_info;
-
-SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
-SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name;
-select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
-
-use test;

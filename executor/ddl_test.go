@@ -671,25 +671,6 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 
 }
 
-func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_bin;`
-	tk.MustExec(testSQL)
-
-	testSQL = `use test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_bin"))
-
-	testSQL = `drop database test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows(mysql.DefaultCharset))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(mysql.DefaultCollationName))
-}
-
 func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "col_charset_collate"

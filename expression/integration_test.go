@@ -4766,18 +4766,6 @@ func TestIssue17287(t *testing.T) {
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
 
-func TestIssue26989(t *testing.T) {
-	t.Skip("covered by explain test")
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select position('a' in 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'a');").Check(testkit.Rows("1"))
-}
-
 func TestIssue17898(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
