@@ -291,9 +291,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
-	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-		builder.SetIsolationLevel(kv.RC)
-	}
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -561,9 +558,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
-		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-			builder.SetIsolationLevel(kv.RC)
-		}
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).

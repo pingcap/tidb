@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
 
@@ -327,6 +328,11 @@ func (se *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 // Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 func (se *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
+}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (se *session) GetStmtStats() *stmtstats.StatementStats {
+	return nil
 }
 
 func (se *session) Close() {

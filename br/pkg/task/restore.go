@@ -39,12 +39,15 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
+	// flagDdlBatchSize controls batch ddl size to create a batch of tables
+	FlagDdlBatchSize = "ddl-batch-size"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
+	defaultFlagDdlBatchSize   = 1
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -82,10 +85,13 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sended.")
+	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
+		"batch size for ddl to create a batch of tabes once.")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
+	_ = flags.MarkHidden(FlagDdlBatchSize)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -114,6 +120,8 @@ type RestoreConfig struct {
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	// DdlBatchSize use to define the size of batch ddl to create tables
+	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -152,6 +160,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagBatchFlushInterval)
 	}
+
+	cfg.DdlBatchSize, err = flags.GetUint(FlagDdlBatchSize)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
+	}
 	return nil
 }
 
@@ -174,6 +187,9 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 	if cfg.BatchFlushInterval == 0 {
 		cfg.BatchFlushInterval = defaultBatchFlushInterval
+	}
+	if cfg.DdlBatchSize == 0 {
+		cfg.DdlBatchSize = defaultFlagDdlBatchSize
 	}
 }
 
@@ -263,6 +279,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		client.EnableSkipCreateSQL()
 	}
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)

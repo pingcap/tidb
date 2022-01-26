@@ -46,6 +46,11 @@ for BACKEND in local importer tidb; do
   check_contains "id: 1"
   check_contains "v2: 啊啊"
 
+  run_sql "SELeCT i, v from nc.ci where v = 'aa';"
+  check_contains "i: 1"
+  check_contains "v: aA"
+
+
   run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data-gbk" --config "tests/$TEST_NAME/gbk.toml"
 
   run_sql 'SELECT count(*) from nc.gbk_source;'

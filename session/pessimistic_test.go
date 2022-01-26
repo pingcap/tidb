@@ -205,6 +205,8 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 		syncCh <- nil
 		_, err := tk2.Exec("update deadlock set v = v + 1 where k = 1")
 		syncCh <- err
+
+		tk2.MustExec("rollback")
 	}()
 	<-syncCh
 	_, err1 := tk1.Exec("update deadlock set v = v + 1 where k = 2")
@@ -601,9 +603,16 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk.MustExec("commit")
 	// This statement success for now, but its lock will be rollbacked later by the
 	// lingering rollback request, as forUpdateTS doesn't change.
-	tk2.MustQuery("select * from tk where c1 > 0 for update nowait")
+	tk2.MustQuery("select * from tk where c1 > 0 for update nowait").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 17"))
 	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
 	tk3.MustExec("begin pessimistic")
+
+	// TODO: @coocood skip the following test in https://github.com/pingcap/tidb/pull/13553/
+	// Remove this code block and figure out why it's skipped.
+	// ----------------------
+	tk2.MustExec("rollback")
+	tk3.MustExec("rollback")
+	// ----------------------
 
 	c.Skip("tk3 is blocking because tk2 didn't rollback itself")
 	// tk3 succ because tk2 rollback itself.
@@ -664,6 +673,8 @@ func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
+
+	tk2.MustExec("rollback")
 }
 
 func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {

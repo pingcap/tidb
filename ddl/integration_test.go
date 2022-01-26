@@ -18,7 +18,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
@@ -78,4 +82,54 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustExec("create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
+}
+
+func TestDDLStatementsBackFill(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	needReorg := false
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().SetHook(&ddl.TestDDLCallback{
+		Do: dom,
+		OnJobUpdatedExported: func(job *model.Job) {
+			if job.SchemaState == model.StateWriteReorganization {
+				needReorg = true
+			}
+		},
+	})
+	tk.MustExec("create table t (a int, b char(65));")
+	tk.MustExec("insert into t values (1, '123');")
+	testCases := []struct {
+		ddlSQL            string
+		expectedNeedReorg bool
+	}{
+		{"alter table t modify column a bigint;", false},
+		{"alter table t modify column b char(255);", false},
+		{"alter table t modify column a varchar(100);", true},
+		{"create table t1 (a int, b int);", false},
+		{"alter table t1 add index idx_a(a);", true},
+		{"alter table t1 add primary key(b) nonclustered;", true},
+		{"alter table t1 drop primary key;", false},
+	}
+	for _, tc := range testCases {
+		needReorg = false
+		tk.MustExec(tc.ddlSQL)
+		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
+	}
+}
+
+func TestSchema(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSchema(t)
+}
+
+func TestTestSerialStatSuite(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSerialStatSuite(t)
 }
