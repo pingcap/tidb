@@ -79,6 +79,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
+	defer dom.Close()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
 	require.NoError(t, err)

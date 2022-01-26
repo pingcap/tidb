@@ -321,6 +321,7 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
 	dom := domain.GetDomain(tk.Session())
+	defer dom.Close()
 	is := dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
