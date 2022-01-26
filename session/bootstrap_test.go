@@ -266,11 +266,6 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), ver)
 
-	// Create a new session then upgrade() will run automatically.
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-
 	se2 := createSessionAndSetID(t, store)
 	r = mustExec(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
