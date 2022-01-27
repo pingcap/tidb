@@ -1224,12 +1224,9 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if m.ReslovedTs < restoreTS {
-				log.Debug("backup stream collect meta file", zap.String("file", path))
-				streamBackupMetaFiles = append(streamBackupMetaFiles, m)
-			} else {
-				log.Debug("backup stream ignore meta file", zap.String("file", path))
-			}
+			// TODO find a way to filter some unnecessary meta files.
+			log.Debug("backup stream collect meta file", zap.String("file", path))
+			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
 		}
 		return nil
 	})

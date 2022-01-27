@@ -732,7 +732,8 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 ) error {
 	leader := regionInfo.Leader
 	if leader == nil {
-		leader = regionInfo.Region.GetPeers()[0]
+		return errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", regionInfo.Region.Id)
 	}
 	// Get the rewrite rule for the file.
 	fileRule := findMatchedRewriteRule(file, rules)
