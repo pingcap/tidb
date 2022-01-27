@@ -182,38 +182,10 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	return errors.Trace(err)
 }
 
-// CreateTables execute a internal CREATE TABLES.
-func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table) error {
-	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		m := map[string][]*model.TableInfo{}
-		for _, table := range tables {
-			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
-		}
-		if err := batchSession.CreateTables(ctx, m); err != nil {
-			return err
-		}
-
-		for _, table := range tables {
-			err := db.restoreSequence(ctx, table)
-			return err
-		}
-	}
-
-	return nil
-}
-
-// CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
-	if err != nil {
-		log.Error("create table failed",
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
 
 	var restoreMetaSQL string
+	var err error
 	switch {
 	case table.Info.IsView():
 		return nil
@@ -252,7 +224,45 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(err)
+	return nil
+}
+
+// CreateTables execute a internal CREATE TABLES.
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTables map[UniqueTableName]bool) error {
+	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
+		m := map[string][]*model.TableInfo{}
+		for _, table := range tables {
+			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+		}
+		if err := batchSession.CreateTables(ctx, m); err != nil {
+			return err
+		}
+
+		for _, table := range tables {
+			err := db.CreateTablePostRestore(ctx, table, ddlTables)
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateTable executes a CREATE TABLE SQL.
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
+	if err != nil {
+		log.Error("create table failed",
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	err = db.CreateTablePostRestore(ctx, table, ddlTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return err
 }
 
 // Close closes the connection.
