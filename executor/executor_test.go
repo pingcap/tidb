@@ -9850,6 +9850,30 @@ func (s *testSerialSuite) TestFix31038(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
 }
 
+func (s *testSerialSuite) TestFix31530(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+	}()
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 10"))
+
+	// update t1 before session1 transaction not finished
+	tk2.MustExec("update t1 set v=11 where id=1")
+
+	tk.MustQuery("(select 'a' as c, id, v from t1 for update) union all (select 'b', id, v from t1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
+	tk.MustQuery("(select 'a' as c, id, v from t1) union all (select 'b', id, v from t1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
+	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1 for update) union all (select 'b', id, v from t1 where id=1) order by c").Check(testkit.Rows("a 1 11", "b 1 10"))
+	tk.MustQuery("(select 'a' as c, id, v from t1 where id=1) union all (select 'b', id, v from t1 where id=1 for update) order by c").Check(testkit.Rows("a 1 10", "b 1 11"))
+	tk.MustExec("rollback")
+}
+
 func (s *testSerialSuite) TestFix31537(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
