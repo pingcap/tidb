@@ -1231,7 +1231,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 }
 
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
-	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
 	return nil
@@ -2015,7 +2015,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var val *expression.Constant
 	switch {
 	case isCurrentTimestamp && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
-		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, int8(col.Decimal))
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, col.Decimal)
 		if err != nil {
 			return
 		}
