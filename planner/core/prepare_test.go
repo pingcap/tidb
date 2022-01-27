@@ -23,6 +23,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/testutil"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -41,6 +45,42 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
+
+var _ = Suite(&testPlanSuite{})
+var _ = SerialSuites(&testPlanSerialSuite{})
+
+type testPlanSuiteBase struct {
+	*parser.Parser
+	is infoschema.InfoSchema
+}
+
+func (s *testPlanSuiteBase) SetUpSuite(c *C) {
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	s.Parser = parser.New()
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+}
+
+type testPlanSerialSuite struct {
+	testPlanSuiteBase
+}
+
+type testPlanSuite struct {
+	testPlanSuiteBase
+
+	testData testutil.TestData
+}
+
+func (s *testPlanSuite) SetUpSuite(c *C) {
+	s.testPlanSuiteBase.SetUpSuite(c)
+
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPlanSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
 
 var _ = Suite(&testPrepareSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{})
