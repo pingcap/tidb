@@ -112,6 +112,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.ddl.SetBinlogClient(s.client)
 
 	clean = func() {
+		clientCon.Close()
 		err = s.ddl.Stop()
 		require.NoError(t, err)
 		s.serv.Stop()
