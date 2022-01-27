@@ -400,7 +400,6 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 }
 
 func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
-	t.Skip("why it fails in CI but not reproduce locally?")
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -445,7 +444,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Ser
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;'")
+		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		require.NoError(t, rows.Close())
@@ -537,9 +536,6 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
 	fp, err := os.CreateTemp("", "load_data_txn_error_term.csv")
 	require.NoError(t, err)
-
-	// fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	// require.NoError(t, err)
 	require.NotNil(t, fp)
 	path := fp.Name()
 
@@ -622,8 +618,6 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		// fmt.Println("!!!!....", path)
-		// time.Sleep(time.Hour)
 		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		require.NoError(t, rows.Close())
 		// Test load data meet duplicate error.

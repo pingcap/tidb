@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut building_test_binary
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut
 
 default: server buildsucc
 
@@ -126,7 +126,7 @@ devgotest: failpoint-enable
 	@$(FAILPOINT_DISABLE)
 
 
-ut: failpoint-enable tools/bin/ut tools/bin/xprog
+ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
@@ -142,15 +142,6 @@ gotest_in_verify_ci: failpoint-enable tools/bin/xprog tools/bin/ut
 	@export TZ='Asia/Shanghai'; \
 	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-
-# gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
-# 	@echo "Running gotest_in_verify_ci"
-# 	@mkdir -p $(TEST_COVERAGE_DIR)
-# 	@export TZ='Asia/Shanghai'; \
-# 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) \
-# 	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
-# 	$(PACKAGES_TIDB_TESTS) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
-# 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
 	@export log_level=debug; \

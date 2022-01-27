@@ -780,7 +780,7 @@ func TestResize(t *testing.T) {
 
 	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
 	for i := 0; i < 1024; i++ {
-		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: int8(i)})
+		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: i})
 	}
 	col.ResizeGoDuration(1024, false)
 	for i := 0; i < 1024; i++ {

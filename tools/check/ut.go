@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math/rand"
@@ -27,8 +28,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	// "regexp"
-	"encoding/xml"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
@@ -64,6 +63,7 @@ ut build xxx
 
 // write the junitfile
 ut run --junitfile xxx`
+
 	fmt.Println(msg)
 	return true
 }
@@ -195,40 +195,27 @@ func cmdRun(args ...string) bool {
 		}
 	}
 
-	// run tests for packages
+	// run tests for a single package
 	if len(args) == 1 {
-		// re, err := regexp.Compile(args[0])
-		// if err != nil {
-		// 	fmt.Println("compile regexp error for", args[0])
-		// }
-
-		for _, pkg := range pkgs {
-			if pkg != args[0] {
-				continue
-			}
-			// if !re.MatchString(pkg) {
-			// 	continue
-			// }
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
-			exist, err := testBinaryExist(pkg)
-			if err != nil {
-				fmt.Println("check test binary existance error", err)
-				continue
-			}
-
-			if !exist {
-				fmt.Println("no test case in ", pkg)
-				continue
-			}
-			tasks, err = listTestCases(pkg, tasks)
-			if err != nil {
-				fmt.Println("list test cases error", err)
-				return false
-			}
+		pkg := args[0]
+		err := buildTestBinary(pkg)
+		if err != nil {
+			fmt.Println("build package error", pkg, err)
+			return false
+		}
+		exist, err := testBinaryExist(pkg)
+		if err != nil {
+			fmt.Println("check test binary existance error", err)
+			return false
+		}
+		if !exist {
+			fmt.Println("no test case in ", pkg)
+			return false
+		}
+		tasks, err = listTestCases(pkg, tasks)
+		if err != nil {
+			fmt.Println("list test cases error", err)
+			return false
 		}
 	}
 
@@ -295,9 +282,6 @@ func cmdRun(args ...string) bool {
 			fmt.Println("write junit file error:", err)
 			return false
 		}
-	}
-	if coverprofile != "" {
-		collectCoverProfileFile()
 	}
 
 	for _, work := range works {
@@ -385,7 +369,6 @@ func main() {
 		case "run":
 			isSucceed = cmdRun(os.Args[2:]...)
 		default:
-			fmt.Println(os.Args)
 			isSucceed = usage()
 		}
 		if !isSucceed {
@@ -501,11 +484,10 @@ type testResult struct {
 func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
-			Classname : path.Join(modulePath, pkg),
-			Name : fn,
+			Classname: path.Join(modulePath, pkg),
+			Name:      fn,
 		},
 	}
-	
 	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
@@ -515,9 +497,11 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	start := time.Now()
 	if err := cmd.Run(); err != nil {
 		res.Failure = &JUnitFailure{
-			Message: "Failed",
+			Message:  "Failed",
 			Contents: buf.String(),
 		}
+		res.d = time.Since(start)
+		res.Time = formatDurationAsSeconds(res.d)
 	}
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
@@ -533,7 +517,7 @@ func collectTestResults(workers []numa) JUnitTestSuites {
 	// The test result in workers are shuffled, so group by the packages here
 	for _, n := range workers {
 		for _, res := range n.results {
-			cases, ok :=  pkgs[res.Classname]
+			cases, ok := pkgs[res.Classname]
 			if !ok {
 				cases = make([]JUnitTestCase, 0, 10)
 			}
@@ -544,15 +528,15 @@ func collectTestResults(workers []numa) JUnitTestSuites {
 	}
 
 	suites := JUnitTestSuites{}
-	// Turn every package resuts to a suite.
+	// Turn every package result to a suite.
 	for pkg, cases := range pkgs {
 		suite := JUnitTestSuite{
-			Tests: len(cases),
-			Failures: failureCases(cases),
-			Time: formatDurationAsSeconds(durations[pkg]),
-			Name: pkg,
+			Tests:      len(cases),
+			Failures:   failureCases(cases),
+			Time:       formatDurationAsSeconds(durations[pkg]),
+			Name:       pkg,
 			Properties: packageProperties(version),
-			TestCases: cases,
+			TestCases:  cases,
 		}
 		suites.Suites = append(suites.Suites, suite)
 	}

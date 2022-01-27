@@ -17,8 +17,6 @@ package executor_test
 import (
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -64,9 +62,6 @@ func TestMain(m *testing.M) {
 		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
-
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGSEGV, syscall.SIGHUP)
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
