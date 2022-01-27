@@ -305,16 +305,23 @@ func cmdRun(args ...string) bool {
 			return false
 		}
 	}
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
 	return true
 }
 
+// handleFlags strip the '--flag xxx' from the command line os.Args
+// Example of the os.Args changes
+// Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
+// After: ut run session TestXXX
+// The value of the flag is returned.
 func handleFlags(flag string) string {
 	var res string
-	// Handle the --junitfile flag, remove it and set the variable.
 	tmp := os.Args[:0]
 	// Iter to the flag
 	var i int
-	for ; i<len(os.Args); i++ {
+	for ; i < len(os.Args); i++ {
 		if os.Args[i] == flag {
 			i++
 			break
@@ -327,11 +334,11 @@ func handleFlags(flag string) string {
 		i++
 	}
 	// Iter the remain flags
-	for ; i<len(os.Args); i++ {
+	for ; i < len(os.Args); i++ {
 		tmp = append(tmp, os.Args[i])
 	}
 
-	// os.Args is now the original flags with '--junitfile XXX' removed.
+	// os.Args is now the original flags with '--coverprofile XXX' removed.
 	os.Args = tmp
 	return res
 }
@@ -384,6 +391,44 @@ func main() {
 		if !isSucceed {
 			os.Exit(1)
 		}
+	}
+}
+
+func collectCoverProfileFile() {
+	// Combine all the cover file of single test function into a whole.
+	files, err := os.ReadDir(coverFileTempDir)
+	if err != nil {
+		fmt.Println("collect cover file error:", err)
+		os.Exit(-1)
+	}
+
+	w, err := os.Create(coverprofile)
+	if err != nil {
+		fmt.Println("create cover file error:", err)
+		os.Exit(-1)
+	}
+	defer w.Close()
+	w.WriteString("mode: set\n")
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+		if err != nil {
+			fmt.Println("open temp cover file error:", err)
+			os.Exit(-1)
+		}
+		defer f.Close()
+
+		r := bufio.NewReader(f)
+		line, _, err := r.ReadLine()
+		if err != nil || string(line) != "mode: set" {
+			continue
+		}
+
+		io.Copy(w, r)
 	}
 }
 
@@ -512,44 +557,6 @@ func collectTestResults(workers []numa) JUnitTestSuites {
 		suites.Suites = append(suites.Suites, suite)
 	}
 	return suites
-}
-
-func collectCoverProfileFile() {
-	// Combine all the cover file of single test function into a whole.
-	files, err := os.ReadDir(coverFileTempDir)
-	if err != nil {
-		fmt.Println("collect cover file error:", err)
-		os.Exit(-1)
-	}
-
-	w, err := os.Create(coverprofile)
-	if err != nil {
-		fmt.Println("create cover file error:", err)
-		os.Exit(-1)
-	}
-	defer w.Close()
-	w.WriteString("mode: set\n")
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
-		if err != nil {
-			fmt.Println("open temp cover file error:", err)
-			os.Exit(-1)
-		}
-		defer f.Close()
-
-		r := bufio.NewReader(f)
-		line, _, err := r.ReadLine()
-		if err != nil|| string(line) != "mode: set" {
-			continue
-		}
-
-		io.Copy(w, r)
-	}
 }
 
 func failureCases(input []JUnitTestCase) int {
