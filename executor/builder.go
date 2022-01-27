@@ -87,7 +87,7 @@ type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
 	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
-	minForUpdateTS   uint64 // The min ts should be used by insert/update/delete/select-for-update statement
+	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
@@ -648,7 +648,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return nil
 	}
 	// Build 'select for update' using the 'for update' ts.
-	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -835,7 +835,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 			return nil
 		}
 	}
-	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1496,31 +1496,17 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.dataReaderTS, nil
 	}
 
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return b.getForUpdateTS()
+	if (b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt) && b.forUpdateTS != 0 {
+		return b.forUpdateTS, nil
 	}
 
-	return b.getIsolationReadTS()
+	return b.getReadTS()
 }
 
-// getSnapshotReadTS returns the ts used by insert/update/delete and select for update
-func (b *executorBuilder) getForUpdateTS() (uint64, error) {
-	ts, err := b.getIsolationReadTS()
-	if err != nil {
-		return 0, err
-	}
-
-	if b.minForUpdateTS > ts {
-		return b.minForUpdateTS, nil
-	}
-
-	return ts, nil
-}
-
-// getIsolationReadTS returns the ts used by select without for update. The return value is affected by the isolation level
-// and some stale/historical read contexts. For example, for RR isolation, it will return the startTS if the txn and for
-// RC isolation, it will return the current timestamp.
-func (b *executorBuilder) getIsolationReadTS() (uint64, error) {
+// getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
+// and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
+// the current timestamp in RC isolation
+func (b *executorBuilder) getReadTS() (uint64, error) {
 	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
 	// ensure the correct value is returned even the `snapshotTS` field is already set by other
 	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
@@ -2043,7 +2029,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2100,7 +2086,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.minForUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
