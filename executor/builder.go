@@ -86,7 +86,7 @@ var (
 type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
-	snapshotTS       uint64 // The ts for snapshot-read, if a select statement without for update will use this ts
+	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
 	minForUpdateTS   uint64 // The min ts should be used by insert/update/delete/select-for-update statement
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
