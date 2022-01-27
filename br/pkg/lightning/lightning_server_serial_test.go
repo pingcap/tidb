@@ -22,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"net/http"
 	"strings"
 	"testing"
@@ -30,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/stretchr/testify/require"
 )
 
