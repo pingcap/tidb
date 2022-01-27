@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -267,10 +268,59 @@ func cmdRun(args ...string) bool {
 			return false
 		}
 	}
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
 	return true
 }
 
+// handleFlags strip the '--flag xxx' from the command line os.Args
+// Example of the os.Args changes
+// Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
+// After: ut run session TestXXX
+// The value of the flag is returned.
+func handleFlags(flag string) string {
+	var res string
+	tmp := os.Args[:0]
+	// Iter to the flag
+	var i int
+	for ; i < len(os.Args); i++ {
+		if os.Args[i] == flag {
+			i++
+			break
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	// Handle the flag
+	if i < len(os.Args) {
+		res = os.Args[i]
+		i++
+	}
+	// Iter the remain flags
+	for ; i < len(os.Args); i++ {
+		tmp = append(tmp, os.Args[i])
+	}
+
+	// os.Args is now the original flags with '--coverprofile XXX' removed.
+	os.Args = tmp
+	return res
+}
+
+var coverprofile string
+var coverFileTempDir string
+
 func main() {
+	coverprofile = handleFlags("--coverprofile")
+	if coverprofile != "" {
+		var err error
+		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
+		if err != nil {
+			fmt.Println("create temp dir fail", coverFileTempDir)
+			os.Exit(1)
+		}
+		defer os.Remove(coverFileTempDir)
+	}
+
 	// Get the correct count of CPU if it's in docker.
 	P = runtime.GOMAXPROCS(0)
 	rand.Seed(time.Now().Unix())
@@ -301,6 +351,44 @@ func main() {
 		if !isSucceed {
 			os.Exit(1)
 		}
+	}
+}
+
+func collectCoverProfileFile() {
+	// Combine all the cover file of single test function into a whole.
+	files, err := os.ReadDir(coverFileTempDir)
+	if err != nil {
+		fmt.Println("collect cover file error:", err)
+		os.Exit(-1)
+	}
+
+	w, err := os.Create(coverprofile)
+	if err != nil {
+		fmt.Println("create cover file error:", err)
+		os.Exit(-1)
+	}
+	defer w.Close()
+	w.WriteString("mode: set\n")
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+		if err != nil {
+			fmt.Println("open temp cover file error:", err)
+			os.Exit(-1)
+		}
+		defer f.Close()
+
+		r := bufio.NewReader(f)
+		line, _, err := r.ReadLine()
+		if err != nil || string(line) != "mode: set" {
+			continue
+		}
+
+		io.Copy(w, r)
 	}
 }
 
@@ -384,17 +472,13 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			exe,
-			"-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
+	} else {
+		// session.test -test.run TestClusteredPrefixColum
+		args = append(args, "-test.run", fn)
 	}
 
-	// session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		exe,
-		"-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
+	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
@@ -409,7 +493,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
+	} else {
+		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
