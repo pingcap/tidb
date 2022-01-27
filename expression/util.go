@@ -1180,11 +1180,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParams(ctx, true, stmt, inValues...)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmtNode)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}
