@@ -1058,12 +1058,83 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	return ver, nil
 }
 
+func commonSetTableFlashReplica() (bool, error) {
+
+}
+
 func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var replicaInfo ast.TiFlashReplicaSpec
 	if err := job.DecodeArgs(&replicaInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
+	// Ban setting replica count for tables in system database.
+	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	}
+
+	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// We should check this first, in order to avoid creating redundant DDL jobs.
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	} else {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.TiFlashReplica = nil
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (w *worker) onSetTableFlashReplicaTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.TiFlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	logutil.BgLogger().Info("Trying to set set TiFlash replica for DB", zap.Int64("schemaID", job.SchemaID), zap.Int("tableCount", len(dbInfo.Tables)))
 
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

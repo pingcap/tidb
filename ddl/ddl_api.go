@@ -218,7 +218,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionSetTiFlashReplicaTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tiflashReplica.Count, tiflashReplica.Labels},
+		Args:       []interface{}{*tiflashReplica},
 	}
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
