@@ -1489,7 +1489,8 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
-// `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise snapshot-read-ts
+// `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
+// Please notice that in RC isolation, the above two ts are the same
 func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
@@ -1499,12 +1500,12 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.getForUpdateTS()
 	}
 
-	return b.getSnapshotReadTS()
+	return b.getIsolationReadTS()
 }
 
 // getSnapshotReadTS returns the ts used by insert/update/delete and select for update
 func (b *executorBuilder) getForUpdateTS() (uint64, error) {
-	ts, err := b.getSnapshotReadTS()
+	ts, err := b.getIsolationReadTS()
 	if err != nil {
 		return 0, err
 	}
@@ -1516,8 +1517,10 @@ func (b *executorBuilder) getForUpdateTS() (uint64, error) {
 	return ts, nil
 }
 
-// getSnapshotReadTS returns the ts used by select without for update
-func (b *executorBuilder) getSnapshotReadTS() (uint64, error) {
+// getIsolationReadTS returns the ts used by select without for update. The return value is affected by the isolation level
+// and some stale/historical read contexts. For example, for RR isolation, it will return the startTS if the txn and for
+// RC isolation, it will return the current timestamp.
+func (b *executorBuilder) getIsolationReadTS() (uint64, error) {
 	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
 	// ensure the correct value is returned even the `snapshotTS` field is already set by other
 	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
