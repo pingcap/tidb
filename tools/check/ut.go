@@ -524,7 +524,7 @@ func collectTestResults(workers []numa) JUnitTestSuites {
 	}
 
 	suites := JUnitTestSuites{}
-	// Turn every package resuts to a suite.
+	// Turn every package result to a suite.
 	for pkg, cases := range pkgs {
 		suite := JUnitTestSuite{
 			Tests:      len(cases),
