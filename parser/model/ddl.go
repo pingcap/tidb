@@ -222,17 +222,17 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZone                        `json:"time_zone"`
+	Location      *TimeZoneLocation                `json:"location"`
 }
 
-// TimeZone represents a single time zone.
-type TimeZone struct {
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
 	Name     string `json:"name"`
 	Offset   int    `json:"offset"` // seconds east of UTC
 	location *time.Location
 }
 
-func (tz *TimeZone) GetLocation() (*time.Location, error) {
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	if tz.location != nil {
 		return tz.location, nil
 	}

@@ -158,7 +158,7 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
 		ReorgMeta: &DDLReorgMeta{
-			Location: &TimeZone{Name: tzName, Offset: tzOffset},
+			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
@@ -442,7 +442,7 @@ func TestPlacementSettingsString(t *testing.T) {
 
 func TestLocation(t *testing.T) {
 	// test offset = 0
-	loc := &TimeZone{}
+	loc := &TimeZoneLocation{}
 	nLoc, err := loc.GetLocation()
 	require.NoError(t, err)
 	require.Equal(t, nLoc.String(), "UTC")
@@ -452,10 +452,10 @@ func TestLocation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, nLoc.String(), "UTC")
 	// timezone +05:00
-	loc1 := &TimeZone{Name: "UTC", Offset: 18000}
+	loc1 := &TimeZoneLocation{Name: "UTC", Offset: 18000}
 	loc1Byte, err := json.Marshal(loc1)
 	require.NoError(t, err)
-	loc2 := &TimeZone{}
+	loc2 := &TimeZoneLocation{}
 	err = json.Unmarshal(loc1Byte, loc2)
 	require.NoError(t, err)
 	require.Equal(t, loc2.Offset, loc1.Offset)

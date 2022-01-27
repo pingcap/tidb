@@ -202,7 +202,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZone{Name: time.Local.String(), Offset: 0},
+			Location:      &model.TimeZoneLocation{Name: time.Local.String(), Offset: 0},
 		}
 	}
 	if w.reorgCtx.doneCh == nil {

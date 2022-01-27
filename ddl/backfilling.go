@@ -541,11 +541,11 @@ func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
 	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
 	if info.ReorgMeta.Location != nil {
-		tz, err := info.ReorgMeta.Location.GetLocation()
+		loc, err := info.ReorgMeta.Location.GetLocation()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		*sctx.GetSessionVars().TimeZone = *tz
+		*sctx.GetSessionVars().TimeZone = *loc
 	}
 	return nil
 }
