@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math/rand"
@@ -58,7 +59,11 @@ ut run $package $test
 ut build
 
 // build a test package
-ut build xxx`
+ut build xxx
+
+// write the junitfile
+ut run --junitfile xxx`
+
 	fmt.Println(msg)
 	return true
 }
@@ -263,6 +268,20 @@ func cmdRun(args ...string) bool {
 	}
 	close(taskCh)
 	wg.Wait()
+
+	if junitfile != "" {
+		out := collectTestResults(works)
+		f, err := os.Create(junitfile)
+		if err != nil {
+			fmt.Println("create junit file fail:", err)
+			return false
+		}
+		if err := write(f, out); err != nil {
+			fmt.Println("write junit file error:", err)
+			return false
+		}
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
@@ -306,10 +325,12 @@ func handleFlags(flag string) string {
 	return res
 }
 
+var junitfile string
 var coverprofile string
 var coverFileTempDir string
 
 func main() {
+	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
 	if coverprofile != "" {
 		var err error
@@ -436,37 +457,96 @@ func listPackages() ([]string, error) {
 
 type numa struct {
 	Fail    bool
+	results []testResult
 }
 
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		start := time.Now()
 		res := n.runTestCase(t.pkg, t.test, t.old)
-		if res.err != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
-			io.Copy(os.Stderr, &res.output)
+		if res.Failure != nil {
+			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
+			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
 			n.Fail = true
 		}
+		n.results = append(n.results, res)
 	}
 }
 
 type testResult struct {
-	err    error
-	output bytes.Buffer
+	JUnitTestCase
+	d time.Duration
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
+func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+	res := testResult{
+		JUnitTestCase: JUnitTestCase{
+			Classname: path.Join(modulePath, pkg),
+			Name:      fn,
+		},
+	}
 	exe := "./" + testFileName(pkg)
 	cmd := n.testCommand(exe, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
-	cmd.Stdout = &res.output
-	cmd.Stderr = &res.output
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
-		res.err = withTrace(err)
+		res.Failure = &JUnitFailure{
+			Message:  "Failed",
+			Contents: buf.String(),
+		}
+		res.d = time.Since(start)
+		res.Time = formatDurationAsSeconds(res.d)
 	}
 	return res
+}
+
+func collectTestResults(workers []numa) JUnitTestSuites {
+	version := goVersion()
+	// pkg => test cases
+	pkgs := make(map[string][]JUnitTestCase)
+	durations := make(map[string]time.Duration)
+
+	// The test result in workers are shuffled, so group by the packages here
+	for _, n := range workers {
+		for _, res := range n.results {
+			cases, ok := pkgs[res.Classname]
+			if !ok {
+				cases = make([]JUnitTestCase, 0, 10)
+			}
+			cases = append(cases, res.JUnitTestCase)
+			pkgs[res.Classname] = cases
+			durations[res.Classname] = durations[res.Classname] + res.d
+		}
+	}
+
+	suites := JUnitTestSuites{}
+	// Turn every package result to a suite.
+	for pkg, cases := range pkgs {
+		suite := JUnitTestSuite{
+			Tests:      len(cases),
+			Failures:   failureCases(cases),
+			Time:       formatDurationAsSeconds(durations[pkg]),
+			Name:       pkg,
+			Properties: packageProperties(version),
+			TestCases:  cases,
+		}
+		suites.Suites = append(suites.Suites, suite)
+	}
+	return suites
+}
+
+func failureCases(input []JUnitTestCase) int {
+	sum := 0
+	for _, v := range input {
+		if v.Failure != nil {
+			sum++
+		}
+	}
+	return sum
 }
 
 func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
@@ -635,4 +715,91 @@ func withTrace(err error) error {
 	var stack [4096]byte
 	sz := runtime.Stack(stack[:], false)
 	return &errWithStack{err, stack[:sz]}
+}
+
+func formatDurationAsSeconds(d time.Duration) string {
+	return fmt.Sprintf("%f", d.Seconds())
+}
+
+func packageProperties(goVersion string) []JUnitProperty {
+	return []JUnitProperty{
+		{Name: "go.version", Value: goVersion},
+	}
+}
+
+// goVersion returns the version as reported by the go binary in PATH. This
+// version will not be the same as runtime.Version, which is always the version
+// of go used to build the gotestsum binary.
+//
+// To skip the os/exec call set the GOVERSION environment variable to the
+// desired value.
+func goVersion() string {
+	if version, ok := os.LookupEnv("GOVERSION"); ok {
+		return version
+	}
+	cmd := exec.Command("go", "version")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
+}
+
+func write(out io.Writer, suites JUnitTestSuites) error {
+	doc, err := xml.MarshalIndent(suites, "", "\t")
+	if err != nil {
+		return err
+	}
+	_, err = out.Write([]byte(xml.Header))
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(doc)
+	return err
+}
+
+// JUnitTestSuites is a collection of JUnit test suites.
+type JUnitTestSuites struct {
+	XMLName xml.Name `xml:"testsuites"`
+	Suites  []JUnitTestSuite
+}
+
+// JUnitTestSuite is a single JUnit test suite which may contain many
+// testcases.
+type JUnitTestSuite struct {
+	XMLName    xml.Name        `xml:"testsuite"`
+	Tests      int             `xml:"tests,attr"`
+	Failures   int             `xml:"failures,attr"`
+	Time       string          `xml:"time,attr"`
+	Name       string          `xml:"name,attr"`
+	Properties []JUnitProperty `xml:"properties>property,omitempty"`
+	TestCases  []JUnitTestCase
+}
+
+// JUnitTestCase is a single test case with its result.
+type JUnitTestCase struct {
+	XMLName     xml.Name          `xml:"testcase"`
+	Classname   string            `xml:"classname,attr"`
+	Name        string            `xml:"name,attr"`
+	Time        string            `xml:"time,attr"`
+	SkipMessage *JUnitSkipMessage `xml:"skipped,omitempty"`
+	Failure     *JUnitFailure     `xml:"failure,omitempty"`
+}
+
+// JUnitSkipMessage contains the reason why a testcase was skipped.
+type JUnitSkipMessage struct {
+	Message string `xml:"message,attr"`
+}
+
+// JUnitProperty represents a key/value pair used to define properties.
+type JUnitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// JUnitFailure contains data related to a failed test.
+type JUnitFailure struct {
+	Message  string `xml:"message,attr"`
+	Type     string `xml:"type,attr"`
+	Contents string `xml:",chardata"`
 }
