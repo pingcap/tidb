@@ -77,4 +77,20 @@ utf8mb4	46	1
 select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
 COLLATION_NAME	CHARACTER_SET_NAME
 utf8mb4_bin	utf8mb4
+show charset;
+Charset	Description	Default collation	Maxlen
+ascii	US ASCII	ascii_bin	1
+binary	binary	binary	1
+gbk	Chinese Internal Code Specification	gbk_bin	2
+latin1	Latin1	latin1_bin	1
+utf8	UTF-8 Unicode	utf8_bin	3
+utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
+show collation;
+Collation	Charset	Id	Default	Compiled	Sortlen
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+latin1_bin	latin1	47	Yes	Yes	1
+binary	binary	63	Yes	Yes	1
+ascii_bin	ascii	65	Yes	Yes	1
+utf8_bin	utf8	83	Yes	Yes	1
+gbk_bin	gbk	87	Yes	Yes	1
 use test;
