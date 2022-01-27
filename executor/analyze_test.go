@@ -1305,7 +1305,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, 2, len(col0.Buckets))
 
 	// manual analyze uses the table-level persisted options by merging the new options
-	tk.MustExec("analyze table t columns a,b with 0.9 samplerate, 3 buckets")
+	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1320,7 +1320,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0.9", rs.Rows()[0][2])
+	require.Equal(t, "1", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
