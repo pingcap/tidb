@@ -1667,7 +1667,7 @@ AlterTableSpec:
 			Count:  $4.(uint64),
 			Labels: $5.([]string),
 		}
-		$$ = &ast.AlterTableSAlterTableSpecpec{
+		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
 		}

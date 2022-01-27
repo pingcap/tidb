@@ -565,5 +565,11 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 func (s *tiflashDDLTestSuite) TestMultiReplica(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_tiflash")
+	tk.MustExec("create database test_tiflash")
+	tk.MustExec("use test_tiflash")
+	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter database ddltiflash set tiflash replica 1")
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test_tiflash", "ddltiflash")
 }
