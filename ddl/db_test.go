@@ -3173,8 +3173,8 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// Success when the new collation is enabled.
+	tk.MustExec("create table t_set (a set('1', '4', '10') default '1 ,4');")
 	// The type of default value is int.
 	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
@@ -3183,6 +3183,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 
 	// The type of default value is int.
 	// It's for successful cases
+	tk.MustExec("drop table if exists t_set")
 	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
 	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
