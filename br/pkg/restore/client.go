@@ -1239,6 +1239,7 @@ func (rc *Client) IsSkipCreateSQL() bool {
 // because we cannot create onExistReplace table.
 // so the final create DDL with the correct auto increment/random id won't be executed.
 func (rc *Client) GenDDLJobsMap() {
+	rc.ddlJobsMap = make(map[UniqueTableName]bool)
 	for _, job := range rc.ddlJobs {
 		switch job.Type {
 		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
