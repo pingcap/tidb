@@ -136,7 +136,7 @@ gotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-gotest_in_verify_ci: failpoint-enable tools/bin/xprog tools/bin/ut
+gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \

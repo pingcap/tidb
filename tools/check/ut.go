@@ -144,7 +144,7 @@ func cmdBuild(args ...string) bool {
 			fmt.Println("build package error", pkgs, err)
 			return false
 		}
-
+		return true
 	}
 
 	// build test binary of a single package
@@ -208,6 +208,7 @@ func cmdRun(args ...string) bool {
 			fmt.Println("check test binary existance error", err)
 			return false
 		}
+
 		if !exist {
 			fmt.Println("no test case in ", pkg)
 			return false
@@ -452,7 +453,6 @@ func listPackages() ([]string, error) {
 		if skipDIR(pkg) {
 			continue
 		}
-
 		ret = append(ret, pkg)
 	}
 	return ret, nil
