@@ -1001,7 +1001,9 @@ func (rc *Controller) listenCheckpointUpdates() {
 				for _, w := range ws {
 					w <- err
 				}
-				web.BroadcastCheckpointDiff(cpd)
+				if rc.cfg.App.BroadcastStatus {
+					web.BroadcastCheckpointDiff(cpd)
+				}
 			}
 			rc.checkpointsWg.Done()
 		}
@@ -1443,11 +1445,15 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+				if rc.cfg.App.BroadcastStatus {
+					web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+				}
 				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
 				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
-				web.BroadcastError(task.tr.tableName, err)
+				if rc.cfg.App.BroadcastStatus {
+					web.BroadcastError(task.tr.tableName, err)
+				}
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
 				if needPostProcess {
@@ -1590,7 +1596,9 @@ func (tr *TableRestore) restoreTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
 			return false, errors.Trace(err)
 		}
-		web.BroadcastTableCheckpoint(tr.tableName, cp)
+		if rc.cfg.App.BroadcastStatus {
+			web.BroadcastTableCheckpoint(tr.tableName, cp)
+		}
 
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {

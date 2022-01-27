@@ -108,8 +108,14 @@ type taskProgress struct {
 	checkpoints checkpointsMap
 }
 
-var currentProgress = taskProgress{
-	checkpoints: makeCheckpointsMap(),
+var currentProgress *taskProgress
+
+// InitCurrentProgress init current progress struct on demand.
+// NOTE: this call is not thread safe, so it should only be inited once at the very beginning of progress start.
+func InitCurrentProgress() {
+	currentProgress = &taskProgress{
+		checkpoints: makeCheckpointsMap(),
+	}
 }
 
 func BroadcastStartTask() {
