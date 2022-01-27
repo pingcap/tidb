@@ -1136,10 +1136,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 			return ret, errors.Trace(err1)
 		}
 		val, err = ConvertUintToUint(uval, upperBound, tp)
-		if err != nil {
-			return ret, errors.Trace(err)
+		if err == nil {
+			err = err1
 		}
-		err = err1
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
 		err = dec.Round(dec, 0, ModeHalfEven)

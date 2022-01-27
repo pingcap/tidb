@@ -25,37 +25,28 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/BurntSushi/toml"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&configTestSuite{})
-
-type configTestSuite struct{}
-
-func startMockServer(c *C, statusCode int, content string) (*httptest.Server, string, int) {
+func startMockServer(t *testing.T, statusCode int, content string) (*httptest.Server, string, int) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(statusCode)
-		fmt.Fprint(w, content)
+		_, _ = fmt.Fprint(w, content)
 	}))
 
 	url, err := url.Parse(ts.URL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	host, portString, err := net.SplitHostPort(url.Host)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	port, err := strconv.Atoi(portString)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	return ts, host, port
 }
@@ -71,8 +62,8 @@ func assignMinimalLegalValue(cfg *config.Config) {
 	cfg.TikvImporter.DiskQuota = 1
 }
 
-func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK,
+func TestAdjustPdAddrAndPort(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
 	)
 	defer ts.Close()
@@ -86,13 +77,13 @@ func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TiDB.Port, Equals, 4444)
-	c.Assert(cfg.TiDB.PdAddr, Equals, "123.45.67.89:1234")
+	require.NoError(t, err)
+	require.Equal(t, 4444, cfg.TiDB.Port)
+	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
 }
 
-func (s *configTestSuite) TestAdjustPdAddrAndPortViaAdvertiseAddr(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK,
+func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":6666,"advertise-address":"121.212.121.212:5555","path":"34.34.34.34:3434"}`,
 	)
 	defer ts.Close()
@@ -106,13 +97,13 @@ func (s *configTestSuite) TestAdjustPdAddrAndPortViaAdvertiseAddr(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TiDB.Port, Equals, 6666)
-	c.Assert(cfg.TiDB.PdAddr, Equals, "34.34.34.34:3434")
+	require.NoError(t, err)
+	require.Equal(t, 6666, cfg.TiDB.Port)
+	require.Equal(t, "34.34.34.34:3434", cfg.TiDB.PdAddr)
 }
 
-func (s *configTestSuite) TestAdjustPageNotFound(c *C) {
-	ts, host, port := startMockServer(c, http.StatusNotFound, "{}")
+func TestAdjustPageNotFound(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusNotFound, "{}")
 	defer ts.Close()
 
 	cfg := config.NewConfig()
@@ -123,11 +114,12 @@ func (s *configTestSuite) TestAdjustPageNotFound(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+	require.Error(t, err)
+	require.Regexp(t, "cannot fetch settings from TiDB.*", err.Error())
 }
 
-func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK, "{}")
+func TestAdjustConnectRefused(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK, "{}")
 
 	cfg := config.NewConfig()
 	cfg.TiDB.Host = host
@@ -139,26 +131,27 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 	ts.Close() // immediately close to ensure connection refused.
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+	require.Error(t, err)
+	require.Regexp(t, "cannot fetch settings from TiDB.*", err.Error())
 }
 
-func (s *configTestSuite) TestAdjustBackendNotSet(c *C) {
+func TestAdjustBackendNotSet(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "tikv-importer.backend must not be empty!")
+	require.EqualError(t, err, "tikv-importer.backend must not be empty!")
 }
 
-func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
+func TestAdjustInvalidBackend(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = "no_such_backend"
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
+	require.EqualError(t, err, "invalid config: unsupported `tikv-importer.backend` (no_such_backend)")
 }
 
-func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
-	tmpDir := c.MkDir()
+func TestCheckAndAdjustFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
 	// use slashPath in url to be compatible with windows
 	slashPath := filepath.ToSlash(tmpDir)
 
@@ -179,34 +172,35 @@ func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 		cfg.Mydumper.SourceDir = testCase
 
 		err := cfg.CheckAndAdjustFilePath()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 }
 
-func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
+func TestAdjustFileRoutePath(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
 	ctx := context.Background()
-	tmpDir := c.MkDir()
+	tmpDir := t.TempDir()
 	cfg.Mydumper.SourceDir = tmpDir
 	invalidPath := filepath.Join(tmpDir, "../test123/1.sql")
 	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
 	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(ctx)
-	c.Assert(err, ErrorMatches, fmt.Sprintf("\\Qfile route path '%s' is not in source dir '%s'\\E", invalidPath, tmpDir))
+	require.Error(t, err)
+	require.Regexp(t, fmt.Sprintf("\\Qfile route path '%s' is not in source dir '%s'\\E", invalidPath, tmpDir), err.Error())
 
 	relPath := filepath.FromSlash("test_dir/1.sql")
 	rule.Path = filepath.Join(tmpDir, relPath)
 	err = cfg.Adjust(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.Mydumper.FileRouters[0].Path, Equals, relPath)
+	require.NoError(t, err)
+	require.Equal(t, relPath, cfg.Mydumper.FileRouters[0].Path)
 }
 
-func (s *configTestSuite) TestDecodeError(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK, "invalid-string")
+func TestDecodeError(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK, "invalid-string")
 	defer ts.Close()
 
 	cfg := config.NewConfig()
@@ -217,11 +211,12 @@ func (s *configTestSuite) TestDecodeError(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+	require.Error(t, err)
+	require.Regexp(t, "cannot fetch settings from TiDB.*", err.Error())
 }
 
-func (s *configTestSuite) TestInvalidSetting(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK, `{"port": 0}`)
+func TestInvalidSetting(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK, `{"port": 0}`)
 	defer ts.Close()
 
 	cfg := config.NewConfig()
@@ -232,11 +227,11 @@ func (s *configTestSuite) TestInvalidSetting(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "invalid `tidb.port` setting")
+	require.EqualError(t, err, "invalid `tidb.port` setting")
 }
 
-func (s *configTestSuite) TestInvalidPDAddr(c *C) {
-	ts, host, port := startMockServer(c, http.StatusOK, `{"port": 1234, "path": ",,"}`)
+func TestInvalidPDAddr(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK, `{"port": 1234, "path": ",,"}`)
 	defer ts.Close()
 
 	cfg := config.NewConfig()
@@ -247,31 +242,31 @@ func (s *configTestSuite) TestInvalidPDAddr(c *C) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, ErrorMatches, "invalid `tidb.pd-addr` setting")
+	require.EqualError(t, err, "invalid `tidb.pd-addr` setting")
 }
 
-func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c *C) {
+func TestAdjustWillNotContactServerIfEverythingIsDefined(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TiDB.Port, Equals, 4567)
-	c.Assert(cfg.TiDB.PdAddr, Equals, "234.56.78.90:12345")
+	require.NoError(t, err)
+	require.Equal(t, 4567, cfg.TiDB.Port)
+	require.Equal(t, "234.56.78.90:12345", cfg.TiDB.PdAddr)
 }
 
-func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
+func TestAdjustWillBatchImportRatioInvalid(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Mydumper.BatchImportRatio = -1
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
+	require.NoError(t, err)
+	require.Equal(t, 0.75, cfg.Mydumper.BatchImportRatio)
 }
 
-func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
+func TestAdjustSecuritySection(t *testing.T) {
 	testCases := []struct {
 		input       string
 		expectedCA  string
@@ -338,29 +333,29 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 	}
 
 	for _, tc := range testCases {
-		comment := Commentf("input = %s", tc.input)
+		comment := fmt.Sprintf("input = %s", tc.input)
 
 		cfg := config.NewConfig()
 		assignMinimalLegalValue(cfg)
 		cfg.TiDB.DistSQLScanConcurrency = 1
 		err := cfg.LoadFromTOML([]byte(tc.input))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 
 		err = cfg.Adjust(context.Background())
-		c.Assert(err, IsNil, comment)
-		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
-		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
+		require.NoError(t, err, comment)
+		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
+		require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
 	}
 	// test different tls config name
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Security.CAPath = "/path/to/ca.pem"
 	cfg.Security.TLSConfigName = "tidb-tls"
-	c.Assert(cfg.Adjust(context.Background()), IsNil)
-	c.Assert(cfg.TiDB.Security.TLSConfigName, Equals, cfg.TiDB.TLS)
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, cfg.TiDB.TLS, cfg.TiDB.Security.TLSConfigName)
 }
 
-func (s *configTestSuite) TestInvalidCSV(c *C) {
+func TestInvalidCSV(t *testing.T) {
 	testCases := []struct {
 		input string
 		err   string
@@ -483,8 +478,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 	}
 
 	for _, tc := range testCases {
-		comment := Commentf("input = %s", tc.input)
-
+		comment := fmt.Sprintf("input = %s", tc.input)
 		cfg := config.NewConfig()
 		cfg.Mydumper.SourceDir = "file://."
 		cfg.TiDB.Port = 4000
@@ -493,85 +487,87 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		cfg.TikvImporter.SortedKVDir = "."
 		cfg.TiDB.DistSQLScanConcurrency = 1
 		err := cfg.LoadFromTOML([]byte(tc.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		err = cfg.Adjust(context.Background())
 		if tc.err != "" {
-			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
+			require.EqualError(t, err, tc.err, comment)
 		} else {
-			c.Assert(err, IsNil, comment)
+			require.NoError(t, err)
 		}
 	}
 }
 
-func (s *configTestSuite) TestInvalidTOML(c *C) {
+func TestInvalidTOML(t *testing.T) {
 	cfg := &config.Config{}
 	err := cfg.LoadFromTOML([]byte(`
 		invalid[mydumper.csv]
 		delimiter = '\'
 		backslash-escape = true
 	`))
-	c.Assert(err, ErrorMatches, regexp.QuoteMeta("Near line 0 (last key parsed ''): bare keys cannot contain '['"))
+	require.EqualError(t, err, "Near line 0 (last key parsed ''): bare keys cannot contain '['")
 }
 
-func (s *configTestSuite) TestTOMLUnusedKeys(c *C) {
+func TestTOMLUnusedKeys(t *testing.T) {
 	cfg := &config.Config{}
 	err := cfg.LoadFromTOML([]byte(`
 		[lightning]
 		typo = 123
 	`))
-	c.Assert(err, ErrorMatches, regexp.QuoteMeta("config file contained unknown configuration options: lightning.typo"))
+	require.EqualError(t, err, "config file contained unknown configuration options: lightning.typo")
 }
 
-func (s *configTestSuite) TestDurationUnmarshal(c *C) {
+func TestDurationUnmarshal(t *testing.T) {
 	duration := config.Duration{}
 	err := duration.UnmarshalText([]byte("13m20s"))
-	c.Assert(err, IsNil)
-	c.Assert(duration.Duration.Seconds(), Equals, 13*60+20.0)
+	require.NoError(t, err)
+	require.Equal(t, 13*60+20.0, duration.Duration.Seconds())
 	err = duration.UnmarshalText([]byte("13x20s"))
-	c.Assert(err, ErrorMatches, "time: unknown unit .?x.? in duration .?13x20s.?")
+	require.Error(t, err)
+	require.Regexp(t, "time: unknown unit .?x.? in duration .?13x20s.?", err.Error())
 }
 
-func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
+func TestDurationMarshalJSON(t *testing.T) {
 	duration := config.Duration{}
 	err := duration.UnmarshalText([]byte("13m20s"))
-	c.Assert(err, IsNil)
-	c.Assert(duration.Duration.Seconds(), Equals, 13*60+20.0)
+	require.NoError(t, err)
+	require.Equal(t, 13*60+20.0, duration.Duration.Seconds())
 	result, err := duration.MarshalJSON()
-	c.Assert(err, IsNil)
-	c.Assert(string(result), Equals, `"13m20s"`)
+	require.NoError(t, err)
+	require.Equal(t, `"13m20s"`, string(result))
 }
 
-func (s *configTestSuite) TestDuplicateResolutionAlgorithm(c *C) {
+func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra config.DuplicateResolutionAlgorithm
-	dra.FromStringValue("record")
-	c.Assert(dra, Equals, config.DupeResAlgRecord)
-	dra.FromStringValue("none")
-	c.Assert(dra, Equals, config.DupeResAlgNone)
-	dra.FromStringValue("remove")
-	c.Assert(dra, Equals, config.DupeResAlgRemove)
+	require.NoError(t, dra.FromStringValue("record"))
+	require.Equal(t, config.DupeResAlgRecord, dra)
+	require.NoError(t, dra.FromStringValue("none"))
+	require.Equal(t, config.DupeResAlgNone, dra)
+	require.NoError(t, dra.FromStringValue("remove"))
+	require.Equal(t, config.DupeResAlgRemove, dra)
 
-	c.Assert(config.DupeResAlgRecord.String(), Equals, "record")
-	c.Assert(config.DupeResAlgNone.String(), Equals, "none")
-	c.Assert(config.DupeResAlgRemove.String(), Equals, "remove")
+	require.Equal(t, "record", config.DupeResAlgRecord.String())
+	require.Equal(t, "none", config.DupeResAlgNone.String())
+	require.Equal(t, "remove", config.DupeResAlgRemove.String())
 }
 
-func (s *configTestSuite) TestLoadConfig(c *C) {
+func TestLoadConfig(t *testing.T) {
 	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
-	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
-	c.Assert(cfg, IsNil)
+	require.EqualError(t, err, `invalid value "sss" for flag -tidb-port: parse error`)
+	require.Nil(t, cfg)
 
 	cfg, err = config.LoadGlobalConfig([]string{"-V"}, nil)
-	c.Assert(err, Equals, flag.ErrHelp)
-	c.Assert(cfg, IsNil)
+	require.Equal(t, flag.ErrHelp, err)
+	require.Nil(t, cfg)
 
 	cfg, err = config.LoadGlobalConfig([]string{"-config", "not-exists"}, nil)
-	c.Assert(err, ErrorMatches, ".*(no such file or directory|The system cannot find the file specified).*")
-	c.Assert(cfg, IsNil)
+	require.Error(t, err)
+	require.Regexp(t, ".*(no such file or directory|The system cannot find the file specified).*", err.Error())
+	require.Nil(t, cfg)
 
 	cfg, err = config.LoadGlobalConfig([]string{"--server-mode"}, nil)
-	c.Assert(err, ErrorMatches, "If server-mode is enabled, the status-addr must be a valid listen address")
-	c.Assert(cfg, IsNil)
+	require.EqualError(t, err, "If server-mode is enabled, the status-addr must be a valid listen address")
+	require.Nil(t, cfg)
 
 	path, _ := filepath.Abs(".")
 	cfg, err = config.LoadGlobalConfig([]string{
@@ -587,67 +583,67 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 		"-sorted-kv-dir", ".",
 		"-checksum=false",
 	}, nil)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.Config.Level, Equals, "debug")
-	c.Assert(cfg.App.Config.File, Equals, "/path/to/file.log")
-	c.Assert(cfg.TiDB.Host, Equals, "172.16.30.11")
-	c.Assert(cfg.TiDB.Port, Equals, 4001)
-	c.Assert(cfg.TiDB.User, Equals, "guest")
-	c.Assert(cfg.TiDB.Psw, Equals, "12345")
-	c.Assert(cfg.TiDB.PdAddr, Equals, "172.16.30.11:2379,172.16.30.12:2379")
-	c.Assert(cfg.Mydumper.SourceDir, Equals, path)
-	c.Assert(cfg.TikvImporter.Backend, Equals, config.BackendLocal)
-	c.Assert(cfg.TikvImporter.SortedKVDir, Equals, ".")
-	c.Assert(cfg.PostRestore.Checksum, Equals, config.OpLevelOff)
-	c.Assert(cfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
+	require.NoError(t, err)
+	require.Equal(t, "debug", cfg.App.Config.Level)
+	require.Equal(t, "/path/to/file.log", cfg.App.Config.File)
+	require.Equal(t, "172.16.30.11", cfg.TiDB.Host)
+	require.Equal(t, 4001, cfg.TiDB.Port)
+	require.Equal(t, "guest", cfg.TiDB.User)
+	require.Equal(t, "12345", cfg.TiDB.Psw)
+	require.Equal(t, "172.16.30.11:2379,172.16.30.12:2379", cfg.TiDB.PdAddr)
+	require.Equal(t, path, cfg.Mydumper.SourceDir)
+	require.Equal(t, config.BackendLocal, cfg.TikvImporter.Backend)
+	require.Equal(t, ".", cfg.TikvImporter.SortedKVDir)
+	require.Equal(t, config.OpLevelOff, cfg.PostRestore.Checksum)
+	require.Equal(t, config.OpLevelOptional, cfg.PostRestore.Analyze)
 
 	taskCfg := config.NewConfig()
 	err = taskCfg.LoadFromGlobal(cfg)
-	c.Assert(err, IsNil)
-	c.Assert(taskCfg.PostRestore.Checksum, Equals, config.OpLevelOff)
-	c.Assert(taskCfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
+	require.NoError(t, err)
+	require.Equal(t, config.OpLevelOff, taskCfg.PostRestore.Checksum)
+	require.Equal(t, config.OpLevelOptional, taskCfg.PostRestore.Analyze)
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	taskCfg.TiDB.DistSQLScanConcurrency = 1
 	err = taskCfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
+	require.NoError(t, err)
+	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false", taskCfg.Checkpoint.DSN)
 
 	result := taskCfg.String()
-	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
+	require.Regexp(t, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`, result)
 
 	cfg, err = config.LoadGlobalConfig([]string{}, nil)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.Config.File, Matches, ".*lightning.log.*")
+	require.NoError(t, err)
+	require.Regexp(t, ".*lightning.log.*", cfg.App.Config.File)
 	cfg, err = config.LoadGlobalConfig([]string{"--log-file", "-"}, nil)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.Config.File, Equals, "-")
+	require.NoError(t, err)
+	require.Equal(t, "-", cfg.App.Config.File)
 }
 
-func (s *configTestSuite) TestDefaultImporterBackendValue(c *C) {
+func TestDefaultImporterBackendValue(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "importer"
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.IndexConcurrency, Equals, 2)
-	c.Assert(cfg.App.TableConcurrency, Equals, 6)
+	require.NoError(t, err)
+	require.Equal(t, 2, cfg.App.IndexConcurrency)
+	require.Equal(t, 6, cfg.App.TableConcurrency)
 }
 
-func (s *configTestSuite) TestDefaultTidbBackendValue(c *C) {
+func TestDefaultTidbBackendValue(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "tidb"
 	cfg.App.RegionConcurrency = 123
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.TableConcurrency, Equals, 123)
+	require.NoError(t, err)
+	require.Equal(t, 123, cfg.App.TableConcurrency)
 }
 
-func (s *configTestSuite) TestDefaultCouldBeOverwritten(c *C) {
+func TestDefaultCouldBeOverwritten(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "importer"
@@ -655,32 +651,33 @@ func (s *configTestSuite) TestDefaultCouldBeOverwritten(c *C) {
 	cfg.App.TableConcurrency = 60
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg.App.IndexConcurrency, Equals, 20)
-	c.Assert(cfg.App.TableConcurrency, Equals, 60)
+	require.NoError(t, err)
+	require.Equal(t, 20, cfg.App.IndexConcurrency)
+	require.Equal(t, 60, cfg.App.TableConcurrency)
 }
 
-func (s *configTestSuite) TestLoadFromInvalidConfig(c *C) {
+func TestLoadFromInvalidConfig(t *testing.T) {
 	taskCfg := config.NewConfig()
 	err := taskCfg.LoadFromGlobal(&config.GlobalConfig{
 		ConfigFileContent: []byte("invalid toml"),
 	})
-	c.Assert(err, ErrorMatches, "Near line 1.*")
+	require.Error(t, err)
+	require.Regexp(t, "Near line 1.*", err.Error())
 }
 
-func (s *configTestSuite) TestTomlPostRestore(c *C) {
+func TestTomlPostRestore(t *testing.T) {
 	cfg := &config.Config{}
 	err := cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		checksum = "req"
 	`))
-	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level 'req', please choose valid option between ['off', 'optional', 'required']"))
+	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		analyze = 123
 	`))
-	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level '123', please choose valid option between ['off', 'optional', 'required']"))
+	require.EqualError(t, err, "invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
 
 	kvMap := map[string]config.PostOpLevel{
 		`"off"`:      config.OpLevelOff,
@@ -697,77 +694,77 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nchecksum= %s\r\n", k)
 		err := cfg.LoadFromTOML([]byte(confStr))
-		c.Assert(err, IsNil)
-		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+		require.NoError(t, err)
+		require.Equal(t, v, cfg.PostRestore.Checksum)
 
 		b.Reset()
-		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
-		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*checksum = "\Q%s\E".*`, v))
+		require.NoError(t, enc.Encode(cfg.PostRestore))
+		require.Regexp(t, fmt.Sprintf(`(?s).*checksum = "\Q%s\E".*`, v), &b)
 	}
 
 	for k, v := range kvMap {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nanalyze= %s\r\n", k)
 		err := cfg.LoadFromTOML([]byte(confStr))
-		c.Assert(err, IsNil)
-		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+		require.NoError(t, err)
+		require.Equal(t, v, cfg.PostRestore.Analyze)
 
 		b.Reset()
-		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
-		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*analyze = "\Q%s\E".*`, v))
+		require.NoError(t, enc.Encode(cfg.PostRestore))
+		require.Regexp(t, fmt.Sprintf(`(?s).*analyze = "\Q%s\E".*`, v), &b)
 	}
 }
 
-func (s *configTestSuite) TestCronEncodeDecode(c *C) {
+func TestCronEncodeDecode(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Cron.SwitchMode.Duration = 1 * time.Minute
 	cfg.Cron.LogProgress.Duration = 2 * time.Minute
 	cfg.Cron.CheckDiskQuota.Duration = 3 * time.Second
 	var b bytes.Buffer
-	c.Assert(toml.NewEncoder(&b).Encode(cfg.Cron), IsNil)
-	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\ncheck-disk-quota = \"3s\"\n")
+	require.NoError(t, toml.NewEncoder(&b).Encode(cfg.Cron))
+	require.Equal(t, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\ncheck-disk-quota = \"3s\"\n", b.String())
 
 	confStr := "[cron]\r\n" + b.String()
 	cfg2 := &config.Config{}
-	c.Assert(cfg2.LoadFromTOML([]byte(confStr)), IsNil)
-	c.Assert(cfg2.Cron, DeepEquals, cfg.Cron)
+	require.NoError(t, cfg2.LoadFromTOML([]byte(confStr)))
+	require.Equal(t, cfg.Cron, cfg2.Cron)
 }
 
-func (s *configTestSuite) TestAdjustWithLegacyBlackWhiteList(c *C) {
+func TestAdjustWithLegacyBlackWhiteList(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	c.Assert(cfg.Mydumper.Filter, DeepEquals, config.DefaultFilter)
-	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+	require.Equal(t, config.DefaultFilter, cfg.Mydumper.Filter)
+	require.False(t, cfg.HasLegacyBlackWhiteList())
 
 	ctx := context.Background()
 	cfg.Mydumper.Filter = []string{"test.*"}
 	cfg.TiDB.DistSQLScanConcurrency = 1
-	c.Assert(cfg.Adjust(ctx), IsNil)
-	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+	require.NoError(t, cfg.Adjust(ctx))
+	require.False(t, cfg.HasLegacyBlackWhiteList())
 
 	cfg.BWList.DoDBs = []string{"test"}
-	c.Assert(cfg.Adjust(ctx), ErrorMatches, "invalid config: `mydumper\\.filter` and `black-white-list` cannot be simultaneously defined")
+	require.EqualError(t, cfg.Adjust(ctx), "invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 
 	cfg.Mydumper.Filter = config.DefaultFilter
-	c.Assert(cfg.Adjust(ctx), IsNil)
-	c.Assert(cfg.HasLegacyBlackWhiteList(), IsTrue)
+	require.NoError(t, cfg.Adjust(ctx))
+	require.True(t, cfg.HasLegacyBlackWhiteList())
 }
 
-func (s *configTestSuite) TestAdjustDiskQuota(c *C) {
+func TestAdjustDiskQuota(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
-	base := c.MkDir()
+	base := t.TempDir()
 	ctx := context.Background()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.DiskQuota = 0
 	cfg.TikvImporter.SortedKVDir = base
 	cfg.TiDB.DistSQLScanConcurrency = 1
-	c.Assert(cfg.Adjust(ctx), IsNil)
-	c.Assert(int64(cfg.TikvImporter.DiskQuota), Equals, int64(0))
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
 }
 
-func (s *configTestSuite) TestDataCharacterSet(c *C) {
+func TestDataCharacterSet(t *testing.T) {
 	testCases := []struct {
 		input string
 		err   string
@@ -831,8 +828,7 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 	}
 
 	for _, tc := range testCases {
-		comment := Commentf("input = %s", tc.input)
-
+		comment := fmt.Sprintf("input = %s", tc.input)
 		cfg := config.NewConfig()
 		cfg.Mydumper.SourceDir = "file://."
 		cfg.TiDB.Port = 4000
@@ -841,17 +837,17 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 		cfg.TikvImporter.SortedKVDir = "."
 		cfg.TiDB.DistSQLScanConcurrency = 1
 		err := cfg.LoadFromTOML([]byte(tc.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = cfg.Adjust(context.Background())
 		if tc.err != "" {
-			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
+			require.EqualError(t, err, tc.err, comment)
 		} else {
-			c.Assert(err, IsNil, comment)
+			require.NoError(t, err, comment)
 		}
 	}
 }
 
-func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
+func TestCheckpointKeepStrategy(t *testing.T) {
 	tomlCases := map[interface{}]config.CheckpointKeepStrategy{
 		true:     config.CheckpointRename,
 		false:    config.CheckpointRemove,
@@ -862,15 +858,15 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 	var cp config.CheckpointKeepStrategy
 	for key, strategy := range tomlCases {
 		err := cp.UnmarshalTOML(key)
-		c.Assert(err, IsNil)
-		c.Assert(cp, Equals, strategy)
+		require.NoError(t, err)
+		require.Equal(t, strategy, cp)
 	}
 
 	defaultCp := "enable = true\r\n"
 	cpCfg := &config.Checkpoint{}
 	_, err := toml.Decode(defaultCp, cpCfg)
-	c.Assert(err, IsNil)
-	c.Assert(cpCfg.KeepAfterSuccess, Equals, config.CheckpointRemove)
+	require.NoError(t, err)
+	require.Equal(t, config.CheckpointRemove, cpCfg.KeepAfterSuccess)
 
 	cpFmt := "keep-after-success = %v\r\n"
 	for key, strategy := range tomlCases {
@@ -881,8 +877,8 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 		tomlStr := fmt.Sprintf(cpFmt, cpValue)
 		cpCfg := &config.Checkpoint{}
 		_, err := toml.Decode(tomlStr, cpCfg)
-		c.Assert(err, IsNil)
-		c.Assert(cpCfg.KeepAfterSuccess, Equals, strategy)
+		require.NoError(t, err)
+		require.Equal(t, strategy, cpCfg.KeepAfterSuccess)
 	}
 
 	marshalTextCases := map[config.CheckpointKeepStrategy]string{
@@ -892,12 +888,12 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 	}
 	for strategy, value := range marshalTextCases {
 		res, err := strategy.MarshalText()
-		c.Assert(err, IsNil)
-		c.Assert(res, DeepEquals, []byte(value))
+		require.NoError(t, err)
+		require.Equal(t, []byte(value), res)
 	}
 }
 
-func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
+func TestLoadCharsetFromConfig(t *testing.T) {
 	cases := map[string]config.Charset{
 		"binary":  config.Binary,
 		"BINARY":  config.Binary,
@@ -909,34 +905,36 @@ func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
 	}
 	for k, v := range cases {
 		charset, err := config.ParseCharset(k)
-		c.Assert(err, IsNil)
-		c.Assert(charset, Equals, v)
+		require.NoError(t, err)
+		require.Equal(t, v, charset)
 	}
 
 	_, err := config.ParseCharset("Unknown")
-	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
+	require.EqualError(t, err, "found unsupported data-character-set: Unknown")
 }
 
-func (s *configTestSuite) TestCheckAndAdjustForLocalBackend(c *C) {
+func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = ""
-	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir must not be empty!")
+	require.EqualError(t, cfg.CheckAndAdjustForLocalBackend(), "tikv-importer.sorted-kv-dir must not be empty!")
 
 	// non exists dir is legal
 	cfg.TikvImporter.SortedKVDir = "./not-exists"
-	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
+	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
 
-	base := c.MkDir()
+	base := t.TempDir()
 	// create empty file
 	file := filepath.Join(base, "file")
-	c.Assert(os.WriteFile(file, []byte(""), 0644), IsNil)
+	require.NoError(t, os.WriteFile(file, []byte(""), 0644))
 	cfg.TikvImporter.SortedKVDir = file
-	c.Assert(cfg.CheckAndAdjustForLocalBackend(), ErrorMatches, "tikv-importer.sorted-kv-dir (.*) is not a directory")
+	err := cfg.CheckAndAdjustForLocalBackend()
+	require.Error(t, err)
+	require.Regexp(t, "tikv-importer.sorted-kv-dir (.*) is not a directory", err.Error())
 
 	// legal dir
 	cfg.TikvImporter.SortedKVDir = base
-	c.Assert(cfg.CheckAndAdjustForLocalBackend(), IsNil)
+	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
 }

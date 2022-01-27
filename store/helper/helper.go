@@ -1139,15 +1139,22 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	}
 	for i := int64(0); i < n; i++ {
 		rs, _, _ := reader.ReadLine()
-		// For (`table`, `store`), has region `r`
-		r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if i, ok := (*regionReplica)[r]; ok {
-			(*regionReplica)[r] = i + 1
-		} else {
-			(*regionReplica)[r] = 1
+		srs := strings.Trim(string(rs), "\r\n\t")
+		splits := strings.Split(srs, " ")
+		for _, s := range splits {
+			// For (`table`, `store`), has region `r`
+			if s == "" {
+				continue
+			}
+			r, err := strconv.ParseInt(s, 10, 32)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if c, ok := (*regionReplica)[r]; ok {
+				(*regionReplica)[r] = c + 1
+			} else {
+				(*regionReplica)[r] = 1
+			}
 		}
 	}
 	return nil
