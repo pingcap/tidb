@@ -3634,15 +3634,15 @@ func (s *testIntegrationSuite3) TestEnumDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
-		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
-		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
 }
 
 func (s *testIntegrationSuite3) TestIssue29326(c *C) {
