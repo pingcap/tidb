@@ -58,4 +58,8 @@ SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER
 SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
 select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
 
+# charset
+show charset;
+show collation;
+
 use test;
