@@ -500,8 +500,6 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
-		res.d = time.Since(start)
-		res.Time = formatDurationAsSeconds(res.d)
 	}
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
