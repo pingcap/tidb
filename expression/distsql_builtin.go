@@ -1180,7 +1180,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	}
 	var t types.Time
 	t.SetType(ft.Tp)
-	t.SetFsp(int8(ft.Decimal))
+	t.SetFsp(ft.Decimal)
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err
