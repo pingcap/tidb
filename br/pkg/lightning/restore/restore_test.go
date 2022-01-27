@@ -377,8 +377,8 @@ type tableRestoreSuite struct {
 }
 
 func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
+	web.InitCurrentProgress()
 	// Produce a mock table info
-
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
@@ -465,6 +465,7 @@ func (s *tableRestoreSuiteBase) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.cfg = config.NewConfig()
+	s.cfg.App.BroadcastStatus = true
 	s.cfg.Mydumper.BatchSize = 111
 	s.cfg.App.TableConcurrency = 2
 }

@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"net/http"
 	"strings"
 	"testing"
@@ -62,6 +63,8 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask"))
 		s.lightning.Stop()
 	}
+
+	web.InitCurrentProgress()
 
 	return
 }
