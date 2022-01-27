@@ -1,0 +1,61 @@
+# prepare database
+create database collation_misc;
+use collation_misc;
+
+# ChangingCharsetToUtf8
+create table t1(a varchar(20) charset utf8);
+insert into t1 values ("t1_value");
+alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN;
+alter table t1 modify column a varchar(20) charset utf8mb4;
+select * from t1;
+create table t(a varchar(20) charset latin1);
+insert into t values ("t_value");
+alter table t modify column a varchar(20) charset latin1;
+select * from t;
+--error 8200
+alter table t modify column a varchar(20) charset utf8;
+--error 8200
+alter table t modify column a varchar(20) charset utf8mb4;
+--error 8200
+alter table t modify column a varchar(20) charset utf8 collate utf8_bin;
+--error 8200
+alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci;
+--error 1273
+alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin;
+--error 1302, 1273
+alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin;
+--error 1253, 1273
+alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin;
+
+# TestCharsetDatabase
+create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
+--error 1273
+create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+use cd_test_utf8;
+select @@character_set_database;
+select @@collation_database;
+--error 1049
+use cd_test_latin1;
+select @@character_set_database;
+select @@collation_database;
+
+# DefaultDBAfterDropCurDB
+--error 1273
+create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+
+# CollationUnion
+with cte as (select cast('2010-09-09' as date) a union select  '2010-09-09  ') select count(*) from cte;
+
+# Issue26989
+set names utf8mb4 collate utf8mb4_general_ci;
+select position('a' in 'AA');
+select locate('a', 'AA');
+select locate('a', 'a');
+set names utf8mb4;
+
+# CharacterSetCollations
+SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
+SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
+select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';
+
+use test;
