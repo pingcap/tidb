@@ -673,7 +673,9 @@ func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
-
+	succ = atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
+	c.Assert(succ, IsTrue)
+	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
 

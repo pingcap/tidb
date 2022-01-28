@@ -248,26 +248,27 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
+	dir, err := os.MkdirTemp(os.TempDir(), "TestStatusAPIWithTLS")
 	require.NoError(t, err)
-	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
-	require.NoError(t, err)
+	defer os.RemoveAll(dir)
 
-	defer func() {
-		os.Remove("/tmp/ca-key-2.pem")
-		os.Remove("/tmp/ca-cert-2.pem")
-		os.Remove("/tmp/server-key-2.pem")
-		os.Remove("/tmp/server-cert-2.pem")
-	}()
+	fileName := func(file string) string {
+		return filepath.Join(dir, file)
+	}
+
+	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, fileName("ca-key-2.pem"), fileName("ca-cert-2.pem"))
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, fileName("server-key-2.pem"), fileName("server-cert-2.pem"))
+	require.NoError(t, err)
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
-	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
-	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
-	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
+	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
+	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
+	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
@@ -293,15 +294,19 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
-	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
-	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
-	client1KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-a.pem")
-	client1CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-a.pem")
-	client2KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-b.pem")
-	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
+	dir, err := os.MkdirTemp(os.TempDir(), "TestStatusAPIWithTLSCNCheck")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
 
-	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
+	caPath := filepath.Join(dir, "ca-cert-cn.pem")
+	serverKeyPath := filepath.Join(dir, "server-key-cn.pem")
+	serverCertPath := filepath.Join(dir, "server-cert-cn.pem")
+	client1KeyPath := filepath.Join(dir, "client-key-cn-check-a.pem")
+	client1CertPath := filepath.Join(dir, "client-cert-cn-check-a.pem")
+	client2KeyPath := filepath.Join(dir, "client-key-cn-check-b.pem")
+	client2CertPath := filepath.Join(dir, "client-cert-cn-check-b.pem")
+
+	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(dir, "ca-key-cn.pem"), caPath)
 	require.NoError(t, err)
 	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
 	require.NoError(t, err)
