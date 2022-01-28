@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -111,10 +112,8 @@ func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 }
 
 func TestSchemaResume(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	d1, err := testNewDDLAndStart(
 		context.Background(),
@@ -149,10 +148,8 @@ func TestSchemaResume(t *testing.T) {
 }
 
 func TestStat(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	d, err := testNewDDLAndStart(
 		context.Background(),
@@ -190,15 +187,14 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			err := d.Stop()
-			require.Nil(t, err)
+			require.NoError(t, d.Stop())
 			require.GreaterOrEqual(t, getDDLSchemaVer(t, d), ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case err := <-done:
+		case result := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			require.Nil(t, err)
+			require.Nil(t, result)
 			break LOOP
 		}
 	}

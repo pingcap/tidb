@@ -19,15 +19,29 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD
 func TestDDLStatsInfo(t *testing.T) {
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
+=======
+func getDDLSchemaVer(t *testing.T, d *ddl) int64 {
+	m, err := d.Stats(nil)
+	require.NoError(t, err)
+	v := m[ddlSchemaVersion]
+	return v.(int64)
+}
+
+func TestDDLStatsInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+>>>>>>> 44bb7409b (ddl: improve test)
 
 	d, err := testNewDDLAndStart(
 		context.Background(),
@@ -36,7 +50,12 @@ func TestDDLStatsInfo(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer func() {
+<<<<<<< HEAD
 		require.NoError(t, d.Stop())
+=======
+		err := d.Stop()
+		require.NoError(t, err)
+>>>>>>> 44bb7409b (ddl: improve test)
 	}()
 
 	dbInfo, err := testSchemaInfo(d, "test_stat")
@@ -47,6 +66,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	ctx := testNewContext(d)
 	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 
+<<<<<<< HEAD
 	m := testGetTable(t, d, dbInfo.ID, tblInfo.ID)
 	// insert t values (1, 1), (2, 2), (3, 3)
 	_, err = m.AddRecord(ctx, types.MakeDatums(1, 1))
@@ -54,6 +74,15 @@ func TestDDLStatsInfo(t *testing.T) {
 	_, err = m.AddRecord(ctx, types.MakeDatums(2, 2))
 	require.NoError(t, err)
 	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
+=======
+	tt := testGetTable(t, d, dbInfo.ID, tblInfo.ID)
+	// insert t values (1, 1), (2, 2), (3, 3)
+	_, err = tt.AddRecord(ctx, types.MakeDatums(1, 1))
+	require.NoError(t, err)
+	_, err = tt.AddRecord(ctx, types.MakeDatums(2, 2))
+	require.NoError(t, err)
+	_, err = tt.AddRecord(ctx, types.MakeDatums(3, 3))
+>>>>>>> 44bb7409b (ddl: improve test)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
