@@ -926,7 +926,7 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 
 	sf := accessesCond[1].(*expression.ScalarFunction)
 	c := sf.GetArgs()[0].(*expression.Column)
-	var AndOrExpr expression.Expression
+	var andOrExpr expression.Expression
 	for i, arg := range sf.GetArgs()[1:] {
 		// get every const value and calculate tidb_shard(val)
 		con := arg.(*expression.Constant)
@@ -944,34 +944,34 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 
 		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg1 is like `a = 100`
 		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
-		tmpArg1, err1 := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
-		if err1 != nil {
-			return accessesCond, err1
+		tmpArg1, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
+		if err != nil {
+			return accessesCond, err
 		}
-		tmpArg2, err2 := expression.NewFunction(sctx, ast.EQ, c.RetType, c.Clone(), arg)
-		if err2 != nil {
-			return accessesCond, err2
+		tmpArg2, err := expression.NewFunction(sctx, ast.EQ, c.RetType, c.Clone(), arg)
+		if err != nil {
+			return accessesCond, err
 		}
 
 		// make a LogicAnd, e.g. `tidb_shard(a) = 8 AND a = 100`
-		andExpr, err3 := expression.NewFunction(sctx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
-		if err3 != nil {
-			return accessesCond, err3
+		andExpr, err := expression.NewFunction(sctx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
+		if err != nil {
+			return accessesCond, err
 		}
 
 		if i == 0 {
-			AndOrExpr = andExpr
+			andOrExpr = andExpr
 		} else {
 			// if the LogicAnd more than one, make a LogicOr,
 			// e.g. `(tidb_shard(a) = 8 AND a = 100) OR (tidb_shard(a) = 161 AND a = 200)`
-			AndOrExpr, errRes = expression.NewFunction(sctx, ast.LogicOr, andType, AndOrExpr, andExpr)
+			andOrExpr, errRes = expression.NewFunction(sctx, ast.LogicOr, andType, andOrExpr, andExpr)
 			if errRes != nil {
 				return accessesCond, errRes
 			}
 		}
 	}
 
-	newAccessCond = append(newAccessCond, AndOrExpr)
+	newAccessCond = append(newAccessCond, andOrExpr)
 
 	return newAccessCond, nil
 }
@@ -1099,7 +1099,7 @@ func NeedAddGcColumn4ShardIndex(
 
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
-	if len(accessCond) < 2 {
+	if len(accessCond) < 2 || len(cols) < 2 {
 		return false
 	}
 
@@ -1134,9 +1134,7 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 	matchedKeyFldCnt := 0
 
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
-	if len(cols) < 2 ||
-		len(accessCond) < 2 ||
-		len(columnValues) < 2 {
+	if len(columnValues) < 2 {
 		return false
 	}
 
@@ -1238,7 +1236,7 @@ func ExtractColumnsFromExpr(virtaulExpr *expression.ScalarFunction) []*expressio
 // @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
 // @retval - if the shard index is valid return true, otherwise return false
 func IsValidShardIndex(cols []*expression.Column) bool {
-	// definition of index shoulde like the form: index(tidb_shard(a), a, ....)
+	// definition of index should like the form: index(tidb_shard(a), a, ....)
 	if len(cols) < 2 {
 		return false
 	}
@@ -1262,18 +1260,4 @@ func IsValidShardIndex(cols []*expression.Column) bool {
 	}
 
 	return true
-}
-
-// IsEqOrInFunc check whetere it si equal or in function
-func IsEqOrInFunc(expr expression.Expression) bool {
-	f, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return false
-	}
-
-	if f.FuncName.L == ast.EQ || f.FuncName.L == ast.In {
-		return true
-	}
-
-	return false
 }
