@@ -24,10 +24,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -146,9 +144,9 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.NotNil(t, getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false))
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &testkit.TestDDLCallback{}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -179,7 +177,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 			}
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	// Alter sql will modify column c2 to tinyint not null.
 	SQL := "alter table t modify column c2 tinyint not null"
 	tk.MustExec(SQL)
@@ -215,12 +213,12 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	require.NotNil(t, getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false))
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &testkit.TestDDLCallback{}
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(hook, tbl, model.StateNone)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	// Alter sql will modify column c2 to bigint not null.
 	SQL := "alter table t modify column c2 int not null"
 	_, err := tk.Exec(SQL)
@@ -230,7 +228,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 
 	// Mock roll back at model.StateDeleteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateDeleteOnly)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-delete only")
@@ -238,7 +236,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 
 	// Mock roll back at model.StateWriteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteOnly)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write only")
@@ -246,14 +244,14 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 
 	// Mock roll back at model.StateWriteReorg.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteReorganization)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write reorganization")
 	assertRollBackedColUnchanged(t, tk)
 }
 
-func customizeHookRollbackAtState(hook *ddl.TestDDLCallback, tbl table.Table, state model.SchemaState) {
+func customizeHookRollbackAtState(hook *testkit.TestDDLCallback, tbl table.Table, state model.SchemaState) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -972,13 +970,13 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	tk.MustExec("use test")
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
 	var assertResult bool
 	assertHasAlterWriteReorg := func(tbl table.Table) {
 		// Restore the assert result to false.
 		assertResult = false
-		hook := &ddl.TestDDLCallback{}
+		hook := &testkit.TestDDLCallback{}
 		hook.OnJobRunBeforeExported = func(job *model.Job) {
 			if tbl.Meta().ID != job.TableID {
 				return
@@ -987,7 +985,7 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 				assertResult = true
 			}
 		}
-		dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		dom.DDL().SetHook(hook)
 	}
 
 	// Change int to tinyint.
@@ -1649,7 +1647,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 
 	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
 	originalHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &testkit.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1701,9 +1699,9 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	dom.DDL().SetHook(originalHook)
 	require.Nil(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
@@ -1728,7 +1726,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 
 	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
 	originalHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &testkit.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1787,9 +1785,9 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 		i++
 	}
 
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column c date NOT NULL")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	dom.DDL().SetHook(originalHook)
 	require.Nil(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
@@ -1814,7 +1812,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 
 	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
 	originalHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &testkit.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1847,9 +1845,9 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 		}
 	}
 
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	dom.DDL().SetHook(originalHook)
 	require.Nil(t, checkErr)
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
@@ -1949,9 +1947,9 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	}()
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &testkit.TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -1961,7 +1959,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 			jobID = job.ID
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
@@ -2028,14 +2026,14 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 
 	// set ddl hook
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
 	tbl := testGetTableByNameT(t, tk.Session(), "test", "ctc_goroutine_leak")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &testkit.TestDDLCallback{}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -2048,7 +2046,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 			jobID = job.ID
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -2062,7 +2060,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
 		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
 	}()
-	<-ddl.TestReorgGoroutineRunning
+	<-testkit.TestReorgGoroutineRunning
 	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
 	wg.Wait()
 	require.Equal(t, "[ddl:8214]Cancelled DDL job", alterErr.Error())
@@ -2281,7 +2279,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	tk.MustExec("insert into t values(now())")
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
 	// use new session to check meta in callback function.
 	internalTK := testkit.NewTestKit(t, store)
@@ -2291,7 +2289,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	require.NotNil(t, tbl)
 	require.Equal(t, 1, len(tbl.Cols()))
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &testkit.TestDDLCallback{}
 	var (
 		checkErr1 error
 		checkErr2 error
@@ -2309,7 +2307,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 			_, checkErr2 = tk.Exec("update t set `a` = '3977-02-22'")
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
 	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr1.Error())
