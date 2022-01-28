@@ -180,7 +180,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -218,7 +218,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -263,7 +263,7 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -314,7 +314,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
-	var kvReqs []*kv.Request
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {

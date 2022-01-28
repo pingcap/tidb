@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -111,7 +112,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic("the second param should be datum")
 	}
 	sc := new(stmtctx.StatementContext)
-	res, err := paramFirst.CompareDatum(sc, &paramSecond)
+	res, err := paramFirst.Compare(sc, &paramSecond, collate.GetBinaryCollator())
 	if err != nil {
 		panic(err)
 	}
@@ -146,6 +147,15 @@ func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*c
 	if !chs.IsCommonHandle {
 		chs.IsCommonHandle = true
 		f(c)
+		chs.IsCommonHandle = false
+	}
+}
+
+// RerunWithCommonHandleEnabledWithoutCheck runs a test function with IsCommonHandle enabled but without check.
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabledWithoutCheck(f func()) {
+	if !chs.IsCommonHandle {
+		chs.IsCommonHandle = true
+		f()
 		chs.IsCommonHandle = false
 	}
 }

@@ -356,6 +356,11 @@ error = '''
 The used table type doesn't support FULLTEXT indexes
 '''
 
+["ddl:1221"]
+error = '''
+Incorrect usage of %s and %s
+'''
+
 ["ddl:1248"]
 error = '''
 Every derived table must have its own alias
@@ -499,6 +504,11 @@ Partition constant is out of partition function domain
 ["ddl:1564"]
 error = '''
 This partition function is not allowed
+'''
+
+["ddl:1652"]
+error = '''
+Duplicate partition field name '%-.192s'
 '''
 
 ["ddl:1654"]
@@ -686,11 +696,6 @@ error = '''
 CREATE/ALTER table with insert method option is not supported
 '''
 
-["ddl:8234"]
-error = '''
-Invalid placement policy '%s': %s
-'''
-
 ["ddl:8236"]
 error = '''
 Placement policy didn't meet the constraint, reason: %s
@@ -698,7 +703,7 @@ Placement policy didn't meet the constraint, reason: %s
 
 ["ddl:8237"]
 error = '''
-Invalid attributes '%s': %s
+Invalid attributes: %s
 '''
 
 ["ddl:8240"]
@@ -724,6 +729,11 @@ Information schema is out of date: schema failed to update in 1 lease, please ma
 ["domain:8028"]
 error = '''
 Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
+'''
+
+["domain:8243"]
+error = '''
+HTTP request failed with status %s
 '''
 
 ["domain:9009"]
@@ -1001,6 +1011,11 @@ error = '''
 Invalid JSON path expression %s.
 '''
 
+["json:3144"]
+error = '''
+Cannot create a JSON value from a string with CHARACTER SET '%s'.
+'''
+
 ["json:3149"]
 error = '''
 In this situation, path expressions may not contain the * and ** tokens.
@@ -1234,6 +1249,11 @@ This version of TiDB doesn't yet support '%s'
 ["planner:1241"]
 error = '''
 Operand should contain %d column(s)
+'''
+
+["planner:1242"]
+error = '''
+Subquery returns more than 1 row
 '''
 
 ["planner:1247"]

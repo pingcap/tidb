@@ -30,11 +30,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -212,9 +210,6 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	dataTp := b.args[0].GetType()
-	dataEnc := charset.NewEncoding(dataTp.Charset)
-
 	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
@@ -223,22 +218,14 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	passwordTp := b.args[1].GetType()
-	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr, err := dataEnc.EncodeString(buf.GetString(i))
-		if err != nil {
-			return err
-		}
-		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
-		if err != nil {
-			return err
-		}
+		dataStr := buf.GetString(i)
+		passwordStr := buf1.GetString(i)
 		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
 		if err != nil {
 			return err
@@ -266,29 +253,18 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err1 != nil {
 		return err1
 	}
-	dataTp := b.args[0].GetType()
-	dataEnc := charset.NewEncoding(dataTp.Charset)
 	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	passwordTp := b.args[1].GetType()
-	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-
-		decodeStr, err := dataEnc.EncodeString(buf.GetString(i))
-		if err != nil {
-			return err
-		}
-		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
-		if err != nil {
-			return err
-		}
+		decodeStr := buf.GetString(i)
+		passwordStr := buf1.GetString(i)
 		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
 		if err != nil {
 			return err
@@ -446,20 +422,14 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 	}
 	result.ReserveString(n)
 
-	var dBytes []byte
 	digest := md5.New() // #nosec G401
-	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		cryptBytes := buf.GetBytes(i)
-		dBytes, err := enc.Encode(dBytes, cryptBytes)
-		if err != nil {
-			return err
-		}
-		_, err = digest.Write(dBytes)
+		_, err = digest.Write(cryptBytes)
 		if err != nil {
 			return err
 		}
@@ -592,14 +562,14 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		str := buf.GetString(i)
+		strBytes := buf.GetBytes(i)
 
 		// According to doc: Empty strings are stored as empty strings.
-		if len(str) == 0 {
+		if len(strBytes) == 0 {
 			result.AppendString("")
 		}
 
-		compressed, err := deflate(hack.Slice(str))
+		compressed, err := deflate(strBytes)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -617,7 +587,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 
-		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		binary.LittleEndian.PutUint32(buffer, uint32(len(strBytes)))
 		copy(buffer[4:], compressed)
 
 		if shouldAppendSuffix {
@@ -710,9 +680,6 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-
-	var dBytes []byte
-	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -726,16 +693,11 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		dBytes, err := enc.Encode(dBytes, passBytes)
-		if err != nil {
-			return err
-		}
-
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-		result.AppendString(auth.EncodePasswordBytes(dBytes))
+		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}
 	return nil
 }

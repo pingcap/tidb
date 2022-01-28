@@ -28,7 +28,6 @@ import (
 )
 
 func TestLoadUserTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -63,7 +62,6 @@ func TestLoadUserTable(t *testing.T) {
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -91,7 +89,6 @@ func TestLoadGlobalPrivTable(t *testing.T) {
 }
 
 func TestLoadDBTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -114,7 +111,6 @@ func TestLoadDBTable(t *testing.T) {
 }
 
 func TestLoadTablesPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -140,7 +136,6 @@ func TestLoadTablesPrivTable(t *testing.T) {
 }
 
 func TestLoadColumnsPrivTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -166,7 +161,6 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -189,7 +183,6 @@ func TestLoadDefaultRoleTable(t *testing.T) {
 }
 
 func TestPatternMatch(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -230,7 +223,6 @@ func TestPatternMatch(t *testing.T) {
 }
 
 func TestHostMatch(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -288,7 +280,6 @@ func TestHostMatch(t *testing.T) {
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -310,7 +301,6 @@ func TestCaseInsensitive(t *testing.T) {
 }
 
 func TestLoadRoleGraph(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -344,7 +334,6 @@ func TestLoadRoleGraph(t *testing.T) {
 }
 
 func TestRoleGraphBFS(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -381,8 +370,46 @@ func TestRoleGraphBFS(t *testing.T) {
 	require.Len(t, ret, 6)
 }
 
+func TestFindAllUserEffectiveRoles(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	mustExec(t, se, `CREATE USER u1`)
+	mustExec(t, se, `CREATE ROLE r_1, r_2, r_3, r_4;`)
+	mustExec(t, se, `GRANT r_3 to r_1`)
+	mustExec(t, se, `GRANT r_4 to r_2`)
+	mustExec(t, se, `GRANT r_1 to u1`)
+	mustExec(t, se, `GRANT r_2 to u1`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadAll(se)
+	require.NoError(t, err)
+	ret := p.FindAllUserEffectiveRoles("u1", "%", []*auth.RoleIdentity{
+		{Username: "r_1", Hostname: "%"},
+		{Username: "r_2", Hostname: "%"},
+	})
+	require.Equal(t, 4, len(ret))
+	require.Equal(t, "r_1", ret[0].Username)
+	require.Equal(t, "r_2", ret[1].Username)
+	require.Equal(t, "r_3", ret[2].Username)
+	require.Equal(t, "r_4", ret[3].Username)
+
+	mustExec(t, se, `REVOKE r_2 from u1`)
+	err = p.LoadAll(se)
+	require.NoError(t, err)
+	ret = p.FindAllUserEffectiveRoles("u1", "%", []*auth.RoleIdentity{
+		{Username: "r_1", Hostname: "%"},
+		{Username: "r_2", Hostname: "%"},
+	})
+	require.Equal(t, 2, len(ret))
+	require.Equal(t, "r_1", ret[0].Username)
+	require.Equal(t, "r_3", ret[1].Username)
+}
+
 func TestAbnormalMySQLTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -461,7 +488,6 @@ func TestAbnormalMySQLTable(t *testing.T) {
 }
 
 func TestSortUserTable(t *testing.T) {
-	t.Parallel()
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
@@ -502,7 +528,6 @@ func TestSortUserTable(t *testing.T) {
 }
 
 func TestGlobalPrivValueRequireStr(t *testing.T) {
-	t.Parallel()
 	var (
 		none  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNone}
 		tls   = privileges.GlobalPrivValue{SSLType: privileges.SslTypeAny}
@@ -530,7 +555,6 @@ func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 }
 
 func TestDBIsVisible(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 

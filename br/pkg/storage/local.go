@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	localDirPerm  os.FileMode = 0o755
+	localDirPerm  os.FileMode = 0o777
 	localFilePerm os.FileMode = 0o644
 	// LocalURIPrefix represents the local storage prefix.
 	LocalURIPrefix = "file://"

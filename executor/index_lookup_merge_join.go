@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -88,6 +89,7 @@ type innerMergeCtx struct {
 	rowTypes                []*types.FieldType
 	joinKeys                []*expression.Column
 	keyCols                 []int
+	keyCollators            []collate.Collator
 	compareFuncs            []expression.CompareFunc
 	colLens                 []int
 	desc                    bool
@@ -154,29 +156,7 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
-	// Be careful, very dirty hack in this line!!!
-	// IndexLookMergeUpJoin need to rebuild executor (the dataReaderBuilder) during
-	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
-	// result is drained.
-	// Lazy evaluation means the saved session context may change during executor's
-	// building and its running.
-	// A specific sequence for example:
-	//
-	// e := buildExecutor()   // txn at build time
-	// recordSet := runStmt(e)
-	// session.CommitTxn()    // txn closed
-	// recordSet.Next()
-	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
-	//
-	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
-	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached snapshot ts to construct DAG.
-	_, err := e.innerMergeCtx.readerBuilder.getSnapshotTS()
-	if err != nil {
-		return err
-	}
-
-	err = e.children[0].Open(ctx)
+	err := e.children[0].Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -502,7 +482,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
 		}
 	}
-	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
+	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false, nil, nil)
 	if imw.innerExec != nil {
 		defer terror.Call(imw.innerExec.Close)
 	}
@@ -697,7 +677,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.CompareDatum(sc, &innerValue)
+		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}
@@ -717,7 +697,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	deDupedLookUpContents := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys)
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, imw.keyCollators)
 		if cmp != 0 || (imw.nextColCompareFilters != nil && imw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookUpContents = append(deDupedLookUpContents, lookUpContents[i])
 		}

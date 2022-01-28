@@ -20,14 +20,12 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
@@ -309,25 +307,22 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var wg util.WaitGroupWrapper
 
-	go func() {
+	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
 			tk1.MustExec(executeQuery)
 		}
-		wg.Done()
-	}()
+	})
 
-	go func() {
+	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
 			tk2.Se.SetSessionManager(&mockSessionManager1{
 				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
-		wg.Done()
-	}()
+	})
 
 	wg.Wait()
 }
@@ -514,9 +509,14 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[5][0]), "IndexRangeScan"), IsTrue)
-	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[5][3]), "table:t2"), IsTrue)
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
+		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
+		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
+		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 1)`,
+		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -525,9 +525,14 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[5][0]), "IndexRangeScan"), IsTrue)
-	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[5][3]), "table:t2"), IsTrue)
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
+		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
+		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
+		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 2)`,
+		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -1115,16 +1120,20 @@ func (s *testPrepareSerialSuite) TestSPM4PlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// The bindSQL has changed, the previous cache is invalid.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	// The binding does not take effect for caches that have been cached.
-	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[1][0], Matches, ".*TableFullScan.*")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	// We can use the new binding.
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexFullScan.*")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	tk.MustExec("delete from mysql.bind_info where default_db='test';")
 	tk.MustExec("admin reload bindings;")
@@ -1379,7 +1388,7 @@ func (s *testPrepareSerialSuite) TestCTE4PlanCache(c *C) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;")
 
 	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt using @a, @b, @a").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")

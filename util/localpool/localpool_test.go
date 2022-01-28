@@ -20,9 +20,9 @@ package localpool
 import (
 	"math/rand"
 	"runtime"
-	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,19 +33,19 @@ type Obj struct {
 
 func TestPool(t *testing.T) {
 	numWorkers := runtime.GOMAXPROCS(0)
-	wg := new(sync.WaitGroup)
-	wg.Add(numWorkers)
+	wg := new(util.WaitGroupWrapper)
 	pool := NewLocalPool(16, func() interface{} {
 		return new(Obj)
 	}, nil)
 	n := 1000
 	for i := 0; i < numWorkers; i++ {
-		go func() {
+		wg.Run(func() {
 			for j := 0; j < n; j++ {
-				GetAndPut(pool)
+				obj := pool.Get().(*Obj)
+				obj.val = rand.Int63()
+				pool.Put(obj)
 			}
-			wg.Done()
-		}()
+		})
 	}
 	wg.Wait()
 	var getHit, getMiss, putHit, putMiss int

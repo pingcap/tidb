@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -143,11 +142,8 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 }
 
 func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var (
-		placementPolicyRef  *model.PolicyRefInfo
-		directPlacementOpts *model.PlacementSettings
-	)
-	if err := job.DecodeArgs(&placementPolicyRef, &directPlacementOpts); err != nil {
+	var placementPolicyRef *model.PolicyRefInfo
+	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -157,24 +153,19 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 	// Double Check if policy exits while ddl executing
-	if placementPolicyRef != nil {
-		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, placementPolicyRef.ID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, placementPolicyRef); err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.
 	// So that we can just check the two situation that do not need ddl: 1. DB.DP == DDL.DP && nil == nil 2. nil == nil && DB.PP == DDL.PP
-	if (directPlacementOpts != nil && dbInfo.DirectPlacementOpts != nil && *dbInfo.DirectPlacementOpts == *directPlacementOpts) ||
-		(placementPolicyRef != nil && dbInfo.PlacementPolicyRef != nil && *dbInfo.PlacementPolicyRef == *placementPolicyRef) {
+	if placementPolicyRef != nil && dbInfo.PlacementPolicyRef != nil && *dbInfo.PlacementPolicyRef == *placementPolicyRef {
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
 
 	// If placementPolicyRef and directPlacementOpts are both nil, And placement of dbInfo is not nil, it will remove all placement options.
 	dbInfo.PlacementPolicyRef = placementPolicyRef
-	dbInfo.DirectPlacementOpts = directPlacementOpts
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
@@ -209,20 +200,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		oldIDs := getIDs(tables)
-		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
-		for _, ID := range append(oldIDs, dbInfo.ID) {
-			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.NewBundle(ID))
-			}
-		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
 		var ruleIDs []string
 		for _, tblInfo := range tables {
 			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))

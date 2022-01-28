@@ -47,7 +47,6 @@ func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Sc
 }
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
-	t.Parallel()
 	ctx := MockContext()
 
 	ctx.GetSessionVars().PlanID = -1

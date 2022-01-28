@@ -143,6 +143,48 @@ func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk.MustGetErrCode("create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default '0000-00-00 00');", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default 0);", errno.ErrInvalidDefault)
+	defer tk.MustExec(`drop table if exists test_zero_date`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows("0000-00-00 00:00:00 0"))
+	tk.MustExec(`update test_zero_date set a = '2001-01-01 11:11:11' where a = 0`)
+	tk.MustExec(`replace into test_zero_date values (0)`)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustExec(`update test_zero_date set a = 0 where a = '2001-01-01 11:11:11'`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrCode(`insert into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`replace into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`update test_zero_date set a = 0 where a = 0`, errno.ErrTruncatedWrongValue)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows())
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("set session sql_mode=''")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustGetErrCode("create table test_zero_date (a timestamp default 0)", errno.ErrInvalidDefault)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
 }
 
 func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
@@ -636,6 +678,13 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
 	tk.MustGetErrCode(sql, errno.ErrBadNull)
+	// disable tidb_enable_change_multi_schema
+	tk.MustExec("set global tidb_enable_change_multi_schema = false")
+	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set global tidb_enable_change_multi_schema = true")
 }
 
 func (s *testIntegrationSuite3) TestTableDDLWithFloatType(c *C) {
@@ -782,39 +831,13 @@ func (s *testIntegrationSuite2) TestDependedGeneratedColumnPrior2GeneratedColumn
 	tk.MustExec("alter table t add column(e int as (c+1))")
 }
 
-func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a varchar(20) charset utf8)")
-	tk.MustExec("insert into t1 values (?)", "t1_value")
-	tk.MustExec("alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN")
-	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
-
-	tk.MustExec("create table t(a varchar(20) charset latin1)")
-	tk.MustExec("insert into t values (?)", "t_value")
-
-	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
-
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci", errno.ErrUnsupportedDDLOperation)
-
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin", errno.ErrUnknownCollation)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin", errno.ErrConflictingDeclarations)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin", errno.ErrCollationCharsetMismatch)
-}
-
 func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a char(10)) charset latin1 collate latin1_bin")
 
-	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnknownCharacterSet)
+	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
 
 	tk.MustGetErrCode("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;", errno.ErrUnknownCollation)
@@ -1530,7 +1553,7 @@ func (s *testSerialDBSuite1) TestCreateSecondaryIndexInCluster(c *C) {
 	tk.MustExec("use test")
 
 	// test create table with non-unique key
-	tk.MustGetErrCode(`
+	tk.MustExec(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
   c02 varchar(255) NOT NULL,
@@ -1540,7 +1563,8 @@ CREATE TABLE t (
   c06 varchar(255) DEFAULT NULL,
   PRIMARY KEY (c01,c02,c03) clustered,
   KEY c04 (c04)
-)`, errno.ErrTooLongKey)
+)`)
+	tk.MustExec("drop table t")
 
 	// test create long clustered primary key.
 	tk.MustGetErrCode(`
@@ -1580,7 +1604,7 @@ CREATE TABLE t (
   PRIMARY KEY (c01,c02) clustered
 )`)
 	tk.MustExec("create index idx1 on t(c03)")
-	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("create index idx2 on t(c03, c04)")
 	tk.MustExec("create unique index uk2 on t(c03, c04)")
 	tk.MustExec("drop table t")
 
@@ -1599,9 +1623,9 @@ CREATE TABLE t (
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
-	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c10 varchar(600) default null")
 	tk.MustExec("alter table t modify c06 varchar(600) default null")
-	tk.MustGetErrCode("alter table t modify c01 varchar(510)", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c01 varchar(510)")
 	tk.MustExec("create table t2 like t")
 }
 
@@ -3065,23 +3089,14 @@ func (s *testSerialDBSuite) TestPlacementOnTemporaryTable(c *C) {
 	defer tk.MustExec("drop placement policy x")
 
 	// Cannot create temporary table with placement options
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement1 (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement2 (id int) followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement2 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create temporary table tplacement2 (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	// Cannot alter temporary table with placement options
 	tk.MustExec("create global temporary table tplacement1 (id int) on commit delete rows")
 	defer tk.MustExec("drop table tplacement1")
-	tk.MustGetErrCode("alter table tplacement1 followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("alter table tplacement1  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("alter table tplacement1  placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	tk.MustExec("create temporary table tplacement2 (id int)")
-	tk.MustGetErrCode("alter table tplacement2 followers=4", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table tplacement2  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table tplacement2  placement policy='x'", errno.ErrUnsupportedDDLOperation)
 
 	// Temporary table will not inherit placement from db
@@ -3601,6 +3616,7 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		// This query should block.
 		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
 		ch <- struct{}{}
+		tk1.MustExec("rollback")
 	}()
 
 	select {
@@ -3611,4 +3627,132 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		// Unexpected, test fail.
 		c.Fail()
 	}
+}
+
+// See https://github.com/pingcap/tidb/issues/29327
+func (s *testIntegrationSuite3) TestEnumDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+}
+
+func (s *testIntegrationSuite3) TestIssue29326(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("insert into t1 values(1)")
+	defer tk.MustExec("drop table t1")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t2 values(1)")
+	defer tk.MustExec("drop table t2")
+
+	tk.MustExec("drop view if exists v1")
+	defer tk.MustExec("drop view if exists v1")
+
+	tk.MustExec("create view v1 as select 1,1")
+	rs, err := tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 1, 2, 1, 2, 1, 2, 1, 2")
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 2 1 2 1 2 1 2"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "2")
+	c.Assert(rs.Fields()[2].Column.Name.O, Equals, "Name_exp_1")
+	c.Assert(rs.Fields()[3].Column.Name.O, Equals, "Name_exp_2")
+	c.Assert(rs.Fields()[4].Column.Name.O, Equals, "Name_exp_1_1")
+	c.Assert(rs.Fields()[5].Column.Name.O, Equals, "Name_exp_1_2")
+	c.Assert(rs.Fields()[6].Column.Name.O, Equals, "Name_exp_2_1")
+	c.Assert(rs.Fields()[7].Column.Name.O, Equals, "Name_exp_2_2")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 't', 't', 1 as t")
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("t t 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_t")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1_t")
+	c.Assert(rs.Fields()[2].Column.Name.O, Equals, "t")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, 1 union all select 1, 1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`1`, `Name_exp_1`) " +
+		"AS SELECT 1 AS `1`,1 AS `Name_exp_1` UNION ALL SELECT 1 AS `1`,1 AS `1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 'id', id from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_id`, `id`) " +
+		"AS SELECT _UTF8MB4'id' AS `Name_exp_id`,`id` AS `id` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("id 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_id")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "id")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, (select id from t1 where t1.id=t2.id) as '1' from t2")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_1`, `1`) " +
+		"AS SELECT 1 AS `Name_exp_1`,(SELECT `id` AS `id` FROM `test`.`t1` WHERE `t1`.`id`=`t2`.`id`) AS `1` FROM `test`.`t2` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1 as 'abs(t1.id)', abs(t1.id) from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`abs(t1.id)`, `Name_exp_abs(t1.id)`) " +
+		"AS SELECT 1 AS `abs(t1.id)`,ABS(`t1`.`id`) AS `Name_exp_abs(t1.id)` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "abs(t1.id)")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_abs(t1.id)")
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as t,1 as t")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as id, id from t1")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select * from t1 left join t2 on t1.id=t2.id")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select t1.id, t2.id from t1,t2 where t1.id=t2.id")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
 }

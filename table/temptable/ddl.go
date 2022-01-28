@@ -146,7 +146,7 @@ func ensureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, er
 	sessVars := sctx.GetSessionVars()
 	if sessVars.TemporaryTableData == nil {
 		// Create this txn just for getting a MemBuffer. It's a little tricky
-		bufferTxn, err := sctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		bufferTxn, err := sctx.GetStore().Begin(tikv.WithStartTS(0))
 		if err != nil {
 			return nil, err
 		}

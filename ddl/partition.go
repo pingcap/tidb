@@ -88,6 +88,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, nil
 	}
 
+	// notice: addingDefinitions is empty when job is in state model.StateNone
 	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(t, job)
 	if err != nil {
 		return ver, err
@@ -116,12 +117,40 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		// modify placement settings
+		for _, def := range tblInfo.Partition.AddingDefinitions {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
+		if tblInfo.TiFlashReplica != nil {
+			// Must set placement rule, and make sure it succeeds.
+			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); err != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				return ver, errors.Trace(err)
+			}
+		}
+
+		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
@@ -145,34 +174,18 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			}
 		}
 
+		// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
+		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+			for _, d := range partInfo.Definitions {
+				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
+			}
+		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-
-		var bundles []*placement.Bundle
-		// bundle for table should be recomputed because it includes some default configs for partitions
-		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		if tblBundle != nil {
-			bundles = append(bundles, tblBundle)
-		}
-
-		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		bundles = append(bundles, partitionBundles...)
-
-		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
 		// Finish this job.
@@ -183,6 +196,39 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	var bundles []*placement.Bundle
+
+	// tblInfo do not include added partitions, so we should add them first
+	tblInfo = tblInfo.Clone()
+	p := *tblInfo.Partition
+	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
+	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	tblInfo.Partition = &p
+
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
+	// bundle for table should be recomputed because it includes some default configs for partitions
+	tblBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblBundle != nil {
+		bundles = append(bundles, tblBundle)
+	}
+
+	partitionBundles, err := placement.NewPartitionListBundles(t, addingDefinitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bundles = append(bundles, partitionBundles...)
+	return bundles, nil
 }
 
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
@@ -204,15 +250,19 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 }
 
 // rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
-func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string) {
+func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, []*placement.Bundle) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
 	partNames := make([]string, 0, len(tblInfo.Partition.AddingDefinitions))
+	rollbackBundles := make([]*placement.Bundle, 0, len(tblInfo.Partition.AddingDefinitions))
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 		partNames = append(partNames, one.Name.L)
+		if one.PlacementPolicyRef != nil {
+			rollbackBundles = append(rollbackBundles, placement.NewBundle(one.ID))
+		}
 	}
 	tblInfo.Partition.AddingDefinitions = nil
-	return physicalTableIDs, partNames
+	return physicalTableIDs, partNames, rollbackBundles
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
@@ -287,6 +337,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
+			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
+				tiflashPeerAtLeastOne = v.(bool)
+			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
 			if tiflashPeerAtLeastOne {
@@ -412,14 +465,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		return nil, err
 	}
 
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return partitions, nil
 }
 
@@ -432,19 +477,6 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	// when policy x is altered.
 	for _, opt := range options {
 		switch opt.Tp {
-		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
-			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
-			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
-			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
-			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
-			ast.TableOptionPlacementVoterConstraints:
-			if partition.DirectPlacementOpts == nil {
-				partition.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
-			if err != nil {
-				return err
-			}
 		case ast.TableOptionPlacementPolicy:
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
@@ -468,6 +500,9 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 			def := defs[i]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
+			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return definitions, nil
@@ -901,21 +936,30 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
+
+	// To be error compatible with MySQL, we need to do this first!
+	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
+	if len(oldDefs) <= len(partLowerNames) {
+		return errors.Trace(ErrDropLastPartition)
+	}
+
+	dupCheck := make(map[string]bool)
 	for _, pn := range partLowerNames {
 		found := false
 		for _, def := range oldDefs {
 			if def.Name.L == pn {
+				if _, ok := dupCheck[pn]; ok {
+					return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
+				}
+				dupCheck[pn] = true
 				found = true
 				break
 			}
 		}
 		if !found {
-			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(pn))
+			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
 		}
-	}
-	if len(oldDefs) == len(partLowerNames) {
-		return errors.Trace(ErrDropLastPartition)
 	}
 	return nil
 }
@@ -990,18 +1034,6 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-	for _, ID := range physicalTableIDs {
-		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, placement.NewBundle(ID))
-		}
-	}
-	err := infosync.PutRuleBundles(context.TODO(), bundles)
-	return err
-}
-
 func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string) error {
 	deleteRules := make([]string, 0, len(partNames))
 	for _, partName := range partNames {
@@ -1023,12 +1055,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	var physicalTableIDs []int64
 	if job.Type == model.ActionAddTablePartition {
-		var pNames []string
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
-		physicalTableIDs, pNames = rollbackAddingPartitionInfo(tblInfo)
-		err = dropRuleBundles(d, physicalTableIDs)
+		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1047,6 +1077,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return ver, nil
 	}
 
+	var physicalTableIDs []int64
 	if job.State == model.JobStateRunning && job.SchemaState == model.StateNone {
 		// Manually set first state.
 		job.SchemaState = model.StatePublic
@@ -1063,11 +1094,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
-		err = dropRuleBundles(d, physicalTableIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
 		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -1180,6 +1206,15 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels)
+		failpoint.Inject("FailTiFlashTruncatePartition", func() {
+			e = errors.New("enforced error")
+		})
+		if e != nil {
+			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
+			job.State = model.JobStateCancelled
+			return ver, e
+		}
 		tblInfo.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
 		for _, oldID := range oldIDs {
@@ -1194,17 +1229,13 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(oldIDs))
-
-	for i, oldID := range oldIDs {
-		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
-		}
+	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1401,23 +1432,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
-	bundles := make([]*placement.Bundle, 0, 2)
-	ptBundle, ptOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(partDef.ID))
-	ptOK = ptOK && !ptBundle.IsEmpty()
-	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
-	ntOK = ntOK && !ntBundle.IsEmpty()
-	if ptOK && ntOK {
-		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
-		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
-	} else if ptOK {
-		bundles = append(bundles, placement.NewBundle(partDef.ID))
-		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
-	} else if ntOK {
-		bundles = append(bundles, placement.NewBundle(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
-	}
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
+
+	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
 	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
@@ -1467,6 +1489,48 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
+func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+	bundles := make([]*placement.Bundle, 0, 3)
+
+	ptBundle, err := placement.NewTableBundle(t, pt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ptBundle != nil {
+		bundles = append(bundles, ptBundle)
+	}
+
+	parBundle, err := placement.NewPartitionBundle(t, *newPar)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if parBundle != nil {
+		bundles = append(bundles, parBundle)
+	}
+
+	ntBundle, err := placement.NewTableBundle(t, nt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ntBundle != nil {
+		bundles = append(bundles, ntBundle)
+	}
+
+	if parBundle == nil && ntBundle != nil {
+		// newPar.ID is the ID of old table to exchange, so ntBundle != nil means it has some old placement settings.
+		// We should remove it in this situation
+		bundles = append(bundles, placement.NewBundle(newPar.ID))
+	}
+
+	if parBundle != nil && ntBundle == nil {
+		// nt.ID is the ID of old partition to exchange, so parBundle != nil means it has some old placement settings.
+		// We should remove it in this situation
+		bundles = append(bundles, placement.NewBundle(nt.ID))
+	}
+
+	return bundles, nil
+}
+
 func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, index int, schemaName, tableName model.CIStr) error {
 	var sql string
 	var paramList []interface{}
@@ -1512,11 +1576,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, sql, paramList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ddlJobCtx, nil, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1615,6 +1675,20 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
 	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
 		return ErrPartitionNoTemporary
+	}
+	return nil
+}
+
+func checkPartitionColumnsUnique(tbInfo *model.TableInfo) error {
+	if len(tbInfo.Partition.Columns) <= 1 {
+		return nil
+	}
+	var columnsMap = make(map[string]struct{})
+	for _, col := range tbInfo.Partition.Columns {
+		if _, ok := columnsMap[col.L]; ok {
+			return ErrSameNamePartitionField.GenWithStackByArgs(col.L)
+		}
+		columnsMap[col.L] = struct{}{}
 	}
 	return nil
 }
@@ -1851,53 +1925,6 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	}
 	tblInfo.Partition.Definitions = newDefs
 	return nil
-}
-
-func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	bundle := &placement.Bundle{}
-	err = job.DecodeArgs(&partitionID, bundle)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(err)
-	}
-
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return 0, err
-	}
-
-	ptInfo := tblInfo.GetPartitionInfo()
-	if ptInfo.GetNameByID(partitionID) == "" {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
-	}
-
-	pstate := ptInfo.GetStateByID(partitionID)
-	switch pstate {
-	case model.StatePublic:
-		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateGlobalTxnOnly
-	case model.StateGlobalTxnOnly:
-		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		ptInfo.SetStateByID(partitionID, model.StatePublic)
-		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	}
-	return ver, nil
 }
 
 type partitionExprProcessor func(sessionctx.Context, *model.TableInfo, ast.ExprNode) error

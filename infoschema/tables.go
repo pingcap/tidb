@@ -176,8 +176,8 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// TableAttributes is the string constant of attributes table.
 	TableAttributes = "ATTRIBUTES"
-	// TablePlacementRules is the string constant of placement rules table.
-	TablePlacementRules = "PLACEMENT_RULES"
+	// TablePlacementPolicies is the string constant of placement policies table.
+	TablePlacementPolicies = "PLACEMENT_POLICIES"
 )
 
 const (
@@ -275,7 +275,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummaryEvicted: autoid.InformationSchemaDBID + 76,
 	TableAttributes:                      autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
-	TablePlacementRules:                  autoid.InformationSchemaDBID + 79,
+	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
 }
 
 type columnInfo struct {
@@ -359,6 +359,7 @@ var schemataCols = []columnInfo{
 	{name: "DEFAULT_CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "DEFAULT_COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SQL_PATH", tp: mysql.TypeVarchar, size: 512},
+	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tablesCols = []columnInfo{
@@ -387,7 +388,6 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -560,7 +560,6 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -795,7 +794,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "SEQ_IN_INDEX", tp: mysql.TypeLonglong, size: 21},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SUB_PART", tp: mysql.TypeLonglong, size: 21},
-	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
+	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
@@ -867,6 +866,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogIsExplicitTxn, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogIsWriteCacheTable, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1448,22 +1448,19 @@ var tableAttributesCols = []columnInfo{
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
-var tablePlacementRulesCols = []columnInfo{
+var tablePlacementPoliciesCols = []columnInfo{
 	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // Catalog wide policy
-	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // System policy does not have a schema
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},     // Schema level rules does not have a table
-	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}, // Table level rules does not have a partition
-	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "REGIONS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag}, // EVEN or MAJORITY_IN_PRIMARY
-	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag}, // Catalog wide policy
+	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: 1024},
+	{name: "REGIONS", tp: mysql.TypeVarchar, size: 1024},
+	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
+	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
+	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
+	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
+	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20}, // EVEN or MAJORITY_IN_PRIMARY
+	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64},
+	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1707,7 +1704,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers []ServerInfo
+	servers := make([]ServerInfo, 0, len(stores))
 	for _, store := range stores {
 		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
 			if val.(bool) {
@@ -1835,7 +1832,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableAttributes:                         tableAttributesCols,
-	TablePlacementRules:                     tablePlacementRulesCols,
+	TablePlacementPolicies:                  tablePlacementPoliciesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

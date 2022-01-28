@@ -22,8 +22,7 @@ import (
 )
 
 func TestCheckFsp(t *testing.T) {
-	t.Parallel()
-	obtained, err := CheckFsp(int(UnspecifiedFsp))
+	obtained, err := CheckFsp(UnspecifiedFsp)
 	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
 
@@ -31,55 +30,54 @@ func TestCheckFsp(t *testing.T) {
 	require.Equal(t, DefaultFsp, obtained)
 	require.EqualError(t, err, "Invalid fsp -2019")
 
-	obtained, err = CheckFsp(int(MinFsp) - 4294967296)
+	obtained, err = CheckFsp(MinFsp - 4294967296)
 	require.Equal(t, DefaultFsp, obtained)
-	require.EqualError(t, err, "Invalid fsp "+strconv.Itoa(int(MinFsp)-4294967296))
+	require.EqualError(t, err, "Invalid fsp "+strconv.Itoa(MinFsp-4294967296))
 
 	// UnspecifiedFsp
 	obtained, err = CheckFsp(-1)
 	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
 
-	obtained, err = CheckFsp(int(MaxFsp) + 1)
+	obtained, err = CheckFsp(MaxFsp + 1)
 	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
-	obtained, err = CheckFsp(int(MaxFsp) + 2019)
+	obtained, err = CheckFsp(MaxFsp + 2019)
 	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
-	obtained, err = CheckFsp(int(MaxFsp) + 4294967296)
+	obtained, err = CheckFsp(MaxFsp + 4294967296)
 	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
-	obtained, err = CheckFsp(int(MaxFsp+MinFsp) / 2)
+	obtained, err = CheckFsp((MaxFsp + MinFsp) / 2)
 	require.Equal(t, (MaxFsp+MinFsp)/2, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(5)
-	require.Equal(t, int8(5), obtained)
+	require.Equal(t, 5, obtained)
 	require.NoError(t, err)
 }
 
 func TestParseFrac(t *testing.T) {
-	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.NoError(t, err)
 
 	a := 200
-	obtained, overflow, err = ParseFrac("999", int8(a))
+	obtained, overflow, err = ParseFrac("999", int(int8(a)))
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "Invalid fsp .*", err.Error())
+	require.Regexp(t, "^Invalid fsp ", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
+	require.Regexp(t, "^strconv.ParseInt:", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
 	require.Equal(t, 123500, obtained)
@@ -121,7 +119,6 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestAlignFrac(t *testing.T) {
-	t.Parallel()
 	obtained := alignFrac("100", 6)
 	require.Equal(t, "100000", obtained)
 	obtained = alignFrac("10000000000", 6)

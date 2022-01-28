@@ -264,7 +264,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...)
+		resByte = append(resByte, tempLine...) // nozero
 		// Use the max value of max_allowed_packet to check the single line length.
 		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
 			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
@@ -738,7 +738,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
@@ -1050,7 +1050,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		if err != nil {
 			return nil, 0, err
 		}
-		lines = append(chars, lines...)
+		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
 		for i := 0; i < len(chars); i++ {

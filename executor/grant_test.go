@@ -29,8 +29,6 @@ import (
 )
 
 func TestGrantGlobal(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -71,8 +69,6 @@ func TestGrantGlobal(t *testing.T) {
 }
 
 func TestGrantDBScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -112,8 +108,6 @@ func TestGrantDBScope(t *testing.T) {
 }
 
 func TestWithGrantOption(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -138,8 +132,6 @@ func TestWithGrantOption(t *testing.T) {
 }
 
 func TestGrantTableScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -184,8 +176,6 @@ func TestGrantTableScope(t *testing.T) {
 }
 
 func TestGrantColumnScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -232,8 +222,6 @@ func TestGrantColumnScope(t *testing.T) {
 }
 
 func TestIssue2456(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -246,8 +234,6 @@ func TestIssue2456(t *testing.T) {
 }
 
 func TestNoAutoCreateUser(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -260,8 +246,6 @@ func TestNoAutoCreateUser(t *testing.T) {
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -278,8 +262,6 @@ func TestCreateUserWhenGrant(t *testing.T) {
 }
 
 func TestGrantPrivilegeAtomic(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -334,8 +316,6 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 }
 
 func TestIssue2654(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -348,8 +328,6 @@ func TestIssue2654(t *testing.T) {
 }
 
 func TestGrantUnderANSIQuotes(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -364,8 +342,6 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 }
 
 func TestMaintainRequire(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -439,8 +415,6 @@ func TestMaintainRequire(t *testing.T) {
 }
 
 func TestMaintainAuthString(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -452,8 +426,6 @@ func TestMaintainAuthString(t *testing.T) {
 }
 
 func TestGrantOnNonExistTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -515,8 +487,6 @@ func TestGrantOnNonExistTable(t *testing.T) {
 }
 
 func TestIssue22721(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -531,8 +501,6 @@ func TestIssue22721(t *testing.T) {
 }
 
 func TestPerformanceSchemaPrivGrant(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -581,8 +549,6 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 }
 
 func TestGrantDynamicPrivs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -614,4 +580,18 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
+}
+
+func TestNonExistTableIllegalGrant(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user u29302")
+	defer tk.MustExec("drop user u29302")
+	// Table level, not existing table, illegal privilege
+	tk.MustGetErrCode("grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
+	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
+	// Column level, not existing table, illegal privilege
+	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
 }

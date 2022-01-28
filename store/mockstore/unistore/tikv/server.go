@@ -138,6 +138,10 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 	return req.reader
 }
 
+func (req *requestCtx) isSnapshotIsolation() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_SI
+}
+
 func (req *requestCtx) finish() {
 	atomic.AddInt32(&req.svr.refCount, -1)
 	if req.reader != nil {
@@ -155,20 +159,10 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.GetResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.CheckKeysLock(req.GetVersion(), req.Context.ResolvedLocks, req.Key)
-	if err != nil {
-		return &kvrpcpb.GetResponse{Error: convertToKeyError(err)}, nil
-	}
-	reader := reqCtx.getDBReader()
-	val, err := reader.Get(req.Key, req.GetVersion())
-	if err != nil {
-		return &kvrpcpb.GetResponse{
-			Error: convertToKeyError(err),
-		}, nil
-	}
-	val = safeCopy(val)
+	val, err := svr.mvccStore.Get(reqCtx, req.Key, req.Version)
 	return &kvrpcpb.GetResponse{
 		Value: val,
+		Error: convertToKeyError(err),
 	}, nil
 }
 

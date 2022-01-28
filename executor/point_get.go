@@ -58,6 +58,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
+	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	e.Init(p, startTS)
@@ -96,7 +100,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -150,6 +155,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
+	if e.cacheTable != nil {
+		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
+	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
@@ -182,7 +190,8 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
 	return nil
 }
 
@@ -298,7 +307,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
@@ -419,6 +429,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
 	if e.isStaleness {
 		return nil
 	}

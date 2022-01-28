@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -68,17 +69,7 @@ func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
 	c.charset, c.collation = chs, coll
 }
 
-func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	if c.charset != "" || c.collation != "" {
-		return c.charset, c.collation
-	}
-
-	if ctx != nil && ctx.GetSessionVars() != nil {
-		c.charset, c.collation = ctx.GetSessionVars().GetCharsetInfo()
-	}
-	if c.charset == "" || c.collation == "" {
-		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
-	}
+func (c *collationInfo) CharsetAndCollation() (string, string) {
 	return c.charset, c.collation
 }
 
@@ -99,10 +90,10 @@ type CollationInfo interface {
 	// SetRepertoire sets a specified repertoire for this expression.
 	SetRepertoire(r Repertoire)
 
-	// CharsetAndCollation ...
-	CharsetAndCollation(ctx sessionctx.Context) (string, string)
+	// CharsetAndCollation gets charset and collation.
+	CharsetAndCollation() (string, string)
 
-	// SetCharsetAndCollation ...
+	// SetCharsetAndCollation sets charset and collation.
 	SetCharsetAndCollation(chs, coll string)
 }
 
@@ -192,7 +183,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
 	switch funcName {
-	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce:
+	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce, ast.Greatest, ast.Least:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
@@ -251,7 +242,28 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return ec, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
+		// We should only aggregate the `then expression`,
+		// case ... when ... expression will be rewritten to:
+		// args:  eq scalar func(args: value, condition1), result1,
+		//        eq scalar func(args: value, condition2), result2,
+		//        ...
+		//        else clause
+		// Or
+		// args:  condition1, result1,
+		//        condition2, result2,
+		//        ...
+		//        else clause
+		// so, arguments with odd index are the `then expression`.
+		if argTps[1] == types.ETString {
+			fieldArgs := make([]Expression, 0)
+			for i := 1; i < len(args); i += 2 {
+				fieldArgs = append(fieldArgs, args[i])
+			}
+			if len(args)%2 == 1 {
+				fieldArgs = append(fieldArgs, args[len(args)-1])
+			}
+			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
+		}
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
@@ -306,12 +318,14 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
+	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
 		}
 
-		if arg.Repertoire() == ASCII {
+		// If value has ASCII repertoire, or it is binary string, just skip it.
+		if arg.Repertoire() == ASCII || types.IsBinaryStr(arg.GetType()) {
 			continue
 		}
 
@@ -320,7 +334,10 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if err != nil {
 				return false
 			}
-			if !isNull && !isValidString(str, ec.Charset) {
+			if isNull {
+				continue
+			}
+			if !enc.IsValid(hack.Slice(str)) {
 				return false
 			}
 		} else {
@@ -331,32 +348,6 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 	}
 
 	return true
-}
-
-// isValidString check if str can convert to dstChs charset without data loss.
-func isValidString(str string, dstChs string) bool {
-	switch dstChs {
-	case charset.CharsetASCII:
-		for _, c := range str {
-			if c >= 0x80 {
-				return false
-			}
-		}
-		return true
-	case charset.CharsetLatin1:
-		// For backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
-		return true
-	case charset.CharsetUTF8, charset.CharsetUTF8MB4:
-		// String in tidb is actually use utf8mb4 encoding.
-		return true
-	case charset.CharsetBinary:
-		// Convert to binary is always safe.
-		return true
-	default:
-		e, _ := charset.Lookup(dstChs)
-		_, err := e.NewEncoder().String(str)
-		return err == nil
-	}
 }
 
 // inferCollation infers collation, charset, coercibility and check the legitimacy.

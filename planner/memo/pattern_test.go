@@ -22,7 +22,6 @@ import (
 )
 
 func TestGetOperand(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, OperandJoin, GetOperand(&plannercore.LogicalJoin{}))
 	require.Equal(t, OperandAggregation, GetOperand(&plannercore.LogicalAggregation{}))
 	require.Equal(t, OperandProjection, GetOperand(&plannercore.LogicalProjection{}))
@@ -40,8 +39,6 @@ func TestGetOperand(t *testing.T) {
 }
 
 func TestOperandMatch(t *testing.T) {
-	t.Parallel()
-
 	require.True(t, OperandAny.Match(OperandLimit))
 	require.True(t, OperandAny.Match(OperandSelection))
 	require.True(t, OperandAny.Match(OperandJoin))
@@ -66,8 +63,6 @@ func TestOperandMatch(t *testing.T) {
 }
 
 func TestNewPattern(t *testing.T) {
-	t.Parallel()
-
 	p := NewPattern(OperandAny, EngineAll)
 	require.Equal(t, OperandAny, p.Operand)
 	require.Nil(t, p.Children)
@@ -78,8 +73,6 @@ func TestNewPattern(t *testing.T) {
 }
 
 func TestPatternSetChildren(t *testing.T) {
-	t.Parallel()
-
 	p := NewPattern(OperandAny, EngineAll)
 	p.SetChildren(NewPattern(OperandLimit, EngineAll))
 	require.Len(t, p.Children, 1)

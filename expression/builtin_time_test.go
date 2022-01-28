@@ -40,7 +40,6 @@ import (
 )
 
 func TestDate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tblDate := []struct {
 		Input  interface{}
@@ -418,7 +417,6 @@ func TestDate(t *testing.T) {
 }
 
 func TestMonthName(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -455,7 +453,6 @@ func TestMonthName(t *testing.T) {
 }
 
 func TestDayName(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -494,7 +491,6 @@ func TestDayName(t *testing.T) {
 }
 
 func TestDayOfWeek(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -531,7 +527,6 @@ func TestDayOfWeek(t *testing.T) {
 }
 
 func TestDayOfMonth(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -568,7 +563,6 @@ func TestDayOfMonth(t *testing.T) {
 }
 
 func TestDayOfYear(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -605,7 +599,6 @@ func TestDayOfYear(t *testing.T) {
 }
 
 func TestDateFormat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// Test case for https://github.com/pingcap/tidb/issues/2908
 	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
@@ -652,7 +645,6 @@ func TestDateFormat(t *testing.T) {
 }
 
 func TestClock(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// test hour, minute, second, micro second
 
@@ -785,7 +777,6 @@ func TestClock(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -832,7 +823,6 @@ func resetStmtContext(ctx sessionctx.Context) {
 }
 
 func TestNowAndUTCTimestamp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	gotime := func(typ types.Time, l *time.Location) time.Time {
 		tt, err := typ.GoTime(l)
@@ -899,7 +889,6 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 }
 
 func TestIsDuration(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Input  string
 		expect bool
@@ -921,7 +910,6 @@ func TestIsDuration(t *testing.T) {
 }
 
 func TestAddTimeSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Input         string
@@ -939,6 +927,7 @@ func TestAddTimeSig(t *testing.T) {
 		{"2018-08-16 20:21:01", "00:00:00.000001", "2018-08-16 20:21:01.000001"},
 		{"1", "xxcvadfgasd", ""},
 		{"xxcvadfgasd", "1", ""},
+		{"2020-05-13 14:01:24", "2020-04-29 05:11:19", ""},
 	}
 	fc := funcs[ast.AddTime]
 	for _, c := range tbl {
@@ -959,7 +948,7 @@ func TestAddTimeSig(t *testing.T) {
 	require.NoError(t, err)
 	res, _, err := du.add(ctx, now, "1", "MICROSECOND")
 	require.NoError(t, err)
-	require.Equal(t, int8(6), res.Fsp())
+	require.Equal(t, 6, res.Fsp())
 
 	tbl = []struct {
 		Input         string
@@ -1037,7 +1026,6 @@ func TestAddTimeSig(t *testing.T) {
 }
 
 func TestSubTimeSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Input         string
@@ -1136,7 +1124,6 @@ func TestSubTimeSig(t *testing.T) {
 }
 
 func TestSysDate(t *testing.T) {
-	t.Parallel()
 	fc := funcs[ast.Sysdate]
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
@@ -1193,13 +1180,13 @@ func TestSysDate(t *testing.T) {
 	require.Error(t, err)
 }
 
-func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int8) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
 
 	f := types.NewFieldType(tp)
-	f.Decimal = int(fsp)
+	f.Decimal = fsp
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -1241,7 +1228,6 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 }
 
 func TestFromUnixTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		isDecimal      bool
@@ -1318,7 +1304,6 @@ func TestFromUnixTime(t *testing.T) {
 }
 
 func TestCurrentDate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	last := time.Now()
 	fc := funcs[ast.CurrentDate]
@@ -1332,7 +1317,6 @@ func TestCurrentDate(t *testing.T) {
 }
 
 func TestCurrentTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tfStr := "15:04:05"
 
@@ -1373,7 +1357,6 @@ func TestCurrentTime(t *testing.T) {
 }
 
 func TestUTCTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	last := time.Now().UTC()
 	tfStr := "00:00:00"
@@ -1415,7 +1398,6 @@ func TestUTCTime(t *testing.T) {
 }
 
 func TestUTCDate(t *testing.T) {
-	t.Parallel()
 	last := time.Now().UTC()
 	fc := funcs[ast.UTCDate]
 	f, err := fc.getFunction(mock.NewContext(), datumsToConstants(nil))
@@ -1428,7 +1410,6 @@ func TestUTCDate(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// If you want to add test cases for `strToDate` but not the builtin function,
 	// adding cases in `types.format_test.go` `TestStrToDate` maybe more clear and easier
@@ -1451,6 +1432,7 @@ func TestStrToDate(t *testing.T) {
 		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"2003-01-02 10:11:12.0012", "%Y-%m-%d %H:%i:%S.%f", true, types.KindMysqlTime, time.Date(2003, 1, 2, 10, 11, 12, 1200000, time.Local)},
 		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, types.KindMysqlTime, time.Time{}},
 		{"10:20:10AM", "%H:%i:%S%p", false, types.KindMysqlTime, time.Time{}},
 		// test %@(skip alpha), %#(skip number), %.(skip punct)
@@ -1500,7 +1482,6 @@ func TestStrToDate(t *testing.T) {
 }
 
 func TestFromDays(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -1562,7 +1543,6 @@ func TestFromDays(t *testing.T) {
 }
 
 func TestDateDiff(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 	tests := []struct {
@@ -1616,7 +1596,6 @@ func TestDateDiff(t *testing.T) {
 }
 
 func TestTimeDiff(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -1625,7 +1604,7 @@ func TestTimeDiff(t *testing.T) {
 		args       []interface{}
 		expectStr  string
 		isNil      bool
-		fsp        int8
+		fsp        int
 		flen       int
 		getWarning bool
 	}{
@@ -1666,7 +1645,6 @@ func TestTimeDiff(t *testing.T) {
 }
 
 func TestWeek(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 	tests := []struct {
@@ -1691,7 +1669,6 @@ func TestWeek(t *testing.T) {
 }
 
 func TestWeekWithoutModeSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		t      string
@@ -1722,7 +1699,6 @@ func TestWeekWithoutModeSig(t *testing.T) {
 	}
 }
 func TestYearWeek(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -1754,7 +1730,6 @@ func TestYearWeek(t *testing.T) {
 }
 
 func TestTimestampDiff(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		unit   string
@@ -1803,7 +1778,6 @@ func TestTimestampDiff(t *testing.T) {
 }
 
 func TestUnixTimestamp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// Test UNIX_TIMESTAMP().
 	fc := funcs[ast.UnixTimestamp]
@@ -1894,7 +1868,6 @@ func TestUnixTimestamp(t *testing.T) {
 }
 
 func TestDateArithFuncs(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	date := []string{"2016-12-31", "2017-01-01"}
 	fcAdd := funcs[ast.DateAdd]
@@ -1923,7 +1896,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expect, v.GetMysqlTime().String())
+		require.Equal(t, test.expect, v.GetString())
 	}
 
 	args := types.MakeDatums(date[0], nil, "DAY")
@@ -1965,7 +1938,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expected, v.GetMysqlTime().String())
+		require.Equal(t, test.expected, v.GetString())
 	}
 
 	testYears := []struct {
@@ -1988,7 +1961,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expected, v.GetMysqlTime().String())
+		require.Equal(t, test.expected, v.GetString())
 	}
 
 	testOverflowYears := []struct {
@@ -2022,7 +1995,7 @@ func TestDateArithFuncs(t *testing.T) {
 	testDurations := []struct {
 		fc       functionClass
 		dur      string
-		fsp      int8
+		fsp      int
 		unit     string
 		format   interface{}
 		expected string
@@ -2131,7 +2104,6 @@ func TestDateArithFuncs(t *testing.T) {
 }
 
 func TestTimestamp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		t      []types.Datum
@@ -2184,7 +2156,6 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestMakeDate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -2239,7 +2210,6 @@ func TestMakeDate(t *testing.T) {
 }
 
 func TestMakeTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Args []interface{}
@@ -2350,7 +2320,6 @@ func TestMakeTime(t *testing.T) {
 }
 
 func TestQuarter(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -2392,7 +2361,6 @@ func TestQuarter(t *testing.T) {
 }
 
 func TestGetFormat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		unit     string
@@ -2431,7 +2399,6 @@ func TestGetFormat(t *testing.T) {
 }
 
 func TestToSeconds(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -2473,7 +2440,6 @@ func TestToSeconds(t *testing.T) {
 }
 
 func TestToDays(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
@@ -2516,7 +2482,6 @@ func TestToDays(t *testing.T) {
 }
 
 func TestTimestampAdd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		unit     string
@@ -2543,7 +2508,6 @@ func TestTimestampAdd(t *testing.T) {
 }
 
 func TestPeriodAdd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		Period  int64
@@ -2580,7 +2544,6 @@ func TestPeriodAdd(t *testing.T) {
 }
 
 func TestTimeFormat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum(`%H %k %h %I %l`)}
@@ -2619,7 +2582,6 @@ func TestTimeFormat(t *testing.T) {
 }
 
 func TestTimeToSec(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.TimeToSec]
 
@@ -2665,7 +2627,6 @@ func TestTimeToSec(t *testing.T) {
 }
 
 func TestSecToTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -2715,7 +2676,6 @@ func TestSecToTime(t *testing.T) {
 }
 
 func TestConvertTz(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	loc1, _ := time.LoadLocation("Europe/Tallinn")
 	loc2, _ := time.LoadLocation("Local")
@@ -2791,7 +2751,6 @@ func TestConvertTz(t *testing.T) {
 }
 
 func TestPeriodDiff(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		Period1 int64
@@ -2865,7 +2824,6 @@ func TestPeriodDiff(t *testing.T) {
 }
 
 func TestLastDay(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		param  interface{}
@@ -2921,7 +2879,6 @@ func TestLastDay(t *testing.T) {
 }
 
 func TestWithTimeZone(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sv := ctx.GetSessionVars()
 	originTZ := sv.Location()
@@ -2966,7 +2923,6 @@ func TestWithTimeZone(t *testing.T) {
 }
 
 func TestTidbParseTso(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
@@ -3005,7 +2961,6 @@ func TestTidbParseTso(t *testing.T) {
 }
 
 func TestTiDBBoundedStaleness(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	t1, err := time.Parse(types.TimeFormat, "2015-09-21 09:53:04")
 	require.NoError(t, err)
@@ -3101,7 +3056,6 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 }
 
 func TestGetIntervalFromDecimal(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	du := baseDateArithmetical{}
 

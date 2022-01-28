@@ -22,8 +22,6 @@ import (
 )
 
 func TestSpace(t *testing.T) {
-	t.Parallel()
-
 	okTable := []struct {
 		Times    int
 		Input    string
@@ -57,8 +55,6 @@ func TestSpace(t *testing.T) {
 }
 
 func TestDigit(t *testing.T) {
-	t.Parallel()
-
 	okTable := []struct {
 		Times          int
 		Input          string
@@ -98,8 +94,6 @@ func TestDigit(t *testing.T) {
 }
 
 func TestNumber(t *testing.T) {
-	t.Parallel()
-
 	okTable := []struct {
 		Input        string
 		ExpectedNum  int
@@ -136,8 +130,6 @@ func TestNumber(t *testing.T) {
 }
 
 func TestCharAndAnyChar(t *testing.T) {
-	t.Parallel()
-
 	okTable := []struct {
 		Char     byte
 		Input    string

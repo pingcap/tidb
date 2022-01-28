@@ -124,8 +124,8 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil {
 			return err
 		}
-		// Some PD client dynamic options need to be checked and set here.
-		err = e.checkPDClientDynamicOption(name, valStr, sessionVars)
+		// Some PD client dynamic options need to be checked first and set here.
+		err = e.checkPDClientDynamicOption(name, sessionVars)
 		if err != nil {
 			return err
 		}
@@ -204,16 +204,30 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	return nil
 }
 
-func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVars *variable.SessionVars) error {
-	var err error
+func (e *SetExecutor) checkPDClientDynamicOption(name string, sessionVars *variable.SessionVars) error {
+	if name != variable.TiDBTSOClientBatchMaxWaitTime &&
+		name != variable.TiDBEnableTSOFollowerProxy {
+		return nil
+	}
+	var (
+		err    error
+		valStr string
+	)
+	valStr, err = sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
+	if err != nil {
+		return err
+	}
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val int64
-		val, err = strconv.ParseInt(valStr, 10, 64)
+		var val float64
+		val, err = strconv.ParseFloat(valStr, 64)
 		if err != nil {
 			return err
 		}
-		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(
+			pd.MaxTSOBatchWaitInterval,
+			time.Duration(float64(time.Millisecond)*val),
+		)
 		if err != nil {
 			return err
 		}

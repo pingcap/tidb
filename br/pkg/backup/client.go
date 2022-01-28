@@ -180,14 +180,9 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
-	exist, err = bc.storage.FileExists(ctx, metautil.LockFile)
+	err = CheckBackupStorageIsLocked(ctx, bc.storage)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
-	}
-	if exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file exists in %v, "+
-			"there may be some backup files in the path already, "+
-			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.LockFile)
+		return err
 	}
 	bc.backend = backend
 	return nil
@@ -196,6 +191,29 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
+}
+
+// CheckBackupStorageIsLocked checks whether backups is locked.
+// which means we found other backup progress already write
+// some data files into the same backup directory or cloud prefix.
+func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
+	exist, err := s.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
+	}
+	if exist {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			// should return error to break the walkDir when found lock file and other .sst files.
+			if strings.HasSuffix(path, ".sst") {
+				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
+					"there are some backup files in the path already, "+
+					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
+			}
+			return nil
+		})
+		return err
+	}
+	return nil
 }
 
 // BuildTableRanges returns the key ranges encompassing the entire table,
@@ -363,7 +381,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 	case model.ActionCreatePlacementPolicy,
 		model.ActionAlterPlacementPolicy,
 		model.ActionDropPlacementPolicy,
-		model.ActionAlterTablePartitionPolicy,
+		model.ActionAlterTablePartitionPlacement,
 		model.ActionModifySchemaDefaultPlacement,
 		model.ActionAlterTablePlacement,
 		model.ActionAlterTableAttributes,
@@ -416,7 +434,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			if err != nil {
 				return errors.Trace(err)
 			}
-			metaWriter.Send(jobBytes, metautil.AppendDDL)
+			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			count++
 		}
 	}
@@ -452,7 +473,13 @@ func (bc *Client) BackupRanges(
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
 			err := bc.BackupRange(elctx, sk, ek, req, metaWriter, progressCallBack)
 			if err != nil {
-				return errors.Trace(err)
+				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
+				if errors.Cause(err) == context.Canceled {
+					return errors.SuspendStack(err)
+				} else {
+					return errors.Trace(err)
+				}
+
 			}
 			return nil
 		})
@@ -719,7 +746,7 @@ func OnBackupResponse(
 		if lockErr := v.KvError.Locked; lockErr != nil {
 			// Try to resolve lock.
 			log.Warn("backup occur kv error", zap.Reflect("error", v))
-			msBeforeExpired, _, err1 := lockResolver.ResolveLocks(
+			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
 				return nil, 0, errors.Trace(err1)
@@ -860,6 +887,68 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+func doSendBackup(
+	ctx context.Context,
+	client backuppb.BackupClient,
+	req backuppb.BackupRequest,
+	respFn func(*backuppb.BackupResponse) error,
+) error {
+	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
+		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
+			"process will notify the shell.")
+		if sigFile, ok := v.(string); ok {
+			file, err := os.Create(sigFile)
+			if err != nil {
+				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
+			}
+			if file != nil {
+				file.Close()
+			}
+		}
+		time.Sleep(3 * time.Second)
+	})
+	bCli, err := client.Backup(ctx, &req)
+	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
+			err = status.Error(codes.Unavailable, "Unavailable error")
+		}
+	})
+	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
+			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
+		}
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = bCli.CloseSend()
+	}()
+
+	for {
+		resp, err := bCli.Recv()
+		if err != nil {
+			if errors.Cause(err) == io.EOF { // nolint:errorlint
+				logutil.CL(ctx).Debug("backup streaming finish",
+					logutil.Key("backup-start-key", req.GetStartKey()),
+					logutil.Key("backup-end-key", req.GetEndKey()))
+				return nil
+			}
+			return err
+		}
+		// TODO: handle errors in the resp.
+		logutil.CL(ctx).Debug("range backed up",
+			logutil.Key("small-range-start-key", resp.GetStartKey()),
+			logutil.Key("small-range-end-key", resp.GetEndKey()))
+		err = respFn(resp)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
 // SendBackup send backup request to the given store.
 // Stop receiving response if respFn returns error.
 func SendBackup(
@@ -881,40 +970,15 @@ func SendBackup(
 	}
 
 	var errReset error
-backupLoop:
+	var errBackup error
+
 	for retry := 0; retry < backupRetryTimes; retry++ {
 		logutil.CL(ctx).Info("try backup",
 			zap.Int("retry time", retry),
 		)
-		failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
-			logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
-				"process will notify the shell.")
-			if sigFile, ok := v.(string); ok {
-				file, err := os.Create(sigFile)
-				if err != nil {
-					log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
-				}
-				if file != nil {
-					file.Close()
-				}
-			}
-			time.Sleep(3 * time.Second)
-		})
-		bcli, err := client.Backup(ctx, &req)
-		failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
-			}
-		})
-		failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
-				err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
-			}
-		})
-		if err != nil {
-			if isRetryableError(err) {
+		errBackup = doSendBackup(ctx, client, req, respFn)
+		if errBackup != nil {
+			if isRetryableError(errBackup) {
 				time.Sleep(3 * time.Second)
 				client, errReset = resetFn()
 				if errReset != nil {
@@ -923,41 +987,11 @@ backupLoop:
 				}
 				continue
 			}
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID),
-				zap.Int("retry time", retry))
-			return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to create backup stream to store %d", storeID)
-		}
-		defer bcli.CloseSend()
-
-		for {
-			resp, err := bcli.Recv()
-			if err != nil {
-				if errors.Cause(err) == io.EOF { // nolint:errorlint
-					logutil.CL(ctx).Info("backup streaming finish",
-						zap.Int("retry-time", retry))
-					break backupLoop
-				}
-				if isRetryableError(err) {
-					time.Sleep(3 * time.Second)
-					// current tikv is unavailable
-					client, errReset = resetFn()
-					if errReset != nil {
-						return errors.Annotatef(errReset, "failed to reset recv connection on store:%d "+
-							"please check the tikv status", storeID)
-					}
-					break
-				}
-				return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to connect to store: %d with retry times:%d", storeID, retry)
-			}
-
-			// TODO: handle errors in the resp.
-			logutil.CL(ctx).Info("range backed up",
-				logutil.Key("small-range-start-key", resp.GetStartKey()),
-				logutil.Key("small-range-end-key", resp.GetEndKey()))
-			err = respFn(resp)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
+			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
+		} else {
+			// finish backup
+			break
 		}
 	}
 	return nil

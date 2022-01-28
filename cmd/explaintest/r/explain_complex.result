@@ -182,7 +182,7 @@ CREATE TABLE `tbl_009` (`a` int, `b` int);
 explain format = 'brief' select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	estRows	task	access object	operator info
 HashAgg	72000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
-└─Projection	90000.00	root		cast(Column#28, decimal(32,0) BINARY)->Column#31, Column#29
+└─Projection	90000.00	root		cast(Column#28, decimal(10,0) BINARY)->Column#31, Column#29
   └─Union	90000.00	root		
     ├─TableReader	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:tbl_001	keep order:false, stats:pseudo
