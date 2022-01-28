@@ -2,6 +2,7 @@ name: BR / Compatibility Test
 
 on:
   push:
+  # merged git action
     branches:
       - master
       - 'release-[0-9].[0-9]*'
@@ -14,19 +15,25 @@ on:
       - '!br/docs/**'
       - '!br/tests/**'
       - '!br/docker/**'
-  pull_request:
-    branches:
-      - master
-      - 'release-[0-9].[0-9]*'
-    paths:
-      - 'br/**'
-      - '!**.html'
-      - '!**.md'
-      - '!CNAME'
-      - '!LICENSE'
-      - '!br/docs/**'
-      - '!br/tests/**'
-      - '!br/docker/**'
+  # disable pull request only keep the merge action since it is very costly to run those tests
+  # pull_request:
+  #   branches:
+  #     - master
+  #     - 'release-[0-9].[0-9]*'
+  #   paths:
+  #     - 'br/**'
+  #     - '!**.html'
+  #     - '!**.md'
+  #     - '!CNAME'
+  #     - '!LICENSE'
+  #     - '!br/docs/**'
+  #     - '!br/tests/**'
+  #     - '!br/docker/**'
+
+# See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   check:

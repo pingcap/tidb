@@ -323,3 +323,13 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 	c.Assert(err, IsNil)
 
 }
+
+type testChecksumMgr struct {
+	checksum RemoteChecksum
+	callCnt  int
+}
+
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+	t.callCnt++
+	return &t.checksum, nil
+}

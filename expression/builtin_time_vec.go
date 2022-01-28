@@ -49,18 +49,6 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
-			continue
-		}
 		i64s[i] = int64(ds[i].Month())
 	}
 	return nil
@@ -89,18 +77,6 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
-			continue
-		}
 		i64s[i] = int64(ds[i].Year())
 	}
 	return nil
@@ -119,7 +95,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if times[i].IsZero() {
+		if times[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
@@ -162,7 +138,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 
 	result.ReserveString(n)
 	ds := buf1.Decimals()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.Decimal
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -237,17 +213,6 @@ func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(input *chunk.Chunk, res
 	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			i64s[i] = 0
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-			}
 			continue
 		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
@@ -456,7 +421,7 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *c
 		if fsp < int64(types.MinFsp) {
 			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
-		res, err := types.ParseDuration(stmtCtx, utc, int8(fsp))
+		res, err := types.ParseDuration(stmtCtx, utc, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -589,7 +554,7 @@ func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 	fsps := bufFsp.Int64s()
 
 	for i := 0; i < n; i++ {
-		fsp := int8(0)
+		fsp := 0
 		if !bufFsp.IsNull(i) {
 			if fsps[i] > int64(types.MaxFsp) {
 				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsps[i], types.MaxFsp)
@@ -597,7 +562,7 @@ func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 			if fsps[i] < int64(types.MinFsp) {
 				return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsps[i])
 			}
-			fsp = int8(fsps[i])
+			fsp = int(fsps[i])
 		}
 
 		t, isNull, err := evalNowWithFsp(b.ctx, fsp)
@@ -810,7 +775,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfEven)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfEven)
 		if err != nil {
 			return err
 		}
@@ -965,12 +930,11 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
 	}
 	return nil
 }
@@ -1001,14 +965,6 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
-				return err
-			}
-			result.SetNull(i, isNull)
-			continue
-		}
 		i64s[i] = int64((date.Month() + 2) / 3)
 	}
 	return nil
@@ -1134,7 +1090,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = int8(b.args[1].GetType().Decimal)
+	duration.Fsp = b.args[1].GetType().Decimal
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1198,7 +1154,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			result.SetNull(i, true)
 			continue
 		}
-		t.SetFsp(int8(b.tp.Decimal))
+		t.SetFsp(b.tp.Decimal)
 		dur, err := t.ConvertToDuration()
 		if err != nil {
 			return err
@@ -1269,7 +1225,7 @@ func (b *builtinMinuteSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Minute())
+		i64s[i] = int64(buf.GetDuration(i, types.UnspecifiedFsp).Minute())
 	}
 	return nil
 }
@@ -1296,7 +1252,7 @@ func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Second())
+		i64s[i] = int64(buf.GetDuration(i, types.UnspecifiedFsp).Second())
 	}
 	return nil
 }
@@ -1307,7 +1263,7 @@ func (b *builtinNowWithoutArgSig) vectorized() bool {
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	nowTs, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	nowTs, isNull, err := evalNowWithFsp(b.ctx, 0)
 	if err != nil {
 		return err
 	}
@@ -1466,7 +1422,7 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 		if fsp < int64(types.MinFsp) {
 			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
-		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int8(fsp))
+		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -1545,7 +1501,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.Decimal
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -1943,12 +1899,11 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(ds[i].Hours())
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Hour())
 	}
 	return nil
 }
@@ -1999,7 +1954,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			second = seconds % 60
 		}
 		secondDemical := float64(second) + demical
-		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), int8(b.tp.Decimal))
+		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -2196,11 +2151,10 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, isNull)
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(ds[i].YearDay())
@@ -2226,7 +2180,7 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chu
 	result.MergeNulls(buf)
 	ts := result.Times()
 	ds := buf.Decimals()
-	fsp := int8(b.tp.Decimal)
+	fsp := b.tp.Decimal
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2392,7 +2346,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				continue
 			}
 
-			t, err := buf.GetTime(i).GoTime(getTimeZone(b.ctx))
+			t, err := buf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
 			if err != nil {
 				i64s[i] = 0
 				continue
@@ -2466,13 +2420,13 @@ func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Colum
 			fsp = len(expr) - idx - 1
 		}
 
-		var tmpFsp int8
+		var tmpFsp int
 		if tmpFsp, err = types.CheckFsp(fsp); err != nil {
 			return err
 		}
-		fsp = int(tmpFsp)
+		fsp = tmpFsp
 
-		res, err := types.ParseDuration(sc, expr, int8(fsp))
+		res, err := types.ParseDuration(sc, expr, fsp)
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = sc.HandleTruncate(err)
 		}
@@ -2581,11 +2535,10 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-			if err != nil {
+			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
 				return err
 			}
-			result.SetNull(i, isNull)
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64(ds[i].Weekday() + 1)
@@ -2619,7 +2572,7 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
 	for i := 0; i < n; i++ {
-		res, err := types.ParseDuration(stmtCtx, dur, int8(i64s[i]))
+		res, err := types.ParseDuration(stmtCtx, dur, int(i64s[i]))
 		if err != nil {
 			return err
 		}
@@ -2835,18 +2788,6 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
-				if err != nil {
-					return err
-				}
-				result.SetNull(i, isNull)
-				continue
-			}
-			i64s[i] = 0
 			continue
 		}
 		i64s[i] = int64(ds[i].Day())

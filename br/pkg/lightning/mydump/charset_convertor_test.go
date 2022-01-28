@@ -12,22 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump_test
+package mydump
 
 import (
 	"io"
 	"os"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testCharsetConvertorSuite{})
-
-type testCharsetConvertorSuite struct{}
-
-func (s *testCharsetConvertorSuite) SetUpSuite(c *C)    {}
-func (s *testCharsetConvertorSuite) TearDownSuite(c *C) {}
 
 const (
 	testUTF8DataFile = "./csv/utf8_test_file.csv"
@@ -41,28 +34,28 @@ var (
 	invalidChar       = []byte{0xff}                                                                                                       // Invalid gb18030 char
 )
 
-func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
+func TestCharsetConvertor(t *testing.T) {
 	utf8Reader, err := os.Open(testUTF8DataFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	utf8Data, err := io.ReadAll(utf8Reader)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	gbkReader, err := os.Open(testGBKDataFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	gbkData, err := io.ReadAll(gbkReader)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cc, err := mydump.NewCharsetConvertor("gb18030", "\ufffd")
-	c.Assert(err, IsNil)
+	cc, err := NewCharsetConvertor("gb18030", "\ufffd")
+	require.NoError(t, err)
 	gbkToUTF8Data, err := cc.Decode(string(gbkData))
-	c.Assert(err, IsNil)
-	c.Assert(gbkToUTF8Data, DeepEquals, string(utf8Data))
+	require.NoError(t, err)
+	require.Equal(t, string(utf8Data), gbkToUTF8Data)
 
 	utf8ToGBKData, err := cc.Encode(string(normalCharUTF8MB4))
-	c.Assert(err, IsNil)
-	c.Assert(utf8ToGBKData, DeepEquals, string(normalCharGB18030))
+	require.NoError(t, err)
+	require.Equal(t, string(normalCharGB18030), utf8ToGBKData)
 }
 
-func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
+func TestInvalidCharReplace(t *testing.T) {
 	dataInvalidCharReplace := "😅😅😅"
 	// Input: 你好invalid char你好
 	inputData := append(normalCharGB18030, invalidChar...)
@@ -72,16 +65,16 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	expectedData = append(expectedData, normalCharUTF8MB4...)
 
 	// Prepare the file data.
-	c.Assert(os.WriteFile(testTempDataFile, inputData, 0666), IsNil)
-	defer func() { c.Assert(os.Remove(testTempDataFile), IsNil) }()
+	require.NoError(t, os.WriteFile(testTempDataFile, inputData, 0666))
+	defer func() { require.NoError(t, os.Remove(testTempDataFile)) }()
 
 	gbkReader, err := os.Open(testTempDataFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	gbkData, err := io.ReadAll(gbkReader)
-	c.Assert(err, IsNil)
-	cc, err := mydump.NewCharsetConvertor("gb18030", dataInvalidCharReplace)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	cc, err := NewCharsetConvertor("gb18030", dataInvalidCharReplace)
+	require.NoError(t, err)
 	gbkToUTF8Data, err := cc.Decode(string(gbkData))
-	c.Assert(err, IsNil)
-	c.Assert(gbkToUTF8Data, DeepEquals, string(expectedData))
+	require.NoError(t, err)
+	require.Equal(t, string(expectedData), gbkToUTF8Data)
 }

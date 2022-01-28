@@ -20,13 +20,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProfileToDatum(t *testing.T) {
-	t.Parallel()
-
 	file, err := os.Open("testdata/test.pprof")
 	require.Nil(t, err)
 	defer func() {
@@ -91,7 +90,7 @@ func TestProfileToDatum(t *testing.T) {
 		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
 		for j, r := range row {
-			v, err := r.CompareDatum(nil, &datums[i][j])
+			v, err := r.Compare(nil, &datums[i][j], collate.GetBinaryCollator())
 			if v != 0 || err != nil {
 				equal = false
 				break

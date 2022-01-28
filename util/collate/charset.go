@@ -14,71 +14,15 @@
 
 package collate
 
-import (
-	"strings"
+import "github.com/pingcap/tidb/parser/charset"
 
-	"github.com/pingcap/tidb/parser/charset"
-)
-
-var (
-	enableCharsetFeat bool
-)
-
-// EnableNewCharset enables the charset feature.
-func EnableNewCharset() {
-	enableCharsetFeat = true
-	addCharset()
-}
-
-// SetCharsetFeatEnabledForTest set charset feature enabled. Only used in test.
-// It will also enable or disable new collation.
-func SetCharsetFeatEnabledForTest(flag bool) {
-	enableCharsetFeat = flag
-	SetNewCollationEnabledForTest(flag)
+// switchDefaultCollation switch the default collation for charset according to the new collation config.
+func switchDefaultCollation(flag bool) {
 	if flag {
-		addCharset()
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
 	} else {
-		removeCharset()
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
 	}
-}
-
-// CharsetFeatEnabled return true if charset feature is enabled.
-func CharsetFeatEnabled() bool {
-	return enableCharsetFeat
-}
-
-func addCharset() {
-	for _, c := range experimentalCharsetInfo {
-		charset.AddCharset(c)
-		for _, coll := range charset.GetCollations() {
-			if strings.EqualFold(coll.CharsetName, c.Name) {
-				charset.AddCollation(coll)
-			}
-		}
-	}
-
-	for name, collator := range experimentalCollation {
-		newCollatorMap[name] = collator
-		newCollatorIDMap[CollationName2ID(name)] = collator
-	}
-}
-
-func removeCharset() {
-	for _, c := range experimentalCharsetInfo {
-		charset.RemoveCharset(c.Name)
-	}
-
-	for name := range experimentalCollation {
-		delete(newCollatorMap, name)
-		delete(newCollatorIDMap, CollationName2ID(name))
-	}
-}
-
-// All the experimental supported charset should be in the following table, only used when charset feature is enable.
-var experimentalCharsetInfo = []*charset.Charset{
-	{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
-}
-
-var experimentalCollation = map[string]Collator{
-	charset.CollationGBKBin: &gbkBinCollator{},
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKBin].IsDefault = !flag
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKChineseCI].IsDefault = flag
 }

@@ -15,17 +15,20 @@
 package expression
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
+func TestScalarFunction(t *testing.T) {
+	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -33,23 +36,25 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	sf := newFunction(ast.LT, a, NewOne())
 	res, err := sf.MarshalJSON()
-	c.Assert(err, IsNil)
-	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22})
-	c.Assert(sf.IsCorrelated(), IsFalse)
-	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), IsFalse)
-	c.Assert(sf.Decorrelate(nil).Equal(s.ctx, sf), IsTrue)
-	c.Assert(sf.HashCode(sc), DeepEquals, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
+	require.NoError(t, err)
+	require.EqualValues(t, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22}, res)
+	require.False(t, sf.IsCorrelated())
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
+	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode(sc))
 
-	sf = NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
+	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
-	c.Assert(ok, IsTrue)
-	c.Assert(newSf.FuncName.O, Equals, "values")
-	c.Assert(newSf.RetType.Tp, Equals, mysql.TypeLonglong)
+	require.True(t, ok)
+	require.Equal(t, "values", newSf.FuncName.O)
+	require.Equal(t, mysql.TypeLonglong, newSf.RetType.Tp)
+	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
+	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 }
 
-func (s *testEvaluatorSuite) TestIssue23309(c *C) {
+func TestIssue23309(t *testing.T) {
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -59,12 +64,13 @@ func (s *testEvaluatorSuite) TestIssue23309(c *C) {
 	null.RetType = types.NewFieldType(mysql.TypeNull)
 	sf, _ := newFunction(ast.NE, a, null).(*ScalarFunction)
 	v, err := sf.GetArgs()[1].Eval(chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.IsNull(), IsTrue)
-	c.Assert(mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().Flag), IsFalse)
+	require.NoError(t, err)
+	require.True(t, v.IsNull())
+	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().Flag))
 }
 
-func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
+func TestScalarFuncs2Exprs(t *testing.T) {
+	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -75,6 +81,6 @@ func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
 	for i := range exprs {
-		c.Assert(exprs[i].Equal(s.ctx, funcs[i]), IsTrue)
+		require.True(t, exprs[i].Equal(ctx, funcs[i]))
 	}
 }

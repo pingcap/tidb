@@ -149,19 +149,35 @@ func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
-	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
+
+	// create tiflash replica
+	{
+		is := domain.GetDomain(tk.Se).InfoSchema()
+		db, exists := is.SchemaByName(model.NewCIStr("test"))
+		c.Assert(exists, IsTrue)
+		for _, tblInfo := range db.Tables {
+			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
+				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+					Count:     1,
+					Available: true,
+				}
+			}
+		}
+	}
+	tk.MustExec("set tidb_allow_mpp=0")
+	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv"))
-	tk.MustExec("explain select max(date_add(value, interval 1 day)) from show_warnings_expr_pushdown group by a")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
+	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by date_add(value, interval 1 day)")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
+	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because groupByItems contain unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
 	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	// tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
 func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
@@ -455,6 +471,18 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
 	c.Assert(rows.Rows()[0][0].(string)[:78], check.Equals, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$")
 
+	// Creating users with `IDENTIFIED WITH 'auth-socket'`
+	tk.MustExec("CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket'")
+
+	// Compare only the start of the output as the salt changes every time.
+	rows = tk.MustQuery("SHOW CREATE USER 'sock'@'%'")
+	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+
+	tk.MustExec("CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3'")
+
+	// Compare only the start of the output as the salt changes every time.
+	rows = tk.MustQuery("SHOW CREATE USER 'sock2'@'%'")
+	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
@@ -583,6 +611,17 @@ func (s *testSuite5) TestShowOpenTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
+}
+func (s *testSuite5) TestShowCreateViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view v1 as select 1")
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
+	tk.MustExec("drop view v1")
 }
 
 func (s *testSuite5) TestShowCreateTable(c *C) {
@@ -737,20 +776,19 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
-			"PARTITION BY RANGE ( MONTH(`end_time`) ) (\n"+
-			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
-			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
-			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
-			"  PARTITION `p4` VALUES LESS THAN (5),\n"+
-			"  PARTITION `p5` VALUES LESS THAN (6),\n"+
-			"  PARTITION `p6` VALUES LESS THAN (7),\n"+
-			"  PARTITION `p7` VALUES LESS THAN (8),\n"+
-			"  PARTITION `p8` VALUES LESS THAN (9),\n"+
-			"  PARTITION `p9` VALUES LESS THAN (10),\n"+
-			"  PARTITION `p10` VALUES LESS THAN (11),\n"+
-			"  PARTITION `p11` VALUES LESS THAN (12),\n"+
-			"  PARTITION `p12` VALUES LESS THAN (MAXVALUE)\n"+
-			")"))
+			"PARTITION BY RANGE (MONTH(`end_time`))\n"+
+			"(PARTITION `p1` VALUES LESS THAN (2),\n"+
+			" PARTITION `p2` VALUES LESS THAN (3),\n"+
+			" PARTITION `p3` VALUES LESS THAN (4),\n"+
+			" PARTITION `p4` VALUES LESS THAN (5),\n"+
+			" PARTITION `p5` VALUES LESS THAN (6),\n"+
+			" PARTITION `p6` VALUES LESS THAN (7),\n"+
+			" PARTITION `p7` VALUES LESS THAN (8),\n"+
+			" PARTITION `p8` VALUES LESS THAN (9),\n"+
+			" PARTITION `p9` VALUES LESS THAN (10),\n"+
+			" PARTITION `p10` VALUES LESS THAN (11),\n"+
+			" PARTITION `p11` VALUES LESS THAN (12),\n"+
+			" PARTITION `p12` VALUES LESS THAN (MAXVALUE))"))
 
 	// for issue #11831
 	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
@@ -893,12 +931,11 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST (`id`) (\n"+
-			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
-			")"))
+			"PARTITION BY LIST (`id`)\n"+
+			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
 	// Test show list column partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
@@ -913,12 +950,11 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(id) (\n"+
-			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
-			")"))
+			"PARTITION BY LIST COLUMNS(`id`)\n"+
+			"(PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			" PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			" PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			" PARTITION `p3` VALUES IN (7,8,15,16,NULL))"))
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
     	partition p0 values in ((3, '1'), (5, '5')),
@@ -929,10 +965,9 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `name` varchar(10) DEFAULT NULL,\n"+
 			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(id,name) (\n"+
-			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
-			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
-			")"))
+			"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
+			"(PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
+			" PARTITION `p1` VALUES IN ((1,\"1\")))"))
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
@@ -942,31 +977,43 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// For issue #29922
+	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
+	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|", ""+
+		"thash CREATE TABLE `thash` (\n"+
+		"  `id` bigint(20) unsigned NOT NULL,\n"+
+		"  `data` varchar(255) DEFAULT NULL,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY HASH (`id`)\n"+
+		"(PARTITION `pEven` COMMENT 'Even ids',\n"+
+		" PARTITION `pOdd` COMMENT 'Odd ids')",
+	))
+	// empty edge case
+	tk.MustExec("drop table if exists `thash`")
+	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`);")
+	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|", ""+
+		"thash CREATE TABLE `thash` (\n"+
+		"  `id` bigint(20) unsigned NOT NULL,\n"+
+		"  `data` varchar(255) DEFAULT NULL,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY HASH (`id`) PARTITIONS 1",
+	))
 }
 
-func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
+func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
-
-	// case for direct opts
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int) " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\"")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] FOLLOWERS=2 "+
-			"CONSTRAINTS=\"[+disk=ssd]\" */",
-	))
 
 	// case for policy
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create placement policy x " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	defer tk.MustExec(`DROP PLACEMENT POLICY IF EXISTS x`)
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
@@ -986,6 +1033,133 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
+
+	// Partitioned tables
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
+	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
+	tk.MustExec("set tidb_enable_list_partition = 1")
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+		"PARTITION BY LIST (a)\n" +
+		"(PARTITION pLow VALUES in (1,2,3,5,8) COMMENT 'a comment' placement policy 'x'," +
+		" PARTITION pMid VALUES in (9) COMMENT 'another comment'," +
+		"partition pMax values IN (10,11,12))")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+		"PARTITION BY LIST (`a`)\n"+
+		"(PARTITION `pLow` VALUES IN (1,2,3,5,8) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
+		" PARTITION `pMax` VALUES IN (10,11,12))",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"PARTITION BY LIST COLUMNS (b)\n" +
+		"(PARTITION pLow VALUES in ('1','2','3','5','8') COMMENT 'a comment' placement policy 'x'," +
+		"partition pMax values IN ('10','11','12'))")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY LIST COLUMNS(`b`)\n"+
+		"(PARTITION `pLow` VALUES IN (\"1\",\"2\",\"3\",\"5\",\"8\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN (\"10\",\"11\",\"12\"))",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"PARTITION BY LIST COLUMNS (a,b)\n" +
+		"(PARTITION pLow VALUES in ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' placement policy 'x'," +
+		"partition pMax values IN ((10,'10'),(11,'11'),(12,'12')))")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
+		"(PARTITION `pLow` VALUES IN ((1,\"1\"),(2,\"2\"),(3,\"3\"),(5,\"5\"),(8,\"8\")) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN ((10,\"10\"),(11,\"11\"),(12,\"12\")))",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"PARTITION BY RANGE (a)\n" +
+		"(PARTITION pLow VALUES less than (1000000) COMMENT 'a comment' placement policy 'x'," +
+		"partition pMax values LESS THAN (MAXVALUE))")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY RANGE (`a`)\n"+
+		"(PARTITION `pLow` VALUES LESS THAN (1000000) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"PARTITION BY RANGE COLUMNS (b)\n" +
+		"(PARTITION pLow VALUES less than ('1000000') COMMENT 'a comment' placement policy 'x'," +
+		"partition pMax values LESS THAN (MAXVALUE))")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY RANGE COLUMNS(`b`)\n"+
+		"(PARTITION `pLow` VALUES LESS THAN (\"1000000\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	// RANGE COLUMNS with multiple columns is not supported!
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+		"PARTITION BY RANGE COLUMNS (a,b)\n" +
+		"(PARTITION pLow VALUES less than (1000000,'1000000') COMMENT 'a comment' placement policy 'x'," +
+		" PARTITION pMidLow VALUES less than (1000000,MAXVALUE) COMMENT 'another comment' placement policy 'x'," +
+		" PARTITION pMadMax VALUES less than (MAXVALUE,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
+		"partition pMax values LESS THAN (MAXVALUE, MAXVALUE))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
+		"PARTITION BY HASH (a) PARTITIONS 2")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`x` */\n"+
+		"PARTITION BY HASH (`a`) PARTITIONS 2",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int, b varchar(255))" +
+		"PARTITION BY HASH (a)\n" +
+		"(PARTITION pLow COMMENT 'a comment' placement policy 'x'," +
+		"partition pMax)")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+		"PARTITION BY HASH (`a`)\n"+
+		"(PARTITION `pLow` COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax`)",
+	))
+	tk.MustExec(`DROP TABLE t`)
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -1102,7 +1276,7 @@ func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
 		""+
 			"v1 CREATE TEMPORARY TABLE `v1` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop view v1")
 	err := tk.ExecToErr("show create view v1")
@@ -1207,7 +1381,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	const builtinFuncNum = 273
+	const builtinFuncNum = 274
 	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
@@ -1415,22 +1589,34 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
+func (s *testSuite5) TestShowCreatePlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	// non existent policy
+	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
+	c.Assert(err.Error(), Equals, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error())
+	// alter and try second example
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("DROP PLACEMENT POLICY xyz")
+}
+
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
 	// For issue https://github.com/pingcap/tidb/issues/24752
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
 	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
 	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
 
 	// Verify that the `show create table` result can be used to build the table.
@@ -1450,7 +1636,7 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `pad` varbinary(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 
 	tk.MustExec("create temporary table t6 (i int primary key, j int)")
@@ -1458,7 +1644,7 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
 	tk.MustExec("create temporary table t7 (i int primary key auto_increment, j int)")
 	defer func() {
@@ -1472,6 +1658,27 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
+}
+
+func (s *testSuite5) TestShowCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("alter table t1 cache")
+	tk.MustQuery("show create table t1").Check(
+		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */"))
+	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
+		testkit.Rows("cached=on"))
+
+	tk.MustExec("alter table t1 nocache")
+	tk.MustQuery("show create table t1").Check(
+		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
+		testkit.Rows(""))
 }

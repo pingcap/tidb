@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -54,7 +55,7 @@ var (
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
-	_ StmtNode = &PlanRecreatorStmt{}
+	_ StmtNode = &PlanReplayerStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -122,12 +123,23 @@ type TraceStmt struct {
 
 	Stmt   StmtNode
 	Format string
+
+	TracePlan       bool
+	TracePlanTarget string
 }
 
 // Restore implements Node interface.
 func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
-	if n.Format != "row" {
+	if n.TracePlan {
+		ctx.WriteKeyWord("PLAN ")
+		if n.TracePlanTarget != "" {
+			ctx.WriteKeyWord("TARGET")
+			ctx.WritePlain(" = ")
+			ctx.WriteString(n.TracePlanTarget)
+			ctx.WritePlain(" ")
+		}
+	} else if n.Format != "row" {
 		ctx.WriteKeyWord("FORMAT")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Format)
@@ -243,8 +255,8 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// PlanRecreatorStmt is a statement to dump or load information for recreating plans
-type PlanRecreatorStmt struct {
+// PlanReplayerStmt is a statement to dump or load information for recreating plans
+type PlanReplayerStmt struct {
 	stmtNode
 
 	Stmt    StmtNode
@@ -260,13 +272,13 @@ type PlanRecreatorStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *PlanRecreatorStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Load {
-		ctx.WriteKeyWord("PLAN RECREATOR LOAD ")
+		ctx.WriteKeyWord("PLAN REPLAYER LOAD ")
 		ctx.WriteString(n.File)
 		return nil
 	}
-	ctx.WriteKeyWord("PLAN RECREATOR DUMP EXPLAIN ")
+	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
@@ -275,37 +287,37 @@ func (n *PlanRecreatorStmt) Restore(ctx *format.RestoreCtx) error {
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
 			if err := n.Where.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Where")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Where")
 			}
 		}
 		if n.OrderBy != nil {
 			ctx.WriteKeyWord(" ")
 			if err := n.OrderBy.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.OrderBy")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.OrderBy")
 			}
 		}
 		if n.Limit != nil {
 			ctx.WriteKeyWord(" ")
 			if err := n.Limit.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Limit")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Limit")
 			}
 		}
 		return nil
 	}
 	if err := n.Stmt.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Stmt")
+		return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Stmt")
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *PlanRecreatorStmt) Accept(v Visitor) (Node, bool) {
+func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
 
-	n = newNode.(*PlanRecreatorStmt)
+	n = newNode.(*PlanReplayerStmt)
 
 	if n.Load {
 		return v.Leave(n)
@@ -1191,6 +1203,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		switch opt.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
 			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthSocket:
+			return "", true
 		default:
 			return auth.EncodePassword(opt.AuthString), true
 		}
@@ -1843,6 +1857,7 @@ const (
 	AdminShowTelemetry
 	AdminResetTelemetryID
 	AdminReloadStatistics
+	AdminFlushPlanCache
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1850,6 +1865,15 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+type StatementScope int
+
+const (
+	StatementScopeNone StatementScope = iota
+	StatementScopeSession
+	StatementScopeInstance
+	StatementScopeGlobal
+)
 
 // ShowSlowType defines the type for SlowSlow statement.
 type ShowSlowType int
@@ -1916,10 +1940,11 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges []HandleRange
-	ShowSlow     *ShowSlow
-	Plugins      []string
-	Where        ExprNode
+	HandleRanges   []HandleRange
+	ShowSlow       *ShowSlow
+	Plugins        []string
+	Where          ExprNode
+	StatementScope StatementScope
 }
 
 // Restore implements Node interface.
@@ -2057,6 +2082,14 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
+	case AdminFlushPlanCache:
+		if n.StatementScope == StatementScopeSession {
+			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
+		} else if n.StatementScope == StatementScopeInstance {
+			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
+		} else if n.StatementScope == StatementScopeGlobal {
+			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3397,6 +3430,33 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*TableOptimizerHint)
 	return v.Leave(n)
+}
+
+// TextString represent a string, it can be a binary literal.
+type TextString struct {
+	Value           string
+	IsBinaryLiteral bool
+}
+
+// TransformTextStrings converts a slice of TextString to strings.
+// This is only used by enum/set strings.
+func TransformTextStrings(ts []*TextString, _ string) []string {
+	// The UTF-8 encoding rather than other encoding is used
+	// because parser is not possible to determine the "real"
+	// charset that a binary literal string should be converted to.
+	enc := charset.EncodingUTF8Impl
+	ret := make([]string, 0, len(ts))
+	for _, t := range ts {
+		if !t.IsBinaryLiteral {
+			ret = append(ret, t.Value)
+		} else {
+			// Validate the binary literal string.
+			// See https://github.com/pingcap/tidb/issues/30740.
+			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
+			ret = append(ret, charset.HackString(r))
+		}
+	}
+	return ret
 }
 
 type BinaryLiteral interface {

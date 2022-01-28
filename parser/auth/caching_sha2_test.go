@@ -15,59 +15,60 @@ package auth
 
 import (
 	"encoding/hex"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testAuthSuite) TestCheckShaPasswordGood(c *C) {
+func TestCheckShaPasswordGood(t *testing.T) {
 	pwd := "foobar"
 	pwhash, _ := hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	r, err := CheckShaPassword(pwhash, pwd)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
+	require.NoError(t, err)
+	require.True(t, r)
 }
 
-func (s *testAuthSuite) TestCheckShaPasswordBad(c *C) {
+func TestCheckShaPasswordBad(t *testing.T) {
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	r, err := CheckShaPassword(pwhash, pwd)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	require.NoError(t, err)
+	require.False(t, r)
 }
 
-func (s *testAuthSuite) TestCheckShaPasswordShort(c *C) {
+func TestCheckShaPasswordShort(t *testing.T) {
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("aaaaaaaa")
 	_, err := CheckShaPassword(pwhash, pwd)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testAuthSuite) TestCheckShaPasswordDigetTypeIncompatible(c *C) {
+func TestCheckShaPasswordDigetTypeIncompatible(t *testing.T) {
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24422430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckShaPassword(pwhash, pwd)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testAuthSuite) TestCheckShaPasswordIterationsInvalid(c *C) {
+func TestCheckShaPasswordIterationsInvalid(t *testing.T) {
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24412430304124031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckShaPassword(pwhash, pwd)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
 // The output from NewSha2Password is not stable as the hash is based on the genrated salt.
 // This is why CheckShaPassword is used here.
-func (s *testAuthSuite) TestNewSha2Password(c *C) {
+func TestNewSha2Password(t *testing.T) {
 	pwd := "testpwd"
 	pwhash := NewSha2Password(pwd)
 	r, err := CheckShaPassword([]byte(pwhash), pwd)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
+	require.NoError(t, err)
+	require.True(t, r)
 
 	for r := range pwhash {
-		c.Assert(pwhash[r], Less, uint8(128))
-		c.Assert(pwhash[r], Not(Equals), 0)  // NUL
-		c.Assert(pwhash[r], Not(Equals), 36) // '$'
+		require.Less(t, pwhash[r], uint8(128))
+		require.NotEqual(t, pwhash[r], 0)  // NUL
+		require.NotEqual(t, pwhash[r], 36) // '$'
 	}
 }

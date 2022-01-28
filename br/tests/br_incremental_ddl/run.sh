@@ -42,14 +42,19 @@ run_sql "CREATE DATABASE ${DB};"
 run_sql "CREATE TABLE ${DB}.${TABLE}1 (c2 CHAR(255));"
 run_sql "RENAME TABLE ${DB}.${TABLE}1 to ${DB}.${TABLE};"
 run_sql "TRUNCATE TABLE ${DB}.${TABLE};"
+
+# create new table to test alter succeed after rename ddl executed.
+run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE}_rename (c CHAR(255));"
+run_sql "RENAME TABLE ${DB}.${TABLE}_rename to ${DB}.${TABLE}_rename2;"
 # insert records
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('$i');"
+    run_sql "INSERT INTO ${DB}.${TABLE}_rename2(c) VALUES ('$i');"
 done
 # incremental backup
 echo "incremental backup start..."
 last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_DIR/$DB/full" | grep -oE "^[0-9]+")
-run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/inc" --db $DB -t $TABLE --lastbackupts $last_backup_ts
+run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/inc" --db $DB --lastbackupts $last_backup_ts
 
 run_sql "DROP DATABASE $DB;"
 # full restore
@@ -63,7 +68,7 @@ if [ "${row_count_full}" != "${ROW_COUNT}" ];then
 fi
 # incremental restore
 echo "incremental restore start..."
-run_br restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR
 row_count_inc=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 # check full restore
 if [ "${row_count_inc}" != "${ROW_COUNT}" ];then
@@ -71,5 +76,6 @@ if [ "${row_count_inc}" != "${ROW_COUNT}" ];then
     exit 1
 fi
 run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('1');"
+run_sql "INSERT INTO ${DB}.${TABLE}_rename2(c) VALUES ('1');"
 
 run_sql "DROP DATABASE $DB;"

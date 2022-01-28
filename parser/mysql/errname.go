@@ -724,7 +724,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrFailedReadFromParFile:                                 Message("Failed to read from the .par file", nil),
 	ErrValuesIsNotIntType:                                    Message("VALUES value for partition '%-.64s' must have type INT", nil),
 	ErrAccessDeniedNoPassword:                                Message("Access denied for user '%-.48s'@'%-.64s'", nil),
-	ErrSetPasswordAuthPlugin:                                 Message("SET PASSWORD has no significance for users authenticating via plugins", nil),
+	ErrSetPasswordAuthPlugin:                                 Message("SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.", nil),
 	ErrGrantPluginUserExists:                                 Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
 	ErrTruncateIllegalFk:                                     Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
 	ErrPluginIsPermanent:                                     Message("Plugin '%s' is forcePlusPermanent and can not be unloaded", nil),

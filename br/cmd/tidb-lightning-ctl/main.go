@@ -20,12 +20,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -105,18 +102,18 @@ func run() error {
 	if *flagFetchMode {
 		return errors.Trace(fetchMode(ctx, cfg, tls))
 	}
-	if len(*mode) != 0 {
-		return errors.Trace(switchMode(ctx, cfg, tls, *mode))
-	}
 	if len(*flagImportEngine) != 0 {
 		return errors.Trace(importEngine(ctx, cfg, tls, *flagImportEngine))
 	}
+	if len(*mode) != 0 {
+		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode))
+	}
 	if len(*flagCleanupEngine) != 0 {
-		return errors.Trace(cleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
+		return errors.Trace(lightning.CleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
 	}
 
 	if len(*cpRemove) != 0 {
-		return errors.Trace(CheckpointRemove(ctx, cfg, *cpRemove))
+		return errors.Trace(lightning.CheckpointRemove(ctx, cfg, *cpRemove))
 	}
 	if len(*cpErrIgnore) != 0 {
 		return errors.Trace(checkpointErrorIgnore(ctx, cfg, *cpErrIgnore))
@@ -146,27 +143,6 @@ func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) er
 	)
 }
 
-func switchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
-	var m import_sstpb.SwitchMode
-	switch mode {
-	case config.ImportMode:
-		m = import_sstpb.SwitchMode_Import
-	case config.NormalMode:
-		m = import_sstpb.SwitchMode_Normal
-	default:
-		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
-	}
-
-	return tikv.ForAllStores(
-		ctx,
-		tls.WithHost(cfg.TiDB.PdAddr),
-		tikv.StoreStateDisconnected,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, m)
-		},
-	)
-}
-
 func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 	return tikv.ForAllStores(
 		ctx,
@@ -182,57 +158,6 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 			return nil
 		},
 	)
-}
-
-func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cpdb.Close()
-
-	// try to remove the metadata first.
-	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// a empty id means this task is not inited, we needn't further check metas.
-	if taskCp != nil && taskCp.TaskID != 0 {
-		// try to clean up table metas if exists
-		if err = cleanupMetas(ctx, cfg, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
-}
-
-func cleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
-	if tableName == "all" {
-		tableName = ""
-	}
-	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if tableMetaExist {
-		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
-		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
-	if err != nil || !exist {
-		return errors.Trace(err)
-	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
@@ -304,8 +229,8 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
 				_, eID := backend.MakeUUID(table.TableName, engineID)
-				file := local.File{UUID: eID}
-				err := file.Cleanup(cfg.TikvImporter.SortedKVDir)
+				engine := local.Engine{UUID: eID}
+				err := engine.Cleanup(cfg.TikvImporter.SortedKVDir)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "* Encountered error while cleanup engine:", err)
 					lastErr = err
@@ -316,7 +241,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 
 	// try clean up metas
 	if lastErr == nil {
-		lastErr = cleanupMetas(ctx, cfg, tableName)
+		lastErr = lightning.CleanupMetas(ctx, cfg, tableName)
 	}
 
 	return errors.Trace(lastErr)
@@ -329,7 +254,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	}
 	defer cpdb.Close()
 
-	if err := os.MkdirAll(dumpFolder, 0o755); err != nil {
+	if err := os.MkdirAll(dumpFolder, 0o750); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -407,33 +332,13 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	return nil
 }
 
-func unsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
 func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
 	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	ce, err := unsafeCloseEngine(ctx, importer, engine)
+	ce, err := lightning.UnsafeCloseEngine(ctx, importer, engine)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -443,18 +348,4 @@ func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engi
 		regionSplitSize = int64(config.SplitRegionSize)
 	}
 	return errors.Trace(ce.Import(ctx, regionSplitSize))
-}
-
-func cleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := unsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
 }

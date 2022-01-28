@@ -1,0 +1,548 @@
+set names utf8mb4;
+set @@sql_mode = '';
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select hex(a), hex(b), hex(c) from t;
+hex(a)	hex(b)	hex(c)
+E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+select length(a), length(b), length(c) from t;
+length(a)	length(b)	length(c)
+9	6	20
+select ascii(a), ascii(b), ascii(c) from t;
+ascii(a)	ascii(b)	ascii(c)
+228	210	228
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
+9	6	20
+set @@tidb_enable_vectorized_expression = true;
+select hex(a), hex(b), hex(c) from t;
+hex(a)	hex(b)	hex(c)
+E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+select length(a), length(b), length(c) from t;
+length(a)	length(b)	length(c)
+9	6	20
+select ascii(a), ascii(b), ascii(c) from t;
+ascii(a)	ascii(b)	ascii(c)
+228	210	228
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
+9	6	20
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
+insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ', 'àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ');
+select upper(a), upper(b) from t;
+upper(a)	upper(b)
+ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+select lower(a), lower(b) from t;
+lower(a)	lower(b)
+àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+set @@tidb_enable_vectorized_expression = true;
+select upper(a), upper(b) from t;
+upper(a)	upper(b)
+ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+select lower(a), lower(b) from t;
+lower(a)	lower(b)
+àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select to_base64(a), to_base64(b), to_base64(c) from t;
+to_base64(a)	to_base64(b)	to_base64(c)
+5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
+set @@tidb_enable_vectorized_expression = true;
+select to_base64(a), to_base64(b), to_base64(c) from t;
+to_base64(a)	to_base64(b)	to_base64(c)
+5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t(a char(10));
+insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
+set @@tidb_enable_vectorized_expression = true;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+hex(convert(a using gbk))	convert(a using gbk)
+D6D0CEC4	中文
+B0A1	啊
+61	a
+31	1
+3F	?
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+hex(convert('中文' using gbk))	convert('中文' using gbk)
+D6D0CEC4	中文
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+hex(convert('啊' using gbk))	convert('啊' using gbk)
+B0A1	啊
+select hex(convert('a' using gbk)), convert('a' using gbk);
+hex(convert('a' using gbk))	convert('a' using gbk)
+61	a
+select hex(convert('1' using gbk)), convert('1' using gbk);
+hex(convert('1' using gbk))	convert('1' using gbk)
+31	1
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+3F	?
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+hex(convert(0xe240 using gbk))	convert(0xe240 using gbk)
+E240	釦
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+hex(convert(0x1e240 using gbk))	convert(0x1e240 using gbk)
+01E240	釦
+select convert(a using binary), convert(convert(a using gbk) using binary) from t;
+convert(a using binary)	convert(convert(a using gbk) using binary)
+中文	����
+啊	��
+a	a
+1	1
+ㅂ	?
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
+����	中文
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
+?	ㅂ
+set @@tidb_enable_vectorized_expression = false;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+hex(convert(a using gbk))	convert(a using gbk)
+D6D0CEC4	中文
+B0A1	啊
+61	a
+31	1
+3F	?
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+hex(convert('中文' using gbk))	convert('中文' using gbk)
+D6D0CEC4	中文
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+hex(convert('啊' using gbk))	convert('啊' using gbk)
+B0A1	啊
+select hex(convert('a' using gbk)), convert('a' using gbk);
+hex(convert('a' using gbk))	convert('a' using gbk)
+61	a
+select hex(convert('1' using gbk)), convert('1' using gbk);
+hex(convert('1' using gbk))	convert('1' using gbk)
+31	1
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+3F	?
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+hex(convert(0xe240 using gbk))	convert(0xe240 using gbk)
+E240	釦
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+hex(convert(0x1e240 using gbk))	convert(0x1e240 using gbk)
+01E240	釦
+select convert(a using binary) from t;
+convert(a using binary)
+中文
+啊
+a
+1
+ㅂ
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
+����	中文
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
+?	ㅂ
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(a), md5(b), md5(c) from t;
+md5(a)	md5(b)	md5(c)
+8093a32450075324682d01456d6e3919	a45d4af7b243e7f393fa09bed72ac73e	aae0117857fe54811a5239275dd81133
+set @@tidb_enable_vectorized_expression = true;
+select md5(a), md5(b), md5(c) from t;
+md5(a)	md5(b)	md5(c)
+8093a32450075324682d01456d6e3919	a45d4af7b243e7f393fa09bed72ac73e	aae0117857fe54811a5239275dd81133
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
+1	1	1
+set @@tidb_enable_vectorized_expression = true;
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
+1	1	1
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select password(a), password(b), password(c) from t;
+password(a)	password(b)	password(c)
+*D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
+set @@tidb_enable_vectorized_expression = true;
+select password(a), password(b), password(c) from t;
+password(a)	password(b)	password(c)
+*D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha1(a), sha1(b), sha1(c) from t;
+sha1(a)	sha1(b)	sha1(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+select sha(a), sha(b), sha(c) from t;
+sha(a)	sha(b)	sha(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+set @@tidb_enable_vectorized_expression = true;
+select sha1(a), sha1(b), sha1(c) from t;
+sha1(a)	sha1(b)	sha1(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+select sha(a), sha(b), sha(c) from t;
+sha(a)	sha(b)	sha(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+sha2(a, 0)	sha2(b, 0)	sha2(c, 0)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+sha2(a, 224)	sha2(b, 224)	sha2(c, 224)
+ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e	2362f577783f6cd6cc10b0308f946f479fef868a39d6339b5d74cc6d	eb0de82dfada1205f65ac4aa6e4778d2f7730144f31688d42a316b9c
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+sha2(a, 256)	sha2(b, 256)	sha2(c, 256)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+sha2(a, 384)	sha2(b, 384)	sha2(c, 384)
+cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74	54e75070f1faab03e7ce808ca2824ed4614ad1d58ee1409d8c1e4fd72ecab12c92ac3a2f919721c2aa09b23e5f3cc8aa	1b526bf926dbc53609628f145a6efe2b17eb29754ba2c6e0e33673dbd79d62ea50bbfc233252f06ba27712f8bd406963
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+sha2(a, 514)	sha2(b, 514)	sha2(c, 514)
+NULL	NULL	NULL
+set @@tidb_enable_vectorized_expression = true;
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+sha2(a, 0)	sha2(b, 0)	sha2(c, 0)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+sha2(a, 224)	sha2(b, 224)	sha2(c, 224)
+ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e	2362f577783f6cd6cc10b0308f946f479fef868a39d6339b5d74cc6d	eb0de82dfada1205f65ac4aa6e4778d2f7730144f31688d42a316b9c
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+sha2(a, 256)	sha2(b, 256)	sha2(c, 256)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+sha2(a, 384)	sha2(b, 384)	sha2(c, 384)
+cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74	54e75070f1faab03e7ce808ca2824ed4614ad1d58ee1409d8c1e4fd72ecab12c92ac3a2f919721c2aa09b23e5f3cc8aa	1b526bf926dbc53609628f145a6efe2b17eb29754ba2c6e0e33673dbd79d62ea50bbfc233252f06ba27712f8bd406963
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+sha2(a, 514)	sha2(b, 514)	sha2(c, 514)
+NULL	NULL	NULL
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+md5(b)
+a45d4af7b243e7f393fa09bed72ac73e
+set @@tidb_enable_vectorized_expression = true;
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+md5(b)
+a45d4af7b243e7f393fa09bed72ac73e
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20));
+insert into t values ('65'), ('123456'), ('123456789');
+select char(a using gbk), char(a using utf8), char(a) from t;
+char(a using gbk)	char(a using utf8)	char(a)
+A	A	A
+釦		�@
+[	[	[�
+select char(12345678 using gbk);
+char(12345678 using gbk)
+糰N
+set @@tidb_enable_vectorized_expression = true;
+select char(a using gbk), char(a using utf8), char(a) from t;
+char(a using gbk)	char(a using utf8)	char(a)
+A	A	A
+釦		�@
+[	[	[�
+select char(12345678 using gbk);
+char(12345678 using gbk)
+糰N
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
+set @@tidb_enable_vectorized_expression = true;
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
+set @@tidb_enable_vectorized_expression = false;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+a	b
+E4B880E4BA8CE4B889	D2BBB6FEC8FD
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+a	b
+E4B880E4BA8CE4B889	D2BBB6FEC8FD
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+a	b
+E4B880E4BA8CE4B889	D2BBB6FEC8FD
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+a	b
+E4B880E4BA8CE4B889	D2BBB6FEC8FD
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('中文', '中文', '中文');
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = true;
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一', '一', 0xe4b880);
+insert into t values ('一', '一', 0xd2bb);
+insert into t values ('一', '一', 0xe4ba8c);
+insert into t values ('一', '一', 0xb6fe);
+set @@tidb_enable_vectorized_expression = true;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+hex(concat(a, c))	hex(concat(b, c))
+E4B880E4B8800000000000000000000000000000000000	D2BBE4B8800000000000000000000000000000000000
+E4B880D2BB000000000000000000000000000000000000	D2BBD2BB000000000000000000000000000000000000
+E4B880E4BA8C0000000000000000000000000000000000	D2BBE4BA8C0000000000000000000000000000000000
+E4B880B6FE000000000000000000000000000000000000	D2BBB6FE000000000000000000000000000000000000
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+hex(concat(a, 0xe4b880))	hex(concat(b, 0xd2bb))
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+select a = 0xe4b880, b = 0xd2bb from t;
+a = 0xe4b880	b = 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = c, b = c from t;
+a = c	b = c
+0	0
+0	0
+0	0
+0	0
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+hex(insert(a, 1, 2, 0xe4ba8c))	hex(insert(b, 1, 2, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+hex(insert(a, 1, 2, c))	hex(insert(b, 1, 2, c))
+E4B880000000000000000000000000000000000080	E4B8800000000000000000000000000000000000
+D2BB00000000000000000000000000000000000080	D2BB000000000000000000000000000000000000
+E4BA8C000000000000000000000000000000000080	E4BA8C0000000000000000000000000000000000
+B6FE00000000000000000000000000000000000080	B6FE000000000000000000000000000000000000
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+hex(lpad(a, 5, 0xe4ba8c))	hex(lpad(b, 5, 0xb6fe))
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+hex(lpad(a, 5, c))	hex(lpad(b, 5, c))
+E4B8E4B880	E4B880D2BB
+D2BBE4B880	D2BB00D2BB
+E4BAE4B880	E4BA8CD2BB
+B6FEE4B880	B6FE00D2BB
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+hex(rpad(a, 5, 0xe4ba8c))	hex(rpad(b, 5, 0xb6fe))
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+hex(rpad(a, 5, c))	hex(rpad(b, 5, c))
+E4B880E4B8	D2BBE4B880
+E4B880D2BB	D2BBD2BB00
+E4B880E4BA	D2BBE4BA8C
+E4B880B6FE	D2BBB6FE00
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+hex(elt(2, a, 0xe4ba8c))	hex(elt(2, b, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+hex(elt(2, a, c))	hex(elt(2, b, c))
+E4B8800000000000000000000000000000000000	E4B8800000000000000000000000000000000000
+D2BB000000000000000000000000000000000000	D2BB000000000000000000000000000000000000
+E4BA8C0000000000000000000000000000000000	E4BA8C0000000000000000000000000000000000
+B6FE000000000000000000000000000000000000	B6FE000000000000000000000000000000000000
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+hex(instr(a, 0xe4b880))	hex(instr(b, 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+hex(position(a in 0xe4b880))	hex(position(b in 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select a like 0xe4b880, b like 0xd2bb from t;
+a like 0xe4b880	b like 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = 0xb6fe from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select b = 0xe4ba8c from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+select concat(a, 0xb6fe) from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select concat(b, 0xe4ba8c) from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+set @@tidb_enable_vectorized_expression = false;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+hex(concat(a, c))	hex(concat(b, c))
+E4B880E4B8800000000000000000000000000000000000	D2BBE4B8800000000000000000000000000000000000
+E4B880D2BB000000000000000000000000000000000000	D2BBD2BB000000000000000000000000000000000000
+E4B880E4BA8C0000000000000000000000000000000000	D2BBE4BA8C0000000000000000000000000000000000
+E4B880B6FE000000000000000000000000000000000000	D2BBB6FE000000000000000000000000000000000000
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+hex(concat(a, 0xe4b880))	hex(concat(b, 0xd2bb))
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+select a = 0xe4b880, b = 0xd2bb from t;
+a = 0xe4b880	b = 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = c, b = c from t;
+a = c	b = c
+0	0
+0	0
+0	0
+0	0
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+hex(insert(a, 1, 2, 0xe4ba8c))	hex(insert(b, 1, 2, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+hex(insert(a, 1, 2, c))	hex(insert(b, 1, 2, c))
+E4B880000000000000000000000000000000000080	E4B8800000000000000000000000000000000000
+D2BB00000000000000000000000000000000000080	D2BB000000000000000000000000000000000000
+E4BA8C000000000000000000000000000000000080	E4BA8C0000000000000000000000000000000000
+B6FE00000000000000000000000000000000000080	B6FE000000000000000000000000000000000000
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+hex(lpad(a, 5, 0xe4ba8c))	hex(lpad(b, 5, 0xb6fe))
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+hex(lpad(a, 5, c))	hex(lpad(b, 5, c))
+E4B8E4B880	E4B880D2BB
+D2BBE4B880	D2BB00D2BB
+E4BAE4B880	E4BA8CD2BB
+B6FEE4B880	B6FE00D2BB
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+hex(rpad(a, 5, 0xe4ba8c))	hex(rpad(b, 5, 0xb6fe))
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+hex(rpad(a, 5, c))	hex(rpad(b, 5, c))
+E4B880E4B8	D2BBE4B880
+E4B880D2BB	D2BBD2BB00
+E4B880E4BA	D2BBE4BA8C
+E4B880B6FE	D2BBB6FE00
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+hex(elt(2, a, 0xe4ba8c))	hex(elt(2, b, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+hex(elt(2, a, c))	hex(elt(2, b, c))
+E4B8800000000000000000000000000000000000	E4B8800000000000000000000000000000000000
+D2BB000000000000000000000000000000000000	D2BB000000000000000000000000000000000000
+E4BA8C0000000000000000000000000000000000	E4BA8C0000000000000000000000000000000000
+B6FE000000000000000000000000000000000000	B6FE000000000000000000000000000000000000
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+hex(instr(a, 0xe4b880))	hex(instr(b, 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+hex(position(a in 0xe4b880))	hex(position(b in 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select a like 0xe4b880, b like 0xd2bb from t;
+a like 0xe4b880	b like 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = 0xb6fe from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select b = 0xe4ba8c from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+select concat(a, 0xb6fe) from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select concat(b, 0xe4ba8c) from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = true;
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB

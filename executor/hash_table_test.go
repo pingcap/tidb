@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,14 +18,15 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
@@ -82,34 +83,34 @@ func (h hashCollision) Sum(b []byte) []byte               { panic("not implement
 func (h hashCollision) Size() int                         { panic("not implemented") }
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
-func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
+func TestHashRowContainer(t *testing.T) {
 	hashFunc := fnv.New64
-	rowContainer, copiedRC := s.testHashRowContainer(c, hashFunc, false)
-	c.Assert(rowContainer.stat.probeCollision, Equals, int64(0))
+	rowContainer, copiedRC := testHashRowContainer(t, hashFunc, false)
+	require.Equal(t, int64(0), rowContainer.stat.probeCollision)
 	// On windows time.Now() is imprecise, the elapse time may equal 0
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
-	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
-	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 
-	rowContainer, copiedRC = s.testHashRowContainer(c, hashFunc, true)
-	c.Assert(rowContainer.stat.probeCollision, Equals, int64(0))
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
-	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
-	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
+	rowContainer, copiedRC = testHashRowContainer(t, hashFunc, true)
+	require.Equal(t, int64(0), rowContainer.stat.probeCollision)
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 
 	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
 		return h
 	}
-	rowContainer, copiedRC = s.testHashRowContainer(c, hashFuncCollision, false)
-	c.Assert(h.count > 0, IsTrue)
-	c.Assert(rowContainer.stat.probeCollision > int64(0), IsTrue)
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
-	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
-	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
+	rowContainer, copiedRC = testHashRowContainer(t, hashFuncCollision, false)
+	require.True(t, h.count > 0)
+	require.True(t, rowContainer.stat.probeCollision > int64(0))
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 }
 
-func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *hashRowContainer) {
+func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *hashRowContainer) {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -125,7 +126,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtx, hCtx.allTypes)
 	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
@@ -134,16 +135,16 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
 	err = rowContainer.PutChunk(chk0, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = rowContainer.PutChunk(chk1, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
-	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
-	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
+	require.Equal(t, spill, rowContainer.alreadySpilledSafeForTest())
+	require.Equal(t, spill, rowContainer.GetMemTracker().BytesConsumed() == 0)
+	require.Equal(t, !spill, rowContainer.GetMemTracker().BytesConsumed() > 0)
 	if rowContainer.alreadySpilledSafeForTest() {
-		c.Assert(rowContainer.GetDiskTracker(), NotNil)
-		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
+		require.NotNil(t, rowContainer.GetDiskTracker())
+		require.True(t, rowContainer.GetDiskTracker().BytesConsumed() > 0)
 	}
 
 	probeChk, probeColType := initProbeChunk(2)
@@ -155,9 +156,9 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
-	c.Assert(err, IsNil)
-	c.Assert(len(matched), Equals, 2)
-	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
-	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
+	require.NoError(t, err)
+	require.Equal(t, 2, len(matched))
+	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))
+	require.Equal(t, chk1.GetRow(1).GetDatumRow(colTypes), matched[1].GetDatumRow(colTypes))
 	return rowContainer, copiedRC
 }

@@ -17,6 +17,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -24,29 +25,34 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"modernc.org/mathutil"
+
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
-
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -177,6 +183,15 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	return nil
 }
 
+func isTiFlash(store *api.MetaStore) bool {
+	for _, label := range store.Labels {
+		if label.Key == "engine" && label.Value == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
 func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	passed := true
 	message := "Cluster doesn't have too many empty regions"
@@ -204,7 +219,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.Id] = store
+		stores[store.Store.StoreID] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -222,10 +237,10 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	)
 	for storeID, regionCnt := range regions {
 		if store, ok := stores[storeID]; ok {
-			if store.Store.State != metapb.StoreState_Up {
+			if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 				continue
 			}
-			if version.IsTiFlash(store.Store.Store) {
+			if isTiFlash(store.Store) {
 				continue
 			}
 			if regionCnt > errorThrehold {
@@ -267,10 +282,10 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	}
 	stores := make([]*api.StoreInfo, 0, len(result.Stores))
 	for _, store := range result.Stores {
-		if store.Store.State != metapb.StoreState_Up {
+		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
-		if version.IsTiFlash(store.Store.Store) {
+		if isTiFlash(store.Store) {
 			continue
 		}
 		stores = append(stores, store)
@@ -300,11 +315,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }
@@ -391,6 +406,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
+	errMgr := errormanager.New(nil, rc.cfg)
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
 		if !ok {
@@ -407,10 +423,17 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
-					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr); err != nil {
 						return sourceSize, errors.Trace(err)
 					}
-					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+
+					if tbl.IndexRatio > 0 {
+						sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					} else {
+						// if sample data failed due to max-error, fallback to use source size
+						sourceSize += tbl.TotalSize
+					}
+
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
 						bigTableCount += 1
 						if !tbl.IsRowOrdered {
@@ -454,33 +477,31 @@ func (rc *Controller) localResource(sourceSize int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	localAvailable := storageSize.Available
+	localAvailable := int64(storageSize.Available)
 
 	var message string
 	var passed bool
 	switch {
-	case localAvailable > uint64(sourceSize):
+	case localAvailable > sourceSize:
 		message = fmt.Sprintf("local disk resources are rich, estimate sorted data size %s, local available is %s",
 			units.BytesSize(float64(sourceSize)), units.BytesSize(float64(localAvailable)))
 		passed = true
+	case int64(rc.cfg.TikvImporter.DiskQuota) > localAvailable:
+		message = fmt.Sprintf("local disk space may not enough to finish import, estimate sorted data size is %s,"+
+			" but local available is %s, please set `tikv-importer.disk-quota` to a smaller value than %s"+
+			" or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
+		passed = false
+		log.L().Error(message)
 	default:
-		if int64(rc.cfg.TikvImporter.DiskQuota) > int64(localAvailable) {
-			message = fmt.Sprintf("local disk space may not enough to finish import"+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"you need a smaller number for tikv-importer.disk-quota (%s) to finish imports",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = false
-			log.L().Error(message)
-		} else {
-			message = fmt.Sprintf("local disk space may not enough to finish import, "+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"we will use disk-quota (size: %s) to finish imports, which may slow down import",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = true
-			log.L().Warn(message)
-		}
+		message = fmt.Sprintf("local disk space may not enough to finish import, "+
+			"estimate sorted data size is %s, but local available is %s,"+
+			"we will use disk-quota (size: %s) to finish imports, which may slow down import",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
+		passed = true
+		log.L().Warn(message)
 	}
 	rc.checkTemplate.Collect(Critical, passed, message)
 	return nil
@@ -577,7 +598,7 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
 }
 
-func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, colCnt int, err error) {
+func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
 	var reader storage.ReadSeekCloser
 	if dataFileMeta.Type == mydump.SourceTypeParquet {
 		reader, err = mydump.OpenParquetReader(ctx, rc.store, dataFileMeta.Path, dataFileMeta.FileSize)
@@ -585,7 +606,7 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 		reader, err = rc.store.Open(ctx, dataFileMeta.Path)
 	}
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	var parser mydump.Parser
@@ -596,18 +617,18 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, dataFileMeta.Path)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
@@ -616,13 +637,18 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 
 	err = parser.ReadRow()
 	if err != nil && errors.Cause(err) != io.EOF {
-		return nil, 0, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	return parser.Columns(), len(parser.LastRow().Row), nil
+	return parser.Columns(), parser.LastRow().Row, nil
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
 func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+	if len(tableInfo.DataFiles) == 0 {
+		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		return nil, nil
+	}
+
 	msgs := make([]string, 0)
 	info, ok := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
@@ -631,19 +657,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return msgs, nil
 	}
 
-	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range igCol.Columns {
-		igCols[col] = struct{}{}
-	}
-
-	if len(tableInfo.DataFiles) == 0 {
-		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
-		return nil, nil
-	}
+	igCols := igCol.ColumnsMap()
 
 	colCountFromTiDB := len(info.Core.Columns)
 	core := info.Core
@@ -658,89 +676,271 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
 	// only check the first file of this table.
-	if len(tableInfo.DataFiles) > 0 {
-		dataFile := tableInfo.DataFiles[0]
-		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
-			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
-		// get columns name from data file.
-		dataFileMeta := dataFile.FileMeta
+	dataFile := tableInfo.DataFiles[0]
+	log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
+	// get columns name from data file.
+	dataFileMeta := dataFile.FileMeta
 
-		if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
-			msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
-			return msgs, nil
-		}
-		colsFromDataFile, colCountFromDataFile, err := rc.readColumnsAndCount(ctx, dataFileMeta)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if colsFromDataFile == nil && colCountFromDataFile == 0 {
-			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
-			return msgs, nil
-		}
+	if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
+		msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
+		return msgs, nil
+	}
+	colsFromDataFile, row, err := rc.readFirstRow(ctx, dataFileMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if colsFromDataFile == nil && len(row) == 0 {
+		log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		return msgs, nil
+	}
 
-		if colsFromDataFile == nil {
-			// when there is no columns name in data file. we must insert data in order.
-			// so the last several columns either can be ignored or has a default value.
-			for i := colCountFromDataFile; i < colCountFromTiDB; i++ {
-				if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
-					msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
-						"and data file has %d columns, but column %s are missing the default value,"+
-						"please give column a default value to skip this check",
-						tableInfo.DB, tableInfo.Name, colCountFromTiDB, colCountFromDataFile, core.Columns[i].Name.L))
-				}
+	if colsFromDataFile == nil {
+		// when there is no columns name in data file. we must insert data in order.
+		// so the last several columns either can be ignored or has a default value.
+		for i := len(row); i < colCountFromTiDB; i++ {
+			if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
+					"and data file has %d columns, but column %s are missing the default value,"+
+					"please give column a default value to skip this check",
+					tableInfo.DB, tableInfo.Name, colCountFromTiDB, len(row), core.Columns[i].Name.L))
+			}
+		}
+		return msgs, nil
+	}
+
+	// compare column names and make sure
+	// 1. TiDB table info has data file's all columns(besides ignore columns)
+	// 2. Those columns not introduced in data file always have a default value.
+	colMap := make(map[string]struct{})
+	for col := range igCols {
+		colMap[col] = struct{}{}
+	}
+	for _, col := range core.Columns {
+		if _, ok := colMap[col.Name.L]; ok {
+			// tidb's column is ignored
+			// we need ensure this column has the default value.
+			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
+					"because it doesn't have a default value, please set tables.ignoreColumns properly",
+					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}
 		} else {
-			// compare column names and make sure
-			// 1. TiDB table info has data file's all columns(besides ignore columns)
-			// 2. Those columns not introduced in data file always have a default value.
-			colMap := make(map[string]struct{})
-			for col := range igCols {
-				colMap[col] = struct{}{}
-			}
-			for _, col := range core.Columns {
-				if _, ok := colMap[col.Name.L]; ok {
-					// tidb's column is ignored
-					// we need ensure this column has the default value.
-					if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
-						msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
-							"because it doesn't hava a default value, please set tables.ignoreColumns properly",
-							tableInfo.DB, tableInfo.Name, col.Name.L))
-					}
-				} else {
-					colMap[col.Name.L] = struct{}{}
-				}
-			}
-			// tidb_rowid can be ignored in check
-			colMap[model.ExtraHandleName.String()] = struct{}{}
-			for _, col := range colsFromDataFile {
-				if _, ok := colMap[col]; !ok {
-					checkMsg := "please check table schema"
-					if dataFileMeta.Type == mydump.SourceTypeCSV && rc.cfg.Mydumper.CSV.Header {
-						checkMsg += " and csv file header"
-					}
-					msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have column %s, "+
-						"%s or use tables.ignoreColumns to ignore %s",
-						tableInfo.DB, tableInfo.Name, col, checkMsg, col))
-				} else {
-					// remove column for next iteration
-					delete(colMap, col)
-				}
-			}
-			// if theses rest columns don't have a default value.
-			for col := range colMap {
-				if _, ok := defaultCols[col]; ok {
-					continue
-				}
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
-					"please give a default value for %s or choose another column to ignore or add this column in data file",
-					tableInfo.DB, tableInfo.Name, col, col))
-			}
+			colMap[col.Name.L] = struct{}{}
 		}
+	}
+	// tidb_rowid can be ignored in check
+	colMap[model.ExtraHandleName.String()] = struct{}{}
+	for _, col := range colsFromDataFile {
+		if _, ok := colMap[col]; !ok {
+			checkMsg := "please check table schema"
+			if dataFileMeta.Type == mydump.SourceTypeCSV && rc.cfg.Mydumper.CSV.Header {
+				checkMsg += " and csv file header"
+			}
+			msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have column %s, "+
+				"%s or use tables.ignoreColumns to ignore %s",
+				tableInfo.DB, tableInfo.Name, col, checkMsg, col))
+		} else {
+			// remove column for next iteration
+			delete(colMap, col)
+		}
+	}
+	// if theses rest columns don't have a default value.
+	for col := range colMap {
+		if _, ok := defaultCols[col]; ok {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s. "+
+			"Please add default value for column '%s' or choose another column to ignore or add this column in data file",
+			tableInfo.DB, tableInfo.Name, col, col))
 	}
 	return msgs, nil
 }
 
-func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+// checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
+// 1. pick one table with two CSV files and a unique/primary key
+// 2. read the first row of those two CSV files
+// 3. checks if the content of those first rows are compatible with the table schema, and whether the
+//    two rows are identical, to determine if the first rows are a header rows.
+func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
+	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
+	// return error in this situation, so we need do it again.
+	if rc.cfg.Mydumper.CSV.Header {
+		return nil
+	}
+	var (
+		tableMeta    *mydump.MDTableMeta
+		csvCount     int
+		hasUniqueIdx bool
+	)
+	// only check one table source files for better performance. The checked table is chosen based on following two factor:
+	// 1. contains at least 1 csv source file, 2 is preferable
+	// 2. table schema contains primary key or unique key
+	// if the two factors can't be both satisfied, the first one has a higher priority
+outer:
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			if len(tblMeta.DataFiles) == 0 {
+				continue
+			}
+			tableHasUniqueIdx := false
+			tableCSVCount := 0
+			for _, f := range tblMeta.DataFiles {
+				if f.FileMeta.Type == mydump.SourceTypeCSV {
+					tableCSVCount++
+					if tableCSVCount >= 2 {
+						break
+					}
+				}
+			}
+			if tableCSVCount == 0 {
+				continue
+			}
+
+			info := rc.dbInfos[tblMeta.DB].Tables[tblMeta.Name]
+			for _, idx := range info.Core.Indices {
+				if idx.Primary || idx.Unique {
+					tableHasUniqueIdx = true
+				}
+			}
+
+			if tableCSVCount >= 2 && hasUniqueIdx {
+				tableMeta = tblMeta
+				// if a perfect table source is found, we can stop check more tables
+				break outer
+			}
+			if tableCSVCount > csvCount || (tableCSVCount == csvCount && !hasUniqueIdx && tableHasUniqueIdx) {
+				tableMeta = tblMeta
+				csvCount = tableCSVCount
+				hasUniqueIdx = tableHasUniqueIdx
+			}
+		}
+	}
+
+	if tableMeta == nil {
+		return nil
+	}
+
+	var rows [][]types.Datum
+	for _, f := range tableMeta.DataFiles {
+		if f.FileMeta.Type != mydump.SourceTypeCSV {
+			continue
+		}
+		_, row, err := rc.readFirstRow(ctx, f.FileMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+		// only check at most two of all the files
+		if len(rows) >= 2 {
+			break
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	} else if len(rows) >= 2 {
+		// if the first row in two source files are not the same, they should not be the header line
+		// NOTE: though lightning's logic allows different source files contains different columns or the
+		// order is difference, here we only check if they are exactly the same because this is the common case.
+		if len(rows[0]) != len(rows[1]) {
+			return nil
+		}
+
+		for i := 0; i < len(rows[0]); i++ {
+			if rows[0][i].GetString() != rows[1][i].GetString() {
+				return nil
+			}
+		}
+	}
+
+	// check if some fields are unique and not ignored
+	// if at least one field appears in a unique key, we can sure there is something wrong,
+	// they should be either the header line or the data is duplicated.
+	tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
+	tableFields := make(map[string]struct{})
+	uniqueIdxFields := make(map[string]struct{})
+	ignoreColumns, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableMeta.DB, tableMeta.Name, rc.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ignoreColsSet := make(map[string]struct{})
+	for _, col := range ignoreColumns.Columns {
+		ignoreColsSet[col] = struct{}{}
+	}
+	for _, idx := range tableInfo.Core.Indices {
+		if !idx.Unique && !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if _, ok := ignoreColsSet[col.Name.L]; !ok {
+				uniqueIdxFields[col.Name.L] = struct{}{}
+			}
+		}
+	}
+	for _, f := range tableInfo.Core.Columns {
+		tableFields[f.Name.L] = struct{}{}
+	}
+	if common.TableHasAutoRowID(tableInfo.Core) {
+		tableFields[model.ExtraHandleName.L] = struct{}{}
+	}
+	hasUniqueField := false
+	for _, d := range rows[0] {
+		val := strings.ToLower(d.GetString())
+		if _, ok := tableFields[val]; !ok {
+			return nil
+		}
+		if _, ok := uniqueIdxFields[val]; ok {
+			hasUniqueField = true
+			break
+		}
+	}
+
+	msg := fmt.Sprintf("source csv files contains header row but `mydumper.csv.header` is false, checked table is `%s`.`%s`",
+		tableMeta.DB, tableMeta.Name)
+	level := Warn
+	if hasUniqueField && len(rows) > 1 {
+		level = Critical
+	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0]) {
+		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
+		level = Critical
+	}
+	rc.checkTemplate.Collect(level, false, msg)
+
+	return nil
+}
+
+func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{}, values []types.Datum) bool {
+	se := kv.NewSession(&kv.SessionOptions{
+		SQLMode: mysql.ModeStrictTransTables,
+	})
+	for i, col := range tbl.Columns {
+		// do not check ignored columns
+		if _, ok := ignoreCols[col.Name.L]; ok {
+			continue
+		}
+		if i >= len(values) {
+			break
+		}
+		_, err := table.CastValue(se, values[i], col, true, false)
+		if err != nil {
+			log.L().Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
+				zap.Any("column_info", col), zap.Error(err))
+			return false
+		}
+	}
+
+	return true
+}
+
+func (rc *Controller) sampleDataFromTable(
+	ctx context.Context,
+	dbName string,
+	tableMeta *mydump.MDTableMeta,
+	tableInfo *model.TableInfo,
+	errMgr *errormanager.ErrorManager,
+) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
@@ -757,13 +957,18 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -796,7 +1001,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -807,7 +1012,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
@@ -816,7 +1021,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -824,22 +1029,27 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)
 			return errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowSize += uint64(lastRow.Length)
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
-		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
-			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
-			return errors.Trace(err)
+			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+				"" /* use a empty string here because we don't actually record */, encodeErr)
+			if encodeErr != nil {
+				return errors.Annotatef(encodeErr, "in file at offset %d", offset)
+			}
+			if rowCount < maxSampleRowCount {
+				continue
+			} else {
+				break
+			}
 		}
 		if tableMeta.IsRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -855,11 +1065,13 @@ outloop:
 			indexKVs = indexKVs.Clear()
 		}
 		kvSize += kvs.Size()
+		rowSize += uint64(lastRow.Length)
+		parser.RecycleRow(lastRow)
 
 		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 			kvSize += uint64(val.(int))
 		})
-		if rowSize > maxSampleDataSize && rowCount > maxSampleRowCount {
+		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}
 	}
@@ -869,4 +1081,85 @@ outloop:
 	}
 	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return nil
+}
+
+func (rc *Controller) checkTableEmpty(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
+		return nil
+	}
+	db, _ := rc.tidbGlue.GetDB()
+
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		tableCount += len(db.Tables)
+	}
+
+	var lock sync.Mutex
+	tableNames := make([]string, 0)
+	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	ch := make(chan string, concurrency)
+	eg, gCtx := errgroup.WithContext(ctx)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for tblName := range ch {
+				// skip tables that have checkpoint
+				if rc.cfg.Checkpoint.Enable {
+					_, err := rc.checkpointsDB.Get(gCtx, tblName)
+					switch {
+					case err == nil:
+						continue
+					case errors.IsNotFound(err):
+					default:
+						return errors.Trace(err)
+					}
+				}
+
+				hasData, err1 := tableContainsData(gCtx, db, tblName)
+				if err1 != nil {
+					return err1
+				}
+				if hasData {
+					lock.Lock()
+					tableNames = append(tableNames, tblName)
+					lock.Unlock()
+				}
+			}
+			return nil
+		})
+	}
+	for _, db := range rc.dbMetas {
+		for _, tbl := range db.Tables {
+			ch <- common.UniqueTable(tbl.DB, tbl.Name)
+		}
+	}
+	close(ch)
+	if err := eg.Wait(); err != nil {
+		if common.IsContextCanceledError(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	if len(tableNames) > 0 {
+		// sort the failed names
+		sort.Strings(tableNames)
+		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
+		rc.checkTemplate.Collect(Critical, false, msg)
+	}
+	return nil
+}
+
+func tableContainsData(ctx context.Context, db utils.QueryExecutor, tableName string) (bool, error) {
+	query := "select 1 from " + tableName + " limit 1"
+	var dump int
+	err := db.QueryRowContext(ctx, query).Scan(&dump)
+
+	switch {
+	case err == sql.ErrNoRows:
+		return false, nil
+	case err != nil:
+		return false, errors.Trace(err)
+	default:
+		return true, nil
+	}
 }

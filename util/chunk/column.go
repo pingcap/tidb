@@ -68,6 +68,19 @@ type Column struct {
 	elemBuf    []byte
 }
 
+// ColumnAllocator defines an allocator for Column.
+type ColumnAllocator interface {
+	NewColumn(ft *types.FieldType, cap int) *Column
+}
+
+// DefaultColumnAllocator is the default implementation of ColumnAllocator.
+type DefaultColumnAllocator struct{}
+
+// NewColumn implements the ColumnAllocator interface.
+func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
+	return newColumn(getFixedLen(ft), cap)
+}
+
 // NewColumn creates a new column with the specific type and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
@@ -583,7 +596,7 @@ func (c *Column) GetTime(rowID int) types.Time {
 // GetDuration returns the Duration in the specific row.
 func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {

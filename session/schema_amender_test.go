@@ -19,8 +19,8 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -33,20 +33,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
-
-var _ = SerialSuites(&testSchemaAmenderSuite{})
-
-type testSchemaAmenderSuite struct {
-}
-
-func (s *testSchemaAmenderSuite) SetUpSuite(c *C) {
-}
-
-func (s *testSchemaAmenderSuite) TearDownSuite(c *C) {
-}
 
 func initTblColIdxID(metaInfo *model.TableInfo) {
 	for i, col := range metaInfo.Columns {
@@ -64,8 +54,8 @@ func initTblColIdxID(metaInfo *model.TableInfo) {
 	metaInfo.State = model.StatePublic
 }
 
-func mutationsEqual(res *transaction.PlainMutations, expected *transaction.PlainMutations, c *C) {
-	c.Assert(len(res.GetKeys()), Equals, len(expected.GetKeys()))
+func mutationsEqual(res *transaction.PlainMutations, expected *transaction.PlainMutations, t *testing.T) {
+	require.Len(t, res.GetKeys(), len(expected.GetKeys()))
 	for i := 0; i < len(res.GetKeys()); i++ {
 		foundIdx := -1
 		for j := 0; j < len(expected.GetKeys()); j++ {
@@ -74,11 +64,11 @@ func mutationsEqual(res *transaction.PlainMutations, expected *transaction.Plain
 				break
 			}
 		}
-		c.Assert(foundIdx, GreaterEqual, 0)
-		c.Assert(res.GetOps()[i], Equals, expected.GetOps()[foundIdx])
-		c.Assert(res.GetPessimisticFlags()[i], Equals, expected.GetPessimisticFlags()[foundIdx])
-		c.Assert(res.GetKeys()[i], BytesEquals, expected.GetKeys()[foundIdx])
-		c.Assert(res.GetValues()[i], BytesEquals, expected.GetValues()[foundIdx])
+		require.GreaterOrEqual(t, foundIdx, 0)
+		require.Equal(t, expected.GetOps()[foundIdx], res.GetOps()[i])
+		require.Equal(t, expected.GetPessimisticFlags()[foundIdx], res.GetPessimisticFlags()[i])
+		require.Equal(t, expected.GetKeys()[foundIdx], res.GetKeys()[i])
+		require.Equal(t, expected.GetValues()[foundIdx], res.GetValues()[i])
 	}
 }
 
@@ -91,8 +81,14 @@ type data struct {
 
 // Generate exist old data and new data in transaction to be amended. Also generate the expected amend mutations
 // according to the old and new data and the full generated expected mutations.
-func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblInfo table.Table, newTblInfo table.Table,
-	expectedAmendOps []amendOp, c *C) (*data, transaction.PlainMutations) {
+func prepareTestData(
+	se *session,
+	mutations *transaction.PlainMutations,
+	oldTblInfo table.Table,
+	newTblInfo table.Table,
+	expectedAmendOps []amendOp,
+	t *testing.T,
+) (*data, transaction.PlainMutations) {
 	var err error
 	// Generated test data.
 	colIds := make([]int64, len(oldTblInfo.Meta().Columns))
@@ -112,7 +108,7 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 	newRowValues := make([][]types.Datum, numberOfRows)
 	rd := rowcodec.Encoder{Enable: true}
 	oldData := &data{}
-	expecteMutations := transaction.NewPlainMutations(8)
+	expectedMutations := transaction.NewPlainMutations(8)
 	oldRowKvMap := make(map[string][]types.Datum)
 	newRowKvMap := make(map[string][]types.Datum)
 
@@ -132,7 +128,7 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 		rowKey := tablecodec.EncodeRowKeyWithHandle(oldTblInfo.Meta().ID, kv.IntHandle(int64(i+1)))
 		var rowValue []byte
 		rowValue, err = rd.Encode(se.sessionVars.StmtCtx, colIds, thisRowValue, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if keyOp == kvrpcpb.Op_Del || keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Lock {
 			// Skip the last Op_put, it has no old row value.
 			if i == 4 {
@@ -170,7 +166,7 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 		} else {
 			rowValue, err = rd.Encode(se.sessionVars.StmtCtx, colIds, thisRowValue, nil)
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert {
 			mutations.Push(keyOp, rowKey, rowValue, true)
 		} else if keyOp == kvrpcpb.Op_Lock {
@@ -184,7 +180,7 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 	for _, op := range expectedAmendOps {
 		var info *amendOperationAddIndexInfo
 		expectedOp, ok := op.(*amendOperationAddIndex)
-		c.Assert(ok, IsTrue)
+		require.True(t, ok)
 		info = expectedOp.info
 		var idxVal []byte
 		genIndexKV := func(inputRow []types.Datum) ([]byte, []byte) {
@@ -195,9 +191,9 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 			kvHandle := kv.IntHandle(inputRow[0].GetInt64())
 			idxKey, _, err := tablecodec.GenIndexKey(se.sessionVars.StmtCtx, newTblInfo.Meta(),
 				info.indexInfoAtCommit.Meta(), newTblInfo.Meta().ID, indexDatums, kvHandle, nil)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			idxVal, err = tablecodec.GenIndexValuePortal(se.sessionVars.StmtCtx, newTblInfo.Meta(), info.indexInfoAtCommit.Meta(), false, info.indexInfoAtCommit.Meta().Unique, false, indexDatums, kvHandle, 0, nil)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			return idxKey, idxVal
 		}
 		for i := 0; i < len(mutations.GetKeys()); i++ {
@@ -237,23 +233,23 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 			}
 			if !skipMerge {
 				if len(oldIdxKeyMutation.GetKeys()) > 0 {
-					expecteMutations.MergeMutations(oldIdxKeyMutation)
+					expectedMutations.MergeMutations(oldIdxKeyMutation)
 				}
 				if len(newIdxKeyMutation.GetKeys()) > 0 {
-					expecteMutations.MergeMutations(newIdxKeyMutation)
+					expectedMutations.MergeMutations(newIdxKeyMutation)
 				}
 			}
 		}
 	}
 
-	return oldData, expecteMutations
+	return oldData, expectedMutations
 }
 
-func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
+func TestAmendCollectAndGenMutations(t *testing.T) {
 	ctx := context.Background()
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 	se := &session{
 		store:       store,
 		sessionVars: variable.NewSessionVars(),
@@ -276,7 +272,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Indices[0] does not exist at the start.
 			oldTblMeta.Indices = oldTblMeta.Indices[1:]
 			oldTbInfo, err := table.TableFromMeta(nil, oldTblMeta)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			oldTblMeta.Indices[0].State = startState
 			oldTblMeta.Indices[2].State = endState
 			oldTblMeta.Indices[3].State = startState
@@ -296,7 +292,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			newTblMeta.Indices = newTblMeta.Indices[:len(newTblMeta.Indices)-1]
 			newTblMeta.Indices[0].Unique = false
 			newTblInfo, err := table.TableFromMeta(nil, newTblMeta)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			newTblMeta.Indices[0].State = endState
 			// Indices[1] is newly created.
 			newTblMeta.Indices[1].State = endState
@@ -309,7 +305,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			collector := newAmendCollector()
 			tblID := int64(1)
 			err = collector.collectTblAmendOps(se, tblID, oldTbInfo, newTblInfo, 1<<model.ActionAddIndex)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			logutil.BgLogger().Info("[TEST]amend ops", zap.Int("len", len(collector.tblAmendOpMap[tblID])))
 			var expectedAmendOps []amendOp
 
@@ -367,52 +363,52 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Check collect results.
 			for i, amendOp := range collector.tblAmendOpMap[tblID] {
 				op, ok := amendOp.(*amendOperationAddIndex)
-				c.Assert(ok, IsTrue)
+				require.True(t, ok)
 				expectedOp, ok := expectedAmendOps[i].(*amendOperationAddIndex)
-				c.Assert(ok, IsTrue)
+				require.True(t, ok)
 				expectedInfo := expectedOp.info
 				info := op.info
-				c.Assert(info.AmendOpType, Equals, expectedInfo.AmendOpType)
-				c.Assert(info.tblInfoAtStart, Equals, expectedInfo.tblInfoAtStart)
-				c.Assert(info.tblInfoAtCommit, Equals, expectedInfo.tblInfoAtCommit)
-				c.Assert(info.indexInfoAtStart, Equals, expectedInfo.indexInfoAtStart)
-				c.Assert(info.indexInfoAtCommit, Equals, expectedInfo.indexInfoAtCommit)
+				require.Equal(t, expectedInfo.AmendOpType, info.AmendOpType)
+				require.Equal(t, expectedInfo.tblInfoAtStart, info.tblInfoAtStart)
+				require.Equal(t, expectedInfo.tblInfoAtCommit, info.tblInfoAtCommit)
+				require.Equal(t, expectedInfo.indexInfoAtStart, info.indexInfoAtStart)
+				require.Equal(t, expectedInfo.indexInfoAtCommit, info.indexInfoAtCommit)
 				for j, col := range expectedInfo.relatedOldIdxCols {
-					c.Assert(col, Equals, info.relatedOldIdxCols[j])
+					require.Equal(t, info.relatedOldIdxCols[j], col)
 				}
 			}
 			// Generated test data.
 			mutations := transaction.NewPlainMutations(8)
-			oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, c)
+			oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, t)
 			// Prepare old data in table.
 			txnPrepare, err := se.store.Begin()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			var checkOldKeys []kv.Key
 			for i, key := range oldData.keys {
 				err = txnPrepare.Set(key, oldData.values[i])
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				checkOldKeys = append(checkOldKeys, key)
 			}
 			err = txnPrepare.Commit(ctx)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			txnCheck, err := se.store.Begin()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			snapData, err := txnCheck.GetSnapshot().Get(ctx, oldData.keys[0])
-			c.Assert(err, IsNil)
-			c.Assert(oldData.values[0], BytesEquals, snapData)
+			require.NoError(t, err)
+			require.Equal(t, snapData, oldData.values[0])
 			snapBatchData, err := txnCheck.BatchGet(ctx, checkOldKeys)
-			c.Assert(err, IsNil)
-			c.Assert(len(snapBatchData), Equals, len(oldData.keys))
+			require.NoError(t, err)
+			require.Equal(t, len(oldData.keys), len(snapBatchData))
 			err = txnCheck.Rollback()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 
 			logutil.BgLogger().Info("[TEST]finish to write old txn data")
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
 			txn, err := se.store.Begin()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			se.txn.changeInvalidToValid(txn)
 			txn, err = se.Txn(true)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			var checkKeys []kv.Key
 			for i, key := range mutations.GetKeys() {
 				val := mutations.GetValues()[i]
@@ -423,14 +419,14 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				} else if keyOp == kvrpcpb.Op_Del {
 					err = txn.Delete(key)
 				}
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 			}
 			curVer, err := se.store.CurrentVersion(kv.GlobalTxnScope)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			se.sessionVars.TxnCtx.SetForUpdateTS(curVer.Ver + 1)
 			mutationVals, err := txn.BatchGet(ctx, checkKeys)
-			c.Assert(err, IsNil)
-			c.Assert(len(mutationVals), Equals, len(checkKeys))
+			require.NoError(t, err)
+			require.Equal(t, len(checkKeys), len(mutationVals))
 			logutil.BgLogger().Info("[TEST]finish to write new txn data")
 
 			schemaAmender := NewSchemaAmenderForTikvTxn(se)
@@ -439,18 +435,18 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				idxValue := []byte("idxValue")
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
 			}
 
 			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			logutil.BgLogger().Info("[TEST]finish to amend and generate new mutations")
 
 			// Validate generated results.
-			c.Assert(len(res.GetKeys()), Equals, len(res.GetOps()))
-			c.Assert(len(res.GetValues()), Equals, len(res.GetOps()))
-			c.Assert(len(res.GetPessimisticFlags()), Equals, len(res.GetOps()))
+			require.Equal(t, len(res.GetOps()), len(res.GetKeys()))
+			require.Equal(t, len(res.GetOps()), len(res.GetValues()))
+			require.Equal(t, len(res.GetOps()), len(res.GetPessimisticFlags()))
 			for i := 0; i < len(expectedMutations.GetKeys()); i++ {
 				logutil.BgLogger().Info("[TEST] expected mutations",
 					zap.Stringer("key", kv.Key(expectedMutations.GetKeys()[i])),
@@ -467,9 +463,9 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 					zap.Bool("is_pessimistic", res.GetPessimisticFlags()[i]),
 				)
 			}
-			mutationsEqual(res, &expectedMutations, c)
+			mutationsEqual(res, &expectedMutations, t)
 			err = txn.Rollback()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			logutil.BgLogger().Info("[TEST]<<<<<<end test round", zap.Stringer("start", startState), zap.Stringer("end", endState))
 		}
 	}

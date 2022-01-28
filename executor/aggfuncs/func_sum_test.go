@@ -15,7 +15,9 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -23,27 +25,32 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-func (s *testSuite) TestMergePartialResult4Sum(c *C) {
+func TestMergePartialResult4Sum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
 	}
-	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
+			testMergePartialResult(t, test)
+		})
 	}
 }
 
-func (s *testSuite) TestSum(c *C) {
+func TestSum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
 	}
-	for _, test := range tests {
-		s.testAggFunc(c, test)
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
+			testAggFunc(t, test)
+		})
 	}
 }
 
-func (s *testSuite) TestMemSum(c *C) {
+func TestMemSum(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false),
@@ -54,7 +61,10 @@ func (s *testSuite) TestMemSum(c *C) {
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDistinctDecimalSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
-	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, i), func(t *testing.T) {
+			testAggMemFunc(t, test)
+		})
 	}
 }

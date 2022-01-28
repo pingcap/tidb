@@ -14,6 +14,7 @@
 * [Test Design](#test-design)
 * [Implementation Plan](#implementation-plan)
   * [Appendix #1 - tidb_experimental_feature_switch documentation](#appendix-1---tidb_experimental_feature_switch-documentation)
+  * [Appendix #2 - Removed system variables](#appendix-2---removed-system-variables)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
@@ -38,7 +39,6 @@ There are currently ~20 hidden system variables:
 | tidb_enable_pipelined_window_function | ‘Pipelined window function’ feature | #1 Stable |
 | tidb_enable_change_multi_schema | ‘Change multi schema in one statement’ feature. | #3 In Development Feature |
 | tidb_enable_point_get_cache | ‘point get cache’ feature | #2 Experimental |
-| tidb_enable_alter_placement | placement rules in SQL feature | #3 In Development Feature |
 | tidb_enable_extended_stats | ‘extended stats’ feature | #2 Experimental |
 | tidb_partition_prune_mode | Is partition prune mode dynamic or static | #2 Experimental |
 | tidb_enable_async_commit | Support Async Commit PRD  | #1 Stable |
@@ -50,10 +50,8 @@ There are currently ~20 hidden system variables:
 | tidb_track_aggregate_memory_usage | Track memory usage of aggregate executor | #1 Stable |
 | tidb_enable_top_sql | Top SQL (Sprint3) 总设计文档  | #2 Experimental |
 | tidb_top_sql_agent_address | Parameters for Top SQL | #4 Non-boolean Experimental |
-| tidb_top_sql_precision_seconds | "" | #4 Non-boolean Experimental  |
-| tidb_top_sql_max_statement_count | "" | #4 Non-boolean Experimental |
-| tidb_top_sql_max_collect | "" | #4 Non-boolean Experimental |
-| tidb_top_sql_report_interval_seconds | "" | #4 Non-boolean Experimental |
+| tidb_top_sql_max_time_series_count | "" | #4 Non-boolean Experimental |
+| tidb_top_sql_max_meta_count | "" | #4 Non-boolean Experimental |
 
 
 ## Detailed Design
@@ -154,6 +152,17 @@ Individual values can be changed by specifying a comma separated list. For examp
 > Be careful when enabling experimental features. Your TiDB server installation may include additional experimental features not listed here, and enabling them may result in data loss.
 > The experimental feature switch is settable on both a SESSION and GLOBAL basis, but some experiments might only be available globally. In which case changes to the session have no effect.
 
+#### Appendix #2 - Removed system variables
+
+For existing experimental flags, the procedure to remove the flag once the feature is GA is problematic since here could be users that have applications that explicitly enable the feature which now break.
+
+This proposes that we support "removed system variables" by the sysvar framework. A removed sysvar:
+
+* Is settable via a `SET` statement
+* Returns an error for `SELECT @@var` queries
+* Is not visible in `SHOW VARIABLES` output
+
+This helps accommodate one of the main use cases (phantom `SET` statements in application code) while not returning inaccurate or out of date data.
 
 ## Test Design
 

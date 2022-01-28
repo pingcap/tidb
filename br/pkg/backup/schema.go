@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -32,7 +31,7 @@ const (
 	DefaultSchemaConcurrency = 64
 )
 
-type scheamInfo struct {
+type schemaInfo struct {
 	tableInfo  *model.TableInfo
 	dbInfo     *model.DBInfo
 	crc64xor   uint64
@@ -44,12 +43,12 @@ type scheamInfo struct {
 // Schemas is task for backuping schemas.
 type Schemas struct {
 	// name -> schema
-	schemas map[string]*scheamInfo
+	schemas map[string]*schemaInfo
 }
 
 func newBackupSchemas() *Schemas {
 	return &Schemas{
-		schemas: make(map[string]*scheamInfo),
+		schemas: make(map[string]*schemaInfo),
 	}
 }
 
@@ -58,7 +57,7 @@ func (ss *Schemas) addSchema(
 ) {
 	name := fmt.Sprintf("%s.%s",
 		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
-	ss.schemas[name] = &scheamInfo{
+	ss.schemas[name] = &schemaInfo{
 		tableInfo: tableInfo,
 		dbInfo:    dbInfo,
 	}
@@ -89,10 +88,13 @@ func (ss *Schemas) BackupSchemas(
 	metaWriter.StartWriteMetasAsync(ctx, op)
 	for _, s := range ss.schemas {
 		schema := s
+		// Because schema.dbInfo is a pointer that many tables point to.
+		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
+		if utils.IsSysDB(schema.dbInfo.Name.L) {
+			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
+		}
+
 		workerPool.ApplyOnErrorGroup(errg, func() error {
-			if utils.IsSysDB(schema.dbInfo.Name.L) {
-				schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
-			}
 			logger := log.With(
 				zap.String("db", schema.dbInfo.Name.O),
 				zap.String("table", schema.tableInfo.Name.O),
@@ -101,53 +103,27 @@ func (ss *Schemas) BackupSchemas(
 			if !skipChecksum {
 				logger.Info("table checksum start")
 				start := time.Now()
-				checksumResp, err := calculateChecksum(
-					ectx, schema.tableInfo, store.GetClient(), backupTS, copConcurrency)
+				err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				schema.crc64xor = checksumResp.Checksum
-				schema.totalKvs = checksumResp.TotalKvs
-				schema.totalBytes = checksumResp.TotalBytes
 				logger.Info("table checksum finished",
-					zap.Uint64("Crc64Xor", checksumResp.Checksum),
-					zap.Uint64("TotalKvs", checksumResp.TotalKvs),
-					zap.Uint64("TotalBytes", checksumResp.TotalBytes),
+					zap.Uint64("Crc64Xor", schema.crc64xor),
+					zap.Uint64("TotalKvs", schema.totalKvs),
+					zap.Uint64("TotalBytes", schema.totalBytes),
 					zap.Duration("take", time.Since(start)))
 			}
 			if statsHandle != nil {
-				jsonTable, err := statsHandle.DumpStatsToJSON(
-					schema.dbInfo.Name.String(), schema.tableInfo, nil)
-				if err != nil {
+				if err := schema.dumpStatsToJSON(statsHandle); err != nil {
 					logger.Error("dump table stats failed", logutil.ShortError(err))
 				}
-				schema.stats = jsonTable
-			}
-			// Send schema to metawriter
-			dbBytes, err := json.Marshal(schema.dbInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tableBytes, err := json.Marshal(schema.tableInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			var statsBytes []byte
-			if schema.stats != nil {
-				statsBytes, err = json.Marshal(schema.stats)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			s := &backuppb.Schema{
-				Db:         dbBytes,
-				Table:      tableBytes,
-				Crc64Xor:   schema.crc64xor,
-				TotalKvs:   schema.totalKvs,
-				TotalBytes: schema.totalBytes,
-				Stats:      statsBytes,
 			}
 
+			// Send schema to metawriter
+			s, err := schema.encodeToSchema()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			if err := metaWriter.Send(s, op); err != nil {
 				return errors.Trace(err)
 			}
@@ -168,24 +144,68 @@ func (ss *Schemas) Len() int {
 	return len(ss.schemas)
 }
 
-func calculateChecksum(
+func (s *schemaInfo) calculateChecksum(
 	ctx context.Context,
-	table *model.TableInfo,
 	client kv.Client,
 	backupTS uint64,
 	concurrency uint,
-) (*tipb.ChecksumResponse, error) {
-	exe, err := checksum.NewExecutorBuilder(table, backupTS).
+) error {
+	exe, err := checksum.NewExecutorBuilder(s.tableInfo, backupTS).
 		SetConcurrency(concurrency).
 		Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
+
 	checksumResp, err := exe.Execute(ctx, client, func() {
 		// TODO: update progress here.
 	})
 	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.crc64xor = checksumResp.Checksum
+	s.totalKvs = checksumResp.TotalKvs
+	s.totalBytes = checksumResp.TotalBytes
+	return nil
+}
+
+func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
+	jsonTable, err := statsHandle.DumpStatsToJSON(
+		s.dbInfo.Name.String(), s.tableInfo, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.stats = jsonTable
+	return nil
+}
+
+func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
+	dbBytes, err := json.Marshal(s.dbInfo)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return checksumResp, nil
+
+	tableBytes, err := json.Marshal(s.tableInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var statsBytes []byte
+	if s.stats != nil {
+		statsBytes, err = json.Marshal(s.stats)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return &backuppb.Schema{
+		Db:         dbBytes,
+		Table:      tableBytes,
+		Crc64Xor:   s.crc64xor,
+		TotalKvs:   s.totalKvs,
+		TotalBytes: s.totalBytes,
+		Stats:      statsBytes,
+	}, nil
 }

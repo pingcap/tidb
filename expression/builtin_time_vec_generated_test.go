@@ -20,7 +20,6 @@ import (
 	"math"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -35,7 +34,7 @@ func (g gener) gen() interface{} {
 	if _, ok := result.(string); ok {
 		dg := newDefaultGener(0, types.ETDuration)
 		d := dg.gen().(types.Duration)
-		if int8(d.Duration)%2 == 0 {
+		if d.Duration%2 == 0 {
 			d.Fsp = 0
 		} else {
 			d.Fsp = 1
@@ -288,7 +287,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 	ast.AddDate: {
 		// builtinAddDateStringStringSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -298,7 +297,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -308,7 +307,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -318,7 +317,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -328,7 +327,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -338,7 +337,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -348,7 +347,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -358,7 +357,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -368,7 +367,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -378,7 +377,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -388,7 +387,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -398,7 +397,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -408,7 +407,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -418,7 +417,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -428,7 +427,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -438,7 +437,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -448,7 +447,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -458,7 +457,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -468,7 +467,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -478,7 +477,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -489,7 +488,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateStringIntSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -499,7 +498,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -509,7 +508,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -519,7 +518,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -529,7 +528,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -539,7 +538,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -549,7 +548,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -559,7 +558,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -569,7 +568,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -579,7 +578,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -589,7 +588,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -599,7 +598,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -609,7 +608,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -619,7 +618,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -629,7 +628,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -639,7 +638,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -649,7 +648,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -659,7 +658,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -669,7 +668,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -679,7 +678,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -690,7 +689,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateStringRealSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -700,7 +699,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -710,7 +709,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -720,7 +719,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -730,7 +729,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -740,7 +739,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -750,7 +749,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -760,7 +759,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -770,7 +769,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -780,7 +779,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -790,7 +789,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -800,7 +799,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -810,7 +809,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -820,7 +819,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -830,7 +829,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -840,7 +839,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -850,7 +849,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -860,7 +859,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -870,7 +869,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -880,7 +879,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -891,7 +890,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateStringDecimalSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -901,7 +900,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -911,7 +910,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -921,7 +920,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -931,7 +930,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -941,7 +940,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -951,7 +950,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -961,7 +960,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -971,7 +970,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -981,7 +980,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -991,7 +990,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1001,7 +1000,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1011,7 +1010,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1021,7 +1020,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1031,7 +1030,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1041,7 +1040,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1051,7 +1050,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1061,7 +1060,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1071,7 +1070,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -1081,7 +1080,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3507,7 +3506,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 	ast.SubDate: {
 		// builtinSubDateStringStringSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3517,7 +3516,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3527,7 +3526,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3537,7 +3536,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3547,7 +3546,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3557,7 +3556,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3567,7 +3566,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3577,7 +3576,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3587,7 +3586,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3597,7 +3596,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3607,7 +3606,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3617,7 +3616,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3627,7 +3626,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3637,7 +3636,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3647,7 +3646,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3657,7 +3656,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3667,7 +3666,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3677,7 +3676,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3687,7 +3686,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3697,7 +3696,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3708,7 +3707,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinSubDateStringIntSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3718,7 +3717,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3728,7 +3727,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3738,7 +3737,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3748,7 +3747,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3758,7 +3757,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3768,7 +3767,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3778,7 +3777,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3788,7 +3787,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3798,7 +3797,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3808,7 +3807,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3818,7 +3817,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3828,7 +3827,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3838,7 +3837,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3848,7 +3847,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3858,7 +3857,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3868,7 +3867,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3878,7 +3877,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3888,7 +3887,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3898,7 +3897,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3909,7 +3908,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinSubDateStringRealSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3919,7 +3918,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3929,7 +3928,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3939,7 +3938,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3949,7 +3948,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3959,7 +3958,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3969,7 +3968,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3979,7 +3978,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3989,7 +3988,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -3999,7 +3998,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4009,7 +4008,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4019,7 +4018,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4029,7 +4028,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4039,7 +4038,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4049,7 +4048,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4059,7 +4058,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4069,7 +4068,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4079,7 +4078,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4089,7 +4088,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4099,7 +4098,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4110,7 +4109,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinSubDateStringDecimalSig
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4120,7 +4119,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4130,7 +4129,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4140,7 +4139,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4150,7 +4149,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4160,7 +4159,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4170,7 +4169,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4180,7 +4179,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4190,7 +4189,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4200,7 +4199,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4210,7 +4209,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4220,7 +4219,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4230,7 +4229,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4240,7 +4239,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4250,7 +4249,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4260,7 +4259,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4270,7 +4269,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4280,7 +4279,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4290,7 +4289,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -4300,7 +4299,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 			chunkSize: 128,
 		},
 		{
-			retEvalType:   types.ETDatetime,
+			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
@@ -6724,12 +6723,12 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinTimeEvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinTimeGeneratedCases)
+func TestVectorizedBuiltinTimeEvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinTimeGeneratedCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinTimeFuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinTimeGeneratedCases)
+func TestVectorizedBuiltinTimeFuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinTimeGeneratedCases)
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVecGenerated(b *testing.B) {

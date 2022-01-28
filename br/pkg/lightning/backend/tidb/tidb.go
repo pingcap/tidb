@@ -84,6 +84,9 @@ type tidbEncoder struct {
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
+	// the max index used in this chunk, due to the ignore-columns config, we can't
+	// directly check the total column count, so we fall back to only check that
+	// the there are enough columns.
 	columnCnt int
 }
 
@@ -284,22 +287,27 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
-		columnCount := 0
+		columnMaxIdx := -1
 		columnIdx := make([]int, len(columnPermutation))
+		for i := 0; i < len(columnPermutation); i++ {
+			columnIdx[i] = -1
+		}
 		for i, idx := range columnPermutation {
 			if idx >= 0 {
 				columnIdx[idx] = i
-				columnCount++
+				if idx > columnMaxIdx {
+					columnMaxIdx = idx
+				}
 			}
 		}
 		enc.columnIdx = columnIdx
-		enc.columnCnt = columnCount
+		enc.columnCnt = columnMaxIdx + 1
 	}
 
 	// TODO: since the column count doesn't exactly reflect the real column names, we only check the upper bound currently.
 	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
 	// column permutation with default, thus enc.columnCnt > len(row).
-	if len(row) > enc.columnCnt {
+	if len(row) < enc.columnCnt {
 		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", kv.RowArrayMarshaler(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
@@ -308,8 +316,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
+	cnt := 0
 	for i, field := range row {
-		if i != 0 {
+		if enc.columnIdx[i] < 0 {
+			continue
+		}
+		if cnt > 0 {
 			encoded.WriteByte(',')
 		}
 		datum := field
@@ -321,6 +333,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 			)
 			return nil, err
 		}
+		cnt++
 	}
 	encoded.WriteByte(')')
 	return tidbRow{
@@ -331,14 +344,17 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 }
 
 // EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
-func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum) string {
+func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
 	enc := tidbEncoder{
 		tbl:  encTable,
 		mode: sqlMode,
 	}
-	resRow, err := enc.Encode(log.L(), row, 0, nil, "", 0)
+	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
 	if err != nil {
-		return fmt.Sprintf("/* ERROR: %s */", err)
+		// if encode can't succeed, fallback to record the raw input strings
+		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
+		datumStr, _ := types.DatumsToString(row, true)
+		return datumStr
 	}
 	return resRow.(tidbRow).insertStmt
 }
@@ -394,12 +410,16 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
@@ -416,9 +436,9 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
-			default:
+			case be.errorMgr.TypeErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
@@ -426,6 +446,9 @@ rowLoop:
 					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
 					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
 				}
+				continue rowLoop
+			default:
+				return err
 			}
 		}
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
@@ -529,7 +552,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
@@ -565,7 +588,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, extra
+			SELECT table_name, column_name, column_type, generation_expression, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
@@ -581,8 +604,8 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName, columnType, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &columnExtra); e != nil {
+			var tableName, columnName, columnType, generationExpr, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -611,6 +634,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 				FieldType: types.FieldType{
 					Flag: flag,
 				},
+				GeneratedExprString: generationExpr,
 			})
 			curColOffset++
 		}
@@ -677,8 +701,7 @@ func (be *tidbBackend) LocalWriter(
 }
 
 type Writer struct {
-	be       *tidbBackend
-	errorMgr *errormanager.ErrorManager
+	be *tidbBackend
 }
 
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {

@@ -33,9 +33,15 @@ type Glue interface {
 // Session is an abstraction of the session.Session interface.
 type Session interface {
 	Execute(ctx context.Context, sql string) error
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
 	Close()
+}
+
+// BatchCreateTableSession is an interface to batch create table parallelly
+type BatchCreateTableSession interface {
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error
 }
 
 // Progress is an interface recording the current execution progress.

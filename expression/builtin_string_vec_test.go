@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -238,19 +237,19 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 	},
@@ -329,6 +328,12 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETString},
 			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charInt64Gener{}, nil},
+			constants:     []*Constant{nil, nil, nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETString},
+			geners:        []dataGenerator{&charInt64Gener{}, nil, &charInt64Gener{}, nil},
 			constants:     []*Constant{nil, nil, nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
@@ -529,12 +534,12 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinStringCases)
+func TestVectorizedBuiltinStringEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinStringCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinStringCases)
+func TestVectorizedBuiltinStringFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinStringCases)
 }
 
 func BenchmarkVectorizedBuiltinStringEvalOneVec(b *testing.B) {
@@ -545,12 +550,12 @@ func BenchmarkVectorizedBuiltinStringFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec2(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinStringCases2)
+func TestVectorizedBuiltinStringEvalOneVec2(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinStringCases2)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc2(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinStringCases2)
+func TestVectorizedBuiltinStringFunc2(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinStringCases2)
 }
 
 func BenchmarkVectorizedBuiltinStringEvalOneVec2(b *testing.B) {

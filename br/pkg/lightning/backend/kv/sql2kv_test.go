@@ -17,8 +17,9 @@ package kv
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -35,19 +36,20 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-func (s *kvSuite) TestMarshal(c *C) {
+func TestMarshal(t *testing.T) {
 	nullDatum := types.Datum{}
 	nullDatum.SetNull()
 	minNotNull := types.Datum{}
 	minNotNull.SetMinNotNull()
 	encoder := zapcore.NewMapObjectEncoder()
 	err := encoder.AddArray("test", RowArrayMarshaler{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()})
-	c.Assert(err, IsNil)
-	c.Assert(encoder.Fields["test"], DeepEquals, []interface{}{
+	require.NoError(t, err)
+	require.Equal(t, encoder.Fields["test"], []interface{}{
 		map[string]interface{}{"kind": "string", "val": "1"},
 		map[string]interface{}{"kind": "null", "val": "NULL"},
 		map[string]interface{}{"kind": "min", "val": "-inf"},
@@ -57,8 +59,8 @@ func (s *kvSuite) TestMarshal(c *C) {
 	invalid := types.Datum{}
 	invalid.SetInterface(1)
 	err = encoder.AddArray("bad-test", RowArrayMarshaler{minNotNull, invalid})
-	c.Assert(err, ErrorMatches, "cannot convert.*")
-	c.Assert(encoder.Fields["bad-test"], DeepEquals, []interface{}{
+	require.Regexp(t, "cannot convert.*", err)
+	require.Equal(t, encoder.Fields["bad-test"], []interface{}{
 		map[string]interface{}{"kind": "min", "val": "-inf"},
 	})
 }
@@ -71,12 +73,12 @@ func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...tabl
 	return kv.IntHandle(-1), errors.New("mock error")
 }
 
-func (s *kvSuite) TestEncode(c *C) {
+func TestEncode(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
 	rows := []types.Datum{
@@ -88,30 +90,29 @@ func (s *kvSuite) TestEncode(c *C) {
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, ErrorMatches, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
-	c.Assert(pairs, IsNil)
+	require.Regexp(t, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint", err)
+	require.Nil(t, pairs)
 
 	rowsWithPk := []types.Datum{
 		types.NewIntDatum(1),
 		types.NewStringDatum("invalid-pk"),
 	}
 	_, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, ErrorMatches, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*")
+	require.Regexp(t, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*", err)
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
 		types.NewStringDatum("1"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			Val:    []uint8{0x8, 0x2, 0x8, 0x2},
-			RowID:  2,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Val:   []uint8{0x8, 0x2, 0x8, 0x2},
+			RowID: 2,
 		},
 	}})
 
@@ -121,9 +122,9 @@ func (s *kvSuite) TestEncode(c *C) {
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567891,
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, ErrorMatches, "mock error")
+	require.EqualError(t, err, "mock error")
 
 	// Non-strict mode
 	noneMode, err := NewTableKVEncoder(tbl, &SessionOptions{
@@ -131,44 +132,46 @@ func (s *kvSuite) TestEncode(c *C) {
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "1"},
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			Val:    []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
-			RowID:  1,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Val:   []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
+			RowID: 1,
 		},
 	}})
 }
 
-func (s *kvSuite) TestDecode(c *C) {
+func TestDecode(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
-	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
+	require.NoError(t, err)
+	decoder, err := NewTableKVDecoder(tbl, "`test`.`c1`", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
-	c.Assert(decoder, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, decoder)
+	require.Equal(t, decoder.Name(), "`test`.`c1`")
 	p := common.KvPair{
 		Key: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 		Val: []byte{0x8, 0x2, 0x8, 0x2},
 	}
-	h, err := decoder.DecodeHandleFromTable(p.Key)
-	c.Assert(err, IsNil)
-	c.Assert(p.Val, NotNil)
+	h, err := decoder.DecodeHandleFromRowKey(p.Key)
+	require.NoError(t, err)
+	require.NotNil(t, p.Val)
 	rows, _, err := decoder.DecodeRawRowData(h, p.Val)
-	c.Assert(rows, DeepEquals, []types.Datum{
+	require.NoError(t, err)
+	require.Equal(t, rows, []types.Datum{
 		types.NewIntDatum(1),
 	})
 }
 
-func (s *kvSuite) TestDecodeIndex(c *C) {
+func TestDecodeIndex(t *testing.T) {
 	logger := log.Logger{Logger: zap.NewNop()}
 	tblInfo := &model.TableInfo{
 		ID: 1,
@@ -195,7 +198,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 	if err != nil {
 		fmt.Printf("error: %v", err.Error())
 	}
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rows := []types.Datum{
 		types.NewIntDatum(2),
 		types.NewStringDatum("abc"),
@@ -206,34 +209,34 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1, -1}, "1.csv", 123)
 	data := pairs.(*KvPairs)
-	c.Assert(len(data.pairs), DeepEquals, 2)
+	require.Len(t, data.pairs, 2)
 
-	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
+	decoder, err := NewTableKVDecoder(tbl, "`test`.``", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
-	c.Assert(err, IsNil)
-	h1, err := decoder.DecodeHandleFromTable(data.pairs[0].Key)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	h1, err := decoder.DecodeHandleFromRowKey(data.pairs[0].Key)
+	require.NoError(t, err)
 	h2, err := decoder.DecodeHandleFromIndex(tbl.Indices()[0].Meta(), data.pairs[1].Key, data.pairs[1].Val)
-	c.Assert(err, IsNil)
-	c.Assert(h1.Equal(h2), IsTrue)
+	require.NoError(t, err)
+	require.True(t, h1.Equal(h2))
 	rawData, _, err := decoder.DecodeRawRowData(h1, data.pairs[0].Val)
-	c.Assert(err, IsNil)
-	c.Assert(rawData, DeepEquals, rows)
+	require.NoError(t, err)
+	require.Equal(t, rawData, rows)
 }
 
-func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
+func TestEncodeRowFormatV2(t *testing.T) {
 	// Test encoding in row format v2, as described in <https://github.com/pingcap/tidb/blob/master/docs/design/2018-07-19-row-format.md>.
 
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
 	rows := []types.Datum{
@@ -245,10 +248,10 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "2"},
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
 			// the key should be the same as TestEncode()
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -261,13 +264,12 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 				0x1, 0x0, // not null offsets = [1]
 				0x7f, // column version = 127 (10000000 clamped to TINYINT)
 			},
-			RowID:  1,
-			Offset: 1234,
+			RowID: 1,
 		},
 	}})
 }
 
-func (s *kvSuite) TestEncodeTimestamp(c *C) {
+func TestEncodeTimestamp(t *testing.T) {
 	ty := *types.NewFieldType(mysql.TypeDatetime)
 	ty.Flag |= mysql.NotNullFlag
 	c1 := &model.ColumnInfo{
@@ -282,7 +284,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
@@ -294,23 +296,22 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 			"time_zone":               "+08:00",
 		},
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
-			Val:    []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
-			RowID:  70,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val:   []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
+			RowID: 70,
 		},
 	}})
 }
 
-func (s *kvSuite) TestEncodeDoubleAutoIncrement(c *C) {
-	tblInfo := mockTableInfo(c, "create table t (id double not null auto_increment, unique key `u_id` (`id`));")
+func TestEncodeDoubleAutoIncrement(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id double not null auto_increment, unique key `u_id` (`id`));")
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
@@ -320,150 +321,142 @@ func (s *kvSuite) TestEncodeDoubleAutoIncrement(c *C) {
 			"tidb_row_format_version": "2",
 		},
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pairs, err := encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("1"),
 	}, 70, []int{0, -1}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
-			Val:    []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x8, 0x0, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-			RowID:  70,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val:   []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x8, 0x0, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			RowID: 70,
 		},
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-			Val:    []uint8{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
-			RowID:  70,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			Val:   []uint8{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			RowID: 70,
 		},
 	}})
-	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoIncrementType).Base(), Equals, int64(70))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoIncrementType).Base(), int64(70))
 }
 
-func mockTableInfo(c *C, createSQL string) *model.TableInfo {
+func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
 	parser := parser.New()
 	node, err := parser.ParseOneStmt(createSQL, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sctx := mock.NewContext()
 	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	info.State = model.StatePublic
 	return info
 }
 
-func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
-	tblInfo := mockTableInfo(c, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
+func TestDefaultAutoRandoms(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
 	// seems parser can't parse auto_random properly.
 	tblInfo.AutoRandomBits = 5
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
 		AutoRandomSeed: 456,
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
-			Val:    []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
-			RowID:  70,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val:   []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+			RowID: 70,
 		},
 	}})
-	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(70))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(70))
 
 	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, "1.csv", 1234)
-	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
+	require.NoError(t, err)
+	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
 		{
-			Key:    []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x47},
-			Val:    []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
-			RowID:  71,
-			Offset: 1234,
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x47},
+			Val:   []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+			RowID: 71,
 		},
 	}})
-	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(71))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(71))
 }
 
-func (s *kvSuite) TestShardRowId(c *C) {
-	tblInfo := mockTableInfo(c, "create table t (s varchar(16)) shard_row_id_bits = 3;")
+func TestShardRowId(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (s varchar(16)) shard_row_id_bits = 3;")
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
 		AutoRandomSeed: 456,
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 	keyMap := make(map[int64]struct{}, 16)
 	for i := int64(1); i <= 32; i++ {
 		pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum(fmt.Sprintf("%d", i))}, i, []int{0, -1}, "1.csv", i*32)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		kvs := pairs.(*KvPairs)
-		c.Assert(len(kvs.pairs), Equals, 1)
+		require.Len(t, kvs.pairs, 1)
 		_, h, err := tablecodec.DecodeRecordKey(kvs.pairs[0].Key)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		rowID := h.IntValue()
-		c.Assert(rowID&((1<<60)-1), Equals, i)
+		require.Equal(t, rowID&((1<<60)-1), i)
 		keyMap[rowID>>60] = struct{}{}
 	}
-	c.Assert(len(keyMap), Equals, 8)
-	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.RowIDAllocType).Base(), Equals, int64(32))
+	require.Len(t, keyMap, 8)
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.RowIDAllocType).Base(), int64(32))
 }
 
-func (s *kvSuite) TestSplitIntoChunks(c *C) {
+func TestSplitIntoChunks(t *testing.T) {
 	pairs := []common.KvPair{
 		{
-			Key:    []byte{1, 2, 3},
-			Val:    []byte{4, 5, 6},
-			Offset: 1000,
+			Key: []byte{1, 2, 3},
+			Val: []byte{4, 5, 6},
 		},
 		{
-			Key:    []byte{7, 8},
-			Val:    []byte{9, 0},
-			Offset: 2000,
+			Key: []byte{7, 8},
+			Val: []byte{9, 0},
 		},
 		{
-			Key:    []byte{1, 2, 3, 4},
-			Val:    []byte{5, 6, 7, 8},
-			Offset: 3000,
+			Key: []byte{1, 2, 3, 4},
+			Val: []byte{5, 6, 7, 8},
 		},
 		{
-			Key:    []byte{9, 0},
-			Val:    []byte{1, 2},
-			Offset: 4000,
+			Key: []byte{9, 0},
+			Val: []byte{1, 2},
 		},
 	}
 
 	splitBy10 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(10)
-	c.Assert(splitBy10, DeepEquals, []Rows{
+	require.Equal(t, splitBy10, []Rows{
 		MakeRowsFromKvPairs(pairs[0:2]),
 		MakeRowsFromKvPairs(pairs[2:3]),
 		MakeRowsFromKvPairs(pairs[3:4]),
 	})
 
 	splitBy12 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(12)
-	c.Assert(splitBy12, DeepEquals, []Rows{
+	require.Equal(t, splitBy12, []Rows{
 		MakeRowsFromKvPairs(pairs[0:2]),
 		MakeRowsFromKvPairs(pairs[2:4]),
 	})
 
 	splitBy1000 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000)
-	c.Assert(splitBy1000, DeepEquals, []Rows{
+	require.Equal(t, splitBy1000, []Rows{
 		MakeRowsFromKvPairs(pairs[0:4]),
 	})
 
 	splitBy1 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1)
-	c.Assert(splitBy1, DeepEquals, []Rows{
+	require.Equal(t, splitBy1, []Rows{
 		MakeRowsFromKvPairs(pairs[0:1]),
 		MakeRowsFromKvPairs(pairs[1:2]),
 		MakeRowsFromKvPairs(pairs[2:3]),
@@ -471,7 +464,7 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 	})
 }
 
-func (s *kvSuite) TestClassifyAndAppend(c *C) {
+func TestClassifyAndAppend(t *testing.T) {
 	kvs := MakeRowFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
@@ -494,7 +487,7 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 
 	kvs.ClassifyAndAppend(&data, &dataChecksum, &indices, &indexChecksum)
 
-	c.Assert(data, DeepEquals, MakeRowsFromKvPairs([]common.KvPair{
+	require.Equal(t, data, MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
 			Val: []byte("value1"),
@@ -504,14 +497,14 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 			Val: []byte("value2"),
 		},
 	}))
-	c.Assert(indices, DeepEquals, MakeRowsFromKvPairs([]common.KvPair{
+	require.Equal(t, indices, MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_izzzzzzzz"),
 			Val: []byte("index1"),
 		},
 	}))
-	c.Assert(dataChecksum.SumKVS(), Equals, uint64(2))
-	c.Assert(indexChecksum.SumKVS(), Equals, uint64(1))
+	require.Equal(t, dataChecksum.SumKVS(), uint64(2))
+	require.Equal(t, indexChecksum.SumKVS(), uint64(1))
 }
 
 type benchSQL2KVSuite struct {
@@ -521,9 +514,7 @@ type benchSQL2KVSuite struct {
 	logger  log.Logger
 }
 
-var _ = Suite(&benchSQL2KVSuite{})
-
-func (s *benchSQL2KVSuite) SetUpTest(c *C) {
+func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	// First, create the table info corresponding to TPC-C's "CUSTOMER" table.
 	p := parser.New()
 	se := mock.NewContext()
@@ -553,20 +544,20 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 			primary key (c_w_id, c_d_id, c_id)
 		);
 	`, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(b, err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 123456)
-	c.Assert(err, IsNil)
+	require.NoError(b, err)
 	tableInfo.State = model.StatePublic
 
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
-	c.Assert(err, IsNil)
-	s.encoder, err = NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
-	c.Assert(err, IsNil)
-	s.logger = log.Logger{Logger: zap.NewNop()}
+	require.NoError(b, err)
+	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
+	require.NoError(b, err)
+	logger := log.Logger{Logger: zap.NewNop()}
 
 	// Prepare the row to insert.
-	s.row = []types.Datum{
+	row := []types.Datum{
 		types.NewIntDatum(15),
 		types.NewIntDatum(10),
 		types.NewIntDatum(3000),
@@ -589,14 +580,23 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 		types.NewStringDatum("OE"),
 		types.NewStringDatum("H5p3dpjp7uu8n1l3j0o1buecfV6FngNNgftpNALDhOzJaSzMCMlrQwXuvLAFPIFg215D3wAYB62kiixIuasfbD729oq8TwgKzPPsx8kHE1b4AdhHwpCml3ELKiwuNGQl7CcBQOiq6aFEMMHzjGwQyXwGey0wutjp2KP3Nd4qj3FHtmHbsD8cJ0pH9TswNmdQBgXsFPZeJJhsG3rTimQpS9Tmn3vNeI9fFas3ClDZuQtBjqoTJlyzmBIYT8HeV3TuS93TNFDaXZpQqh8HsvlPq4uTTLOO9CguiY29zlSmIjkZYtva3iscG3YDOQVLeGpP9dtqEJwlRvJ4oe9jWkvRMlCeslSNEuzLxjUBtJBnGRFAzJF6RMlIWCkdCpIhcnIy3jUEsxTuiAU3hsZxUjLg2dnOG62h5qR"),
 	}
-	s.colPerm = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
+	colPerm := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
+	s := &benchSQL2KVSuite{
+		encoder: encoder,
+		logger:  logger,
+		row:     row,
+		colPerm: colPerm,
+	}
+	return s
 }
 
-// Run `go test github.com/pingcap/tidb/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
-func (s *benchSQL2KVSuite) BenchmarkSQL2KV(c *C) {
-	for i := 0; i < c.N; i++ {
+// BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/br/pkg/lightning/backend/kv` to get benchmark result.
+func BenchmarkSQL2KV(b *testing.B) {
+	s := SetUpTest(b)
+	for i := 0; i < b.N; i++ {
 		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, "", 0)
-		c.Assert(err, IsNil)
-		c.Assert(rows, HasLen, 2)
+		require.NoError(b, err)
+		len := reflect.ValueOf(rows).Elem().Field(0).Len()
+		require.Equal(b, len, 2)
 	}
 }

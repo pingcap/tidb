@@ -212,12 +212,25 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 		if len(rg.LowVal) != len(idx.Columns) {
 			return false
 		}
+		for _, v := range rg.LowVal {
+			if v.IsNull() {
+				// a unique index may have duplicated rows with NULLs, so we cannot set the unique attribute to true when the range has NULL
+				// please see https://github.com/pingcap/tidb/issues/29650 for more details
+				return false
+			}
+		}
+		for _, v := range rg.HighVal {
+			if v.IsNull() {
+				return false
+			}
+		}
 	}
 	return true
 }
 
-func findColumnInfoByID(infos []*model.ColumnInfo, id int64) *model.ColumnInfo {
-	for _, info := range infos {
+// FindColumnInfoByID finds ColumnInfo in cols by ID.
+func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+	for _, info := range colInfos {
 		if info.ID == id {
 			return info
 		}
@@ -243,12 +256,17 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
-	types := make([]*tipb.FieldType, 0, len(e.HashCols))
+	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
 		hashCols = append(hashCols, col.Col)
 		tp := expression.ToPBFieldType(col.Col.RetType)
 		tp.Collate = col.CollateID
-		types = append(types, tp)
+		hashColTypes = append(hashColTypes, tp)
+	}
+	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
+	for _, column := range e.Schema().Columns {
+		pbType := expression.ToPBFieldType(column.RetType)
+		allFieldTypes = append(allFieldTypes, pbType)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
 	if err != nil {
@@ -259,7 +277,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		EncodedTaskMeta: encodedTask,
 		PartitionKeys:   hashColPb,
 		Child:           child,
-		Types:           types,
+		Types:           hashColTypes,
+		AllFieldTypes:   allFieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -308,7 +327,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
-			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
+			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
 	var pkColIds []int64
@@ -410,7 +429,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
 	for _, equalCondition := range p.EqualConditions {
 		retType := equalCondition.RetType.Clone()
-		chs, coll := equalCondition.CharsetAndCollation(ctx)
+		chs, coll := equalCondition.CharsetAndCollation()
 		retType.Charset = chs
 		retType.Collate = coll
 		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))

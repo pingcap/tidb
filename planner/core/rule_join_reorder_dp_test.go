@@ -195,7 +195,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 		},
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroups, eqConds)
+	result, err := solver.solve(joinGroups, eqConds, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}")
 }
@@ -212,7 +212,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
 		},
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{MockJoin{a, b}, MockJoin{c, d}}")
 }

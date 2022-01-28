@@ -11,3 +11,9 @@ ssl-key = "/tmp/backup_restore_test/certs/tidb.key"
 cluster-ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
 cluster-ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
 cluster-ssl-key = "/tmp/backup_restore_test/certs/tidb.key"
+
+# experimental section controls the features that are still experimental: their semantics,
+# interfaces are subject to change, using these features in the production environment is not recommended.
+[experimental]
+# enable creating expression index.
+allow-expression-index = true

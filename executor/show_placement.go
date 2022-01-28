@@ -17,16 +17,21 @@ package executor
 import (
 	"context"
 	gjson "encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -102,12 +107,7 @@ func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{})
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -132,7 +132,7 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlacementForDB(_ context.Context) (err error) {
+func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker != nil && e.ctx.GetSessionVars().User != nil {
 		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
@@ -151,13 +151,17 @@ func (e *ShowExec) fetchShowPlacementForDB(_ context.Context) (err error) {
 	}
 
 	if placement != nil {
-		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String()})
+		state, err := fetchDBScheduleState(ctx, nil, dbInfo)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 	}
 
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
+func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 	tbl, err := e.getTable()
 	if err != nil {
 		return err
@@ -170,23 +174,79 @@ func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
 	}
 
 	if placement != nil {
+		state, err := fetchTableScheduleState(ctx, nil, tblInfo)
+		if err != nil {
+			return err
+		}
 		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
-		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String()})
+		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String(), state.String()})
 	}
 
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
+func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err error) {
+	tbl, err := e.getTable()
+	if err != nil {
+		return err
+	}
+
+	tblInfo := tbl.Meta()
+	if tblInfo.Partition == nil {
+		return errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(e.Partition.O, tblInfo.Name.O))
+	}
+
+	var partition *model.PartitionDefinition
+	for i := range tblInfo.Partition.Definitions {
+		par := tblInfo.Partition.Definitions[i]
+		if par.Name.L == e.Partition.L {
+			partition = &par
+			break
+		}
+	}
+
+	if partition == nil {
+		return errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(e.Partition.O, tblInfo.Name.O))
+	}
+
+	placement, err := e.getTablePlacement(tblInfo)
+	if err != nil {
+		return err
+	}
+
+	placement, err = e.getPartitionPlacement(placement, partition)
+	if err != nil {
+		return err
+	}
+
+	if placement != nil {
+		state, err := fetchPartitionScheduleState(ctx, nil, partition)
+		if err != nil {
+			return err
+		}
+		tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
+		e.appendRow([]interface{}{
+			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
+			placement.String(),
+			state.String(),
+		})
+	}
+
+	return nil
+}
+
+func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 	if err := e.fetchAllPlacementPolicies(); err != nil {
 		return err
 	}
 
-	if err := e.fetchAllDBPlacements(); err != nil {
+	scheduled := make(map[int64]infosync.PlacementScheduleState)
+
+	if err := e.fetchAllDBPlacements(ctx, scheduled); err != nil {
 		return err
 	}
 
-	return e.fetchAllTablePlacements()
+	return e.fetchAllTablePlacements(ctx, scheduled)
 }
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
@@ -195,13 +255,13 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
-		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String()})
+		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String(), "NULL"})
 	}
 
 	return nil
 }
 
-func (e *ShowExec) fetchAllDBPlacements() error {
+func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
@@ -219,14 +279,18 @@ func (e *ShowExec) fetchAllDBPlacements() error {
 		}
 
 		if placement != nil {
-			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String()})
+			state, err := fetchDBScheduleState(ctx, scheduleState, dbInfo)
+			if err != nil {
+				return err
+			}
+			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 		}
 	}
 
 	return nil
 }
 
-func (e *ShowExec) fetchAllTablePlacements() error {
+func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
@@ -247,16 +311,40 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 
 			var rows [][]interface{}
 			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
-			placement, err := e.getTablePlacement(tblInfo)
+			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err
 			}
 
-			if placement != nil {
-				rows = append(rows, []interface{}{"TABLE " + ident.String(), placement.String()})
+			if tblPlacement != nil {
+				state, err := fetchTableScheduleState(ctx, scheduleState, tblInfo)
+				if err != nil {
+					return err
+				}
+				rows = append(rows, []interface{}{"TABLE " + ident.String(), tblPlacement.String(), state.String()})
 			}
 
-			// TODO: Add partition placement rules
+			if tblInfo.Partition != nil {
+				for i := range tblInfo.Partition.Definitions {
+					partition := tblInfo.Partition.Definitions[i]
+					partitionPlacement, err := e.getPartitionPlacement(tblPlacement, &partition)
+					if err != nil {
+						return err
+					}
+
+					if partitionPlacement != nil {
+						state, err := fetchPartitionScheduleState(ctx, scheduleState, &partition)
+						if err != nil {
+							return err
+						}
+						rows = append(rows, []interface{}{
+							fmt.Sprintf("TABLE %s PARTITION %s", ident.String(), partition.Name.String()),
+							partitionPlacement.String(),
+							state.String(),
+						})
+					}
+				}
+			}
 
 			if len(rows) > 0 {
 				tableRowSets = append(tableRowSets, struct {
@@ -281,21 +369,24 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 }
 
 func (e *ShowExec) getDBPlacement(dbInfo *model.DBInfo) (*model.PlacementSettings, error) {
-	placement := dbInfo.DirectPlacementOpts
-	if placement != nil {
-		return placement, nil
-	}
-
 	return e.getPolicyPlacement(dbInfo.PlacementPolicyRef)
 }
 
 func (e *ShowExec) getTablePlacement(tblInfo *model.TableInfo) (*model.PlacementSettings, error) {
-	placement := tblInfo.DirectPlacementOpts
+	return e.getPolicyPlacement(tblInfo.PlacementPolicyRef)
+}
+
+func (e *ShowExec) getPartitionPlacement(tblPlacement *model.PlacementSettings, partition *model.PartitionDefinition) (*model.PlacementSettings, error) {
+	placement, err := e.getPolicyPlacement(partition.PlacementPolicyRef)
+	if err != nil {
+		return nil, err
+	}
+
 	if placement != nil {
 		return placement, nil
 	}
 
-	return e.getPolicyPlacement(tblInfo.PlacementPolicyRef)
+	return tblPlacement, nil
 }
 
 func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings *model.PlacementSettings, err error) {
@@ -308,4 +399,72 @@ func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings 
 		return nil, errors.Errorf("Policy with name '%s' not found", policyRef.Name)
 	}
 	return policy.PlacementSettings, nil
+}
+
+func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
+	if s, ok := scheduleState[id]; ok {
+		return s, nil
+	}
+	startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id))
+	endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id+1))
+	schedule, err := infosync.GetReplicationState(ctx, startKey, endKey)
+	if err == nil && scheduleState != nil {
+		scheduleState[id] = schedule
+	}
+	return schedule, err
+}
+
+func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, part *model.PartitionDefinition) (infosync.PlacementScheduleState, error) {
+	return fetchScheduleState(ctx, scheduleState, part.ID)
+}
+
+func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+
+	schedule, err := fetchScheduleState(ctx, scheduleState, table.ID)
+	if err != nil {
+		return state, err
+	}
+	state = accumulateState(state, schedule)
+	if state != infosync.PlacementScheduleStateScheduled {
+		return state, nil
+	}
+
+	if table.GetPartitionInfo() != nil {
+		for _, part := range table.GetPartitionInfo().Definitions {
+			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			if err != nil {
+				return infosync.PlacementScheduleStatePending, err
+			}
+			state = accumulateState(state, schedule)
+			if state != infosync.PlacementScheduleStateScheduled {
+				break
+			}
+		}
+	}
+
+	return schedule, nil
+}
+
+func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+	for _, table := range db.Tables {
+		schedule, err := fetchTableScheduleState(ctx, scheduleState, table)
+		if err != nil {
+			return state, err
+		}
+		state = accumulateState(state, schedule)
+		if state != infosync.PlacementScheduleStateScheduled {
+			break
+		}
+	}
+	return state, nil
+}
+
+func accumulateState(curr, news infosync.PlacementScheduleState) infosync.PlacementScheduleState {
+	a, b := int(curr), int(news)
+	if a > b {
+		return news
+	}
+	return curr
 }

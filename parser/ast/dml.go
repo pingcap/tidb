@@ -1100,6 +1100,8 @@ type SelectStmt struct {
 	// Lists is filled only when Kind == SelectStmtKindValues
 	Lists []*RowExpr
 	With  *WithClause
+	// AsViewSchema indicates if this stmt provides the schema for the view. It is only used when creating the view
+	AsViewSchema bool
 }
 
 func (*SelectStmt) resultSet() {}
@@ -2578,6 +2580,8 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowHistogramsInFlight
+	ShowColumnStatsUsage
 	ShowPlugins
 	ShowProfile
 	ShowProfiles
@@ -2765,6 +2769,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}
+	case ShowHistogramsInFlight:
+		ctx.WriteKeyWord("HISTOGRAMS_IN_FLIGHT")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowColumnStatsUsage:
+		ctx.WriteKeyWord("COLUMN_STATS_USAGE")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
 	case ShowProfiles:
 		ctx.WriteKeyWord("PROFILES")
 	case ShowProfile:
@@ -2821,12 +2835,12 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowPlacementForTable:
 		ctx.WriteKeyWord("PLACEMENT FOR TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 		}
 	case ShowPlacementForPartition:
 		ctx.WriteKeyWord("PLACEMENT FOR TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
@@ -2856,7 +2870,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			// FROM or IN
 			ctx.WriteKeyWord("INDEX IN ")
 			if err := n.Table.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 			} // TODO: remember to check this case
 		case ShowColumns: // equivalent to SHOW FIELDS
 			if n.Extended {
@@ -2868,7 +2882,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 				// FROM or IN
 				ctx.WriteKeyWord(" IN ")
 				if err := n.Table.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+					return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 				}
 			}
 			restoreShowDatabaseNameOpt()
@@ -2910,7 +2924,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 			}
 			if len(n.IndexName.L) > 0 {
 				ctx.WriteKeyWord(" INDEX ")
@@ -2924,7 +2938,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		case ShowTableNextRowId:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 			}
 			ctx.WriteKeyWord(" NEXT_ROW_ID")
 			return nil

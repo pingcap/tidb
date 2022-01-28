@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,7 +41,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Flen:    int(tp.Flen),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
-		Collate: protoToCollation(tp.Collate),
+		Collate: collate.ProtoToCollation(tp.Collate),
 		Elems:   tp.Elems,
 	}
 }
@@ -221,7 +222,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_GreatestString:
 		f = &builtinGreatestStringSig{base}
 	case tipb.ScalarFuncSig_GreatestTime:
-		f = &builtinGreatestTimeSig{base}
+		f = &builtinGreatestTimeSig{base, false}
+	case tipb.ScalarFuncSig_GreatestDate:
+		f = &builtinGreatestTimeSig{base, true}
+	case tipb.ScalarFuncSig_GreatestCmpStringAsTime:
+		f = &builtinGreatestCmpStringAsTimeSig{base, false}
+	case tipb.ScalarFuncSig_GreatestCmpStringAsDate:
+		f = &builtinGreatestCmpStringAsTimeSig{base, true}
 	case tipb.ScalarFuncSig_LeastInt:
 		f = &builtinLeastIntSig{base}
 	case tipb.ScalarFuncSig_LeastReal:
@@ -231,7 +238,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastString:
 		f = &builtinLeastStringSig{base}
 	case tipb.ScalarFuncSig_LeastTime:
-		f = &builtinLeastTimeSig{base}
+		f = &builtinLeastTimeSig{base, false}
+	case tipb.ScalarFuncSig_LeastDate:
+		f = &builtinLeastTimeSig{base, true}
+	case tipb.ScalarFuncSig_LeastCmpStringAsTime:
+		f = &builtinLeastCmpStringAsTimeSig{base, false}
+	case tipb.ScalarFuncSig_LeastCmpStringAsDate:
+		f = &builtinLeastCmpStringAsTimeSig{base, true}
 	case tipb.ScalarFuncSig_IntervalInt:
 		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
@@ -933,6 +946,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCharSig{base}
 	case tipb.ScalarFuncSig_CharLengthUTF8:
 		f = &builtinCharLengthUTF8Sig{base}
+	case tipb.ScalarFuncSig_CharLength:
+		f = &builtinCharLengthBinarySig{base}
 	case tipb.ScalarFuncSig_Concat:
 		f = &builtinConcatSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_ConcatWS:
@@ -1049,6 +1064,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
@@ -1161,7 +1180,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	}
 	var t types.Time
 	t.SetType(ft.Tp)
-	t.SetFsp(int8(ft.Decimal))
+	t.SetFsp(ft.Decimal)
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err
@@ -1212,7 +1231,7 @@ func convertUint(val []byte) (*Constant, error) {
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, collate.ProtoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 

@@ -215,6 +215,11 @@
             "info": {
                 "writes": [
                     {
+                        "type": 1,
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328
+                    },
+                    {
                         "start_ts": 423158426542538752,
                         "commit_ts": 423158426543587328,
                         "short_value": "gAACAAAAAQMDAAQAYWFhZA=="
@@ -228,6 +233,21 @@
                 ]
             }
         }
+    }
+    ```
+
+    *Hint: The meaning of the MVCC operation type:*
+
+    ```protobuf
+    enum Op {
+	Put = 0;
+	Del = 1;
+	Lock = 2;
+	Rollback = 3;
+	// insert operation has a constraint that key should not exist before.
+	Insert = 4;
+	PessimisticLock = 5;
+	CheckNotExists = 6;
     }
     ```
 
@@ -522,3 +542,11 @@ timezone.*
     curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
     ```
 
+1. Get/Set the size of the Ballast Object
+
+    ```shell
+    # get current size of the ballast object
+    curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
+    # reset the size of the ballast object (2GB in this example)
+    curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+    ```

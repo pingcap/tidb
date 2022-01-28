@@ -14,17 +14,15 @@
 package ast_test
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testMiscSuite{})
-
-type testMiscSuite struct {
-}
 
 type visitor struct{}
 
@@ -44,7 +42,7 @@ func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
+func TestMiscVisitorCover(t *testing.T) {
 	valueExpr := ast.NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []ast.Node{
 		&ast.AdminStmt{},
@@ -86,7 +84,7 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 	}
 }
 
-func (ts *testMiscSuite) TestDDLVisitorCover(c *C) {
+func TestDDLVisitorCoverMisc(t *testing.T) {
 	sql := `
 create table t (c1 smallint unsigned, c2 int unsigned);
 alter table t add column a smallint unsigned after b;
@@ -104,14 +102,14 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 `
 	parse := parser.New()
 	stmts, _, err := parse.Parse(sql, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})
 		stmt.Accept(visitor1{})
 	}
 }
 
-func (ts *testMiscSuite) TestDMLVistorCover(c *C) {
+func TestDMLVistorCover(t *testing.T) {
 	sql := `delete from somelog where user = 'jcole' order by timestamp_column limit 1;
 delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
 select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
@@ -123,7 +121,7 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 
 	p := parser.New()
 	stmts, _, err := p.Parse(sql, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})
 		stmt.Accept(visitor1{})
@@ -131,21 +129,21 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 }
 
 // test Change Pump or drainer status sql parser
-func (ts *testMiscSuite) TestChangeStmt(c *C) {
+func TestChangeStmt(t *testing.T) {
 	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
 change drainer to node_state='paused' for node_id '127.0.0.1:8249';
 shutdown;`
 
 	p := parser.New()
 	stmts, _, err := p.Parse(sql, "", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})
 		stmt.Accept(visitor1{})
 	}
 }
 
-func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
+func TestSensitiveStatement(t *testing.T) {
 	positive := []ast.StmtNode{
 		&ast.SetPwdStmt{},
 		&ast.CreateUserStmt{},
@@ -154,7 +152,7 @@ func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
 	}
 	for i, stmt := range positive {
 		_, ok := stmt.(ast.SensitiveStmtNode)
-		c.Assert(ok, IsTrue, Commentf("%d, %#v fail", i, stmt))
+		require.Truef(t, ok, "%d, %#v fail", i, stmt)
 	}
 
 	negative := []ast.StmtNode{
@@ -172,11 +170,11 @@ func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
 	}
 	for _, stmt := range negative {
 		_, ok := stmt.(ast.SensitiveStmtNode)
-		c.Assert(ok, IsFalse)
+		require.False(t, ok)
 	}
 }
 
-func (ts *testMiscSuite) TestUserSpec(c *C) {
+func TestUserSpec(t *testing.T) {
 	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
 	u := ast.UserSpec{
 		User: &auth.UserIdentity{
@@ -189,25 +187,25 @@ func (ts *testMiscSuite) TestUserSpec(c *C) {
 		},
 	}
 	pwd, ok := u.EncodedPassword()
-	c.Assert(ok, IsTrue)
-	c.Assert(pwd, Equals, u.AuthOpt.HashString)
+	require.True(t, ok)
+	require.Equal(t, u.AuthOpt.HashString, pwd)
 
 	u.AuthOpt.HashString = "not-good-password-format"
 	_, ok = u.EncodedPassword()
-	c.Assert(ok, IsFalse)
+	require.False(t, ok)
 
 	u.AuthOpt.ByAuthString = true
 	pwd, ok = u.EncodedPassword()
-	c.Assert(ok, IsTrue)
-	c.Assert(pwd, Equals, hashString)
+	require.True(t, ok)
+	require.Equal(t, hashString, pwd)
 
 	u.AuthOpt.AuthString = ""
 	pwd, ok = u.EncodedPassword()
-	c.Assert(ok, IsTrue)
-	c.Assert(pwd, Equals, "")
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
 }
 
-func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
+func TestTableOptimizerHintRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"USE_INDEX(t1 c1)", "USE_INDEX(`t1` `c1`)"},
 		{"USE_INDEX(test.t1 c1)", "USE_INDEX(`test`.`t1` `c1`)"},
@@ -279,10 +277,10 @@ func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.SelectStmt).TableHints[0]
 	}
-	RunNodeRestoreTest(c, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
 }
 
-func (ts *testMiscSuite) TestChangeStmtRestore(c *C) {
+func TestChangeStmtRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
 		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
@@ -290,10 +288,10 @@ func (ts *testMiscSuite) TestChangeStmtRestore(c *C) {
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.ChangeStmt)
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testMiscSuite) TestBRIESecureText(c *C) {
+func TestBRIESecureText(t *testing.T) {
 	testCases := []struct {
 		input   string
 		secured string
@@ -319,13 +317,14 @@ func (ts *testMiscSuite) TestBRIESecureText(c *C) {
 		},
 	}
 
-	parser := parser.New()
+	p := parser.New()
 	for _, tc := range testCases {
-		comment := Commentf("input = %s", tc.input)
-		node, err := parser.ParseOneStmt(tc.input, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("input = %s", tc.input)
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, comment)
 		n, ok := node.(ast.SensitiveStmtNode)
-		c.Assert(ok, IsTrue, comment)
-		c.Assert(n.SecureText(), Matches, tc.secured, comment)
+		require.True(t, ok, comment)
+		require.Regexp(t, tc.secured, n.SecureText(), comment)
+
 	}
 }

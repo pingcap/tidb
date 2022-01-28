@@ -532,7 +532,6 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// Test create table like at temporary mode.
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
@@ -632,7 +631,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	defer tk.MustExec("drop table if exists tb3, tb4")
 	tk.MustQuery("show create table tb4;").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
 
 	// Test from->global temporary, to->normal.
 	tk.MustExec("drop table if exists tb5, tb6")
@@ -654,7 +653,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("create temporary table tb12 like tb11")
 	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
 		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
 	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
 		infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error())
@@ -699,6 +698,19 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tableInfo = table.Meta()
 	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
 	defer tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
+
+	// Test for placement
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
+	defer tk.MustExec("drop placement policy p1")
+	tk.MustExec("drop table if exists placement_table1")
+	tk.MustExec("create table placement_table1(id int) placement policy p1")
+	defer tk.MustExec("drop table if exists placement_table1")
+
+	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
+	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -1101,14 +1113,16 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	})
 
 	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("unlock tables")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 }
 
 func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
 	_, err = tk.Exec("create temporary table t(a bigint key auto_random);")
@@ -1627,6 +1641,7 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
 	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t2(a int auto_increment, unique key (a) invisible);", errno.ErrPKIndexCantBeInvisible)
 	// Column `a` become implicit primary key after DDL statement on itself
 	tk.MustExec("create table t2(a int not null)")
 	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)

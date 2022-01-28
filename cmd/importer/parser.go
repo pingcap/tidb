@@ -174,17 +174,17 @@ func (t *table) String() string {
 	}
 
 	ret := fmt.Sprintf("[table]name: %s\n", t.name)
-	ret += fmt.Sprintf("[table]columns:\n")
+	ret += "[table]columns:\n"
 	ret += t.printColumns()
 
 	ret += fmt.Sprintf("[table]column list: %s\n", t.columnList)
 
-	ret += fmt.Sprintf("[table]indices:\n")
+	ret += "[table]indices:\n"
 	for k, v := range t.indices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
-	ret += fmt.Sprintf("[table]unique indices:\n")
+	ret += "[table]unique indices:\n"
 	for k, v := range t.uniqIndices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}

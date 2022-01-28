@@ -968,7 +968,7 @@ func FormatDuration(d time.Duration) string {
 	if unit == time.Nanosecond {
 		return d.String()
 	}
-	integer := (d / unit) * unit
+	integer := (d / unit) * unit //nolint:durationcheck
 	decimal := float64(d%unit) / float64(unit)
 	if d < 10*unit {
 		decimal = math.Round(decimal*100) / 100

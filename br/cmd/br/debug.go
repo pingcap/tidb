@@ -77,7 +77,7 @@ func newCheckSumCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			reader := metautil.NewMetaReader(backupMeta, s)
+			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 			dbs, err := utils.LoadBackupTables(ctx, reader)
 			if err != nil {
 				return errors.Trace(err)
@@ -176,7 +176,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				log.Error("read backupmeta failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			reader := metautil.NewMetaReader(backupMeta, s)
+			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 			dbs, err := utils.LoadBackupTables(ctx, reader)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
@@ -346,7 +346,13 @@ func encodeBackupMetaCommand() *cobra.Command {
 				// Do not overwrite origin meta file
 				fileName += "_from_json"
 			}
-			err = s.WriteFile(ctx, fileName, backupMeta)
+
+			encryptedContent, iv, err := metautil.Encrypt(backupMeta, &cfg.CipherInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			err = s.WriteFile(ctx, fileName, append(iv, encryptedContent...))
 			if err != nil {
 				return errors.Trace(err)
 			}
