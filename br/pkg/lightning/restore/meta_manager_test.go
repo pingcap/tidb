@@ -24,7 +24,6 @@ import (
 
 type metaMgrSuite struct {
 	mockDB      sqlmock.Sqlmock
-	tr          *TableRestore
 	mgr         *dbTableMetaMgr
 	checksumMgr *testChecksumMgr
 }
