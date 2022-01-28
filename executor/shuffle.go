@@ -225,11 +225,11 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.prepared = true
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("shuffleError")); _err_ == nil {
+	failpoint.Inject("shuffleError", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("ShuffleExec.Next error")
+			failpoint.Return(errors.New("ShuffleExec.Next error"))
 		}
-	}
+	})
 
 	if e.executed {
 		return nil

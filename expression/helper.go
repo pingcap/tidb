@@ -153,10 +153,10 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("injectNow")); _err_ == nil {
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
 		v := time.Unix(int64(val.(int)), 0)
-		return v, nil
-	}
+		failpoint.Return(v, nil)
+	})
 
 	now := time.Now()
 

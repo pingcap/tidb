@@ -1249,9 +1249,9 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
 	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
 	// globally.
-	if _, _err_ := failpoint.Eval(_curpkg_("sqlDigestRetrieverSkipRetrieveGlobal")); _err_ == nil {
-		return nil
-	}
+	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
+		failpoint.Return(nil)
+	})
 
 	var unknownDigests []interface{}
 	for k, v := range r.SQLDigestsMap {

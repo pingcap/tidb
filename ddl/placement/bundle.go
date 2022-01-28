@@ -240,11 +240,11 @@ func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 // String implements fmt.Stringer.
 func (b *Bundle) String() string {
 	t, err := json.Marshal(b)
-	if val, _err_ := failpoint.Eval(_curpkg_("MockMarshalFailure")); _err_ == nil {
+	failpoint.Inject("MockMarshalFailure", func(val failpoint.Value) {
 		if _, ok := val.(bool); ok {
 			err = errors.New("test")
 		}
-	}
+	})
 	if err != nil {
 		return ""
 	}

@@ -557,11 +557,11 @@ func updateIndexResult(
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, *statistics.FMSketch, *statistics.TopN, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("buildStatsFromResult")); _err_ == nil {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, nil, nil, nil, errors.New("mock buildStatsFromResult error")
+			failpoint.Return(nil, nil, nil, nil, errors.New("mock buildStatsFromResult error"))
 		}
-	}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	var topn *statistics.TopN
@@ -1273,9 +1273,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			close(resultCh)
 		}
 	}()
-	if _, _err_ := failpoint.Eval(_curpkg_("mockAnalyzeSamplingMergeWorkerPanic")); _err_ == nil {
+	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
-	}
+	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
@@ -1323,9 +1323,9 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 			close(resultCh)
 		}
 	}()
-	if _, _err_ := failpoint.Eval(_curpkg_("mockAnalyzeSamplingBuildWorkerPanic")); _err_ == nil {
+	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
 		panic("failpoint triggered")
-	}
+	})
 	colLen := len(e.colsInfo)
 workLoop:
 	for {

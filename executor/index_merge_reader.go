@@ -268,9 +268,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("startPartialIndexWorkerErr")); _err_ == nil {
+	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
-	}
+	})
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()

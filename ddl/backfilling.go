@@ -301,13 +301,13 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.ddlWorker.setDDLLabelForTopSQL(job)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		if _, _err_ := failpoint.Eval(_curpkg_("mockBackfillRunErr")); _err_ == nil {
+		failpoint.Inject("mockBackfillRunErr", func() {
 			if w.id == 0 {
 				result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				w.resultCh <- result
-				continue
+				failpoint.Continue()
 			}
-		}
+		})
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -568,11 +568,11 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		return nil
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockCaseWhenParseFailure")); _err_ == nil {
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause.")
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
-	}
+	})
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
@@ -645,21 +645,21 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			closeBackfillWorkers(workers)
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("checkBackfillWorkerNum")); _err_ == nil {
+		failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
 			if val.(bool) {
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {
 					if num > len(kvRanges) {
 						if len(backfillWorkers) != len(kvRanges) {
-							return errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers))
+							failpoint.Return(errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
 						}
 					} else if num != len(backfillWorkers) {
-						return errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers))
+						failpoint.Return(errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
 					}
 					TestCheckWorkerNumCh <- struct{}{}
 				}
 			}
-		}
+		})
 
 		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
 			zap.Int("workerCnt", len(backfillWorkers)),

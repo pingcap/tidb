@@ -30,10 +30,10 @@ import (
 
 // GetStorageSize gets storage's capacity and available size
 func GetStorageSize(dir string) (size StorageSize, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("GetStorageSize")); _err_ == nil {
+	failpoint.Inject("GetStorageSize", func(val failpoint.Value) {
 		injectedSize := val.(int)
-		return StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil
-	}
+		failpoint.Return(StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil)
+	})
 
 	var stat unix.Statfs_t
 	err = unix.Statfs(dir, &stat)

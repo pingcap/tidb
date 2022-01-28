@@ -209,9 +209,9 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.lastColHelper,
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("testIssue18068")); _err_ == nil {
+	failpoint.Inject("testIssue18068", func() {
 		omw.batchSize = 1
-	}
+	})
 	return omw
 }
 
@@ -311,7 +311,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
-		failpoint.Eval(_curpkg_("mockIndexMergeJoinOOMPanic"))
+		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
 		if task == nil {
 			return
 		}
@@ -440,11 +440,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
-	if val, _err_ := failpoint.Eval(_curpkg_("IndexMergeJoinMockOOM")); _err_ == nil {
+	failpoint.Inject("IndexMergeJoinMockOOM", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("OOM test index merge join doesn't hang here.")
 		}
-	}
+	})
 	// needOuterSort means the outer side property items can't guarantee the order of join keys.
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.

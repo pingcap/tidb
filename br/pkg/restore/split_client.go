@@ -256,7 +256,7 @@ func splitRegionWithFailpoint(
 	client tikvpb.TikvClient,
 	keys [][]byte,
 ) (*kvrpcpb.SplitRegionResponse, error) {
-	if injectNewLeader, _err_ := failpoint.Eval(_curpkg_("not-leader-error")); _err_ == nil {
+	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
 		log.Debug("failpoint not-leader-error injected.")
 		resp := &kvrpcpb.SplitRegionResponse{
 			RegionError: &errorpb.Error{
@@ -268,16 +268,16 @@ func splitRegionWithFailpoint(
 		if injectNewLeader.(bool) {
 			resp.RegionError.NotLeader.Leader = regionInfo.Leader
 		}
-		return resp, nil
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("somewhat-retryable-error")); _err_ == nil {
+		failpoint.Return(resp, nil)
+	})
+	failpoint.Inject("somewhat-retryable-error", func() {
 		log.Debug("failpoint somewhat-retryable-error injected.")
-		return &kvrpcpb.SplitRegionResponse{
+		failpoint.Return(&kvrpcpb.SplitRegionResponse{
 			RegionError: &errorpb.Error{
 				ServerIsBusy: &errorpb.ServerIsBusy{},
 			},
-		}, nil
-	}
+		}, nil)
+	})
 	return client.SplitRegion(ctx, &kvrpcpb.SplitRegionRequest{
 		Context: &kvrpcpb.Context{
 			RegionId:    regionInfo.Region.Id,

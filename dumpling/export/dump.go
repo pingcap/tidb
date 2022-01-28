@@ -216,7 +216,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 	// Inject consistency failpoint test after we release the table lock
-	failpoint.Eval(_curpkg_("ConsistencyCheck"))
+	failpoint.Inject("ConsistencyCheck", nil)
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
@@ -236,7 +236,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	tableDataStartTime := time.Now()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("PrintTiDBMemQuotaQuery")); _err_ == nil {
+	failpoint.Inject("PrintTiDBMemQuotaQuery", func(_ failpoint.Value) {
 		row := d.dbHandle.QueryRowContext(tctx, "select @@tidb_mem_quota_query;")
 		var s string
 		err = row.Scan(&s)
@@ -245,7 +245,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		} else {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
-	}
+	})
 	baseConn := newBaseConn(metaConn, canRebuildConn(conf.Consistency, conf.TransactionalConsistency), rebuildConn)
 
 	if conf.SQL == "" {

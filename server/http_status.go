@@ -401,14 +401,14 @@ func (s *Server) startHTTPServer() {
 	})
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
-	if _, _err_ := failpoint.Eval(_curpkg_("enableTestAPI")); _err_ == nil {
+	failpoint.Inject("enableTestAPI", func() {
 		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
 
 		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
-	}
+	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})

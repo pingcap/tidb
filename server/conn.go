@@ -216,9 +216,9 @@ func (cc *clientConn) String() string {
 // https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("FakeAuthSwitch")); _err_ == nil {
-		return []byte(plugin), nil
-	}
+	failpoint.Inject("FakeAuthSwitch", func() {
+		failpoint.Return([]byte(plugin), nil)
+	})
 	enclen := 1 + len(plugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
@@ -398,11 +398,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.writePacket(data)
 }
 
@@ -873,9 +873,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("FakeUser")); _err_ == nil {
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
 		userplugin = val.(string)
-	}
+	})
 	if userplugin == mysql.AuthSocket {
 		if !cc.isUnixSocket {
 			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
@@ -1431,11 +1431,11 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			}
 		}
 	}()
-	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.flush()
 }
 
@@ -2156,16 +2156,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
 	for {
-		if value, _err_ := failpoint.Eval(_curpkg_("fetchNextErr")); _err_ == nil {
+		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
 			case "firstNext":
-				return firstNext, storeerr.ErrTiFlashServerTimeout
+				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 			case "secondNext":
 				if !firstNext {
-					return firstNext, storeerr.ErrTiFlashServerTimeout
+					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
 			}
-		}
+		})
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {

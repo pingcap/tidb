@@ -113,11 +113,11 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("checkTotalMPPTasks")); _err_ == nil {
+	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
 		if val.(int) != len(e.mppReqs) {
-			return errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs))
+			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
-	}
+	})
 	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS)
 	if err != nil {
 		return errors.Trace(err)

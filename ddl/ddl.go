@@ -460,11 +460,11 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
 	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		if val, _err_ := failpoint.Eval(_curpkg_("mockGenGlobalIDFail")); _err_ == nil {
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("gofail genGlobalIDs error")
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
-		}
+		})
 
 		m := meta.NewMeta(txn)
 		var err error
@@ -609,9 +609,9 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}()
 	i := 0
 	for {
-		if _, _err_ := failpoint.Eval(_curpkg_("storeCloseInLoop")); _err_ == nil {
+		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			_ = d.Stop()
-		}
+		})
 
 		select {
 		case <-d.ddlJobDoneCh:

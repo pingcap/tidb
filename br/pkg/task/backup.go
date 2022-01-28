@@ -407,7 +407,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if unit == callBackUnit {
 			updateCh.Inc()
 			progressCount++
-			if v, _err_ := failpoint.Eval(_curpkg_("progress-call-back")); _err_ == nil {
+			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {
 					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
@@ -420,7 +420,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 						log.Warn("failed to write data to file", zap.Error(err))
 					}
 				}
-			}
+			})
 		}
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
@@ -476,7 +476,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	g.Record(summary.BackupDataSize, archiveSize)
 	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
-	if v, _err_ := failpoint.Eval(_curpkg_("s3-outage-during-writing-file")); _err_ == nil {
+	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 3s and notify the shell to kill s3 service.")
 		if sigFile, ok := v.(string); ok {
@@ -489,7 +489,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}
 		time.Sleep(3 * time.Second)
-	}
+	})
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil

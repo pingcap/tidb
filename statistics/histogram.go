@@ -1478,10 +1478,10 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	for i := 0; i < l && i < 4; i++ {
 		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("cleanEstResults")); _err_ == nil {
+	failpoint.Inject("cleanEstResults", func() {
 		singleColumnEstResults = singleColumnEstResults[:0]
 		l = 0
-	}
+	})
 	if l == 1 {
 		return singleColumnEstResults[0], true, nil
 	} else if l == 2 {

@@ -301,11 +301,11 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplica")); _err_ == nil {
+	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
 		if val.(bool) {
-			return true, nil
+			failpoint.Return(true, nil)
 		}
-	}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -337,9 +337,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
-			if v, _err_ := failpoint.Eval(_curpkg_("ForceTiflashNotAvailable")); _err_ == nil {
+			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
 				tiflashPeerAtLeastOne = v.(bool)
-			}
+			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
 			if tiflashPeerAtLeastOne {
@@ -1207,9 +1207,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels)
-		if _, _err_ := failpoint.Eval(_curpkg_("FailTiFlashTruncatePartition")); _err_ == nil {
+		failpoint.Inject("FailTiFlashTruncatePartition", func() {
 			e = errors.New("enforced error")
-		}
+		})
 		if e != nil {
 			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
 			job.State = model.JobStateCancelled
@@ -1393,12 +1393,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionErr")); _err_ == nil {
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			return ver, errors.New("occur an error after updating partition id")
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
 		}
-	}
+	})
 
 	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, partDef.ID)

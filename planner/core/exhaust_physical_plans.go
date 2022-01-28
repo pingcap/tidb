@@ -811,11 +811,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		lastColMng = helper.lastColManager
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
-			return p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng)
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
 		}
-	}
+	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -846,11 +846,11 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	}
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
-			return p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
-	}
+	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -1772,12 +1772,12 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
 			indexJoins, _ := p.tryToGetIndexJoin(prop)
-			return indexJoins, true, nil
+			failpoint.Return(indexJoins, true, nil)
 		}
-	}
+	})
 
 	if (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")

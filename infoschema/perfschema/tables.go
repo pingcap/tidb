@@ -297,7 +297,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	default:
 		return nil, errors.Errorf("%s does not support profile remote component", nodeType)
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("mockRemoteNodeStatusAddress")); _err_ == nil {
+	failpoint.Inject("mockRemoteNodeStatusAddress", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
 		if s := val.(string); len(s) > 0 {
@@ -316,7 +316,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 			// erase error
 			err = nil
 		}
-	}
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

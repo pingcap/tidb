@@ -441,9 +441,9 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 		if err == nil {
 			err = rows.Close()
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("ChaosBrokenMetaConn")); _err_ == nil {
-			return errors.New("connection is closed")
-		}
+		failpoint.Inject("ChaosBrokenMetaConn", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("connection is closed"))
+		})
 		return errors.Annotatef(err, "sql: %s", query)
 	}, func() {
 		colTypes = nil

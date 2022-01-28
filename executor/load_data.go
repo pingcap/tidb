@@ -284,9 +284,9 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("commitOneTaskErr")); _err_ == nil {
+	failpoint.Inject("commitOneTaskErr", func() error {
 		return errors.New("mock commit one task error")
-	}
+	})
 	e.Ctx.StmtCommit()
 	// Make sure process stream routine never use invalid txn
 	e.txnInUse.Lock()
