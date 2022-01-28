@@ -1035,13 +1035,10 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		if len(ts.Columns) > prevColumnLen {
+		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add an projection to make sure not to output extract columns.
 			t.needExtraProj = true
-			// Keep originSchema if exists so that we don't overlap it.
-			if t.originSchema == nil {
-				t.originSchema = prevSchema
-			}
+			t.originSchema = prevSchema
 		}
 	}
 	t.cst /= copIterWorkers
