@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -242,6 +244,26 @@ func (s *testDBSuite1) TestRenameIndex(c *C) {
 
 	tk.MustExec("alter table t rename index k2 to K2")
 	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
+}
+
+func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	require.NoError(t, err)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	require.NoError(t, err)
+	return tbl
+}
+
+func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	require.NoError(t, err)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	require.NoError(t, err)
+	return tbl
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
