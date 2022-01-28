@@ -578,3 +578,15 @@ select reverse(c_str) from t use index(idx);
 reverse(c_str)
 nnamreh lufituaeb
 drop table t;
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+drop table t1,t2;
