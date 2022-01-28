@@ -240,7 +240,9 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTab
 
 		for _, table := range tables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
-			return err
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
