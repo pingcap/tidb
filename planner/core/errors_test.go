@@ -85,6 +85,6 @@ func TestError(t *testing.T) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.True(t, code != mysql.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
+		require.Truef(t, code != mysql.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
 	}
 }
