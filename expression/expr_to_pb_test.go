@@ -1441,7 +1441,7 @@ func TestPushDownSwitcher(t *testing.T) {
 	}
 	var enabled []string
 	for _, funcName := range cases {
-		args := []Expression{genColumn(mysql.TypeLong, 1)}
+		args := []Expression{genColumn(mysql.TypeDouble, 1)}
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,

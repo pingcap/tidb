@@ -1167,6 +1167,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 				failpoint.Return(true)
 			}
 		}
+		failpoint.Return(false)
 	})
 
 	ret := false
