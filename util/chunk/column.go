@@ -596,7 +596,7 @@ func (c *Column) GetTime(rowID int) types.Time {
 // GetDuration returns the Duration in the specific row.
 func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {
