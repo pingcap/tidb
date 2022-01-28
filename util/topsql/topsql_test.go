@@ -109,6 +109,7 @@ func TestTopSQLReporter(t *testing.T) {
 	defer func() {
 		ds.Close()
 		report.Close()
+		server.Stop()
 	}()
 
 	reqs := []struct {
