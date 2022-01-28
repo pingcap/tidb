@@ -521,13 +521,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		return err
 	}
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError")); _err_ == nil {
 		if val.(bool) {
 			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
-				failpoint.Return(kv.ErrTxnRetryable)
+				return kv.ErrTxnRetryable
 			}
 		}
-	})
+	}
 
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
@@ -891,11 +891,11 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
-	failpoint.Inject("keepHistory", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("keepHistory")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(err)
+			return err
 		}
-	})
+	}
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
@@ -1067,12 +1067,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		failpoint.Inject("preCommitHook", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("preCommitHook")); _err_ == nil {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
 				hook()
 			}
-		})
+		}
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -1723,12 +1723,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockStmtSlow")); _err_ == nil {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
 			v, _ := val.(int)
 			time.Sleep(time.Duration(v) * time.Millisecond)
 		}
-	})
+	}
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -1835,12 +1835,12 @@ func (s *session) hasQuerySpecial() bool {
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	failpoint.Inject("assertTxnManagerInRunStmt", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInRunStmt")); _err_ == nil {
 		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
 		if stmt, ok := s.(*executor.ExecStmt); ok {
 			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
 		}
-	})
+	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
@@ -2002,10 +2002,10 @@ func (s *session) preparedStmtExec(ctx context.Context,
 	is infoschema.InfoSchema, snapshotTS uint64,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 
-	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInPreparedStmtExec")); _err_ == nil {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
 		sessiontxn.AssertTxnManagerInfoSchema(s, is)
-	})
+	}
 
 	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, args)
 	if err != nil {
@@ -2030,10 +2030,10 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	is infoschema.InfoSchema, snapshotTS uint64,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 
-	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInCachedPlanExec")); _err_ == nil {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
 		sessiontxn.AssertTxnManagerInfoSchema(s, is)
-	})
+	}
 
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
@@ -2994,9 +2994,9 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 			// we don't need to request tso for stale read
 			return
 		}
-		failpoint.Inject("assertTSONotRequest", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("assertTSONotRequest")); _err_ == nil {
 			panic("tso shouldn't be requested")
-		})
+		}
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)

@@ -179,11 +179,11 @@ func pdRequest(
 }
 
 func pdRequestRetryInterval() time.Duration {
-	failpoint.Inject("FastRetry", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("FastRetry")); _err_ == nil {
 		if v.(bool) {
-			failpoint.Return(0)
+			return 0
 		}
-	})
+	}
 	return time.Second
 }
 
@@ -267,12 +267,12 @@ func parseVersion(versionBytes []byte) *semver.Version {
 			zap.ByteString("version", versionBytes), zap.Error(err))
 		version = &semver.Version{Major: 0, Minor: 0, Patch: 0}
 	}
-	failpoint.Inject("PDEnabledPauseConfig", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("PDEnabledPauseConfig")); _err_ == nil {
 		if val.(bool) {
 			// test pause config is enable
 			version = &semver.Version{Major: 5, Minor: 0, Patch: 0}
 		}
-	})
+	}
 	return version
 }
 

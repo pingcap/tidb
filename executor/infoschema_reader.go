@@ -2813,7 +2813,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
-	failpoint.Inject("mockOutputOfAttributes", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockOutputOfAttributes")); _err_ == nil {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
 		}
@@ -2829,7 +2829,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 			},
 		}
 		err = nil
-	})
+	}
 
 	if err != nil {
 		return errors.Wrap(err, "get the label rules failed")

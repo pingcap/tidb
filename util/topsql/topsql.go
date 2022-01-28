@@ -98,7 +98,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	} else {
 		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
-	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForEachSQL")); _err_ == nil {
 		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
 		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
 		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
@@ -106,7 +106,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		if val.(bool) {
 			lowerSQL := strings.ToLower(normalizedSQL)
 			if strings.Contains(lowerSQL, "mysql") {
-				failpoint.Return(ctx)
+				return ctx
 			}
 			isDML := false
 			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "commit"} {
@@ -116,7 +116,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 				}
 			}
 			if !isDML {
-				failpoint.Return(ctx)
+				return ctx
 			}
 			start := time.Now()
 			logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
@@ -128,7 +128,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 				}
 			}
 		}
-	})
+	}
 	return ctx
 }
 

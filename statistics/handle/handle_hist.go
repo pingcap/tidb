@@ -246,12 +246,12 @@ func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.
 
 // readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
-	failpoint.Inject("mockReadStatsForOnePanic", nil)
-	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
+	failpoint.Eval(_curpkg_("mockReadStatsForOnePanic"))
+	if val, _err_ := failpoint.Eval(_curpkg_("mockReadStatsForOneFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
+			return nil, errors.New("gofail ReadStatsForOne error")
 		}
-	})
+	}
 	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -402,7 +402,7 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 func (h *Handle) finishWorking(col model.TableColumnID) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	failpoint.Inject("mockFinishWorkingPanic", nil)
+	failpoint.Eval(_curpkg_("mockFinishWorkingPanic"))
 	if chList, ok := h.StatsLoad.WorkingColMap[col]; ok {
 		list := chList[1:]
 		for _, ch := range list {

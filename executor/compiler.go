@@ -68,10 +68,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	failpoint.Inject("assertTxnManagerInCompile", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInCompile")); _err_ == nil {
 		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
-	})
+	}
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
@@ -79,13 +79,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertStmtCtxIsStaleness")); _err_ == nil {
 		expected := val.(bool)
 		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
 		if got != expected {
 			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
 		}
-	})
+	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	var lowerPriority bool

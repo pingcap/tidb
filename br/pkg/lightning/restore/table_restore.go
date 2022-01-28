@@ -92,9 +92,9 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	chunks, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
 		timestamp := time.Now().Unix()
-		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
+		if v, _err_ := failpoint.Eval(_curpkg_("PopulateChunkTimestamp")); _err_ == nil {
 			timestamp = int64(v.(int))
-		})
+		}
 		for _, chunk := range chunks {
 			engine, found := cp.Engines[chunk.EngineID]
 			if !found {
@@ -369,9 +369,9 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
-			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("FailBeforeIndexEngineImported")); _err_ == nil {
 				panic("forcing failure due to FailBeforeIndexEngineImported")
-			})
+			}
 		}
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
@@ -952,7 +952,7 @@ func (tr *TableRestore) importKV(
 
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
 
-	failpoint.Inject("SlowDownImport", func() {})
+	failpoint.Eval(_curpkg_("SlowDownImport"))
 
 	return nil
 }

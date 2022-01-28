@@ -278,7 +278,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
 
-	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockTimeForStatementsSummary")); _err_ == nil {
 		// mockTimeForStatementsSummary takes string of Unix timestamp
 		if unixTimeStr, ok := val.(string); ok {
 			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
@@ -288,7 +288,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 				now = unixTime
 			}
 		}
-	})
+	}
 
 	intervalSeconds := ssMap.refreshInterval()
 	historySize := ssMap.historySize()

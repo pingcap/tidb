@@ -250,9 +250,9 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
 		available := tb.Available
-		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("PollTiFlashReplicaStatusReplacePrevAvailableValue")); _err_ == nil {
 			available = val.(bool)
-		})
+		}
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
@@ -279,9 +279,9 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
 			avail := regionCount == flashRegionCount
-			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("PollTiFlashReplicaStatusReplaceCurAvailableValue")); _err_ == nil {
 				avail = val.(bool)
-			})
+			}
 
 			if !avail {
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
@@ -423,9 +423,9 @@ func (d *ddl) PollTiFlashRoutine() {
 				logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
 				return
 			}
-			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
-				failpoint.Continue()
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("BeforePollTiFlashReplicaStatusLoop")); _err_ == nil {
+				continue
+			}
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {

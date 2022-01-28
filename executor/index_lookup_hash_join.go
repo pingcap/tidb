@@ -306,11 +306,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
-		failpoint.Inject("TestIssue30211", nil)
+		failpoint.Eval(_curpkg_("TestIssue30211"))
 		task, err := ow.buildTask(ctx)
-		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("testIndexHashJoinOuterWorkerErr")); _err_ == nil {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")
-		})
+		}
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
 			if ow.keepOuterOrder {
@@ -330,9 +330,9 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 			return
 		}
 		if ow.keepOuterOrder {
-			failpoint.Inject("testIssue20779", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("testIssue20779")); _err_ == nil {
 				panic("testIssue20779")
-			})
+			}
 			if finished := ow.pushToChan(ctx, task, ow.taskCh); finished {
 				return
 			}
@@ -493,9 +493,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			}
 		}
 	}
-	failpoint.Inject("testIndexHashJoinInnerWorkerErr", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("testIndexHashJoinInnerWorkerErr")); _err_ == nil {
 		joinResult.err = errors.New("mockIndexHashJoinInnerWorkerErr")
-	})
+	}
 	// When task.keepOuterOrder is TRUE (resultCh != iw.resultCh):
 	//   - the last joinResult will be handled when the task has been processed,
 	//     thus we DO NOT need to check it here again.
@@ -533,7 +533,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 }
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
-	failpoint.Inject("IndexHashJoinBuildHashTablePanic", nil)
+	failpoint.Eval(_curpkg_("IndexHashJoinBuildHashTablePanic"))
 	if iw.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -562,9 +562,9 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 			}
 			h.Reset()
 			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
-			failpoint.Inject("testIndexHashJoinBuildErr", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("testIndexHashJoinBuildErr")); _err_ == nil {
 				err = errors.New("mockIndexHashJoinBuildErr")
-			})
+			}
 			if err != nil {
 				// This panic will be recovered by the invoker.
 				panic(err.Error())
@@ -634,9 +634,9 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg.Wait()
 	// check error after wg.Wait to make sure error message can be sent to
 	// resultCh even if panic happen in buildHashTableForOuterResult.
-	failpoint.Inject("IndexHashJoinFetchInnerResultsErr", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("IndexHashJoinFetchInnerResultsErr")); _err_ == nil {
 		err = errors.New("IndexHashJoinFetchInnerResultsErr")
-	})
+	}
 	if err != nil {
 		return err
 	}
@@ -789,9 +789,9 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			row := chk.GetRow(j)
 			ptr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
 			err = iw.collectMatchedInnerPtrs4OuterRows(ctx, row, ptr, task, h, iw.joinKeyBuf)
-			failpoint.Inject("TestIssue31129", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("TestIssue31129")); _err_ == nil {
 				err = errors.New("TestIssue31129")
-			})
+			}
 			if err != nil {
 				return err
 			}

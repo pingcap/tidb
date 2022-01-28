@@ -177,19 +177,19 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		ctx,
 		func() error {
 			stores, err = GetAllTiKVStores(ctx, pdClient, storeBehavior)
-			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-error")); _err_ == nil {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
 				}
-			})
+			}
 
-			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("hint-GetAllTiKVStores-cancel")); _err_ == nil {
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 					err = status.Error(codes.Canceled, "Cancel Retry")
 				}
-			})
+			}
 
 			return errors.Trace(err)
 		},
@@ -297,7 +297,7 @@ func NewMgr(
 }
 
 func (mgr *Mgr) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	failpoint.Inject("hint-get-backup-client", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-get-backup-client")); _err_ == nil {
 		log.Info("failpoint hint-get-backup-client injected, "+
 			"process will notify the shell.", zap.Uint64("store", storeID))
 		if sigFile, ok := v.(string); ok {
@@ -310,7 +310,7 @@ func (mgr *Mgr) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.Cl
 			}
 		}
 		time.Sleep(3 * time.Second)
-	})
+	}
 	store, err := mgr.GetPDClient().GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -355,10 +355,10 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 
-	failpoint.Inject("assertTxnManagerInCompile", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInCompile")); _err_ == nil {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
-	})
+	}
 
 	stmt := &ExecStmt{
 		GoCtx:       ctx,

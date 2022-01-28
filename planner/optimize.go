@@ -305,21 +305,21 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("checkOptimizeCountOne")); _err_ == nil {
 		optimizeCnt++
 		if optimizeCnt > 1 {
-			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+			return nil, nil, 0, errors.New("gofail wrong optimizerCnt error")
 		}
-	})
+	}
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
-	failpoint.Inject("mockRandomPlanID", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRandomPlanID")); _err_ == nil {
 		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
-	})
+	}
 
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())

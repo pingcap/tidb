@@ -161,11 +161,11 @@ func (m *mppIterator) run(ctx context.Context) {
 		m.mu.Unlock()
 		m.wg.Add(1)
 		boMaxSleep := copNextMaxBackoff
-		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("ReduceCopNextMaxBackoff")); _err_ == nil {
 			if value.(bool) {
 				boMaxSleep = 2
 			}
-		})
+		}
 		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
@@ -292,13 +292,13 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
-	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mppNonRootTaskError")); _err_ == nil {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
 			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
-	})
+	}
 	if !req.IsRoot {
 		return
 	}

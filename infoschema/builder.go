@@ -476,13 +476,13 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	// Failpoint check whether tableInfo should be added to repairInfo.
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
-	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("repairFetchCreateTable")); _err_ == nil {
 		if val.(bool) {
 			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
-				failpoint.Return(nil, nil)
+				return nil, nil
 			}
 		}
-	})
+	}
 
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)

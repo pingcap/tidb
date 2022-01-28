@@ -134,12 +134,12 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertBatchPointReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
 			panic("batch point get replica option fail")
 		}
-	})
+	}
 
 	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
@@ -358,14 +358,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
 		// 3. Then point get retrieve data from backend after step 2 finished
 		// 4. Check the result
-		failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step1", func() {
+		if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("batchPointGetRepeatableReadTest-step1")); _err_ == nil {
 			if ch, ok := ctx.Value("batchPointGetRepeatableReadTest").(chan struct{}); ok {
 				// Make `UPDATE` continue
 				close(ch)
 			}
 			// Wait `UPDATE` finished
-			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
-		})
+			failpoint.EvalContext(ctx, _curpkg_("batchPointGetRepeatableReadTest-step2"))
+		}
 	} else if e.keepOrder {
 		less := func(i int, j int) bool {
 			if e.desc {

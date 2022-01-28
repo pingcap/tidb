@@ -367,7 +367,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 	for {
-		failpoint.Inject("TestIssue30211", nil)
+		failpoint.Eval(_curpkg_("TestIssue30211"))
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err

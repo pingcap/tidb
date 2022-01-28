@@ -411,13 +411,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
 	fpEnabled := false
-	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("FailPlacement")); _err_ == nil {
 		if val.(bool) {
 			fpEnabled = true
 			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
 			err = nil
 		}
-	})
+	}
 	if fpEnabled {
 		return
 	}
@@ -446,15 +446,15 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
-	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
+	if isServiceError, _err_ := failpoint.Eval(_curpkg_("putRuleBundlesError")); _err_ == nil {
 		var err error
 		if isServiceError.(bool) {
 			err = ErrHTTPServiceError.FastGen("mock service error")
 		} else {
 			err = errors.New("mock other error")
 		}
-		failpoint.Return(err)
-	})
+		return err
+	}
 
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -869,14 +869,14 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
-	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockServerInfo")); _err_ == nil {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
 		}
-	})
+	}
 
 	return info
 }

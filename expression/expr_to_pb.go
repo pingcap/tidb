@@ -209,9 +209,9 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
-		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("PanicIfPbCodeUnspecified")); _err_ == nil {
 			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
-		})
+		}
 		return nil
 	}
 

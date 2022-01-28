@@ -390,11 +390,11 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("ErrorMockReloadFailed")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock reload failed"))
+			return errors.New("mock reload failed")
 		}
-	})
+	}
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -804,11 +804,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockReplaceDDL")); _err_ == nil {
 		if val.(bool) {
 			do.ddl = d
 		}
-	})
+	}
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -1025,7 +1025,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 
-			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("skipLoadSysVarCacheLoop")); _err_ == nil {
 				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
 				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
 				// own storage.
@@ -1033,9 +1033,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// That's the problem, each testSuit use different storage to update some same local variables.
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
-					failpoint.Continue()
+					continue
 				}
-			})
+			}
 
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")

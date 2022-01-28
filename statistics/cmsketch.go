@@ -268,9 +268,9 @@ func queryValue(sc *stmtctx.StatementContext, c *CMSketch, t *TopN, val types.Da
 
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
-	failpoint.Inject("mockQueryBytesMaxUint64", func(val failpoint.Value) {
-		failpoint.Return(uint64(val.(int)))
-	})
+	if val, _err_ := failpoint.Eval(_curpkg_("mockQueryBytesMaxUint64")); _err_ == nil {
+		return uint64(val.(int))
+	}
 	h1, h2 := murmur3.Sum128(d)
 	return c.queryHashValue(h1, h2)
 }

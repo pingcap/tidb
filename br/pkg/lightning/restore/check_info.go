@@ -1068,9 +1068,9 @@ outloop:
 		rowSize += uint64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 
-		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mock-kv-size")); _err_ == nil {
 			kvSize += uint64(val.(int))
-		})
+		}
 		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}

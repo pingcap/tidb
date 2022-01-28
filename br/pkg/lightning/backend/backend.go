@@ -345,14 +345,14 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 
 	logger.Info("open engine")
 
-	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("FailIfEngineCountExceeds")); _err_ == nil {
 		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
 		openCount := metric.ReadCounter(openCounter)
 		closedCount := metric.ReadCounter(closedCounter)
 		if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
 			panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
 		}
-	})
+	}
 
 	return &OpenedEngine{
 		engine: engine{

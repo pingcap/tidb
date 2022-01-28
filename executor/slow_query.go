@@ -535,11 +535,11 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
 		}
 	}()
-	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorMockParseSlowLogPanic")); _err_ == nil {
 		if val.(bool) {
 			panic("panic test")
 		}
-	})
+	}
 	var row []types.Datum
 	user := ""
 	tz := sctx.GetSessionVars().Location()

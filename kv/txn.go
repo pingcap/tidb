@@ -60,7 +60,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			return err
 		}
 
-		failpoint.Inject("mockCommitErrorInNewTxn", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockCommitErrorInNewTxn")); _err_ == nil {
 			if v := val.(string); len(v) > 0 {
 				switch v {
 				case "retry_once":
@@ -68,10 +68,10 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 						err = ErrTxnRetryable
 					}
 				case "no_retry":
-					failpoint.Return(errors.New("mock commit error"))
+					return errors.New("mock commit error")
 				}
 			}
-		})
+		}
 
 		if err == nil {
 			err = txn.Commit(ctx)

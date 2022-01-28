@@ -104,11 +104,11 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	for {
 		select {
 		case <-ctx.Done():
-			failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("checkOwnerCheckAllVersionsWaitTime")); _err_ == nil {
 				if v.(bool) {
 					panic("shouldn't happen")
 				}
-			})
+			}
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			ver := atomic.LoadInt64(&s.selfSchemaVersion)

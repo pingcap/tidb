@@ -602,11 +602,11 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 			return nil, errors.Trace(err)
 		}
 
-		failpoint.Inject("errGetRegionByIDEmpty", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("errGetRegionByIDEmpty")); _err_ == nil {
 			if val.(bool) {
 				region.Meta = nil
 			}
-		})
+		}
 
 		if region.Meta == nil {
 			return nil, errors.Errorf("region not found for regionID %q", regionID)
