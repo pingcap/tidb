@@ -296,9 +296,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 
 				var builder distsql.RequestBuilder
-				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-					builder.SetIsolationLevel(kv.RC)
-				}
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
