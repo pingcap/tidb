@@ -15,16 +15,14 @@
 package core
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/stretchr/testify/require"
 )
 
-type testErrorSuite struct{}
-
-var _ = Suite(testErrorSuite{})
-
-func (s testErrorSuite) TestError(c *C) {
+func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedType,
 		ErrAnalyzeMissIndex,
@@ -87,6 +85,6 @@ func (s testErrorSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		require.True(t, code != mysql.ErrUnknown && code == uint16(err.Code()), "err: %v", err)
 	}
 }
