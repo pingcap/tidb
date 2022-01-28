@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -108,11 +109,8 @@ LOOP:
 }
 
 func TestSchemaResume(t *testing.T) {
-	store := testCreateStore(t, "test_schema_resume")
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	d1, err := testNewDDLAndStart(
 		context.Background(),
@@ -147,27 +145,24 @@ func TestSchemaResume(t *testing.T) {
 	testCheckSchemaState(t, d1, dbInfo, model.StateNone)
 }
 
-func (s *testStatSuiteToVerify) TestStat() {
-	store := testCreateStore(s.T(), "test_stat")
-	defer func() {
-		err := store.Close()
-		require.NoError(s.T(), err)
-	}()
+func TestStat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
 	)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	defer func() {
 		err := d.Stop()
-		require.NoError(s.T(), err)
+		require.NoError(t, err)
 	}()
 
 	dbInfo, err := testSchemaInfo(d, "test_restart")
-	require.NoError(s.T(), err)
-	testCreateSchema(s.T(), testNewContext(d), d, dbInfo)
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
 	//	m, err := d.Stats(nil)
@@ -186,20 +181,19 @@ func (s *testStatSuiteToVerify) TestStat() {
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-	ver := s.getDDLSchemaVer(d)
+	ver := getDDLSchemaVer(t, d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			err := d.Stop()
-			require.Nil(s.T(), err)
-			require.GreaterOrEqual(s.T(), s.getDDLSchemaVer(d), ver)
+			require.NoError(t, d.Stop())
+			require.GreaterOrEqual(t, getDDLSchemaVer(t, d), ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case err := <-done:
+		case result := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			require.Nil(s.T(), err)
+			require.Nil(t, result)
 			break LOOP
 		}
 	}
