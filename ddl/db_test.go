@@ -256,16 +256,6 @@ func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string)
 	return tbl
 }
 
-func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
-}
-
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
