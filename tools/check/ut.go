@@ -263,11 +263,14 @@ func cmdRun(args ...string) bool {
 	}
 
 	shuffle(tasks)
+
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+	fmt.Println("run all tasks takes", time.Since(start))
 
 	if junitfile != "" {
 		out := collectTestResults(works)
@@ -485,8 +488,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	exe := "./" + testFileName(pkg)
-	cmd := n.testCommand(exe, fn, old)
+	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	var buf bytes.Buffer
@@ -498,9 +500,9 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
-		res.d = time.Since(start)
-		res.Time = formatDurationAsSeconds(res.d)
 	}
+	res.d = time.Since(start)
+	res.Time = formatDurationAsSeconds(res.d)
 	return res
 }
 
@@ -549,7 +551,16 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+	args := make([]string, 0, 10)
+	exe := "./" + testFileName(pkg)
+	if coverprofile != "" {
+		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
+		tmpFile := path.Join(coverFileTempDir, fileName)
+		args = append(args, "-test.coverprofile", tmpFile)
+	}
+	args = append(args, "-test.cpu", "1")
+	// args = append(args, []string{"-test.timeout", "20s"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
@@ -590,23 +601,27 @@ func buildTestBinary(pkg string) error {
 
 // buildTestBinaryMulti is much faster than build the test packages one by one.
 func buildTestBinaryMulti(pkgs []string) error {
-       // go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
-       xprogPath := path.Join(workDir, "tools/bin/xprog")
-       packages := make([]string, 0, len(pkgs))
-       for _, pkg := range pkgs {
-               packages = append(packages, path.Join(modulePath, pkg))
-       }
+	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	packages := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		packages = append(packages, path.Join(modulePath, pkg))
+	}
 
-       var cmd *exec.Cmd
-	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
-       cmd.Args = append(cmd.Args, packages...)
-       cmd.Dir = workDir
-       cmd.Stdout = os.Stdout
-       cmd.Stderr = os.Stderr
-       if err := cmd.Run(); err != nil {
-               return withTrace(err)
-       }
-       return nil
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
+	} else {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+	}
+	cmd.Args = append(cmd.Args, packages...)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -618,6 +633,7 @@ func testBinaryExist(pkg string) (bool, error) {
 	}
 	return true, withTrace(err)
 }
+
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
 	return file + ".test.bin"
@@ -690,6 +706,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
+	rand.Seed(time.Now().UnixNano())
 	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
