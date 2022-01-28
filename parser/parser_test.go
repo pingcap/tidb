@@ -2195,6 +2195,111 @@ func TestIdentifier(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestBuiltinFuncAsIdentifier(t *testing.T) {
+	whitespaceFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"BIT_AND", "`c1`"},
+		{"BIT_OR", "`c1`"},
+		{"BIT_XOR", "`c1`"},
+		{"CAST", "1 AS FLOAT"},
+		{"COUNT", "1"},
+		{"CURDATE", ""},
+		{"CURTIME", ""},
+		{"DATE_ADD", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"DATE_SUB", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"EXTRACT", "SECOND FROM _UTF8MB4'2011-11-11 10:10:10'"},
+		{"GROUP_CONCAT", "`c2`, `c1` SEPARATOR ','"},
+		{"MAX", "`c1`"},
+		{"MID", "_UTF8MB4'Sakila', -5, 3"},
+		{"MIN", "`c1`"},
+		{"NOW", ""},
+		{"POSITION", "_UTF8MB4'bar' IN _UTF8MB4'foobarbar'"},
+		{"STDDEV_POP", "`c1`"},
+		{"STDDEV_SAMP", "`c1`"},
+		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
+		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
+		{"SUM", "`c1`"},
+		{"SYSDATE", ""},
+		{"TRIM", "_UTF8MB4' foo '"},
+		{"VAR_POP", "`c1`"},
+		{"VAR_SAMP", "`c1`"},
+	}
+
+	testcases := make([]testCase, 0, 3*len(whitespaceFuncs))
+	runTests := func(ignoreSpace bool) {
+		p := parser.New()
+		if ignoreSpace {
+			p.SetSQLMode(mysql.ModeIgnoreSpace)
+		}
+		for _, c := range testcases {
+			_, _, err := p.Parse(c.src, "", "")
+			if !c.ok {
+				require.Errorf(t, err, "source %v", c.src)
+				continue
+			}
+			require.NoErrorf(t, err, "source %v", c.src)
+			if c.ok && !ignoreSpace {
+				RunRestoreTest(t, c.src, c.restore, false)
+			}
+		}
+	}
+
+	for _, function := range whitespaceFuncs {
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// In MySQL, `select x ()` is recognized as a stored function.
+		// In TiDB, most of these functions are recognized as identifiers while some are builtin functions (such as COUNT, CURDATE)
+		// because the later ones are not added to the token map. We'd better not to modify it since it breaks compatibility.
+		// For example, `select CURDATE ()` reports an error in MySQL but it works well for TiDB.
+
+		// `x` is recognized as an identifier for `x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(false)
+
+	testcases = make([]testCase, 0, 4*len(whitespaceFuncs))
+	for _, function := range whitespaceFuncs {
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), false, ""})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(true)
+
+	normalFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"ADDDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SESSION_USER", ""},
+		{"SUBDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SYSTEM_USER", ""},
+	}
+
+	testcases = make([]testCase, 0, 4*len(normalFuncs))
+	for _, function := range normalFuncs {
+		// `x` is recognized as a function name for `select x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as a function name for `select x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as an identifier for `create table x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as an identifier for `create table x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+	}
+	runTests(false)
+	runTests(true)
+}
+
 func TestDDL(t *testing.T) {
 	table := []testCase{
 		{"CREATE", false, ""},

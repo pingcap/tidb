@@ -950,6 +950,7 @@ func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.Tes
 }
 
 func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts1(c *C) {
+	c.Skip("unstable test")
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -989,6 +990,7 @@ func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts1(c *C) {
 }
 
 func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
+	c.Skip("unstable test")
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
