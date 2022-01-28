@@ -523,3 +523,72 @@ b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
 lower, md5, reverse, upper, vitess_hash
+<<<<<<< HEAD
+=======
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+`COL1` double NOT NULL,
+`COL2` double NOT NULL,
+`COL3` double DEFAULT NULL,
+PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, primary key(c_int, c_str(9))  clustered, key idx((reverse(c_str))));
+replace into t (c_int, c_str) values (9, "beautiful hermann");
+select reverse(c_str) from t use index(idx);
+reverse(c_str)
+nnamreh lufituaeb
+drop table t;
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+drop table t1,t2;
+>>>>>>> 59937273c... planner: fix projection of generate column for indexLookup task (#31684)
