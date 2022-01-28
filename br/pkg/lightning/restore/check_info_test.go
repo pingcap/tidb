@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -39,17 +40,14 @@ import (
 	tmock "github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&checkInfoSuite{})
-
-type checkInfoSuite struct{}
-
 const passed CheckType = "pass"
 
-func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
-	dir := c.MkDir()
+func TestCheckCSVHeader(t *testing.T) {
+	dir := t.TempDir()
+
 	ctx := context.Background()
 	mockStore, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	type tableSource struct {
 		Name    string
@@ -363,9 +361,9 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 
 			for _, tbl := range tbls {
 				node, err := p.ParseOneStmt(tbl.SQL, "", "")
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				core.State = model.StatePublic
 				dbInfo.Tables[tbl.Name] = &checkpoints.TidbTableInfo{
 					ID:   core.ID,
@@ -378,7 +376,7 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 				for i, s := range tbl.Sources {
 					fileName := fmt.Sprintf("%s.%s.%d.csv", db, tbl.Name, i)
 					err = os.WriteFile(filepath.Join(dir, fileName), []byte(s), 0o644)
-					c.Assert(err, IsNil)
+					require.NoError(t, err)
 					fileInfos = append(fileInfos, mydump.FileInfo{
 						FileMeta: mydump.SourceFileMeta{
 							Path:     fileName,
@@ -400,15 +398,16 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 		}
 
 		err := rc.checkCSVHeader(ctx, dbMetas)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if ca.level != passed {
-			c.Assert(rc.checkTemplate.FailedCount(ca.level), Equals, 1)
+			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
 		}
 	}
 }
 
-func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
-	dir := c.MkDir()
+func TestCheckTableEmpty(t *testing.T) {
+	dir := t.TempDir()
+
 	cfg := config.NewConfig()
 	cfg.Checkpoint.Enable = false
 	dbMetas := []*mydump.MDDatabaseMeta{
@@ -447,17 +446,17 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	// test tidb will do nothing
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
 	err := rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// test incremental mode
 	rc.cfg.TikvImporter.Backend = config.BackendLocal
 	rc.cfg.TikvImporter.IncrementalImport = true
 	err = rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rc.cfg.TikvImporter.IncrementalImport = false
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
@@ -468,12 +467,12 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	// not error, need not to init check template
 	err = rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	// single table contains data
 	db, mock, err = sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
@@ -484,15 +483,16 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
-	c.Assert(len(tmpl.criticalMsgs), Equals, 1)
-	c.Assert(tmpl.criticalMsgs[0], Matches, "table\\(s\\) \\[`test2`.`tbl1`\\] are not empty")
+	require.Equal(t, 1, len(tmpl.criticalMsgs))
+	require.Regexp(t, "table\\(s\\) \\[`test2`.`tbl1`\\] are not empty", tmpl.criticalMsgs[0])
 
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
@@ -503,11 +503,12 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
-	c.Assert(len(tmpl.criticalMsgs), Equals, 1)
-	c.Assert(tmpl.criticalMsgs[0], Matches, "table\\(s\\) \\[`test1`.`tbl1`, `test2`.`tbl1`\\] are not empty")
+	require.Equal(t, 1, len(tmpl.criticalMsgs))
+	require.Regexp(t, "table\\(s\\) \\[`test1`.`tbl1`, `test2`.`tbl1`\\] are not empty", tmpl.criticalMsgs[0])
 
 	// init checkpoint with only two of the three tables
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
@@ -531,25 +532,26 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	rc.cfg.Checkpoint.Enable = true
 	rc.checkpointsDB = checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
 	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
-	c.Check(err, IsNil)
+	require.NoError(t, err)
 	db, mock, err = sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	// only need to check the one that is not in checkpoint
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *checkInfoSuite) TestLocalResource(c *C) {
-	dir := c.MkDir()
+func TestLocalResource(t *testing.T) {
+	dir := t.TempDir()
+
 	mockStore, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize", "return(2048)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
 	}()
@@ -567,28 +569,28 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	// 1. source-size is smaller than disk-size, won't trigger error information
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.localResource(1000)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
-	c.Assert(tmpl.warnFailedCount, Equals, 1)
-	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.normalMsgs[1], Matches, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB")
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 0, tmpl.criticalFailedCount)
+	require.Regexp(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.normalMsgs[1])
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.localResource(4096)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
-	c.Assert(tmpl.warnFailedCount, Equals, 1)
-	c.Assert(tmpl.criticalFailedCount, Equals, 1)
-	c.Assert(tmpl.criticalMsgs[0], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports")
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 1, tmpl.criticalFailedCount)
+	require.Regexp(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.criticalMsgs[0])
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
 	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
 	err = rc.localResource(4096)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
-	c.Assert(tmpl.warnFailedCount, Equals, 1)
-	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.normalMsgs[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import")
+	require.Equal(t, 1, tmpl.warnFailedCount)
+	require.Equal(t, 0, tmpl.criticalFailedCount)
+	require.Regexp(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import", tmpl.normalMsgs[1])
 }

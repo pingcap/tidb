@@ -8,10 +8,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/ddl"
@@ -21,13 +21,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
-
-var _ = Suite(&checksumSuite{})
-
-type checksumSuite struct{}
 
 func MockDoChecksumCtx(db *sql.DB) context.Context {
 	ctx := context.Background()
@@ -35,9 +32,9 @@ func MockDoChecksumCtx(db *sql.DB) context.Context {
 	return context.WithValue(ctx, &checksumManagerKey, manager)
 }
 
-func (s *checksumSuite) TestDoChecksum(c *C) {
+func TestDoChecksum(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -56,22 +53,22 @@ func (s *checksumSuite) TestDoChecksum(c *C) {
 
 	ctx := MockDoChecksumCtx(db)
 	checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
-	c.Assert(err, IsNil)
-	c.Assert(*checksum, DeepEquals, RemoteChecksum{
+	require.NoError(t, err)
+	require.Equal(t, RemoteChecksum{
 		Schema:     "test",
 		Table:      "t",
 		Checksum:   8520875019404689597,
 		TotalKVs:   7296873,
 		TotalBytes: 357601387,
-	})
+	}, *checksum)
 
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *checksumSuite) TestDoChecksumParallel(c *C) {
+func TestDoChecksumParallel(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -99,25 +96,25 @@ func (s *checksumSuite) TestDoChecksumParallel(c *C) {
 	for i := 0; i < 5; i++ {
 		wg.Run(func() {
 			checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
-			c.Assert(err, IsNil)
-			c.Assert(*checksum, DeepEquals, RemoteChecksum{
+			require.NoError(t, err)
+			require.Equal(t, RemoteChecksum{
 				Schema:     "test",
 				Table:      "t",
 				Checksum:   8520875019404689597,
 				TotalKVs:   7296873,
 				TotalBytes: 357601387,
-			})
+			}, *checksum)
 		})
 	}
 	wg.Wait()
 
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *checksumSuite) TestIncreaseGCLifeTimeFail(c *C) {
+func TestIncreaseGCLifeTimeFail(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	for i := 0; i < 5; i++ {
 		mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
@@ -138,19 +135,19 @@ func (s *checksumSuite) TestIncreaseGCLifeTimeFail(c *C) {
 	for i := 0; i < 5; i++ {
 		wg.Run(func() {
 			_, errChecksum := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
-			c.Assert(errChecksum, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
+			require.Regexp(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
 		})
 	}
 	wg.Wait()
 
 	_, err = db.Exec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E", "10m")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
+func TestDoChecksumWithTikv(t *testing.T) {
 	// set up mock tikv checksum manager
 	pdClient := &testPDClient{}
 	resp := tipb.ChecksumResponse{Checksum: 123, TotalKvs: 10, TotalBytes: 1000}
@@ -160,9 +157,9 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	p := parser.New()
 	se := tmock.NewContext()
 	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -176,24 +173,24 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
-			c.Assert(err, ErrorMatches, "tikv timeout")
+			require.Regexp(t, "tikv timeout", err.Error())
 			continue
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 
 		// after checksum, safepint should be small than start ts
 		ts := pdClient.currentSafePoint()
 		// 1ms for the schedule deviation
-		c.Assert(ts <= startTS+1, IsTrue)
-		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
-		c.Assert(len(checksumExec.manager.tableGCSafeTS), Equals, 0)
+		require.True(t, ts <= startTS+1)
+		require.True(t, atomic.LoadUint32(&checksumExec.manager.started) > 0)
+		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
 	}
 }
 
-func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
+func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("300h"))
@@ -206,10 +203,10 @@ func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 
 	ctx := MockDoChecksumCtx(db)
 	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
-	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
+	require.Regexp(t, "compute remote checksum failed: mock syntax error.*", err.Error())
 
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 type safePointTTL struct {
@@ -267,10 +264,10 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 	return c.currentSafePoint(), nil
 }
 
-func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
+func TestGcTTLManagerSingle(t *testing.T) {
 	pdClient := &testPDClient{}
 	manager := newGCTTLManager(pdClient)
-	c.Assert(manager.serviceID, Not(Equals), "")
+	require.NotEqual(t, "", manager.serviceID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	oldTTL := serviceSafePointTTL
@@ -281,56 +278,56 @@ func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	}()
 
 	err := manager.addOneJob(ctx, "test", uint64(time.Now().Unix()))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	time.Sleep(2*time.Second + 10*time.Millisecond)
 
 	// after 2 seconds, must at least update 5 times
 	val := atomic.LoadInt32(&pdClient.count)
-	c.Assert(val, GreaterEqual, int32(5))
+	require.GreaterOrEqual(t, val, int32(5))
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
 	time.Sleep(10 * time.Millisecond)
 	val = atomic.LoadInt32(&pdClient.count)
 	time.Sleep(1*time.Second + 10*time.Millisecond)
-	c.Assert(atomic.LoadInt32(&pdClient.count), Equals, val)
+	require.Equal(t, val, atomic.LoadInt32(&pdClient.count))
 }
 
-func (s *checksumSuite) TestGcTTLManagerMulti(c *C) {
+func TestGcTTLManagerMulti(t *testing.T) {
 	manager := newGCTTLManager(&testPDClient{})
 	ctx := context.Background()
 
 	for i := uint64(1); i <= 5; i++ {
 		err := manager.addOneJob(ctx, fmt.Sprintf("test%d", i), i)
-		c.Assert(err, IsNil)
-		c.Assert(manager.currentTS, Equals, uint64(1))
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), manager.currentTS)
 	}
 
 	manager.removeOneJob("test2")
-	c.Assert(manager.currentTS, Equals, uint64(1))
+	require.Equal(t, uint64(1), manager.currentTS)
 
 	manager.removeOneJob("test1")
-	c.Assert(manager.currentTS, Equals, uint64(3))
+	require.Equal(t, uint64(3), manager.currentTS)
 
 	manager.removeOneJob("test3")
-	c.Assert(manager.currentTS, Equals, uint64(4))
+	require.Equal(t, uint64(4), manager.currentTS)
 
 	manager.removeOneJob("test4")
-	c.Assert(manager.currentTS, Equals, uint64(5))
+	require.Equal(t, uint64(5), manager.currentTS)
 
 	manager.removeOneJob("test5")
-	c.Assert(manager.currentTS, Equals, uint64(0))
+	require.Equal(t, uint64(0), manager.currentTS)
 }
 
-func (s *checksumSuite) TestPdServiceID(c *C) {
+func TestPdServiceID(t *testing.T) {
 	pdCli := &testPDClient{}
 	gcTTLManager1 := newGCTTLManager(pdCli)
-	c.Assert(gcTTLManager1.serviceID, Matches, "lightning-.*")
+	require.Regexp(t, "lightning-.*", gcTTLManager1.serviceID)
 	gcTTLManager2 := newGCTTLManager(pdCli)
-	c.Assert(gcTTLManager2.serviceID, Matches, "lightning-.*")
+	require.Regexp(t, "lightning-.*", gcTTLManager2.serviceID)
 
-	c.Assert(gcTTLManager1.serviceID != gcTTLManager2.serviceID, IsTrue)
+	require.True(t, gcTTLManager1.serviceID != gcTTLManager2.serviceID)
 }
 
 type mockResponse struct {

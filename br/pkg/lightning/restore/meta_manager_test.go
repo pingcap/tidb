@@ -6,9 +6,9 @@ import (
 	"context"
 	"database/sql/driver"
 	"sort"
+	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -18,10 +18,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-var _ = Suite(&metaMgrSuite{})
 
 type metaMgrSuite struct {
 	mockDB      sqlmock.Sqlmock
@@ -30,14 +29,14 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func (s *metaMgrSuite) SetUpSuite(c *C) {
+func newTableRestore(t *testing.T) *TableRestore {
 	p := parser.New()
 	se := tmock.NewContext()
 
 	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
 	schema := "test"
@@ -51,33 +50,37 @@ func (s *metaMgrSuite) SetUpSuite(c *C) {
 
 	tableName := common.UniqueTable(schema, tb)
 	logger := log.With(zap.String("table", tableName))
-	s.tr = &TableRestore{
+	return &TableRestore{
 		tableName: tableName,
 		tableInfo: ti,
 		logger:    logger,
 	}
 }
 
-func (s *metaMgrSuite) SetUpTest(c *C) {
+func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
 	db, m, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
+	var s metaMgrSuite
 	s.mgr = &dbTableMetaMgr{
 		session:      db,
 		taskID:       1,
-		tr:           s.tr,
+		tr:           newTableRestore(t),
 		tableName:    common.UniqueTable("test", TableMetaTableName),
 		needChecksum: true,
 	}
 	s.mockDB = m
 	s.checksumMgr = &testChecksumMgr{}
+	return &s, func() {
+		require.NoError(t, s.mockDB.ExpectationsWereMet())
+		require.Nil(t, s.mockDB.ExpectationsWereMet())
+	}
 }
 
-func (s *metaMgrSuite) TearDownTest(c *C) {
-	c.Assert(s.mockDB.ExpectationsWereMet(), IsNil)
-}
+func TestAllocTableRowIDsSingleTable(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
 
-func (s *metaMgrSuite) TestAllocTableRowIDsSingleTable(c *C) {
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -88,13 +91,16 @@ func (s *metaMgrSuite) TestAllocTableRowIDsSingleTable(c *C) {
 	s.prepareMock(rows, &nextID, updateArgs, nil, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(0))
-	c.Assert(ck, IsNil)
-	c.Assert(s.checksumMgr.callCnt, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rowIDBase)
+	require.Nil(t, ck)
+
+	require.Equal(t, 0, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableAutoIDNot0(c *C) {
+func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -106,13 +112,17 @@ func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableAutoIDNot0(c *C) {
 	s.prepareMock(rows, &nextID, updateArgs, nil, &newStatus)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(998))
-	c.Assert(ck, IsNil)
-	c.Assert(s.checksumMgr.callCnt, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Nil(t, ck)
+
+	require.Equal(t, 1, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableContainsData(c *C) {
+func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
+
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -124,13 +134,16 @@ func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableContainsData(c *C) {
 	s.prepareMock(rows, &nextID, updateArgs, &checksum, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(998))
-	c.Assert(ck, DeepEquals, &checksum)
-	c.Assert(s.checksumMgr.callCnt, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Equal(t, &checksum, ck)
+	require.Equal(t, 1, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableSkipChecksum(c *C) {
+func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
+
 	s.mgr.needChecksum = false
 	defer func() {
 		s.mgr.needChecksum = true
@@ -146,13 +159,17 @@ func (s *metaMgrSuite) TestAllocTableRowIDsSingleTableSkipChecksum(c *C) {
 	s.prepareMock(rows, &nextID, updateArgs, nil, &newStatus)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(998))
-	c.Assert(ck, IsNil)
-	c.Assert(s.checksumMgr.callCnt, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Nil(t, ck)
+
+	require.Equal(t, 0, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsAllocated(c *C) {
+func TestAllocTableRowIDsAllocated(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
+
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -162,13 +179,16 @@ func (s *metaMgrSuite) TestAllocTableRowIDsAllocated(c *C) {
 	s.prepareMock(rows, nil, nil, &checksum, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(998))
-	c.Assert(ck, DeepEquals, &checksum)
-	c.Assert(s.checksumMgr.callCnt, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Equal(t, &checksum, ck)
+	require.Equal(t, 1, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsFinished(c *C) {
+func TestAllocTableRowIDsFinished(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
+
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -178,13 +198,15 @@ func (s *metaMgrSuite) TestAllocTableRowIDsFinished(c *C) {
 	s.prepareMock(rows, nil, nil, nil, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(998))
-	c.Assert(ck, DeepEquals, &checksum)
-	c.Assert(s.checksumMgr.callCnt, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Equal(t, &checksum, ck)
+	require.Equal(t, 0, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsMultiTasksInit(c *C) {
+func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -196,13 +218,16 @@ func (s *metaMgrSuite) TestAllocTableRowIDsMultiTasksInit(c *C) {
 	s.prepareMock(rows, &nextID, updateArgs, nil, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(0))
-	c.Assert(ck, IsNil)
-	c.Assert(s.checksumMgr.callCnt, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rowIDBase)
+	require.Nil(t, ck)
+
+	require.Equal(t, 0, s.checksumMgr.callCnt)
 }
 
-func (s *metaMgrSuite) TestAllocTableRowIDsMultiTasksAllocated(c *C) {
+func TestAllocTableRowIDsMultiTasksAllocated(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
 
 	rows := [][]driver.Value{
@@ -213,10 +238,11 @@ func (s *metaMgrSuite) TestAllocTableRowIDsMultiTasksAllocated(c *C) {
 	s.prepareMock(rows, nil, updateArgs, nil, nil)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
-	c.Assert(err, IsNil)
-	c.Assert(rowIDBase, Equals, int64(100))
-	c.Assert(ck, IsNil)
-	c.Assert(s.checksumMgr.callCnt, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), rowIDBase)
+	require.Nil(t, ck)
+
+	require.Equal(t, 0, s.checksumMgr.callCnt)
 }
 
 func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, updateArgs []driver.Value, checksum *verification.KVChecksum, updateStatus *string) {
@@ -264,26 +290,27 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 	}
 }
 
-var _ = Suite(&taskMetaMgrSuite{})
-
 type taskMetaMgrSuite struct {
 	mgr    *dbTaskMetaMgr
 	mockDB sqlmock.Sqlmock
 }
 
-func (s *taskMetaMgrSuite) SetUpTest(c *C) {
+func newTaskMetaMgrSuite(t *testing.T) *taskMetaMgrSuite {
 	db, m, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
+	var s taskMetaMgrSuite
 	s.mgr = &dbTaskMetaMgr{
 		session:   db,
 		taskID:    1,
 		tableName: common.UniqueTable("test", "t1"),
 	}
 	s.mockDB = m
+	return &s
 }
 
-func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
+func TestCheckTasksExclusively(t *testing.T) {
+	s := newTaskMetaMgrSuite(t)
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
@@ -304,12 +331,12 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 	s.mockDB.ExpectCommit()
 
 	err := s.mgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
-		c.Assert(len(tasks), Equals, 5)
+		require.Equal(t, 5, len(tasks))
 		sort.Slice(tasks, func(i, j int) bool {
 			return tasks[i].taskID < tasks[j].taskID
 		})
 		for j := 0; j < 5; j++ {
-			c.Assert(tasks[j].taskID, Equals, int64(j))
+			require.Equal(t, int64(j), tasks[j].taskID)
 		}
 
 		var newTasks []taskMeta
@@ -320,7 +347,7 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 		}
 		return newTasks, nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 }
 
