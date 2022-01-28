@@ -569,6 +569,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
+	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
+	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn

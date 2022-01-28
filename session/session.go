@@ -2969,7 +2969,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		ShardStep:  int(s.sessionVars.ShardAllocateStep),
 		TxnScope:   s.GetSessionVars().CheckAndGetTxnScope(),
 	}
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
+	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			s.sessionVars.TxnCtx.IsPessimistic = true
 		}
