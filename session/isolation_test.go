@@ -22,10 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testIsolationSuite struct {
-	testSessionSuiteBase
-}
-
 /*
 These test cases come from the paper <A Critique of ANSI SQL Isolation Levels>.
 The sign 'P0', 'P1'.... can be found in the paper. These cases will run under snapshot isolation.
