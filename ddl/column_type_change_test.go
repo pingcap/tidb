@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package ddl
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -111,7 +111,13 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 }
 
 func getModifyColumnT(t *testing.T, ctx sessionctx.Context, db, tbl, colName string, allColumn bool) *table.Column {
-	tt := testGetTableByNameT(t, ctx, db, tbl)
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	require.NoError(t, err)
+	tt, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tbl))
+	require.NoError(t, err)
+
 	colName = strings.ToLower(colName)
 	var cols []*table.Column
 	if allColumn {
@@ -139,7 +145,11 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	err := dom.Reload()
+	require.NoError(t, err)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
 	require.NotNil(t, tbl)
 	require.Len(t, tbl.Cols(), 2)
 	require.NotNil(t, getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false))
@@ -147,7 +157,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalHook)
 
-	hook := &testkit.TestDDLCallback{}
+	hook := &TestDDLCallback{}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -158,14 +168,16 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateNone:
-			tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+			tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.Cols()) != 2 {
 				checkErr = errors.New("len(cols) is not right")
 			}
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+			tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
@@ -186,7 +198,8 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.NoError(t, checkErr)
 
 	// Check the col meta after the column type change.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	require.Len(t, tbl.Cols(), 2)
 	col := getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false)
@@ -208,7 +221,8 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	tk.MustExec("create table t (c1 bigint, c2 bigint)")
 	tk.MustExec("insert into t(c1, c2) values (1, 1)")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	require.Len(t, tbl.Cols(), 2)
 	require.NotNil(t, getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false))
@@ -216,16 +230,16 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalHook)
 
-	hook := &testkit.TestDDLCallback{}
+	hook := &TestDDLCallback{}
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(hook, tbl, model.StateNone)
 	dom.DDL().SetHook(hook)
 	// Alter sql will modify column c2 to bigint not null.
 	SQL := "alter table t modify column c2 int not null"
-	_, err := tk.Exec(SQL)
+	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-queueing")
-	assertRollBackedColUnchanged(t, tk)
+	assertRollBackedColUnchanged(t, tk, dom)
 
 	// Mock roll back at model.StateDeleteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateDeleteOnly)
@@ -233,7 +247,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-delete only")
-	assertRollBackedColUnchanged(t, tk)
+	assertRollBackedColUnchanged(t, tk, dom)
 
 	// Mock roll back at model.StateWriteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteOnly)
@@ -241,7 +255,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write only")
-	assertRollBackedColUnchanged(t, tk)
+	assertRollBackedColUnchanged(t, tk, dom)
 
 	// Mock roll back at model.StateWriteReorg.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteReorganization)
@@ -249,10 +263,10 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	_, err = tk.Exec(SQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write reorganization")
-	assertRollBackedColUnchanged(t, tk)
+	assertRollBackedColUnchanged(t, tk, dom)
 }
 
-func customizeHookRollbackAtState(hook *testkit.TestDDLCallback, tbl table.Table, state model.SchemaState) {
+func customizeHookRollbackAtState(hook *TestDDLCallback, tbl table.Table, state model.SchemaState) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
@@ -264,8 +278,9 @@ func customizeHookRollbackAtState(hook *testkit.TestDDLCallback, tbl table.Table
 	}
 }
 
-func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	require.Len(t, tbl.Cols(), 2)
 	col := getModifyColumnT(t, tk.Session().(sessionctx.Context), "test", "t", "c2", false)
@@ -977,7 +992,7 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	assertHasAlterWriteReorg := func(tbl table.Table) {
 		// Restore the assert result to false.
 		assertResult = false
-		hook := &testkit.TestDDLCallback{}
+		hook := &TestDDLCallback{}
 		hook.OnJobRunBeforeExported = func(job *model.Job) {
 			if tbl.Meta().ID != job.TableID {
 				return
@@ -993,7 +1008,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	// Although display length is increased, the default flen is decreased, reorg is needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(1))")
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(3)")
 	require.Equal(t, true, assertResult)
@@ -1002,7 +1018,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.Equal(t, false, assertResult)
@@ -1606,7 +1623,7 @@ func TestUpdateDataAfterChangeTimestampToDate(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1615,7 +1632,8 @@ func TestRowFormat(t *testing.T) {
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
 	h := helper.NewHelper(store.(helper.Storage))
@@ -1646,9 +1664,10 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(2, 2)")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	originalHook := dom.DDL().GetHook()
-	hook := &testkit.TestDDLCallback{Do: dom}
+	hook := &TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1664,7 +1683,8 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
-				tbl := testGetTableByNameT(t, tk1.Session(), "test", "t")
+				tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+				require.NoError(t, err)
 				if len(tbl.WritableCols()) != 3 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1725,9 +1745,10 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	originalHook := dom.DDL().GetHook()
-	hook := &testkit.TestDDLCallback{Do: dom}
+	hook := &TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1743,7 +1764,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && stableTimes < 3 {
 			if !once {
 				once = true
-				tbl := testGetTableByNameT(t, tk1.Session(), "test", "t")
+				tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+				require.NoError(t, err)
 				if len(tbl.WritableCols()) != 4 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1811,9 +1833,10 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	originalHook := dom.DDL().GetHook()
-	hook := &testkit.TestDDLCallback{Do: dom}
+	hook := &TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1824,7 +1847,8 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 		}
 
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
-			tbl := testGetTableByNameT(t, tk1.Session(), "test", "t")
+			tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
 			if len(tbl.WritableCols()) != 4 {
 				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
@@ -1856,7 +1880,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 
 // Close issue #22820
 func TestChangingAttributeOfColumnWithFK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1871,18 +1895,21 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	prepare()
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "orders")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("orders"))
+	require.NoError(t, err)
 	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "orders")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("orders"))
+	require.NoError(t, err)
 	require.Equal(t, "user_id2", tbl.Meta().Columns[1].Name.L)
 	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "orders")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("orders"))
+	require.NoError(t, err)
 	require.Equal(t, "haha", tbl.Meta().Columns[1].Comment)
 	require.Equal(t, "-1", tbl.Meta().Columns[1].DefaultValue.(string))
 
@@ -1950,7 +1977,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -2032,9 +2059,10 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "ctc_goroutine_leak")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ctc_goroutine_leak"))
+	require.NoError(t, err)
 
-	hook := &testkit.TestDDLCallback{}
+	hook := &TestDDLCallback{}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -2286,11 +2314,12 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	require.Equal(t, 1, len(tbl.Cols()))
 
-	hook := &testkit.TestDDLCallback{}
+	hook := &TestDDLCallback{}
 	var (
 		checkErr1 error
 		checkErr2 error
