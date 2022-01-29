@@ -2060,7 +2060,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
 		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
 	}()
-	<-testkit.TestReorgGoroutineRunning
+	<-TestReorgGoroutineRunning
 	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
 	wg.Wait()
 	require.Equal(t, "[ddl:8214]Cancelled DDL job", alterErr.Error())

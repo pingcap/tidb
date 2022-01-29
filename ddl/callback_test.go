@@ -26,9 +26,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
-var TestReorgGoroutineRunning = make(chan interface{})
-
 type TestInterceptor struct {
 	*BaseInterceptor
 
