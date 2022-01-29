@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 )
 
 func MockDoChecksumCtx(db *sql.DB) context.Context {
@@ -186,7 +186,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		ts := pdClient.currentSafePoint()
 		// 1ms for the schedule deviation
 		require.True(t, ts <= startTS+1)
-		require.True(t, atomic.LoadUint32(&checksumExec.manager.started) > 0)
+		require.True(t, checksumExec.manager.started.Load())
 		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
 	}
 }
@@ -222,7 +222,7 @@ type safePointTTL struct {
 type testPDClient struct {
 	sync.Mutex
 	pd.Client
-	count       int32
+	count       atomic.Int32
 	gcSafePoint []safePointTTL
 }
 
@@ -246,7 +246,7 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 	if !strings.HasPrefix(serviceID, "lightning") {
 		panic("service ID must start with 'lightning'")
 	}
-	atomic.AddInt32(&c.count, 1)
+	c.count.Add(1)
 	c.Lock()
 	idx := sort.Search(len(c.gcSafePoint), func(i int) bool {
 		return c.gcSafePoint[i].safePoint >= safePoint
@@ -287,15 +287,15 @@ func TestGcTTLManagerSingle(t *testing.T) {
 	time.Sleep(2*time.Second + 10*time.Millisecond)
 
 	// after 2 seconds, must at least update 5 times
-	val := atomic.LoadInt32(&pdClient.count)
+	val := pdClient.count.Load()
 	require.GreaterOrEqual(t, val, int32(5))
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
 	time.Sleep(10 * time.Millisecond)
-	val = atomic.LoadInt32(&pdClient.count)
+	val = pdClient.count.Load()
 	time.Sleep(1*time.Second + 10*time.Millisecond)
-	require.Equal(t, val, atomic.LoadInt32(&pdClient.count))
+	require.Equal(t, val, pdClient.count.Load())
 }
 
 func TestGcTTLManagerMulti(t *testing.T) {
