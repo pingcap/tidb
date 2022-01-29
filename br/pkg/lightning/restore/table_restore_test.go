@@ -731,6 +731,10 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("SELECT.*tikv_gc_life_time.*").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -752,14 +756,15 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	require.NoError(s.T(), err)
-
-	require.NoError(s.T(), db.Close())
-	require.NoError(s.T(), mock.ExpectationsWereMet())
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("SELECT.*tikv_gc_life_time.*").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -781,14 +786,15 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	require.Regexp(s.T(), "checksum mismatched.*", err.Error())
-
-	require.NoError(s.T(), db.Close())
-	require.NoError(s.T(), mock.ExpectationsWereMet())
 }
 
 func (s *tableRestoreSuite) TestAnalyzeTable() {
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectExec("ANALYZE TABLE `db`\\.`table`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -800,9 +806,6 @@ func (s *tableRestoreSuite) TestAnalyzeTable() {
 	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
 	err = s.tr.analyzeTable(ctx, g)
 	require.NoError(s.T(), err)
-
-	require.NoError(s.T(), db.Close())
-	require.NoError(s.T(), mock.ExpectationsWereMet())
 }
 
 func (s *tableRestoreSuite) TestImportKVSuccess() {

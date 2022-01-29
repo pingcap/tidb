@@ -72,7 +72,6 @@ func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
 	s.checksumMgr = &testChecksumMgr{}
 	return &s, func() {
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
-		require.Nil(t, s.mockDB.ExpectationsWereMet())
 	}
 }
 

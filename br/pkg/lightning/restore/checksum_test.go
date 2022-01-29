@@ -35,6 +35,10 @@ func MockDoChecksumCtx(db *sql.DB) context.Context {
 func TestDoChecksum(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -61,14 +65,15 @@ func TestDoChecksum(t *testing.T) {
 		TotalKVs:   7296873,
 		TotalBytes: 357601387,
 	}, *checksum)
-
-	require.NoError(t, db.Close())
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDoChecksumParallel(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -107,14 +112,15 @@ func TestDoChecksumParallel(t *testing.T) {
 		})
 	}
 	wg.Wait()
-
-	require.NoError(t, db.Close())
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestIncreaseGCLifeTimeFail(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 
 	for i := 0; i < 5; i++ {
 		mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
@@ -142,9 +148,6 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 
 	_, err = db.Exec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E", "10m")
 	require.NoError(t, err)
-
-	require.NoError(t, db.Close())
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDoChecksumWithTikv(t *testing.T) {
@@ -191,6 +194,10 @@ func TestDoChecksumWithTikv(t *testing.T) {
 func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("300h"))
@@ -204,9 +211,6 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	ctx := MockDoChecksumCtx(db)
 	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 	require.Regexp(t, "compute remote checksum failed: mock syntax error.*", err.Error())
-
-	require.NoError(t, db.Close())
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 type safePointTTL struct {
