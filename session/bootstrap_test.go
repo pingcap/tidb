@@ -745,7 +745,7 @@ func TestUpgradeVersion74(t *testing.T) {
 		func() {
 			store, dom := createStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
-			defer dom.Close()
+
 			seV73 := createSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
@@ -761,7 +761,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err := getBootstrapVersion(seV73)
 			require.NoError(t, err)
 			require.Equal(t, int64(72), ver)
-
+			dom.Close()
 			domV74, err := BootstrapSession(store)
 			require.NoError(t, err)
 			defer domV74.Close()
@@ -784,7 +784,7 @@ func TestUpgradeVersion75(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	seV74 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -808,7 +808,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(64)", strings.ToLower(row.GetString(1)))
-
+	dom.Close()
 	domV75, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV75.Close()
@@ -878,7 +878,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	ctx := context.Background()
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	// Upgrade from 3.0.0 to 5.1+ or above.
 	ver300 := 33
 	seV3 := createSessionAndSetID(t, store)
@@ -903,7 +903,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
-
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -953,7 +953,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	ctx := context.Background()
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	// Upgrade from 3.0.0 to 5.4+.
 	ver300 := 33
 	seV3 := createSessionAndSetID(t, store)
@@ -978,7 +978,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
-
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1004,7 +1004,6 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			ctx := context.Background()
 			store, dom := createStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
-			defer dom.Close()
 
 			// upgrade from 4.0.0 to 5.4+.
 			ver400 := 46
@@ -1040,7 +1039,7 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 				// For the second it should be off.
 				mustExec(t, seV4, "set global tidb_enable_index_merge = on")
 			}
-
+			dom.Close()
 			// Upgrade to 5.x.
 			domCurVer, err := BootstrapSession(store)
 			require.NoError(t, err)
