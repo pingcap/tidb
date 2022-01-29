@@ -67,12 +67,12 @@ type pendingIndexHandles struct {
 
 // makePendingIndexHandlesWithCapacity makes the pendingIndexHandles struct-of-arrays with the given
 // capacity for every internal array.
-func makePendingIndexHandlesWithCapacity(cap int) pendingIndexHandles {
+func makePendingIndexHandlesWithCapacity(c int) pendingIndexHandles {
 	return pendingIndexHandles{
-		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, cap),
-		indexNames:        make([]string, 0, cap),
-		handles:           make([]tidbkv.Handle, 0, cap),
-		rawHandles:        make([][]byte, 0, cap),
+		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, c),
+		indexNames:        make([]string, 0, c),
+		handles:           make([]tidbkv.Handle, 0, c),
+		rawHandles:        make([][]byte, 0, c),
 	}
 }
 

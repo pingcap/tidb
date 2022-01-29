@@ -333,13 +333,13 @@ func newChunk(elemLen ...int) *Chunk {
 	return chk
 }
 
-func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+func newChunkWithInitCap(c int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
+			chk.columns = append(chk.columns, newFixedLenColumn(l, c))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap))
+			chk.columns = append(chk.columns, newVarLenColumn(c))
 		}
 	}
 	return chk
