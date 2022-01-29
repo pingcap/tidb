@@ -21,7 +21,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -36,32 +35,34 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestRestoreSchemaSuite(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&restoreSchemaSuite{})
-
 type restoreSchemaSuite struct {
+	suite.Suite
 	ctx        context.Context
 	rc         *Controller
 	controller *gomock.Controller
 	tableInfos []*model.TableInfo
 }
 
-func (s *restoreSchemaSuite) SetUpSuite(c *C) {
+func TestRestoreSchemaSuite(t *testing.T) {
+	suite.Run(t, new(restoreSchemaSuite))
+}
+
+func (s *restoreSchemaSuite) SetupSuite() {
 	ctx := context.Background()
-	fakeDataDir := c.MkDir()
+	fakeDataDir := s.T().TempDir()
+
 	store, err := storage.NewLocalStorage(fakeDataDir)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	// restore database schema file
 	fakeDBName := "fakedb"
 	// please follow the `mydump.defaultFileRouteRules`, matches files like '{schema}-schema-create.sql'
 	fakeFileName := fmt.Sprintf("%s-schema-create.sql", fakeDBName)
 	err = store.WriteFile(ctx, fakeFileName, []byte(fmt.Sprintf("CREATE DATABASE %s;", fakeDBName)))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	// restore table schema files
 	fakeTableFilesCount := 8
 
@@ -76,12 +77,12 @@ func (s *restoreSchemaSuite) SetUpSuite(c *C) {
 		fakeFileName := fmt.Sprintf("%s.%s-schema.sql", fakeDBName, fakeTableName)
 		fakeFileContent := fmt.Sprintf("CREATE TABLE %s(i TINYINT);", fakeTableName)
 		err = store.WriteFile(ctx, fakeFileName, []byte(fakeFileContent))
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 
 		node, err := p.ParseOneStmt(fakeFileContent, "", "")
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfos = append(tableInfos, core)
 	}
@@ -94,14 +95,14 @@ func (s *restoreSchemaSuite) SetUpSuite(c *C) {
 		fakeFileName := fmt.Sprintf("%s.%s-schema-view.sql", fakeDBName, fakeViewName)
 		fakeFileContent := []byte(fmt.Sprintf("CREATE ALGORITHM=UNDEFINED VIEW `%s` (`i`) AS SELECT `i` FROM `%s`.`%s`;", fakeViewName, fakeDBName, fmt.Sprintf("tbl%d", i)))
 		err = store.WriteFile(ctx, fakeFileName, fakeFileContent)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}
 	config := config.NewConfig()
 	config.Mydumper.DefaultFileRules = true
 	config.Mydumper.CharacterSet = "utf8mb4"
 	config.App.RegionConcurrency = 8
 	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	s.rc = &Controller{
 		checkTemplate: NewSimpleTemplate(),
 		cfg:           config,
@@ -112,8 +113,8 @@ func (s *restoreSchemaSuite) SetUpSuite(c *C) {
 }
 
 //nolint:interfacer // change test case signature might cause Check failed to find this test case?
-func (s *restoreSchemaSuite) SetUpTest(c *C) {
-	s.controller, s.ctx = gomock.WithContext(context.Background(), c)
+func (s *restoreSchemaSuite) SetupTest() {
+	s.controller, s.ctx = gomock.WithContext(context.Background(), s.T())
 	mockBackend := mock.NewMockBackend(s.controller)
 	mockBackend.EXPECT().
 		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
@@ -123,7 +124,7 @@ func (s *restoreSchemaSuite) SetUpTest(c *C) {
 	s.rc.backend = backend.MakeBackend(mockBackend)
 
 	mockDB, sqlMock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	for i := 0; i < 17; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
@@ -141,32 +142,32 @@ func (s *restoreSchemaSuite) SetUpTest(c *C) {
 	s.rc.tidbGlue = mockTiDBGlue
 }
 
-func (s *restoreSchemaSuite) TearDownTest(c *C) {
+func (s *restoreSchemaSuite) TearDownTest() {
 	s.rc.Close()
 	s.controller.Finish()
 }
 
-func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful() {
 	// before restore, if sysVars is initialized by other test, the time_zone should be default value
 	if len(s.rc.sysVars) > 0 {
 		tz, ok := s.rc.sysVars["time_zone"]
-		c.Assert(ok, IsTrue)
-		c.Assert(tz, Equals, "SYSTEM")
+		require.True(s.T(), ok)
+		require.Equal(s.T(), "SYSTEM", tz)
 	}
 
 	s.rc.cfg.TiDB.Vars = map[string]string{
 		"time_zone": "UTC",
 	}
 	err := s.rc.restoreSchema(s.ctx)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	// test after restore schema, sysVars has been updated
 	tz, ok := s.rc.sysVars["time_zone"]
-	c.Assert(ok, IsTrue)
-	c.Assert(tz, Equals, "UTC")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "UTC", tz)
 }
 
-func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
+func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
 	injectErr := errors.New("Something wrong")
 	mockSession := mock.NewMockSession(s.controller)
 	mockSession.EXPECT().
@@ -184,15 +185,15 @@ func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
 		Return(mockSession, nil)
 	s.rc.tidbGlue = mockTiDBGlue
 	err := s.rc.restoreSchema(s.ctx)
-	c.Assert(err, NotNil)
-	c.Assert(errors.ErrorEqual(err, injectErr), IsTrue)
+	require.Error(s.T(), err)
+	require.True(s.T(), errors.ErrorEqual(err, injectErr))
 }
 
 // When restoring a CSV with `-no-schema` and the target table doesn't exist
 // then we can't restore the schema as the `Path` is empty. This is to make
 // sure this results in the correct error.
 // https://github.com/pingcap/br/issues/1394
-func (s *restoreSchemaSuite) TestNoSchemaPath(c *C) {
+func (s *restoreSchemaSuite) TestNoSchemaPath() {
 	fakeTable := mydump.MDTableMeta{
 		DB:   "fakedb",
 		Name: "fake1",
@@ -210,12 +211,12 @@ func (s *restoreSchemaSuite) TestNoSchemaPath(c *C) {
 	}
 	s.rc.dbMetas[0].Tables = append(s.rc.dbMetas[0].Tables, &fakeTable)
 	err := s.rc.restoreSchema(s.ctx)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `table .* schema not found`)
+	require.Error(s.T(), err)
+	require.Regexp(s.T(), `table .* schema not found`, err.Error())
 	s.rc.dbMetas[0].Tables = s.rc.dbMetas[0].Tables[:len(s.rc.dbMetas[0].Tables)-1]
 }
 
-func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel(c *C) {
+func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 	childCtx, cancel := context.WithCancel(s.ctx)
 	mockSession := mock.NewMockSession(s.controller)
 	mockSession.EXPECT().
@@ -235,6 +236,6 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel(c *C) {
 	s.rc.tidbGlue = mockTiDBGlue
 	err := s.rc.restoreSchema(childCtx)
 	cancel()
-	c.Assert(err, NotNil)
-	c.Assert(err, Equals, childCtx.Err())
+	require.Error(s.T(), err)
+	require.Equal(s.T(), childCtx.Err(), err)
 }
