@@ -656,7 +656,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	seV67 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -673,10 +673,10 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	ver, err := getBootstrapVersion(seV67)
 	require.NoError(t, err)
 	require.Equal(t, int64(67), ver)
+	dom.Close()
 
 	domV68, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV68.Close()
 	seV68 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV68)
 	require.NoError(t, err)
@@ -689,6 +689,7 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, "INT_ONLY", row.GetString(0))
 	require.Equal(t, "INT_ONLY", row.GetString(1))
+	domV68.Close()
 }
 
 func TestUpgradeVersion66(t *testing.T) {
