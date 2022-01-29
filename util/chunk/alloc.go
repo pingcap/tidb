@@ -116,6 +116,10 @@ func (alloc *poolColumnAllocator) init() {
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
+	if col.avoidReusing {
+		// Avoid buffering grpc data.
+		return
+	}
 	typeSize := col.typeSize()
 	if typeSize <= 0 {
 		return
