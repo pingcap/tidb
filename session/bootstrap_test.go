@@ -696,7 +696,6 @@ func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
 	seV65 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -712,10 +711,10 @@ func TestUpgradeVersion66(t *testing.T) {
 	ver, err := getBootstrapVersion(seV65)
 	require.NoError(t, err)
 	require.Equal(t, int64(65), ver)
-
+	dom.Close()
 	domV66, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV66.Close()
+
 	seV66 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV66)
 	require.NoError(t, err)
@@ -727,6 +726,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, int64(1), row.GetInt64(0))
 	require.Equal(t, int64(1), row.GetInt64(1))
+	domV66.Close()
 }
 
 func TestUpgradeVersion74(t *testing.T) {
