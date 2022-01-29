@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -61,10 +61,10 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 	"github.com/tikv/pd/server/api"
 )
-
-var _ = Suite(&tableRestoreSuite{})
 
 type tableRestoreSuiteBase struct {
 	tr  *TableRestore
@@ -77,23 +77,23 @@ type tableRestoreSuiteBase struct {
 	store storage.ExternalStorage
 }
 
-func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
+func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	// Produce a mock table info
 
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
 	node, err := p.ParseOneStmt(`
-		CREATE TABLE "table" (
-			a INT,
-			b INT,
-			c INT,
-			KEY (b)
-		)
-	`, "", "")
-	c.Assert(err, IsNil)
+	CREATE TABLE "table" (
+		a INT,
+		b INT,
+		c INT,
+		KEY (b)
+	)
+`, "", "")
+	require.NoError(t, err)
 	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	core.State = model.StatePublic
 
 	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
@@ -104,21 +104,20 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 
 	// Write some sample SQL dump
 
-	fakeDataDir := c.MkDir()
-
+	fakeDataDir := t.TempDir()
 	store, err := storage.NewLocalStorage(fakeDataDir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	s.store = store
 
 	fakeDataFilesCount := 6
 	fakeDataFilesContent := []byte("INSERT INTO `table` VALUES (1, 2, 3);")
-	c.Assert(len(fakeDataFilesContent), Equals, 37)
+	require.Equal(t, 37, len(fakeDataFilesContent))
 	fakeDataFiles := make([]mydump.FileInfo, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
 		fakeFileName := fmt.Sprintf("db.table.%d.sql", i)
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = os.WriteFile(fakeDataPath, fakeDataFilesContent, 0o644)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
 			FileMeta: mydump.SourceFileMeta{
@@ -133,7 +132,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
 	csvName := "db.table.99.csv"
 	err = os.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 		TableName: filter.Table{Schema: "db", Name: "table"},
 		FileMeta: mydump.SourceFileMeta{
@@ -159,11 +158,11 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	}
 }
 
-func (s *tableRestoreSuiteBase) SetUpTest(c *C) {
+func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableRestore structure
 	var err error
 	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
 	s.cfg.Mydumper.BatchSize = 111
@@ -171,10 +170,23 @@ func (s *tableRestoreSuiteBase) SetUpTest(c *C) {
 }
 
 type tableRestoreSuite struct {
+	suite.Suite
 	tableRestoreSuiteBase
 }
 
-func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
+func TestTableRestoreSuite(t *testing.T) {
+	suite.Run(t, new(tableRestoreSuite))
+}
+
+func (s *tableRestoreSuite) SetupSuite() {
+	s.setupSuite(s.T())
+}
+
+func (s *tableRestoreSuite) SetupTest() {
+	s.setupTest(s.T())
+}
+
+func (s *tableRestoreSuite) TestPopulateChunks() {
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp")
@@ -186,9 +198,9 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 
 	rc := &Controller{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: s.store}
 	err := s.tr.populateChunks(context.Background(), rc, cp)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	//nolint:dupl // false positive.
-	c.Assert(cp.Engines, DeepEquals, map[int32]*checkpoints.EngineCheckpoint{
+	require.Equal(s.T(), map[int32]*checkpoints.EngineCheckpoint{
 		-1: {
 			Status: checkpoints.CheckpointStatusLoaded,
 		},
@@ -284,7 +296,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 				},
 			},
 		},
-	})
+	}, cp.Engines)
 
 	// set csv header to true, this will cause check columns fail
 	s.cfg.Mydumper.CSV.Header = true
@@ -292,8 +304,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	regionSize := s.cfg.Mydumper.MaxRegionSize
 	s.cfg.Mydumper.MaxRegionSize = 5
 	err = s.tr.populateChunks(context.Background(), rc, cp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
+	require.Error(s.T(), err)
+	require.Regexp(s.T(), `.*unknown columns in header \[1 2 3\]`, err.Error())
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
 }
@@ -312,9 +324,9 @@ func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, erro
 	return nil, nil
 }
 
-func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
+func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	ctx := context.Background()
-	ctrl := gomock.NewController(c)
+	ctrl := gomock.NewController(s.T())
 	mockBackend := mock.NewMockBackend(ctrl)
 	rc := &Controller{
 		cfg:            s.cfg,
@@ -338,10 +350,10 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
 	}
 	err := s.tr.populateChunks(ctx, rc, cp)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
 	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
@@ -356,11 +368,11 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
 		Return(nil, errors.New("mock open index local writer failed"))
 	openedIdxEngine, err := rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	// open the first engine meet error, should directly return the error
 	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
-	c.Assert(err, ErrorMatches, "mock open index local writer failed")
+	require.Equal(s.T(), "mock open index local writer failed", err.Error())
 
 	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 		time.Sleep(20 * time.Millisecond)
@@ -378,17 +390,18 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
 		DoAndReturn(localWriter).AnyTimes()
 
 	openedIdxEngine, err = rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	// open engine failed after write rows failed, should return write rows error
 	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
-	c.Assert(err, ErrorMatches, "mock write rows failed")
+	require.Equal(s.T(), "mock write rows failed", err.Error())
 }
 
-func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
-	fakeDataDir := c.MkDir()
+func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
+	fakeDataDir := s.T().TempDir()
+
 	store, err := storage.NewLocalStorage(fakeDataDir)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	fakeDataFiles := make([]mydump.FileInfo, 0)
 
@@ -405,15 +418,15 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 		"b,c\r\n2000001,30000001\r\n35231616,462424626\r\n62432,434898934\r\n",
 	}
 	total := 0
-	for i, s := range fakeCsvContents {
+	for i, str := range fakeCsvContents {
 		csvName := fmt.Sprintf("db.table.%02d.csv", i)
-		err := os.WriteFile(filepath.Join(fakeDataDir, csvName), []byte(s), 0o644)
-		c.Assert(err, IsNil)
+		err := os.WriteFile(filepath.Join(fakeDataDir, csvName), []byte(str), 0o644)
+		require.NoError(s.T(), err)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(s))},
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(str))},
 		})
-		total += len(s)
+		total += len(str)
 	}
 	tableMeta := &mydump.MDTableMeta{
 		DB:         "db",
@@ -441,10 +454,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
 	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
-	c.Assert(err, IsNil)
-	c.Assert(tr.populateChunks(context.Background(), rc, cp), IsNil)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
-	c.Assert(cp.Engines, DeepEquals, map[int32]*checkpoints.EngineCheckpoint{
+	require.Equal(s.T(), map[int32]*checkpoints.EngineCheckpoint{
 		-1: {
 			Status: checkpoints.CheckpointStatusLoaded,
 		},
@@ -577,24 +590,24 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 				},
 			},
 		},
-	})
+	}, cp.Engines)
 }
 
-func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, 2, -1}), DeepEquals, []string{"a", "b", "c"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 0, 2, -1}), DeepEquals, []string{"b", "a", "c"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, 1, -1}), DeepEquals, []string{"b", "c"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}), DeepEquals, []string{"a", "b"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}), DeepEquals, []string{"c", "a"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}), DeepEquals, []string{"b"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 2, 3, 0}), DeepEquals, []string{"_tidb_rowid", "a", "b", "c"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 0, 2, 3}), DeepEquals, []string{"b", "a", "c", "_tidb_rowid"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, 2, 1}), DeepEquals, []string{"b", "_tidb_rowid", "c"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{2, -1, 0, 1}), DeepEquals, []string{"c", "_tidb_rowid", "a"})
-	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 1, -1, 0}), DeepEquals, []string{"_tidb_rowid", "b"})
+func (s *tableRestoreSuite) TestGetColumnsNames() {
+	require.Equal(s.T(), []string{"a", "b", "c"}, getColumnNames(s.tableInfo.Core, []int{0, 1, 2, -1}))
+	require.Equal(s.T(), []string{"b", "a", "c"}, getColumnNames(s.tableInfo.Core, []int{1, 0, 2, -1}))
+	require.Equal(s.T(), []string{"b", "c"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, 1, -1}))
+	require.Equal(s.T(), []string{"a", "b"}, getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}))
+	require.Equal(s.T(), []string{"c", "a"}, getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}))
+	require.Equal(s.T(), []string{"b"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}))
+	require.Equal(s.T(), []string{"_tidb_rowid", "a", "b", "c"}, getColumnNames(s.tableInfo.Core, []int{1, 2, 3, 0}))
+	require.Equal(s.T(), []string{"b", "a", "c", "_tidb_rowid"}, getColumnNames(s.tableInfo.Core, []int{1, 0, 2, 3}))
+	require.Equal(s.T(), []string{"b", "_tidb_rowid", "c"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, 2, 1}))
+	require.Equal(s.T(), []string{"c", "_tidb_rowid", "a"}, getColumnNames(s.tableInfo.Core, []int{2, -1, 0, 1}))
+	require.Equal(s.T(), []string{"_tidb_rowid", "b"}, getColumnNames(s.tableInfo.Core, []int{-1, 1, -1, 0}))
 }
 
-func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
+func (s *tableRestoreSuite) TestInitializeColumns() {
 	ccp := &checkpoints.ChunkCheckpoint{}
 
 	defer func() {
@@ -668,15 +681,14 @@ func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 		s.tr.ignoreColumns = testCase.ignoreColumns
 		err := s.tr.initializeColumns(testCase.columns, ccp)
 		if len(testCase.errPat) > 0 {
-			c.Assert(err, NotNil)
-			c.Assert(err, ErrorMatches, testCase.errPat)
+			require.Error(s.T(), err)
+			require.Regexp(s.T(), testCase.errPat, err.Error())
 		} else {
-			c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+			require.Equal(s.T(), testCase.expectedPermutation, ccp.ColumnPermutation)
 		}
 	}
 }
-
-func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
+func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
@@ -701,24 +713,28 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 
 	for _, testCase := range cases {
 		node, err := p.ParseOneStmt(testCase.schema, "", "")
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
 		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
 		err = s.tr.initializeColumns(testCase.columns, ccp)
-		c.Assert(err, IsNil)
-		c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), testCase.expectedPermutation, ccp.ColumnPermutation)
 	}
 }
 
-func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
+func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("SELECT.*tikv_gc_life_time.*").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -737,17 +753,18 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(1234567, 12345, 1234567890))
-	c.Assert(err, IsNil)
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(s.T(), err)
 }
 
-func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
+func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectQuery("SELECT.*tikv_gc_life_time.*").
 		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
@@ -766,17 +783,18 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = s.tr.compareChecksum(remoteChecksum, verification.MakeKVChecksum(9876543, 54321, 1357924680))
-	c.Assert(err, ErrorMatches, "checksum mismatched.*")
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Regexp(s.T(), "checksum mismatched.*", err.Error())
 }
 
-func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
+func (s *tableRestoreSuite) TestAnalyzeTable() {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), db.Close())
+		require.NoError(s.T(), mock.ExpectationsWereMet())
+	}()
 
 	mock.ExpectExec("ANALYZE TABLE `db`\\.`table`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -784,17 +802,14 @@ func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
 
 	ctx := context.Background()
 	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
 	err = s.tr.analyzeTable(ctx, g)
-	c.Assert(err, IsNil)
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(s.T(), err)
 }
 
-func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
-	controller := gomock.NewController(c)
+func (s *tableRestoreSuite) TestImportKVSuccess() {
+	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
@@ -823,13 +838,13 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 		Return(nil)
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = s.tr.importKV(ctx, closedEngine, rc, 1)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 }
 
-func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
-	controller := gomock.NewController(c)
+func (s *tableRestoreSuite) TestImportKVFailure() {
+	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
@@ -855,13 +870,13 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = s.tr.importKV(ctx, closedEngine, rc, 1)
-	c.Assert(err, ErrorMatches, "fake import error.*")
+	require.Regexp(s.T(), "fake import error.*", err.Error())
 }
 
-func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
-	controller := gomock.NewController(c)
+func (s *tableRestoreSuite) TestTableRestoreMetrics() {
+	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 
 	chunkPendingBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
@@ -886,10 +901,10 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	cfg.Mydumper.CSV.Header = false
 	cfg.TikvImporter.Backend = config.BackendImporter
 	tls, err := cfg.ToTLS()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	err = cfg.Adjust(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	cpDB := checkpoints.NewNullCheckpointsDB()
 	g := mock.NewMockGlue(controller)
@@ -930,7 +945,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		}
 	}()
 	db, sqlMock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
@@ -938,21 +953,21 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	web.BroadcastInitProgress(rc.dbMetas)
 
 	err = rc.restoreTables(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	c.Assert(chunkPending-chunkPendingBase, Equals, float64(7))
-	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending-chunkPendingBase)
+	require.Equal(s.T(), float64(7), chunkPending-chunkPendingBase)
+	require.Equal(s.T(), chunkPending-chunkPendingBase, chunkFinished-chunkFinishedBase)
 
 	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
-	c.Assert(engineFinished-engineFinishedBase, Equals, float64(8))
+	require.Equal(s.T(), float64(8), engineFinished-engineFinishedBase)
 
 	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
-	c.Assert(tableFinished-tableFinishedBase, Equals, float64(1))
+	require.Equal(s.T(), float64(1), tableFinished-tableFinishedBase)
 }
 
-func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
+func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
@@ -975,15 +990,15 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
 
 	start := time.Now()
 	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
-	c.Assert(elapsed, GreaterEqual, time.Millisecond*100)
+	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
 
 	close(saveCpCh)
 	rc.checkpointsWg.Wait()
 }
 
-func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
+func (s *tableRestoreSuite) TestCheckClusterResource() {
 	cases := []struct {
 		mockStoreResponse   []byte
 		mockReplicaResponse []byte
@@ -1036,19 +1051,20 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 	}
 
 	ctx := context.Background()
-	dir := c.MkDir()
+	dir := s.T().TempDir()
+
 	file := filepath.Join(dir, "tmp")
 	f, err := os.Create(file)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	buf := make([]byte, 16)
 	// write 16 bytes file into local storage
 	for i := range buf {
 		buf[i] = byte('A' + i)
 	}
 	_, err = f.Write(buf)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	mockStore, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	for _, ca := range cases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
@@ -1057,7 +1073,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			} else {
 				_, err = w.Write(ca.mockReplicaResponse)
 			}
-			c.Assert(err, IsNil)
+			require.NoError(s.T(), err)
 		}))
 
 		tls := common.NewTLSFromMockServer(server)
@@ -1071,13 +1087,13 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		err = rc.clusterResource(ctx, sourceSize)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 
-		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
-		c.Assert(template.Success(), Equals, ca.expectResult)
-		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
+		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
+		require.Equal(s.T(), ca.expectResult, template.Success())
+		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 
 		server.Close()
 	}
@@ -1097,7 +1113,7 @@ func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(ta
 	return err
 }
 
-func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
+func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         api.StoresInfo
 		emptyRegions   api.RegionsInfo
@@ -1170,7 +1186,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 
 	mustMarshal := func(v interface{}) []byte {
 		data, err := json.Marshal(v)
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 		return data
 	}
 
@@ -1184,7 +1200,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 			} else {
 				w.WriteHeader(http.StatusNotFound)
 			}
-			c.Assert(err, IsNil)
+			require.NoError(s.T(), err)
 		}))
 
 		tls := common.NewTLSFromMockServer(server)
@@ -1195,19 +1211,19 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
 
 		err := rc.checkClusterRegion(context.Background())
-		c.Assert(err, IsNil)
-		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
-		c.Assert(template.Success(), Equals, ca.expectResult)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
+		require.Equal(s.T(), ca.expectResult, template.Success())
 
 		for _, expectMsg := range ca.expectMsgs {
-			c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, expectMsg)
+			require.Regexp(s.T(), expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 		}
 
 		server.Close()
 	}
 }
 
-func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
+func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	cases := []struct {
 		strictFormat    bool
 		expectMsg       string
@@ -1266,30 +1282,31 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 			},
 		},
 	}
-	dir := c.MkDir()
+	dir := s.T().TempDir()
+
 	mockStore, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
 		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
 		err := rc.HasLargeCSV(ca.dbMetas)
-		c.Assert(err, IsNil)
-		c.Assert(template.FailedCount(Warn), Equals, ca.expectWarnCount)
-		c.Assert(template.Success(), Equals, ca.expectResult)
-		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
+		require.Equal(s.T(), ca.expectResult, template.Success())
+		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 	}
 }
 
-func (s *tableRestoreSuite) TestEstimate(c *C) {
+func (s *tableRestoreSuite) TestEstimate() {
 	ctx := context.Background()
-	controller := gomock.NewController(c)
+	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
@@ -1319,31 +1336,32 @@ func (s *tableRestoreSuite) TestEstimate(c *C) {
 	}
 	source, err := rc.estimateSourceData(ctx)
 	// Because this file is small than region split size so we does not sample it.
-	c.Assert(err, IsNil)
-	c.Assert(source, Equals, s.tableMeta.TotalSize)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
 	source, err = rc.estimateSourceData(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(source, Greater, s.tableMeta.TotalSize)
+	require.NoError(s.T(), err)
+	require.Greater(s.T(), source, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
 	source, err = rc.estimateSourceData(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(source, Equals, s.tableMeta.TotalSize)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 }
 
-func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
-	dir := c.MkDir()
+func (s *tableRestoreSuite) TestSchemaIsValid() {
+	dir := s.T().TempDir()
+
 	ctx := context.Background()
 
 	case1File := "db1.table1.csv"
 	mockStore, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = mockStore.WriteFile(ctx, case1File, []byte(`"a"`))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	case2File := "db1.table2.csv"
 	err = mockStore.WriteFile(ctx, case2File, []byte("\"colA\",\"colB\"\n\"a\",\"b\""))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	cases := []struct {
 		ignoreColumns []*config.IgnoreColumns
@@ -1740,15 +1758,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
 		}
 		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
-		c.Assert(err, IsNil)
-		c.Assert(msgs, HasLen, ca.MsgNum)
+		require.NoError(s.T(), err)
+		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
-			c.Assert(msgs[0], Matches, ca.expectMsg)
+			require.Regexp(s.T(), ca.expectMsg, msgs[0])
 		}
 	}
 }
 
-func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
+func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	cfg := &config.Config{
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize:          config.ReadBlockSize,
@@ -1767,15 +1785,16 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
 		},
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
-	c.Assert(err, IsNil)
-	mockStore, err := storage.NewLocalStorage(c.MkDir())
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
+	dir := s.T().TempDir()
+	mockStore, err := storage.NewLocalStorage(dir)
+	require.NoError(s.T(), err)
 	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	ctx := context.Background()
 	csvFile := "db1.gbk_table.csv"
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	rc := &Controller{
 		cfg:           cfg,
@@ -1824,6 +1843,6 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
 			},
 		},
 	})
-	c.Assert(err, IsNil)
-	c.Assert(msgs, HasLen, 0)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 0)
 }
