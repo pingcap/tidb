@@ -124,3 +124,10 @@ func TestSchema(t *testing.T) {
 
 	ddl.ExportTestSchema(t)
 }
+
+func TestTestSerialStatSuite(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSerialStatSuite(t)
+}
