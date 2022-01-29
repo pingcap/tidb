@@ -109,13 +109,13 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 		Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 
 	// Deliver nothing.
 
@@ -125,7 +125,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoop() {
@@ -149,14 +149,14 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 
 	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 
 	// Set up the expected API calls to the data engine...
 
@@ -219,7 +219,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, diskQuotaLock: newDiskQuotaLock()}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
 	require.Equal(s.T(), int64(12), s.cr.chunk.Chunk.Offset)
 	require.Equal(s.T(), int64(76), s.cr.chunk.Chunk.PrevRowIDMax)
@@ -234,11 +234,11 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567895,
 	})
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	require.Nil(s.T(), err)
+	require.NoError(s.T(), err)
 	require.Len(s.T(), kvsCh, 2)
 
 	kvs := <-kvsCh
