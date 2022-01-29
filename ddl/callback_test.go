@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testkit
+package ddl
 
 import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -31,7 +30,7 @@ import (
 var TestReorgGoroutineRunning = make(chan interface{})
 
 type TestInterceptor struct {
-	*ddl.BaseInterceptor
+	*BaseInterceptor
 
 	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
@@ -46,10 +45,10 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 
 // TestDDLCallback is used to customize user callback themselves.
 type TestDDLCallback struct {
-	*ddl.BaseCallback
+	*BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
-	Do ddl.DomainReloader
+	Do DomainReloader
 
 	onJobRunBefore         func(*model.Job)
 	OnJobRunBeforeExported func(*model.Job)
@@ -123,7 +122,7 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 }
 
 func TestCallback(t *testing.T) {
-	cb := &ddl.BaseCallback{}
+	cb := &BaseCallback{}
 	require.Nil(t, cb.OnChanged(nil))
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)

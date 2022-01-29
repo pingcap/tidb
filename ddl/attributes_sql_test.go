@@ -31,7 +31,7 @@ import (
 )
 
 // MockGC is used to make GC work in the test environment.
-func mock(tk *testkit.TestKit) (string, string, string, func()) {
+func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	originGC := ddl.IsEmulatorGCEnable()
 	resetGC := func() {
 		if originGC {
