@@ -16,7 +16,9 @@ package session_test
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -29,6 +31,7 @@ The sign 'P0', 'P1'.... can be found in the paper. These cases will run under sn
 func TestP0DirtyWrite(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -86,6 +89,7 @@ func TestP0DirtyWrite(t *testing.T) {
 func TestP1DirtyRead(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -135,6 +139,7 @@ func TestP1DirtyRead(t *testing.T) {
 func TestP2NonRepeatableRead(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -205,6 +210,7 @@ func TestP2NonRepeatableRead(t *testing.T) {
 func TestP3Phantom(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -272,6 +278,7 @@ func TestP3Phantom(t *testing.T) {
 func TestP4LostUpdate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -332,6 +339,7 @@ func TestP4CLostUpdate(t *testing.T) {}
 func TestA3Phantom(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -384,6 +392,7 @@ func TestA3Phantom(t *testing.T) {
 func TestA5AReadSkew(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -448,6 +457,7 @@ func TestA5AReadSkew(t *testing.T) {
 func TestA5BWriteSkew(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -544,6 +554,7 @@ for tidb, we support read-after-write on cluster level.
 func TestReadAfterWrite(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -596,6 +607,7 @@ This case will do harm in Innodb, even if in snapshot isolation, but harmless in
 func TestPhantomReadInInnodb(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
