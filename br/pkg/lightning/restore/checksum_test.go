@@ -135,7 +135,7 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		wg.Run(func() {
 			_, errChecksum := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
-			require.Regexp(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
+			require.Equal(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
 		})
 	}
 	wg.Wait()
@@ -173,7 +173,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
-			require.Regexp(t, "tikv timeout", err.Error())
+			require.Equal(t, "tikv timeout", err.Error())
 			continue
 		} else {
 			require.NoError(t, err)

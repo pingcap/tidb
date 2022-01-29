@@ -488,7 +488,7 @@ func TestCheckTableEmpty(t *testing.T) {
 
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, len(tmpl.criticalMsgs))
-	require.Regexp(t, "table\\(s\\) \\[`test2`.`tbl1`\\] are not empty", tmpl.criticalMsgs[0])
+	require.Equal(t, "table(s) [`test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
@@ -508,7 +508,7 @@ func TestCheckTableEmpty(t *testing.T) {
 
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, len(tmpl.criticalMsgs))
-	require.Regexp(t, "table\\(s\\) \\[`test1`.`tbl1`, `test2`.`tbl1`\\] are not empty", tmpl.criticalMsgs[0])
+	require.Equal(t, "table(s) [`test1`.`tbl1`, `test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// init checkpoint with only two of the three tables
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
@@ -573,7 +573,7 @@ func TestLocalResource(t *testing.T) {
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
 	require.Equal(t, 0, tmpl.criticalFailedCount)
-	require.Regexp(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.normalMsgs[1])
+	require.Equal(t, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB", tmpl.normalMsgs[1])
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
@@ -582,7 +582,7 @@ func TestLocalResource(t *testing.T) {
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
 	require.Equal(t, 1, tmpl.criticalFailedCount)
-	require.Regexp(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.criticalMsgs[0])
+	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports", tmpl.criticalMsgs[0])
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
@@ -592,5 +592,5 @@ func TestLocalResource(t *testing.T) {
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
 	require.Equal(t, 0, tmpl.criticalFailedCount)
-	require.Regexp(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import", tmpl.normalMsgs[1])
+	require.Equal(t, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota (size: 1KiB) to finish imports, which may slow down import", tmpl.normalMsgs[1])
 }

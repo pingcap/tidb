@@ -372,7 +372,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 
 	// open the first engine meet error, should directly return the error
 	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
-	require.Regexp(s.T(), "mock open index local writer failed", err.Error())
+	require.Equal(s.T(), "mock open index local writer failed", err.Error())
 
 	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 		time.Sleep(20 * time.Millisecond)
@@ -394,7 +394,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 
 	// open engine failed after write rows failed, should return write rows error
 	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
-	require.Regexp(s.T(), "mock write rows failed", err.Error())
+	require.Equal(s.T(), "mock write rows failed", err.Error())
 }
 
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {

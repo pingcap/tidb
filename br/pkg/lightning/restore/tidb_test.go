@@ -493,7 +493,7 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnError(errors.New("mock permission deny"))
 	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	require.Regexp(t, "obtain new collation enabled failed: mock permission deny", err.Error())
+	require.Equal(t, "obtain new collation enabled failed: mock permission deny", err.Error())
 
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
