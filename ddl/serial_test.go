@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -426,7 +425,7 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Se
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -579,7 +578,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
-	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	c.Assert(err, IsNil)
 	testCases := []struct {
@@ -608,7 +607,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b));")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1;")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows;")
-	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -655,7 +654,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
-	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
 		infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error())
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
@@ -692,7 +691,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("create table foreign_key_table1 (a int, b int);")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b));")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
-	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
 	c.Assert(err, IsNil)
 	tableInfo = table.Meta()
@@ -1676,7 +1675,7 @@ func (s *testIntegrationSuite7) TestCreateClusteredIndex(c *C) {
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Se
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)

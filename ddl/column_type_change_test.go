@@ -26,6 +26,7 @@ import (
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1949,7 +1950,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalHook)
 
-	hook := &testkit.TestDDLCallback{Do: dom}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
