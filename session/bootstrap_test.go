@@ -435,7 +435,7 @@ func TestIssue20900_2(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+
 	// test issue 20900, upgrade from v4.0.8 to v4.0.9+
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -452,10 +452,9 @@ func TestIssue20900_2(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(52), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV4.Close()
 	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
@@ -469,6 +468,7 @@ func TestIssue20900_2(t *testing.T) {
 	req = r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
+	domV4.Close()
 }
 
 func TestANSISQLMode(t *testing.T) {
