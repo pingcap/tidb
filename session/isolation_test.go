@@ -17,7 +17,6 @@ package session_test
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -28,36 +27,75 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIsolationWithTikv(t *testing.T) {
+	if !*withTiKV {
+		t.Skip(" without tikv")
+	}
+	var store kv.Storage
+	var pdAddr string
+	initPdAddrs()
+	pdAddr = <-pdAddrChan
+	var d driver.TiKVDriver
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = false
+	})
+	store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+	require.NoError(t, err)
+	err = clearStorage(store)
+	require.NoError(t, err)
+	err = clearETCD(store.(kv.EtcdBackend))
+	require.NoError(t, err)
+	session.ResetStoreForWithTiKVTest(store)
+	defer func() {
+		require.NoError(t, store.Close())
+		pdAddrChan <- pdAddr
+	}()
+	t.Run("TestP0DirtyWrite", func(t *testing.T) {
+		p0DirtyWrite(t, store)
+	})
+	t.Run("TestP1DirtyRead", func(t *testing.T) {
+		p1DirtyRead(t, store)
+	})
+	t.Run("TestP3Phantom", func(t *testing.T) {
+		p3Phantom(t, store)
+	})
+	t.Run("TestP2NonRepeatableRead", func(t *testing.T) {
+		p2NonRepeatableRead(t, store)
+	})
+	t.Run("TestP4LostUpdate", func(t *testing.T) {
+		p4LostUpdate(t, store)
+	})
+	t.Run("TestA3Phantom", func(t *testing.T) {
+		a3Phantom(t, store)
+	})
+	t.Run("TestA5AReadSkew", func(t *testing.T) {
+		a5AReadSkew(t, store)
+	})
+	t.Run("TestA5BWriteSkew", func(t *testing.T) {
+		a5BWriteSkew(t, store)
+	})
+	t.Run("TestReadAfterWrite", func(t *testing.T) {
+		readAfterWrite(t, store)
+	})
+	t.Run("TestPhantomReadInInnodb", func(t *testing.T) {
+		phantomReadInInnodb(t, store)
+	})
+}
+
 /*
 These test cases come from the paper <A Critique of ANSI SQL Isolation Levels>.
 The sign 'P0', 'P1'.... can be found in the paper. These cases will run under snapshot isolation.
 */
 func TestP0DirtyWrite(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			pdAddrChan <- pdAddr
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	p0DirtyWrite(t, store)
+}
+
+func p0DirtyWrite(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -113,34 +151,15 @@ func TestP0DirtyWrite(t *testing.T) {
 }
 
 func TestP1DirtyRead(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	p1DirtyRead(t, store)
+}
+
+func p1DirtyRead(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -188,34 +207,15 @@ func TestP1DirtyRead(t *testing.T) {
 }
 
 func TestP2NonRepeatableRead(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	p2NonRepeatableRead(t, store)
+}
+
+func p2NonRepeatableRead(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -284,34 +284,15 @@ func TestP2NonRepeatableRead(t *testing.T) {
 }
 
 func TestP3Phantom(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	p3Phantom(t, store)
+}
+
+func p3Phantom(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -377,34 +358,15 @@ func TestP3Phantom(t *testing.T) {
 }
 
 func TestP4LostUpdate(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	p4LostUpdate(t, store)
+}
+
+func p4LostUpdate(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -463,34 +425,15 @@ func TestP4LostUpdate(t *testing.T) {
 func TestP4CLostUpdate(t *testing.T) {}
 
 func TestA3Phantom(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	a3Phantom(t, store)
+}
+
+func a3Phantom(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -541,34 +484,16 @@ func TestA3Phantom(t *testing.T) {
 }
 
 func TestA5AReadSkew(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	a5AReadSkew(t, store)
+}
+
+func a5AReadSkew(t *testing.T, store kv.Storage) {
+
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -631,34 +556,15 @@ func TestA5AReadSkew(t *testing.T) {
 }
 
 func TestA5BWriteSkew(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
+	a5BWriteSkew(t, store)
+}
+
+func a5BWriteSkew(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -753,33 +659,15 @@ These test cases come from the paper <Highly Available Transactions: Virtues and
 for tidb, we support read-after-write on cluster level.
 */
 func TestReadAfterWrite(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	readAfterWrite(t, store)
+}
+
+func readAfterWrite(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
@@ -830,33 +718,16 @@ func TestReadAfterWrite(t *testing.T) {
 This case will do harm in Innodb, even if in snapshot isolation, but harmless in tidb.
 */
 func TestPhantomReadInInnodb(t *testing.T) {
-	var store kv.Storage
-	var pdAddr string
-	var clean func()
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
-		session.ResetStoreForWithTiKVTest(store)
-		clean = func() {
-			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
-		}
-	} else {
-		store, clean = testkit.CreateMockStore(t)
+		t.Skip(" with tikv")
 	}
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	phantomReadInInnodb(t, store)
+
+}
+
+func phantomReadInInnodb(t *testing.T, store kv.Storage) {
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
