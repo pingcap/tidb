@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,12 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type periodGener struct {
@@ -64,10 +65,6 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
-type dateTimeUnitStrGener struct {
-	randGen *defaultRandGen
-}
-
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
@@ -82,24 +79,6 @@ func (g *tzStrGener) gen() interface{} {
 
 	n := rand.Int() % len(tzs)
 	return tzs[n]
-}
-
-func (g *dateTimeUnitStrGener) gen() interface{} {
-	dateTimes := []string{
-		"DAY",
-		"WEEK",
-		"MONTH",
-		"QUARTER",
-		"YEAR",
-		"DAY_MICROSECOND",
-		"DAY_SECOND",
-		"DAY_MINUTE",
-		"DAY_HOUR",
-		"YEAR_MONTH",
-	}
-
-	n := g.randGen.Intn(len(dateTimes))
-	return dateTimes[n]
 }
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
@@ -538,7 +517,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETInt},
-			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+			// TiDB has DST time problem. Change the random ranges to [2000-01-01 00:00:01, +inf]
+			geners: []dataGenerator{newRangeInt64Gener(248160190726144000, math.MaxInt64)},
+		},
+	},
+	// Todo: how to inject the safeTS for better testing.
+	ast.TiDBBoundedStaleness: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
 		},
 	},
 	ast.LastDay: {
@@ -585,12 +572,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinTimeCases)
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
@@ -601,7 +588,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinTimeCases)
 }
 
-func (s *testEvaluatorSuite) TestVecMonth(c *C) {
+func TestVecMonth(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
@@ -612,11 +599,11 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	input.AppendTime(0, types.ZeroDate)
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
-	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
+	require.True(t, ctx.GetSessionVars().StrictSQLMode)
+	require.NoError(t, f.vecEvalInt(input, result))
+	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
-	c.Assert(f.vecEvalInt(input, result), IsNil)
+	require.NoError(t, f.vecEvalInt(input, result))
 }

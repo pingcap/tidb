@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,23 +16,27 @@ package core
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithNames(s.ctx, str, schema, names)
+	filters, err := expression.ParseSimpleExprsWithNames(ctx, str, schema, names)
 	if err != nil {
 		return nil, err
 	}
@@ -41,14 +46,16 @@ func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Sche
 	return filters, nil
 }
 
-func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
-	s.ctx.GetSessionVars().PlanID = -1
-	joinNode := LogicalJoin{}.Init(s.ctx, 0)
-	dataSourceNode := DataSource{}.Init(s.ctx, 0)
+func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+	ctx := MockContext()
+
+	ctx.GetSessionVars().PlanID = -1
+	joinNode := LogicalJoin{}.Init(ctx, 0)
+	dataSourceNode := DataSource{}.Init(ctx, 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -57,7 +64,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -66,7 +73,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -75,11 +82,20 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("d"),
+		TblName: model.NewCIStr("t"),
+		DBName:  model.NewCIStr("test"),
+	})
+	dsSchema.Append(&expression.Column{
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, charset.CollationASCII, types.UnspecifiedLength),
+	})
+	dsNames = append(dsNames, &types.FieldName{
+		ColName: model.NewCIStr("c_ascii"),
 		TblName: model.NewCIStr("t"),
 		DBName:  model.NewCIStr("test"),
 	})
@@ -88,7 +104,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	outerChildSchema := expression.NewSchema()
 	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -97,7 +113,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -106,7 +122,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -115,7 +131,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -125,8 +141,8 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
 	path := &util.AccessPath{
-		IdxCols:    append(make([]*expression.Column, 0, 4), dsSchema.Columns...),
-		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength},
+		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
+		IdxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength, 2},
 	}
 	joinColNames := append(dsNames.Shallow(), outerChildNames...)
 
@@ -146,7 +162,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "",
 			otherConds:      "",
 			ranges:          "[[NULL,NULL]]",
-			idxOff2KeyOff:   "[0 -1 -1 -1]",
+			idxOff2KeyOff:   "[0 -1 -1 -1 -1]",
 			accesses:        "[]",
 			remained:        "[]",
 			compareFilters:  "<nil>",
@@ -168,7 +184,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "a = 1",
 			otherConds:      "",
 			ranges:          "[[1 NULL,1 NULL]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
 			accesses:        "[eq(Column#1, 1)]",
 			remained:        "[]",
 			compareFilters:  "<nil>",
@@ -179,10 +195,10 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "a = 1",
 			otherConds:      "c > g and c < concat(g, \"ab\")",
 			ranges:          "[[1 NULL NULL,1 NULL NULL]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
-			accesses:        "[eq(Column#1, 1) gt(Column#3, Column#7) lt(Column#3, concat(Column#7, ab))]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
+			accesses:        "[eq(Column#1, 1) gt(Column#3, Column#8) lt(Column#3, concat(Column#8, ab))]",
 			remained:        "[]",
-			compareFilters:  "gt(Column#3, Column#7) lt(Column#3, concat(Column#7, ab))",
+			compareFilters:  "gt(Column#3, Column#8) lt(Column#3, concat(Column#8, ab))",
 		},
 		// cast function won't be involved.
 		{
@@ -190,20 +206,30 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "a = 1",
 			otherConds:      "c > g and c < g + 10",
 			ranges:          "[[1 NULL NULL,1 NULL NULL]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
-			accesses:        "[eq(Column#1, 1) gt(Column#3, Column#7)]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
+			accesses:        "[eq(Column#1, 1) gt(Column#3, Column#8)]",
 			remained:        "[]",
-			compareFilters:  "gt(Column#3, Column#7)",
+			compareFilters:  "gt(Column#3, Column#8)",
 		},
 		// Can deal with prefix index correctly.
 		{
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a = 1 and c > 'a' and c < 'aaaaaa'",
 			otherConds:      "",
-			ranges:          "[(1 NULL \"a\",1 NULL 0x6161]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
+			ranges:          "[(1 NULL \"a\",1 NULL \"aa\"]]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
 			accesses:        "[eq(Column#1, 1) gt(Column#3, a) lt(Column#3, aaaaaa)]",
 			remained:        "[gt(Column#3, a) lt(Column#3, aaaaaa)]",
+			compareFilters:  "<nil>",
+		},
+		{
+			innerKeys:       []*expression.Column{dsSchema.Columns[1], dsSchema.Columns[2], dsSchema.Columns[3]},
+			pushedDownConds: "a = 1 and c_ascii > 'a' and c_ascii < 'aaaaaa'",
+			otherConds:      "",
+			ranges:          "[(1 NULL NULL NULL \"a\",1 NULL NULL NULL \"aa\"]]",
+			idxOff2KeyOff:   "[-1 0 1 2 -1]",
+			accesses:        "[eq(Column#1, 1) gt(Column#5, a) lt(Column#5, aaaaaa)]",
+			remained:        "[gt(Column#5, a) lt(Column#5, aaaaaa)]",
 			compareFilters:  "<nil>",
 		},
 		// Can generate correct ranges for in functions.
@@ -212,7 +238,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "a in (1, 2, 3) and c in ('a', 'b', 'c')",
 			otherConds:      "",
 			ranges:          "[[1 NULL \"a\",1 NULL \"a\"] [2 NULL \"a\",2 NULL \"a\"] [3 NULL \"a\",3 NULL \"a\"] [1 NULL \"b\",1 NULL \"b\"] [2 NULL \"b\",2 NULL \"b\"] [3 NULL \"b\",3 NULL \"b\"] [1 NULL \"c\",1 NULL \"c\"] [2 NULL \"c\",2 NULL \"c\"] [3 NULL \"c\",3 NULL \"c\"]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
 			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c)]",
 			remained:        "[in(Column#3, a, b, c)]",
 			compareFilters:  "<nil>",
@@ -223,10 +249,10 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "a in (1, 2, 3) and c in ('a', 'b', 'c')",
 			otherConds:      "d > h and d < h + 100",
 			ranges:          "[[1 NULL \"a\" NULL,1 NULL \"a\" NULL] [2 NULL \"a\" NULL,2 NULL \"a\" NULL] [3 NULL \"a\" NULL,3 NULL \"a\" NULL] [1 NULL \"b\" NULL,1 NULL \"b\" NULL] [2 NULL \"b\" NULL,2 NULL \"b\" NULL] [3 NULL \"b\" NULL,3 NULL \"b\" NULL] [1 NULL \"c\" NULL,1 NULL \"c\" NULL] [2 NULL \"c\" NULL,2 NULL \"c\" NULL] [3 NULL \"c\" NULL,3 NULL \"c\" NULL]]",
-			idxOff2KeyOff:   "[-1 0 -1 -1]",
-			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c) gt(Column#4, Column#8) lt(Column#4, plus(Column#8, 100))]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
+			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c) gt(Column#4, Column#9) lt(Column#4, plus(Column#9, 100))]",
 			remained:        "[in(Column#3, a, b, c)]",
-			compareFilters:  "gt(Column#4, Column#8) lt(Column#4, plus(Column#8, 100))",
+			compareFilters:  "gt(Column#4, Column#9) lt(Column#4, plus(Column#9, 100))",
 		},
 		// Join keys are not continuous and the pushed key connect the key but not eq/in functions.
 		{
@@ -234,26 +260,39 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			pushedDownConds: "b > 1",
 			otherConds:      "",
 			ranges:          "[(NULL 1,NULL +inf]]",
-			idxOff2KeyOff:   "[0 -1 -1 -1]",
+			idxOff2KeyOff:   "[0 -1 -1 -1 -1]",
 			accesses:        "[gt(Column#2, 1)]",
 			remained:        "[]",
 			compareFilters:  "<nil>",
 		},
+		{
+			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
+			pushedDownConds: "a = 1 and c > 'a' and c < '一二三'",
+			otherConds:      "",
+			ranges:          "[(1 NULL \"a\",1 NULL \"一二\"]]",
+			idxOff2KeyOff:   "[-1 0 -1 -1 -1]",
+			accesses:        "[eq(Column#1, 1) gt(Column#3, a) lt(Column#3, 一二三)]",
+			remained:        "[gt(Column#3, a) lt(Column#3, 一二三)]",
+			compareFilters:  "<nil>",
+		},
 	}
 	for i, tt := range tests {
-		pushed, err := s.rewriteSimpleExpr(tt.pushedDownConds, dsSchema, dsNames)
-		c.Assert(err, IsNil)
+		pushed, err := rewriteSimpleExpr(ctx, tt.pushedDownConds, dsSchema, dsNames)
+		require.NoError(t, err)
 		dataSourceNode.pushedDownConds = pushed
-		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema, joinColNames)
-		c.Assert(err, IsNil)
+		others, err := rewriteSimpleExpr(ctx, tt.otherConds, joinNode.schema, joinColNames)
+		require.NoError(t, err)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
-		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
-		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)
-		c.Assert(fmt.Sprintf("%v", helper.chosenRemained), Equals, tt.remained)
-		c.Assert(fmt.Sprintf("%v", helper.lastColManager), Equals, tt.compareFilters)
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
+		if helper.chosenRanges == nil {
+			helper.chosenRanges = ranger.Ranges{}
+		}
+		require.NoError(t, err)
+		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
+		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), "test case: ", i)
+		require.Equal(t, tt.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff))
+		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
+		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))
 	}
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,12 +26,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,6 +40,7 @@ import (
 
 var (
 	globalIDMutex sync.Mutex
+	policyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -66,9 +68,29 @@ var (
 	mSequencePrefix   = "SID"
 	mSeqCyclePrefix   = "SequenceCycle"
 	mTableIDPrefix    = "TID"
+	mIncIDPrefix      = "IID"
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+)
+
+const (
+	// CurrentMagicByteVer is the current magic byte version, used for future meta compatibility.
+	CurrentMagicByteVer byte = 0x00
+	// PolicyMagicByte handler
+	// 0x00 - 0x3F: Json Handler
+	// 0x40 - 0x7F: Reserved
+	// 0x80 - 0xBF: Reserved
+	// 0xC0 - 0xFF: Reserved
+
+	// type means how to handle the serialized data.
+	typeUnknown int = 0
+	typeJSON    int = 1
+	// todo: customized handler.
 )
 
 var (
@@ -76,6 +98,10 @@ var (
 	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
 	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
+	// ErrPolicyExists is the error for policy exists.
+	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
+	// ErrPolicyNotExists is the error for policy not exists.
+	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrTableExists is the error for table exists.
 	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
@@ -94,8 +120,9 @@ type Meta struct {
 // NewMeta creates a Meta in transaction txn.
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
-	txn.SetOption(tikvstore.Priority, tikvstore.PriorityHigh)
-	txn.SetOption(tikvstore.SyncLog, true)
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	txn.SetOption(kv.SyncLog, struct{}{})
+	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
@@ -143,12 +170,25 @@ func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
 }
 
+// GetPolicyID gets current policy global id.
+func (m *Meta) GetPolicyID() (int64, error) {
+	return m.txn.GetInt64(mPolicyGlobalID)
+}
+
+func (m *Meta) policyKey(policyID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
+}
+
 func (m *Meta) dbKey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
 }
 
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+}
+
+func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
 }
 
 func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
@@ -179,81 +219,9 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
 }
 
-// GenAutoTableID adds step to the auto ID of the table and returns the sum.
-func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if table exists.
-	tableKey := m.tableKey(tableID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
-}
-
-// GenAutoRandomID adds step to the auto shard ID of the table and returns the sum.
-func (m *Meta) GenAutoRandomID(dbID, tableID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if table exists.
-	tableKey := m.tableKey(tableID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return m.txn.HInc(dbKey, m.autoRandomTableIDKey(tableID), step)
-}
-
-// GetAutoTableID gets current auto id with table id.
-func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
-}
-
-// GetAutoRandomID gets current auto random id with table id.
-func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
-}
-
-// GenSequenceValue adds step to the sequence value and returns the sum.
-func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if sequence exists.
-	tableKey := m.tableKey(sequenceID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return m.txn.HInc(dbKey, m.sequenceKey(sequenceID), step)
-}
-
-// GetSequenceValue gets current sequence value with sequence id.
-func (m *Meta) GetSequenceValue(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
-}
-
-// SetSequenceValue sets start value when sequence in cycle.
-func (m *Meta) SetSequenceValue(dbID int64, sequenceID int64, start int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceKey(sequenceID), []byte(strconv.FormatInt(start, 10)))
-}
-
-// GetSequenceCycle gets current sequence cycle times with sequence id.
-func (m *Meta) GetSequenceCycle(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceCycleKey(sequenceID))
-}
-
-// SetSequenceCycle sets cycle times value when sequence in cycle.
-func (m *Meta) SetSequenceCycle(dbID int64, sequenceID int64, round int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceCycleKey(sequenceID), []byte(strconv.FormatInt(round, 10)))
+// GetAutoIDAccessors gets the controller for auto IDs.
+func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
+	return NewAutoIDAccessors(m, dbID, tableID)
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -264,6 +232,22 @@ func (m *Meta) GetSchemaVersion() (int64, error) {
 // GenSchemaVersion generates next schema version.
 func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
+}
+
+func (m *Meta) checkPolicyExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v == nil {
+		err = ErrPolicyNotExists.GenWithStack("policy doesn't exist")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v != nil {
+		err = ErrPolicyExists.GenWithStack("policy already exists")
+	}
+	return errors.Trace(err)
 }
 
 func (m *Meta) checkDBExists(dbKey []byte) error {
@@ -296,6 +280,46 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
+}
+
+// CreatePolicy creates a policy.
+func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
+	if policy.ID != 0 {
+		policyKey := m.policyKey(policy.ID)
+		if err := m.checkPolicyNotExists(policyKey); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// Autofill the policy ID.
+		policyIDMutex.Lock()
+		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		policyIDMutex.Unlock()
+		policy.ID = genID
+	}
+	policyKey := m.policyKey(policy.ID)
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
+}
+
+// UpdatePolicy updates a policy.
+func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
+	policyKey := m.policyKey(policy.ID)
+
+	if err := m.checkPolicyExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
 // CreateDatabase creates a database with db info.
@@ -398,6 +422,19 @@ func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqV
 	return errors.Trace(m.txn.HSet(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), []byte(strconv.FormatInt(seqValue, 10))))
 }
 
+// DropPolicy drops the specified policy.
+func (m *Meta) DropPolicy(policyID int64) error {
+	// Check if policy exists.
+	policyKey := m.policyKey(policyID)
+	if err := m.txn.HClear(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mPolicies, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
@@ -415,8 +452,12 @@ func (m *Meta) DropDatabase(dbID int64) error {
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, tblID int64, delAutoID bool) error {
-	err := m.DropTableOrView(dbID, tblID, delAutoID)
+func (m *Meta) DropSequence(dbID int64, tblID int64) error {
+	err := m.DropTableOrView(dbID, tblID)
+	if err != nil {
+		return err
+	}
+	err = m.GetAutoIDAccessors(dbID, tblID).Del()
 	if err != nil {
 		return err
 	}
@@ -427,7 +468,7 @@ func (m *Meta) DropSequence(dbID int64, tblID int64, delAutoID bool) error {
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
+func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -442,14 +483,6 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
-	}
-	if delAutoID {
-		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
-			return errors.Trace(err)
-		}
-		if err := m.txn.HDel(dbKey, m.autoRandomTableIDKey(tblID)); err != nil {
-			return errors.Trace(err)
-		}
 	}
 	return nil
 }
@@ -541,6 +574,77 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	return dbInfo, errors.Trace(err)
 }
 
+// ListPolicies shows all policies.
+func (m *Meta) ListPolicies() ([]*model.PolicyInfo, error) {
+	res, err := m.txn.HGetAll(mPolicies)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policies := make([]*model.PolicyInfo, 0, len(res))
+	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policy := &model.PolicyInfo{}
+		err = json.Unmarshal(value, policy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
+// GetPolicy gets the database value with ID.
+func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
+	policyKey := m.policyKey(policyID)
+	value, err := m.txn.HGet(mPolicies, policyKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if value == nil {
+		return nil, ErrPolicyNotExists.GenWithStack("policy id : %d doesn't exist", policyID)
+	}
+
+	value, err = detachMagicByte(value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policy := &model.PolicyInfo{}
+	err = json.Unmarshal(value, policy)
+	return policy, errors.Trace(err)
+}
+
+func attachMagicByte(data []byte) []byte {
+	data = append(data, 0)
+	copy(data[1:], data)
+	data[0] = mPolicyMagicByte
+	return data
+}
+
+func detachMagicByte(value []byte) ([]byte, error) {
+	magic, data := value[:1], value[1:]
+	switch whichMagicType(magic[0]) {
+	case typeJSON:
+		if magic[0] != CurrentMagicByteVer {
+			return nil, errors.New("incompatible magic type handling module")
+		}
+		return data, nil
+	default:
+		return nil, errors.New("unknown magic type handling module")
+	}
+}
+
+func whichMagicType(b byte) int {
+	if b <= 0x3F {
+		return typeJSON
+	}
+	return typeUnknown
+}
+
 // GetTable gets the table value in database with tableID.
 func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	// Check if db exists.
@@ -627,13 +731,13 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 
 	job := &model.Job{
 		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to tikvstore.PriorityLow.
-		Priority: tikvstore.PriorityLow,
+		// set the default priority to kv.PriorityLow.
+		Priority: kv.PriorityLow,
 	}
 	err = job.Decode(value)
 	// Check if the job.Priority is valid.
-	if job.Priority < tikvstore.PriorityNormal || job.Priority > tikvstore.PriorityHigh {
-		job.Priority = tikvstore.PriorityLow
+	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
+		job.Priority = kv.PriorityLow
 	}
 	return job, errors.Trace(err)
 }

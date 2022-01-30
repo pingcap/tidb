@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,7 +16,7 @@ package core
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -58,4 +59,54 @@ func (t *testPlannerFunctionSuite) TestMPPDecimalConvert(c *C) {
 	testDecimalConvert(20, 20, 0, 60, true, true, 20, 65, c)
 	testDecimalConvert(20, 40, 0, 60, false, true, 20, 65, c)
 	testDecimalConvert(0, 40, 0, 60, false, false, 0, 60, c)
+}
+
+func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldType, lConvert, rConvert bool, c *C) {
+	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
+	c.Assert(cType.Tp, Equals, retType.Tp)
+	c.Assert(cType.Flen, Equals, retType.Flen)
+	c.Assert(cType.Decimal, Equals, retType.Decimal)
+	c.Assert(cType.Flag, Equals, retType.Flag)
+	c.Assert(lConvert, Equals, lCon)
+	c.Assert(rConvert, Equals, rCon)
+}
+
+func (t *testPlannerFunctionSuite) TestMPPJoinKeyTypeConvert(c *C) {
+	tinyIntType := &types.FieldType{
+		Tp: mysql.TypeTiny,
+	}
+	tinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
+
+	unsignedTinyIntType := &types.FieldType{
+		Tp: mysql.TypeTiny,
+	}
+	unsignedTinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
+	unsignedTinyIntType.Flag = mysql.UnsignedFlag
+
+	bigIntType := &types.FieldType{
+		Tp: mysql.TypeLonglong,
+	}
+	bigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+
+	unsignedBigIntType := &types.FieldType{
+		Tp: mysql.TypeLonglong,
+	}
+	unsignedBigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	unsignedBigIntType.Flag = mysql.UnsignedFlag
+
+	decimalType := &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flen:    20,
+		Decimal: 0,
+	}
+
+	testJoinKeyTypeConvert(tinyIntType, tinyIntType, tinyIntType, false, false, c)
+	testJoinKeyTypeConvert(tinyIntType, unsignedTinyIntType, bigIntType, true, true, c)
+	testJoinKeyTypeConvert(tinyIntType, bigIntType, bigIntType, true, false, c)
+	testJoinKeyTypeConvert(bigIntType, tinyIntType, bigIntType, false, true, c)
+	testJoinKeyTypeConvert(unsignedBigIntType, tinyIntType, decimalType, true, true, c)
+	testJoinKeyTypeConvert(tinyIntType, unsignedBigIntType, decimalType, true, true, c)
+	testJoinKeyTypeConvert(bigIntType, bigIntType, bigIntType, false, false, c)
+	testJoinKeyTypeConvert(unsignedBigIntType, bigIntType, decimalType, true, true, c)
+	testJoinKeyTypeConvert(bigIntType, unsignedBigIntType, decimalType, true, true, c)
 }

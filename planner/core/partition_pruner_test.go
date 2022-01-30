@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
 	"sort"
 	"strings"
 
@@ -37,16 +37,6 @@ type testPartitionPruneSuit struct {
 	dom      *domain.Domain
 	ctx      sessionctx.Context
 	testData testutil.TestData
-}
-
-func (s *testPartitionPruneSuit) cleanEnv(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_partition")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
 }
 
 func (s *testPartitionPruneSuit) SetUpSuite(c *C) {
@@ -77,6 +67,9 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	tk.MustExec("create table t5(d date, a int, b int, primary key(d, a)) partition by hash(month(d)) partitions 10;")
 	tk.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
 	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
+	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
+	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
+	tk.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
 
 	var input []string
 	var output []struct {
@@ -100,6 +93,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("use test_partition")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -176,6 +170,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	// tk1 use to test partition table with index.
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
 	tk1.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -187,6 +182,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("drop database if exists test_partition_2;")
+	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk2.MustExec("create database test_partition_2")
 	tk2.MustExec("use test_partition_2")
 	tk2.MustExec("create table t1 (id int, a int, b int)")
@@ -311,142 +307,54 @@ func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
 
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	for count := 0; count < 5; count++ {
-		partitionNum := rand.Intn(10) + 1
-		valueNum := rand.Intn(10) + 1
-		condNum := 20
+	valueNum := 10
+	// Create table.
+	tk.MustExec("drop database if exists test_partition;")
+	tk.MustExec("create database test_partition")
+	tk.MustExec("use test_partition")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("create table t1 (id int, a int, b int ) partition by list columns (b, id, a) (partition p0 values in ((1,0,2),(2,0,2),(0,1,0),(1,1,0),(2,1,0),(0,1,1),(0,1,2),(0,2,0),(1,2,0)),partition p1 values in ((1,0,1),(0,0,2),(2,1,1),(2,1,2),(2,2,1),(1,2,2),(2,2,2)),partition p2 values in ((0,0,0),(1,0,0),(2,0,0),(0,0,1),(2,0,1),(1,1,1),(1,1,2),(2,2,0),(0,2,1),(1,2,1),(0,2,2)))")
 
-		partitionDefs := make([][]string, partitionNum)
-		for id := 0; id < valueNum; id++ {
-			for a := 0; a < valueNum; a++ {
-				for b := 0; b < valueNum; b++ {
-					idx := rand.Intn(partitionNum)
-					partitionDefs[idx] = append(partitionDefs[idx], fmt.Sprintf("(%v,%v,%v)", b, id, a))
-				}
-			}
-		}
-		validIdx := 0
-		for _, def := range partitionDefs {
-			if len(def) > 0 {
-				partitionDefs[validIdx] = def
-				validIdx++
-			}
-		}
-		partitionDefs = partitionDefs[:validIdx]
-		createSQL := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-		// Generate table definition.
-		colNames := []string{"id", "a", "b"}
-		createSQL.WriteString("create table t1 (id int, a int, b int")
-		// Generate Index definition.
-		if rand.Int()%2 == 0 {
-			createSQL.WriteString(", index (")
-			n := rand.Intn(len(colNames)) + 1
-			cols := map[string]struct{}{}
-			for i := 0; i < n; i++ {
-				col := colNames[rand.Intn(len(colNames))]
-				cols[col] = struct{}{}
-			}
-			cnt := 0
-			for col := range cols {
-				if cnt > 0 {
-					createSQL.WriteString(",")
-				}
-				createSQL.WriteString(col)
-				cnt++
-			}
-			createSQL.WriteString(")")
-		}
-		createSQL.WriteString(" ) partition by list columns (b, id, a) (")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec("create database test_partition_1")
+	tk1.MustExec("use test_partition_1")
+	tk1.MustExec("create table t1 (id int, a int, b int)")
 
-		for i := range partitionDefs {
-			if i > 0 {
-				createSQL.WriteString(",")
-			}
-			createSQL.WriteString(fmt.Sprintf("partition p%v values in (", i))
-			for idx, v := range partitionDefs[i] {
-				if idx > 0 {
-					createSQL.WriteString(",")
-				}
-				createSQL.WriteString(v)
-			}
-			createSQL.WriteString(")")
-		}
-		createSQL.WriteString(")")
+	inserts := []string{
+		"insert into t1 (b,id,a) values (1,0,2),(2,0,2),(0,1,0),(1,1,0),(2,1,0),(0,1,1),(0,1,2),(0,2,0),(1,2,0)",
+		"insert into t1 (b,id,a) values (1,0,1),(0,0,2),(2,1,1),(2,1,2),(2,2,1),(1,2,2),(2,2,2)",
+		"insert into t1 (b,id,a) values (0,0,0),(1,0,0),(2,0,0),(0,0,1),(2,0,1),(1,1,1),(1,1,2),(2,2,0),(0,2,1),(1,2,1),(0,2,2)",
+	}
+	// prepare data.
+	for _, insert := range inserts {
+		tk.MustExec(insert)
+		tk1.MustExec(insert)
 
-		// Create table.
-		tk.MustExec("drop database if exists test_partition;")
-		tk.MustExec("create database test_partition")
-		tk.MustExec("use test_partition")
-		tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-		tk.MustExec(createSQL.String())
+		// Test query without condition
+		query := "select * from t1 order by id,a,b"
+		tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+	}
 
-		tk1 := testkit.NewTestKit(c, s.store)
-		tk1.MustExec("drop database if exists test_partition_1;")
-		tk1.MustExec("create database test_partition_1")
-		tk1.MustExec("use test_partition_1")
-		tk1.MustExec("create table t1 (id int, a int, b int)")
-
-		// prepare data.
-		for _, def := range partitionDefs {
-			insert := fmt.Sprintf("insert into t1 (b,id,a) values %v", strings.Join(def, ","))
-			tk.MustExec(insert)
-			tk1.MustExec(insert)
-
-			// Test query without condition
-			query := fmt.Sprintf("select * from t1 order by id,a,b")
-			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
-		}
-
-		// Test for single column condition.
-		for i := 0; i < valueNum+1; i++ {
-			query := fmt.Sprintf("select * from t1 where id = %v order by id,a,b", i)
-			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
-			query = fmt.Sprintf("select * from t1 where a = %v order by id,a,b", i)
-			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
-			query = fmt.Sprintf("select * from t1 where b = %v order by id,a,b", i)
-			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
-		}
-		// Test for multi-columns condition.
-		genCond := func() string {
-			col := colNames[rand.Intn(len(colNames))]
-			value := rand.Intn(valueNum + 2)
-			switch rand.Int() % 3 {
-			case 0:
-				return fmt.Sprintf(" %v = %v ", col, value)
-			case 1:
-				return fmt.Sprintf(" %v = %v ", value, col)
-			default:
-				buf := bytes.NewBuffer(nil)
-				buf.WriteString(fmt.Sprintf(" %v in (", col))
-				n := rand.Intn(valueNum+5) + 1
-				for i := 0; i < n; i++ {
-					if i > 0 {
-						buf.WriteString(",")
-					}
-					value := rand.Intn(valueNum + 2)
-					buf.WriteString(fmt.Sprintf("%v", value))
-				}
-				buf.WriteString(")")
-				return buf.String()
-			}
-		}
-		for i := 0; i < 500; i++ {
-			condCnt := rand.Intn(condNum) + 1
-			query := bytes.NewBuffer(nil)
-			query.WriteString("select * from t1 where ")
-			for j := 0; j < condCnt; j++ {
-				if j > 0 {
-					if rand.Int()%2 == 0 {
-						query.WriteString(" and ")
-					} else {
-						query.WriteString(" or ")
-					}
-				}
-				query.WriteString(genCond())
-			}
-			query.WriteString(" order by id,a,b")
-			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
-		}
+	// Test for single column condition.
+	for i := 0; i < valueNum+1; i++ {
+		query := fmt.Sprintf("select * from t1 where id = %v order by id,a,b", i)
+		tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		query = fmt.Sprintf("select * from t1 where a = %v order by id,a,b", i)
+		tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		query = fmt.Sprintf("select * from t1 where b = %v order by id,a,b", i)
+		tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+	}
+	// Test for multi-columns condition.
+	multiColumns := []string{
+		"select * from t1 where  0 = a  or  4 = b  order by id,a,b",
+		"select * from t1 where  b in (3,4,3,1) and  b = 0  order by id,a,b",
+		"select * from t1 where  1 = b  and  id = 3  and  1 = id  and  b in (1,0,1,3,4,0,4,4) order by id,a,b",
+		"select * from t1 where  1 = b  and  id in (1,1,4,4,1,0,3) order by id,a,b",
+		"select * from t1 where  1 = b  and  b = 4  order by id,a,b",
+	}
+	for _, multi := range multiColumns {
+		tk.MustQuery(multi).Check(tk1.MustQuery(multi).Rows())
 	}
 }
 
@@ -487,6 +395,15 @@ func (s *testPartitionPruneSuit) TestIssue22898(c *C) {
 	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (48);").Check(testkit.Rows("48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
 }
 
+func (s *testPartitionPruneSuit) TestIssue23622(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (a int, b int) partition by range (a) (partition p0 values less than (0), partition p1 values less than (5));")
+	tk.MustExec("insert into t2(a) values (-1), (1);")
+	tk.MustQuery("select * from t2 where a > 10 or b is NULL order by a;").Check(testkit.Rows("-1 <nil>", "1 <nil>"))
+}
+
 func (s *testPartitionPruneSuit) Test22396(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
@@ -497,4 +414,99 @@ func (s *testPartitionPruneSuit) Test22396(c *C) {
 	tk.MustQuery("SELECT * FROM test WHERE b = 1;")
 	tk.MustQuery("SELECT * FROM test WHERE a = 1 AND b = 1;")
 	tk.MustQuery("SELECT * FROM test WHERE a + b = 2;")
+}
+
+func (s *testPartitionPruneSuit) TestIssue23608(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int) partition by hash (a) partitions 10")
+	tk.MustExec("insert into t1 values (1), (2), (12), (3), (11), (13)")
+	tk.MustQuery("select * from t1 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12", "13", "3"))
+	tk.MustQuery("select * from t1 where not (a < -20 or a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a > 0 and a < 10)").Sort().Check(testkit.Rows("11", "12", "13"))
+	tk.MustQuery("select * from t1 where not (a < -20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a = 1)").Sort().Check(testkit.Rows("11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t1 where not (a != 1)").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec(`
+create table t2(a int)
+partition by range (a) (
+    partition p0 values less than (0),
+    partition p1 values less than (10),
+    partition p2 values less than (20)
+)`)
+	tk.MustQuery("explain format = 'brief' select * from t2 where not (a < 5)").Check(testkit.Rows(
+		"PartitionUnion 6666.67 root  ",
+		"├─TableReader 3333.33 root  data:Selection",
+		"│ └─Selection 3333.33 cop[tikv]  ge(test.t2.a, 5)",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+		"└─TableReader 3333.33 root  data:Selection",
+		"  └─Selection 3333.33 cop[tikv]  ge(test.t2.a, 5)",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p2 keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a int) partition by hash (a) partitions 10")
+	tk.MustExec("insert into t3 values (1), (2), (12), (3), (11), (13)")
+	tk.MustQuery("select * from t3 where a not between 2 and 2").Sort().Check(testkit.Rows("1", "11", "12", "13", "3"))
+	tk.MustQuery("select * from t3 where not (a < -20 or a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a > 0 and a < 10)").Sort().Check(testkit.Rows("11", "12", "13"))
+	tk.MustQuery("select * from t3 where not (a < -20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a > 20)").Sort().Check(testkit.Rows("1", "11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a = 1)").Sort().Check(testkit.Rows("11", "12", "13", "2", "3"))
+	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
+}
+
+//issue 22079
+func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
+	tk.MustExec("drop database if exists test_partition;")
+	tk.MustExec("create database test_partition")
+	tk.MustExec("use test_partition")
+	tk.MustExec("drop table if exists t")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec(`create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		partition by range(a) (
+		partition p0 values less than (1),
+		partition p1 values less than (2),
+		partition p2 values less than (3),
+		partition p_max values less than (maxvalue));`)
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
+	tk.MustQuery("SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`COL1` int NOT NULL DEFAULT '25' COMMENT 'NUMERIC PK'," +
+		"`COL3` bigint NOT NULL," +
+		"PRIMARY KEY (`COL1`,`COL3`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH ((`COL1` * `COL3`))" +
+		"PARTITIONS 13;")
+	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
+	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }

@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package session
 
@@ -24,13 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -65,7 +66,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
+	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -74,7 +76,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory)
+		onClose := func() {
+			dm.Delete(store)
+		}
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -121,6 +126,9 @@ var (
 	// Because we have not completed GC and other functions, we set it to 0.
 	// TODO: Set indexUsageSyncLease to 60s.
 	indexUsageSyncLease = int64(0 * time.Second)
+
+	// planReplayerGCLease is the time for plan replayer gc.
+	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -161,6 +169,21 @@ func SetIndexUsageSyncLease(lease time.Duration) {
 	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
 }
 
+// GetIndexUsageSyncLease returns the index usage sync lease time.
+func GetIndexUsageSyncLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+}
+
+// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
+func SetPlanReplayerGCLease(lease time.Duration) {
+	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
+}
+
+// GetPlanReplayerGCLease returns the plan replayer gc lease time.
+func GetPlanReplayerGCLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
+}
+
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
 	SetStatsLease(-1)
@@ -169,13 +192,13 @@ func DisableStats4Test() {
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
-	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
+	sessVars := ctx.GetSessionVars()
 	p := parser.New()
-	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
-	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	stmts, warns, err := p.Parse(src, charset, collation)
+	p.SetParserConfig(sessVars.BuildParserConfig())
+	p.SetSQLMode(sessVars.SQLMode)
+	stmts, warns, err := p.ParseSQL(src, sessVars.GetParseParams()...)
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		sessVars.StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
 		logutil.BgLogger().Warn("compiling",
@@ -234,7 +257,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
+			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
@@ -296,7 +319,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
 		err := rs.Next(ctx, req)

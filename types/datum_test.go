@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,19 +22,15 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testDatumSuite{})
-
-type testDatumSuite struct {
-}
-
-func (ts *testDatumSuite) TestDatum(c *C) {
+func TestDatum(t *testing.T) {
 	values := []interface{}{
 		int64(1),
 		uint64(1),
@@ -47,162 +44,150 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 		d.SetMinNotNull()
 		d.SetValueWithDefaultCollation(val)
 		x := d.GetValue()
-		c.Assert(x, DeepEquals, val)
-		c.Assert(d.Length(), Equals, int(d.length))
-		c.Assert(fmt.Sprint(d), Equals, d.String())
+		require.Equal(t, val, x)
+		require.Equal(t, int(d.length), d.Length())
+		require.Equal(t, d.String(), fmt.Sprint(d))
 	}
 }
 
-func testDatumToBool(c *C, in interface{}, res int) {
+func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	b, err := datum.ToBool(sc)
-	c.Assert(err, IsNil)
-	c.Assert(b, Equals, res64)
+	require.NoError(t, err)
+	require.Equal(t, res64, b)
 }
 
-func (ts *testDatumSuite) TestToBool(c *C) {
-	testDatumToBool(c, 0, 0)
-	testDatumToBool(c, int64(0), 0)
-	testDatumToBool(c, uint64(0), 0)
-	testDatumToBool(c, float32(0.1), 1)
-	testDatumToBool(c, float64(0.1), 1)
-	testDatumToBool(c, float64(0.5), 1)
-	testDatumToBool(c, float64(0.499), 1)
-	testDatumToBool(c, "", 0)
-	testDatumToBool(c, "0.1", 1)
-	testDatumToBool(c, []byte{}, 0)
-	testDatumToBool(c, []byte("0.1"), 1)
-	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
-	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
-	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
-	testDatumToBool(c, json.CreateBinary(int64(1)), 1)
-	testDatumToBool(c, json.CreateBinary(int64(0)), 0)
-	testDatumToBool(c, json.CreateBinary("0"), 1)
-	testDatumToBool(c, json.CreateBinary("aaabbb"), 1)
-	testDatumToBool(c, json.CreateBinary(float64(0.0)), 0)
-	testDatumToBool(c, json.CreateBinary(float64(3.1415)), 1)
-	testDatumToBool(c, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
-	testDatumToBool(c, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
-	testDatumToBool(c, json.CreateBinary("0000-00-00 00:00:00"), 1)
-	testDatumToBool(c, json.CreateBinary("0778"), 1)
-	testDatumToBool(c, json.CreateBinary("0000"), 1)
-	testDatumToBool(c, json.CreateBinary(nil), 1)
-	testDatumToBool(c, json.CreateBinary([]interface{}{nil}), 1)
-	testDatumToBool(c, json.CreateBinary(true), 1)
-	testDatumToBool(c, json.CreateBinary(false), 1)
-	testDatumToBool(c, json.CreateBinary(""), 1)
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
-	c.Assert(err, IsNil)
-	testDatumToBool(c, t, 1)
+func TestToBool(t *testing.T) {
+	testDatumToBool(t, 0, 0)
+	testDatumToBool(t, int64(0), 0)
+	testDatumToBool(t, uint64(0), 0)
+	testDatumToBool(t, float32(0.1), 1)
+	testDatumToBool(t, float64(0.1), 1)
+	testDatumToBool(t, float64(0.5), 1)
+	testDatumToBool(t, float64(0.499), 1)
+	testDatumToBool(t, "", 0)
+	testDatumToBool(t, "0.1", 1)
+	testDatumToBool(t, []byte{}, 0)
+	testDatumToBool(t, []byte("0.1"), 1)
+	testDatumToBool(t, NewBinaryLiteralFromUint(0, -1), 0)
+	testDatumToBool(t, Enum{Name: "a", Value: 1}, 1)
+	testDatumToBool(t, Set{Name: "a", Value: 1}, 1)
+	testDatumToBool(t, json.CreateBinary(int64(1)), 1)
+	testDatumToBool(t, json.CreateBinary(int64(0)), 0)
+	testDatumToBool(t, json.CreateBinary("0"), 1)
+	testDatumToBool(t, json.CreateBinary("aaabbb"), 1)
+	testDatumToBool(t, json.CreateBinary(float64(0.0)), 0)
+	testDatumToBool(t, json.CreateBinary(float64(3.1415)), 1)
+	testDatumToBool(t, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(t, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(t, json.CreateBinary("0000-00-00 00:00:00"), 1)
+	testDatumToBool(t, json.CreateBinary("0778"), 1)
+	testDatumToBool(t, json.CreateBinary("0000"), 1)
+	testDatumToBool(t, json.CreateBinary(nil), 1)
+	testDatumToBool(t, json.CreateBinary([]interface{}{nil}), 1)
+	testDatumToBool(t, json.CreateBinary(true), 1)
+	testDatumToBool(t, json.CreateBinary(false), 1)
+	testDatumToBool(t, json.CreateBinary(""), 1)
+	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	require.NoError(t, err)
+	testDatumToBool(t, t1, 1)
 
 	td, err := ParseDuration(nil, "11:11:11.999999", 6)
-	c.Assert(err, IsNil)
-	testDatumToBool(c, td, 1)
+	require.NoError(t, err)
+	testDatumToBool(t, td, 1)
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
-	c.Assert(err, IsNil)
-	testDatumToBool(c, v, 1)
+	require.NoError(t, err)
+	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	_, err = d.ToBool(sc)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func testDatumToInt64(c *C, val interface{}, expect int64) {
+func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	b, err := d.ToInt64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(b, Equals, expect)
+	require.NoError(t, err)
+	require.Equal(t, expect, b)
 }
 
-func (ts *testTypeConvertSuite) TestToInt64(c *C) {
-	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, 0, int64(0))
-	testDatumToInt64(c, int64(0), int64(0))
-	testDatumToInt64(c, uint64(0), int64(0))
-	testDatumToInt64(c, float32(3.1), int64(3))
-	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
-	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, json.CreateBinary(int64(3)), int64(3))
+func TestToInt64(t *testing.T) {
+	testDatumToInt64(t, "0", int64(0))
+	testDatumToInt64(t, 0, int64(0))
+	testDatumToInt64(t, int64(0), int64(0))
+	testDatumToInt64(t, uint64(0), int64(0))
+	testDatumToInt64(t, float32(3.1), int64(3))
+	testDatumToInt64(t, float64(3.1), int64(3))
+	testDatumToInt64(t, NewBinaryLiteralFromUint(100, -1), int64(100))
+	testDatumToInt64(t, Enum{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(t, json.CreateBinary(int64(3)), int64(3))
 
-	t, err := ParseTime(&stmtctx.StatementContext{
+	t1, err := ParseTime(&stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, t, int64(20111110111112))
+	require.NoError(t, err)
+	testDatumToInt64(t, t1, int64(20111110111112))
 
 	td, err := ParseDuration(nil, "11:11:11.999999", 6)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, td, int64(111112))
+	require.NoError(t, err)
+	testDatumToInt64(t, td, int64(111112))
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, v, int64(3))
+	require.NoError(t, err)
+	testDatumToInt64(t, v, int64(3))
 }
 
-func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
-	ft := NewFieldType(mysql.TypeFloat)
-	var datum = NewFloat64Datum(281.37)
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err := datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat32)
-	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
-
-	datum.SetString("281.37", mysql.DefaultCollationName)
-	converted, err = datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat32)
-	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
-
-	ft = NewFieldType(mysql.TypeDouble)
-	datum = NewFloat32Datum(281.37)
-	converted, err = datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat64)
-	// Convert to float32 and convert back to float64, we will get a different value.
-	c.Assert(converted.GetFloat64(), Not(Equals), 281.37)
-	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
-}
-
-func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
+func TestConvertToFloat(t *testing.T) {
 	testCases := []struct {
 		d      Datum
+		tp     byte
 		errMsg string
-		result float64
+		r64    float64
+		r32    float32
 	}{
-		{NewDatum(float32(3.00)), "", 3.00},
-		{NewDatum(float64(12345.678)), "", 12345.678},
-		{NewDatum("12345.678"), "", 12345.678},
-		{NewDatum([]byte("12345.678")), "", 12345.678},
-		{NewDatum(int64(12345)), "", 12345},
-		{NewDatum(uint64(123456)), "", 123456},
-		{NewDatum(byte(123)), "cannot convert .*", 0},
+		{NewDatum(float32(3.00)), mysql.TypeDouble, "", 3.00, 3.00},
+		{NewDatum(float64(12345.678)), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum("12345.678"), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum([]byte("12345.678")), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum(int64(12345)), mysql.TypeDouble, "", 12345, 12345},
+		{NewDatum(uint64(123456)), mysql.TypeDouble, "", 123456, 123456},
+		{NewDatum(byte(123)), mysql.TypeDouble, "cannot convert ", 0, 0},
+		{NewDatum(math.NaN()), mysql.TypeDouble, "constant .* overflows double", 0, 0},
+		{NewDatum(math.Inf(-1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(-1), float32(math.Inf(-1))},
+		{NewDatum(math.Inf(1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(1), float32(math.Inf(1))},
+		{NewDatum(float32(281.37)), mysql.TypeFloat, "", 281.37, 281.37},
+		{NewDatum("281.37"), mysql.TypeFloat, "", 281.37, 281.37},
 	}
 
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, t := range testCases {
-		converted, err := t.d.ToFloat64(sc)
-		if t.errMsg == "" {
-			c.Assert(err, IsNil)
+	for _, testCase := range testCases {
+		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
+		if testCase.errMsg == "" {
+			require.NoError(t, err)
 		} else {
-			c.Assert(err, ErrorMatches, t.errMsg)
+			require.Error(t, err)
+			require.Regexp(t, testCase.errMsg, err.Error())
 		}
-		c.Assert(converted, Equals, t.result)
+		require.Equal(t, testCase.r32, converted.GetFloat32())
+		if testCase.tp == mysql.TypeDouble {
+			require.Equal(t, testCase.r64, converted.GetFloat64())
+		} else {
+			// Convert to float32 and convert back to float64, we will get a different value.
+			require.NotEqual(t, testCase.r64, converted.GetFloat64())
+		}
 	}
 }
 
@@ -216,7 +201,7 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 	return
 }
 
-func (ts *testDatumSuite) TestToJSON(c *C) {
+func TestToJSON(t *testing.T) {
 	ft := NewFieldType(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
@@ -238,24 +223,24 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 	for _, tt := range tests {
 		obtain, err := tt.datum.ConvertTo(sc, ft)
 		if tt.success {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 
 			sd := NewStringDatum(tt.expected)
 			var expected Datum
 			expected, err = sd.ConvertTo(sc, ft)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 
 			var cmp int
-			cmp, err = obtain.CompareDatum(sc, &expected)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
+			cmp, err = obtain.Compare(sc, &expected, collate.GetBinaryCollator())
+			require.NoError(t, err)
+			require.Equal(t, 0, cmp)
 		} else {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		}
 	}
 }
 
-func (ts *testDatumSuite) TestIsNull(c *C) {
+func TestIsNull(t *testing.T) {
 	tests := []struct {
 		data   interface{}
 		isnull bool
@@ -268,16 +253,16 @@ func (ts *testDatumSuite) TestIsNull(c *C) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		testIsNull(c, tt.data, tt.isnull)
+		testIsNull(t, tt.data, tt.isnull)
 	}
 }
 
-func testIsNull(c *C, data interface{}, isnull bool) {
+func testIsNull(t *testing.T, data interface{}, isnull bool) {
 	d := NewDatum(data)
-	c.Assert(d.IsNull(), Equals, isnull, Commentf("data: %v, isnull: %v", data, isnull))
+	require.Equalf(t, isnull, d.IsNull(), "data: %v, isnull: %v", data, isnull)
 }
 
-func (ts *testDatumSuite) TestToBytes(c *C) {
+func TestToBytes(t *testing.T) {
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -292,12 +277,12 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
-		c.Assert(err, IsNil)
-		c.Assert(bin, BytesEquals, tt.out)
+		require.NoError(t, err)
+		require.Equal(t, tt.out, bin)
 	}
 }
 
-func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
+func TestComputePlusAndMinus(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
@@ -318,14 +303,14 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
-		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, &tt.plus)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x))
+		require.Equal(t, tt.hasErr, err != nil)
+		v, err := got.Compare(sc, &tt.plus, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
 	}
 }
 
-func (ts *testDatumSuite) TestCloneDatum(c *C) {
+func TestCloneDatum(t *testing.T) {
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -341,11 +326,11 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
-		res, err := tt.CompareDatum(sc, &tt1)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, 0)
+		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equal(t, 0, res)
 		if tt.b != nil {
-			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+			require.NotSame(t, &tt1.b[0], &tt.b[0])
 		}
 	}
 }
@@ -356,11 +341,11 @@ func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	return t
 }
 
-func newMyDecimal(val string, c *C) *MyDecimal {
-	t := MyDecimal{}
-	err := t.FromString([]byte(val))
-	c.Assert(err, IsNil)
-	return &t
+func newMyDecimal(val string, t *testing.T) *MyDecimal {
+	d := MyDecimal{}
+	err := d.FromString([]byte(val))
+	require.NoError(t, err)
+	return &d
 }
 
 func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
@@ -371,7 +356,7 @@ func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 	}
 }
 
-func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
+func TestEstimatedMemUsage(t *testing.T) {
 	b := []byte{'a', 'b', 'c', 'd'}
 	enum := Enum{Name: "a", Value: 1}
 	datumArray := []Datum{
@@ -380,17 +365,17 @@ func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
 		NewFloat32Datum(1.0),
 		NewStringDatum(string(b)),
 		NewBytesDatum(b),
-		NewDecimalDatum(newMyDecimal("1234.1234", c)),
+		NewDecimalDatum(newMyDecimal("1234.1234", t)),
 		NewMysqlEnumDatum(enum),
 	}
 	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
 		sizeOfMyDecimal +
 		len(b)*2 +
 		len(hack.Slice(enum.Name)))
-	c.Assert(int(EstimatedMemUsage(datumArray, 10)), Equals, bytesConsumed)
+	require.Equal(t, bytesConsumed, int(EstimatedMemUsage(datumArray, 10)))
 }
 
-func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
+func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	sc.OverflowAsWarning = true
@@ -454,13 +439,13 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 		// int64 reserve to Decimal
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimal("2", c)),
+			NewDecimalDatum(newMyDecimal("2", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Ceiling,
 		},
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimal("1", c)),
+			NewDecimalDatum(newMyDecimal("1", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
@@ -472,18 +457,18 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 		},
 		{
 			NewIntDatum(math.MaxInt64),
-			NewDecimalDatum(newMyDecimal(strconv.FormatInt(math.MaxInt64, 10), c)),
+			NewDecimalDatum(newMyDecimal(strconv.FormatInt(math.MaxInt64, 10), t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
 	}
 	for ith, test := range testData {
 		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var cmp int
-		cmp, err = reverseRes.CompareDatum(sc, &test.res)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, reverseRes, test.res))
+		cmp, err = reverseRes.Compare(sc, &test.res, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}
 }
 
@@ -504,7 +489,7 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 	return vals, vals1
 }
 
-func (ts *testDatumSuite) TestStringToMysqlBit(c *C) {
+func TestStringToMysqlBit(t *testing.T) {
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -522,8 +507,8 @@ func (ts *testDatumSuite) TestStringToMysqlBit(c *C) {
 	tp.Flen = 1
 	for _, tt := range tests {
 		bin, err := tt.a.convertToMysqlBit(nil, tp)
-		c.Assert(err, IsNil)
-		c.Assert(bin.b, BytesEquals, tt.out)
+		require.NoError(t, err)
+		require.Equal(t, tt.out, bin.b)
 	}
 }
 
@@ -533,7 +518,7 @@ func BenchmarkCompareDatum(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
-			_, err := v.CompareDatum(sc, &vals1[j])
+			_, err := v.Compare(sc, &vals1[j], collate.GetBinaryCollator())
 			if err != nil {
 				b.Fatal(err)
 			}

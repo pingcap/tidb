@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -38,10 +40,9 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
-	var d types.Datum
 	return &CorrelatedColumn{
 		Column: col.Column,
-		Data:   &d,
+		Data:   col.Data,
 	}
 }
 
@@ -181,6 +182,15 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+	return col, true
+}
+
+func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
+	return true
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType
@@ -219,6 +229,16 @@ type Column struct {
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
+	}
+	return false
+}
+
+// EqualByExprAndID extends Equal by comparing virual expression
+func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
+	if newCol, ok := expr.(*Column); ok {
+		expr, isOk := col.VirtualExpr.(*ScalarFunction)
+		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
+		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
 }
@@ -327,6 +347,10 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	if col.IsHidden {
+		// A hidden column must be a virtual generated column, we should output its expression.
+		return col.VirtualExpr.String()
+	}
 	if col.OrigName != "" {
 		return col.OrigName
 	}
@@ -478,6 +502,23 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+	newCol := col.Clone()
+	isOk := newCol.resolveIndicesByVirtualExpr(schema)
+	return newCol, isOk
+}
+
+func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
+	for i, c := range schema.Columns {
+		if c.EqualByExprAndID(nil, col) {
+			col.Index = i
+			return true
+		}
+	}
+	return false
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (col *Column) Vectorized() bool {
 	return true
@@ -613,11 +654,21 @@ func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (col *Column) Coercibility() Coercibility {
-	if col.HasCoercibility() {
-		return col.collationInfo.Coercibility()
+	if !col.HasCoercibility() {
+		col.SetCoercibility(deriveCoercibilityForColumn(col))
 	}
-	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (col *Column) Repertoire() Repertoire {
+	if col.RetType.EvalType() != types.ETString {
+		return ASCII
+	}
+	if col.RetType.Charset == charset.CharsetASCII {
+		return ASCII
+	}
+	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.

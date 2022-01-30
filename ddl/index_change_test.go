@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -38,15 +38,19 @@ type testIndexChangeSuite struct {
 
 func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_index_change")
-	s.dbInfo = &model.DBInfo{
-		Name: model.NewCIStr("test_index_change"),
-		ID:   1,
-	}
-	err := kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(t.CreateDatabase(s.dbInfo))
-	})
-	c.Check(err, IsNil, Commentf("err %v", errors.ErrorStack(err)))
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
+	c.Assert(err, IsNil)
+	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 
 func (s *testIndexChangeSuite) TearDownSuite(c *C) {
@@ -54,22 +58,23 @@ func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	// create table t (c1 int primary key, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo, err := testTableInfo(d, "t", 2)
+	c.Assert(err, IsNil)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -146,7 +151,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -189,7 +194,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
@@ -198,7 +203,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(indexValue), kv.IntHandle(handle))
+	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
 	if err != nil {
 		return errors.Trace(err)
 	}

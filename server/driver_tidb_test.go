@@ -8,23 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package server
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
-
-type tidbResultSetTestSuite struct{}
-
-var _ = Suite(tidbResultSetTestSuite{})
 
 func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 	return &ColumnInfo{
@@ -42,7 +41,7 @@ func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 		DefaultValue:       nil,
 	}
 }
-func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
+func TestConvertColumnInfo(t *testing.T) {
 	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{
@@ -64,7 +63,7 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		DBName:       model.NewCIStr("test"),
 	}
 	colInfo := convertColumnInfo(&resultField)
-	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeBit, 1))
+	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
 	resultField = ast.ResultField{
@@ -87,7 +86,7 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		DBName:       model.NewCIStr("test"),
 	}
 	colInfo = convertColumnInfo(&resultField)
-	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeTiny, 1))
+	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
 
 	resultField = ast.ResultField{
 		Column: &model.ColumnInfo{
@@ -109,5 +108,5 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		DBName:       model.NewCIStr("test"),
 	}
 	colInfo = convertColumnInfo(&resultField)
-	c.Assert(colInfo.ColumnLength, Equals, uint32(4))
+	require.Equal(t, uint32(4), colInfo.ColumnLength)
 }

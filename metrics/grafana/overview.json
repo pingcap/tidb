@@ -497,9 +497,9 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "delta(pd_tso_events{tidb_cluster=\"$tidb_cluster\", type=\"save\",instance=\"$instance\"}[1m]) > bool 0",
+              "expr": "pd_tso_role{tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", dc=\"global\"}",
               "format": "time_series",
-              "interval": "",
+              "instant": true,
               "intervalFactor": 2,
               "legendFormat": "",
               "metric": "pd_server_tso",
@@ -514,13 +514,18 @@
           "valueMaps": [
             {
               "op": "=",
-              "text": "Leader",
-              "value": "1"
+              "text": "Follower",
+              "value": "null"
             },
             {
               "op": "=",
               "text": "Follower",
-              "value": "null"
+              "value": "0"
+            },
+            {
+              "op": "=",
+              "text": "Leader",
+              "value": "1"
             }
           ],
           "valueName": "current"
@@ -2690,6 +2695,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The duration of a client starting to wait for the TS until received the TS result.",
           "fill": 1,
           "gridPos": {
             "h": 7,
@@ -2725,7 +2731,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "999",
@@ -2733,14 +2739,14 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "99",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "90",
@@ -4919,14 +4925,14 @@
               "expr": "irate(node_network_receive_bytes_total{tidb_cluster=\"$tidb_cluster\", device!=\"lo\"}[5m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Inbound:  {{instance}}",
+              "legendFormat": "Inbound:  {{instance}}-{{device}}",
               "refId": "A"
             },
             {
               "expr": "irate(node_network_transmit_bytes_total{tidb_cluster=\"$tidb_cluster\", device!=\"lo\"}[5m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Outbound:  {{instance}}",
+              "legendFormat": "Outbound:  {{instance}}-{{device}}",
               "refId": "B"
             }
           ],
@@ -5165,25 +5171,20 @@
     "list": [
       {
         "allValue": null,
-        "current": {
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
         "label": "tidb_cluster",
         "multi": false,
         "name": "tidb_cluster",
-        "options": [
-
-        ],
+        "options": [],
         "query": "label_values(pd_cluster_status, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
         "tagValuesQuery": "",
-        "tags": [
-
-        ],
+        "tags": [],
         "tagsQuery": "",
         "type": "query",
         "useTags": false

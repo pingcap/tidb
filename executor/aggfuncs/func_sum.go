@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,6 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -115,10 +118,12 @@ type sum4Float64 struct {
 	baseSum4Float64
 }
 
-func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &sum4Float64{}
+
+func (e *sum4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -129,7 +134,7 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.notNullRowCount++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -166,7 +171,14 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of sum should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -201,10 +213,12 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return 0, nil
 }
 
-func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &sum4Decimal{}
+
+func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -225,7 +239,7 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.notNullRowCount++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}

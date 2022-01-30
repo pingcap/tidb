@@ -5,16 +5,18 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-// // Unless required by applicable law or agreed to in writing, software
+//
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -27,11 +29,17 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	s := partitionProcessor{}
 	pi := tbl.Meta().Partition
+	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
+	// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+	// TODO: there may be a better way to push down Not once for all.
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		return s.pruneHashPartition(ctx, tbl, partitionNames, conds, columns, names)
 	case model.PartitionTypeRange:
-		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
+		rangeOr, _, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names, nil)
 		if err != nil {
 			return nil, err
 		}

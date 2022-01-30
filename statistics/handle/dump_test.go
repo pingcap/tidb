@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,17 +18,65 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testStatsSuite) TestConversion(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
+	require.Equal(t, b.Count, a.Count)
+	require.Equal(t, b.ModifyCount, a.ModifyCount)
+	require.Equal(t, len(b.Columns), len(a.Columns))
+	for i := range a.Columns {
+		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
+		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
+		if a.Columns[i].CMSketch == nil {
+			require.Nil(t, b.Columns[i].CMSketch)
+		} else {
+			require.True(t, a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch))
+		}
+		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
+		require.Truef(t, a.Columns[i].TopN.Equal(b.Columns[i].TopN), "%v, %v", a.Columns[i].TopN, b.Columns[i].TopN)
+	}
+	require.Equal(t, len(b.Indices), len(a.Indices))
+	for i := range a.Indices {
+		require.True(t, statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false))
+		if a.Indices[i].CMSketch == nil {
+			require.Nil(t, b.Indices[i].CMSketch)
+		} else {
+			require.True(t, a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch))
+		}
+		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
+	}
+	require.True(t, isSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
+}
+
+func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_extended")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
+	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.column_stats_usage")
+	do.StatsHandle().Clear()
+}
+
+func TestConversion(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int, b int)")
@@ -35,50 +84,50 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (3, 1),(2, 1),(1, 10)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
-	is := s.do.InfoSchema()
-	h := s.do.StatsHandle()
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tbl := h.GetTableStats(tableInfo.Meta())
-	assertTableEqual(c, loadTbl, tbl)
+	requireTableEqual(t, loadTbl, tbl)
 
-	cleanEnv(c, s.store, s.do)
+	cleanStats(tk, dom)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		c.Assert(h.Update(is), IsNil)
+		require.Nil(t, h.Update(is))
 		wg.Done()
 	}()
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	wg.Wait()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
-	assertTableEqual(c, loadTblInStorage, tbl)
+	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) getStatsJSON(c *C, db, tableName string) *handle.JSONTable {
-	is := s.do.InfoSchema()
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handle.JSONTable {
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.Nil(t, h.Update(is))
 	table, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tableName))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return jsonTbl
 }
 
-func (s *testStatsSuite) TestDumpGlobalStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestDumpGlobalStats(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
@@ -88,23 +137,23 @@ func (s *testStatsSuite) TestDumpGlobalStats(c *C) {
 	tk.MustExec("analyze table t")
 
 	// global-stats is not existed
-	stats := s.getStatsJSON(c, "test", "t")
-	c.Assert(stats.Partitions["p0"], NotNil)
-	c.Assert(stats.Partitions["p1"], NotNil)
-	c.Assert(stats.Partitions["global"], IsNil)
+	stats := getStatsJSON(t, dom, "test", "t")
+	require.NotNil(t, stats.Partitions["p0"])
+	require.NotNil(t, stats.Partitions["p1"])
+	require.Nil(t, stats.Partitions["global"])
 
 	// global-stats is existed
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t")
-	stats = s.getStatsJSON(c, "test", "t")
-	c.Assert(stats.Partitions["p0"], NotNil)
-	c.Assert(stats.Partitions["p1"], NotNil)
-	c.Assert(stats.Partitions["global"], NotNil)
+	stats = getStatsJSON(t, dom, "test", "t")
+	require.NotNil(t, stats.Partitions["p0"])
+	require.NotNil(t, stats.Partitions["p1"])
+	require.NotNil(t, stats.Partitions["global"])
 }
 
-func (s *testStatsSuite) TestLoadGlobalStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestLoadGlobalStats(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -112,25 +161,25 @@ func (s *testStatsSuite) TestLoadGlobalStats(c *C) {
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2)")
 	tk.MustExec("analyze table t")
-	globalStats := s.getStatsJSON(c, "test", "t")
+	globalStats := getStatsJSON(t, dom, "test", "t")
 
 	// remove all statistics
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	s.do.StatsHandle().Clear()
-	clearedStats := s.getStatsJSON(c, "test", "t")
-	c.Assert(len(clearedStats.Partitions), Equals, 0)
+	dom.StatsHandle().Clear()
+	clearedStats := getStatsJSON(t, dom, "test", "t")
+	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load global-stats back
-	c.Assert(s.do.StatsHandle().LoadStatsFromJSON(s.do.InfoSchema(), globalStats), IsNil)
-	loadedStats := s.getStatsJSON(c, "test", "t")
-	c.Assert(len(loadedStats.Partitions), Equals, 3) // p0, p1, global
+	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(dom.InfoSchema(), globalStats))
+	loadedStats := getStatsJSON(t, dom, "test", "t")
+	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
 }
 
-func (s *testStatsSuite) TestDumpPartitions(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestDumpPartitions(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -145,15 +194,15 @@ PARTITION BY RANGE ( a ) (
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d)`, i, i))
 	}
 	tk.MustExec("analyze table t")
-	is := s.do.InfoSchema()
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.Nil(t, h.Update(is))
 
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	pi := tableInfo.GetPartitionInfo()
 	originTables := make([]*statistics.Table, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
@@ -165,47 +214,47 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_buckets")
 	h.Clear()
 
-	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
-	c.Assert(err, IsNil)
+	err = h.LoadStatsFromJSON(dom.InfoSchema(), jsonTbl)
+	require.NoError(t, err)
 	for i, def := range pi.Definitions {
-		t := h.GetPartitionStats(tableInfo, def.ID)
-		assertTableEqual(c, originTables[i], t)
+		tt := h.GetPartitionStats(tableInfo, def.ID)
+		requireTableEqual(t, originTables[i], tt)
 	}
 }
 
-func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestDumpAlteredTable(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
 	defer func() { h.SetLease(oriLease) }()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
-	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	_, err = h.DumpStatsToJSON("test", table.Meta(), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
+func TestDumpCMSketchWithTopN(t *testing.T) {
 	// Just test if we can store and recover the Top N elements stored in database.
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+	testKit, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
 	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
 	testKit.MustExec("analyze table t")
 
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+	h := dom.StatsHandle()
+	require.Nil(t, h.Update(is))
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
@@ -215,81 +264,79 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1)
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1, false, false)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 
 	stat = h.GetTableStats(tableInfo)
 	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch
-	c.Assert(cmsFromStore, NotNil)
-	c.Check(cms.Equal(cmsFromStore), IsTrue)
+	require.NotNil(t, cmsFromStore)
+	require.True(t, cms.Equal(cmsFromStore))
 
 	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil)
-	c.Check(err, IsNil)
+	require.NoError(t, err)
 	err = h.LoadStatsFromJSON(is, jsonTable)
-	c.Check(err, IsNil)
+	require.NoError(t, err)
 	stat = h.GetTableStats(tableInfo)
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
-	c.Check(cms.Equal(cmsFromJSON), IsTrue)
+	require.True(t, cms.Equal(cmsFromJSON))
 }
 
-func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestDumpPseudoColumns(t *testing.T) {
+	testKit, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a))")
 	// Force adding an pseudo tables in stats cache.
 	testKit.MustQuery("select * from t")
 	testKit.MustExec("analyze table t index idx")
 
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	h := s.do.StatsHandle()
+	require.NoError(t, err)
+	h := dom.StatsHandle()
 	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestDumpExtendedStats(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
-	h := s.do.StatsHandle()
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
 
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tbl := h.GetTableStats(tableInfo.Meta())
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
-	c.Assert(err, IsNil)
-	assertTableEqual(c, loadTbl, tbl)
+	require.NoError(t, err)
+	requireTableEqual(t, loadTbl, tbl)
 
-	cleanEnv(c, s.store, s.do)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		c.Assert(h.Update(is), IsNil)
-		wg.Done()
-	}()
+	cleanStats(tk, dom)
+	wg := util.WaitGroupWrapper{}
+	wg.Run(func() {
+		require.Nil(t, h.Update(is))
+	})
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	wg.Wait()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
-	assertTableEqual(c, loadTblInStorage, tbl)
+	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestDumpVer2Stats(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -301,39 +348,39 @@ func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	tk.MustExec("alter table t add index single(a)")
 	tk.MustExec("alter table t add index multi(a, b)")
 	tk.MustExec("analyze table t with 2 topn")
-	h := s.do.StatsHandle()
-	is := s.do.InfoSchema()
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	loadJSONTable := &handle.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
-	assertTableEqual(c, loadTbl, storageTbl)
+	requireTableEqual(t, loadTbl, storageTbl)
 
 	// assert that this statistics.Table is the same as the one in stats cache
 	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
-	assertTableEqual(c, loadTbl, statsCacheTbl)
+	requireTableEqual(t, loadTbl, statsCacheTbl)
 
 	err = h.LoadStatsFromJSON(is, loadJSONTable)
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
-	assertTableEqual(c, statsCacheTbl, loadTbl)
+	requireTableEqual(t, statsCacheTbl, loadTbl)
 }

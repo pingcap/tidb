@@ -8,17 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package statistics
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 // extractSampleItemsDatums is for test purpose only to extract Datum slice
@@ -31,77 +33,85 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	return datums
 }
 
-func (s *testStatisticsSuite) TestSketch(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
+func SubTestSketch() func(*testing.T) {
+	return func(t *testing.T) {
+		s := createTestStatisticsSamples(t)
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
 
-	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(73344))
+		rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(73344), ndv)
 
-	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(100480))
+		pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(100480), ndv)
 
-	sampleSketch.MergeFMSketch(pkSketch)
-	sampleSketch.MergeFMSketch(rcSketch)
-	c.Check(sampleSketch.NDV(), Equals, int64(100480))
+		sampleSketch.MergeFMSketch(pkSketch)
+		sampleSketch.MergeFMSketch(rcSketch)
+		require.Equal(t, int64(100480), sampleSketch.NDV())
 
-	maxSize = 2
-	sketch := NewFMSketch(maxSize)
-	sketch.insertHashValue(1)
-	sketch.insertHashValue(2)
-	c.Check(len(sketch.hashset), Equals, maxSize)
-	sketch.insertHashValue(4)
-	c.Check(len(sketch.hashset), LessEqual, maxSize)
-}
-
-func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
-
-	p := FMSketchToProto(sampleSketch)
-	f := FMSketchFromProto(p)
-	c.Assert(sampleSketch.mask, Equals, f.mask)
-	c.Assert(len(sampleSketch.hashset), Equals, len(f.hashset))
-	for val := range sampleSketch.hashset {
-		c.Assert(f.hashset[val], IsTrue)
+		maxSize = 2
+		sketch := NewFMSketch(maxSize)
+		sketch.insertHashValue(1)
+		sketch.insertHashValue(2)
+		require.Equal(t, maxSize, len(sketch.hashset))
+		sketch.insertHashValue(4)
+		require.LessOrEqual(t, maxSize, len(sketch.hashset))
 	}
 }
 
-func (s *testStatisticsSuite) TestFMSketchCoding(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
-	bytes, err := EncodeFMSketch(sampleSketch)
-	c.Assert(err, IsNil)
-	fmsketch, err := DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(sampleSketch.NDV(), Equals, fmsketch.NDV())
+func SubTestSketchProtoConversion() func(*testing.T) {
+	return func(t *testing.T) {
+		s := createTestStatisticsSamples(t)
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
+		p := FMSketchToProto(sampleSketch)
+		f := FMSketchFromProto(p)
+		require.Equal(t, f.mask, sampleSketch.mask)
+		require.Equal(t, len(f.hashset), len(sampleSketch.hashset))
+		for val := range sampleSketch.hashset {
+			require.True(t, f.hashset[val])
+		}
+	}
+}
 
-	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(73344))
-	bytes, err = EncodeFMSketch(rcSketch)
-	c.Assert(err, IsNil)
-	fmsketch, err = DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(rcSketch.NDV(), Equals, fmsketch.NDV())
+func SubTestFMSketchCoding() func(*testing.T) {
+	return func(t *testing.T) {
+		s := createTestStatisticsSamples(t)
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
+		bytes, err := EncodeFMSketch(sampleSketch)
+		require.NoError(t, err)
+		fmsketch, err := DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), sampleSketch.NDV())
 
-	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(100480))
-	bytes, err = EncodeFMSketch(pkSketch)
-	c.Assert(err, IsNil)
-	fmsketch, err = DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(pkSketch.NDV(), Equals, fmsketch.NDV())
+		rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(73344), ndv)
+		bytes, err = EncodeFMSketch(rcSketch)
+		require.NoError(t, err)
+		fmsketch, err = DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), rcSketch.NDV())
+
+		pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(100480), ndv)
+		bytes, err = EncodeFMSketch(pkSketch)
+		require.NoError(t, err)
+		fmsketch, err = DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
+	}
 }

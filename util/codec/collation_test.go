@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,20 +18,16 @@ import (
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = SerialSuites(&testCollationSuite{})
-
-type testCollationSuite struct {
-}
 
 func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 	tp := types.NewFieldType(mysql.TypeString)
@@ -48,7 +45,7 @@ func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 	return 3, chk1, chk2
 }
 
-func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
+func TestHashGroupKeyCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -59,13 +56,15 @@ func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
 	buf1 := make([][]byte, n)
 	buf2 := make([][]byte, n)
 	buf1, err := HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	for i := 0; i < n; i++ {
-		c.Assert(len(buf1[i]), Equals, len(buf2[i]))
+		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
-			c.Assert(buf1[i][j], Equals, buf2[i][j])
+			require.Equal(t, buf2[i][j], buf1[i][j])
 		}
 	}
 
@@ -73,18 +72,19 @@ func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
 	buf1 = make([][]byte, n)
 	buf2 = make([][]byte, n)
 	buf1, err = HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	for i := 0; i < n; i++ {
-		c.Assert(len(buf1[i]), Equals, len(buf2[i]))
+		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
-			c.Assert(buf1[i][j], Equals, buf2[i][j])
+			require.Equal(t, buf2[i][j], buf1[i][j])
 		}
 	}
 }
 
-func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
+func TestHashChunkRowCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -94,13 +94,13 @@ func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
 	cols := []int{0}
 	buf := make([]byte, 1)
 
-	tp.Collate = "bin"
+	tp.Collate = "binary"
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(h1.Sum32(), Not(Equals), h2.Sum32())
+		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.NotEqual(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
 	}
@@ -109,9 +109,9 @@ func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(h1.Sum32(), Equals, h2.Sum32())
+		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
 	}
@@ -120,15 +120,15 @@ func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
-		c.Assert(h1.Sum32(), Equals, h2.Sum32())
+		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
 	}
 }
 
-func (s *testCollationSuite) TestHashChunkColumnsCollation(c *C) {
+func TestHashChunkColumnsCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -139,26 +139,27 @@ func (s *testCollationSuite) TestHashChunkColumnsCollation(c *C) {
 	h1s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	tp.Collate = "bin"
-	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
-	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	tp.Collate = "binary"
+	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
+
 	for i := 0; i < n; i++ {
-		c.Assert(h1s[i].Sum64(), Not(Equals), h2s[i].Sum64())
+		require.NotEqual(t, h2s[i].Sum64(), h1s[i].Sum64())
 		h1s[i].Reset()
 		h2s[i].Reset()
 	}
 
 	tp.Collate = "utf8_general_ci"
-	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
-	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {
-		c.Assert(h1s[i].Sum64(), Equals, h2s[i].Sum64())
+		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 
 	tp.Collate = "utf8_unicode_ci"
-	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
-	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {
-		c.Assert(h1s[i].Sum64(), Equals, h2s[i].Sum64())
+		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 }

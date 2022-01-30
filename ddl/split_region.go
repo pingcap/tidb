@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,12 +18,12 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
@@ -138,7 +139,7 @@ func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 			// We don't break for PDError because it may caused by ScatterRegion request failed.
-			if _, ok := errors.Cause(err).(*tikv.PDError); !ok {
+			if _, ok := errors.Cause(err).(*tikverr.PDError); !ok {
 				break
 			}
 		}

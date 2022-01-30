@@ -8,9 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -19,8 +21,8 @@ import (
 	"bytes"
 	"flag"
 	"go/format"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"text/template"
 
@@ -37,6 +39,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -57,7 +60,7 @@ const builtinCompareImports = `import (
 var builtinCompareVecTpl = template.Must(template.New("").Parse(`
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +68,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	if err := b.args[0].VecEval{{ .type.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -115,7 +118,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 var builtinNullEQCompareVecTpl = template.Must(template.New("").Parse(`
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -123,7 +126,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	if err := b.args[0].VecEval{{ .type.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -171,7 +174,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
-// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
 // the vectorization falls back to the scalar execution.
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -216,7 +219,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	n := input.NumRows()
 	result.Resize{{ .type.TypeNameInColumn }}(n, true)
 	i64s := result.{{ .type.TypeNameInColumn }}s()
-	buf1, err := b.bufAllocator.get(types.ET{{ .type.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -251,7 +254,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
-		buf, err := b.bufAllocator.get(types.ETInt, n)
+		buf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -294,8 +297,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 const builtinCompareVecTestHeader = `import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -313,12 +315,12 @@ var builtinCompareVecTestFuncTail = `	},
 
 var builtinCompareVecTestTail = `}
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinCompareCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinCompareCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinCompareEvalOneVec(b *testing.B) {
@@ -414,7 +416,7 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 func generateTestDotGo(fileName string, compares []CompareContext, types []TypeContext) error {
@@ -459,7 +461,7 @@ func generateTestDotGo(fileName string, compares []CompareContext, types []TypeC
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.

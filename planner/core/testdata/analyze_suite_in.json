@@ -1,5 +1,58 @@
 [
   {
+    "name": "TestCBOWithoutAnalyze",
+    "cases": [
+      "explain format = 'brief' select * from t1, t2 where t1.a = t2.a",
+      "explain format = 'hint' select * from t1, t2 where t1.a = t2.a"
+    ]
+  },
+  {
+    "name": "TestTableDual",
+    "cases": [
+      "explain format = 'brief' select * from t where 1 = 0",
+      "explain format = 'brief' select * from t where 1 = 1 limit 0"
+    ]
+  },
+  {
+    "name": "TestEstimation",
+    "cases": [
+      "explain format = 'brief' select count(*) from t group by a"
+    ]
+  },
+  {
+    "name": "TestOutdatedAnalyze",
+    "cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": true,
+        "RatioOfPseudoEstimate": 10.0
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": true,
+        "RatioOfPseudoEstimate": 0.7
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": false,
+        "RatioOfPseudoEstimate": 10.0
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": false,
+        "RatioOfPseudoEstimate": 0.7
+      }
+    ]
+  },
+  {
+    "name": "TestInconsistentEstimation",
+    "cases": [
+      // Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
+      // the `a = 5 and c = 5` will get 10, it is not consistent.
+      "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5"
+    ]
+  },
+  {
     "name": "TestLimitCrossEstimation",
     "cases": [
       // Pseudo stats.

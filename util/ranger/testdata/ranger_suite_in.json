@@ -101,5 +101,13 @@
       "select * from t2 use index(idx) where a = 1 and b <= -1;",
       "select * from t2 use index(idx) where a = 1 and b >= -1;"
     ]
+  },
+  {
+    "name": "TestPrefixIndexAppendPointRanges",
+    "cases": [
+      "select * from IDT_20755 use index (u_m_col) where col1 in (\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", \"物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒\", \"剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠\") and col2 in (72, 39, 73) and col3 != \"2024-10-19 08:55:32\"",
+      "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73) and col3 != \"2024-10-19 08:55:32\"",
+      "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73, 74) and col3 != \"2024-10-19 08:55:32\""
+    ]
   }
 ]

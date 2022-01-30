@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,11 +16,13 @@ package kv
 
 import (
 	"context"
+	"errors"
 	"math"
 	"math/rand"
 	"time"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -57,9 +60,24 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			return err
 		}
 
-		err = txn.Commit(ctx)
+		failpoint.Inject("mockCommitErrorInNewTxn", func(val failpoint.Value) {
+			if v := val.(string); len(v) > 0 {
+				switch v {
+				case "retry_once":
+					if i == 0 {
+						err = ErrTxnRetryable
+					}
+				case "no_retry":
+					failpoint.Return(errors.New("mock commit error"))
+				}
+			}
+		})
+
 		if err == nil {
-			break
+			err = txn.Commit(ctx)
+			if err == nil {
+				break
+			}
 		}
 		if retryable && IsTxnRetryableError(err) {
 			logutil.BgLogger().Warn("RunInNewTxn",
@@ -88,15 +106,7 @@ var (
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html.
 func BackOff(attempts uint) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
-	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
+	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond // #nosec G404
 	time.Sleep(sleep)
 	return int(sleep)
-}
-
-// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
-type TxnInfo struct {
-	TxnScope string `json:"txn_scope"`
-	StartTS  uint64 `json:"start_ts"`
-	CommitTS uint64 `json:"commit_ts"`
-	ErrMsg   string `json:"error,omitempty"`
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,17 +20,22 @@ import (
 	"context"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 )
 
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
@@ -47,8 +53,24 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 	return rows, err
 }
 
+func newSlowQueryRetriever() (*slowQueryRetriever, error) {
+	newISBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	is := newISBuilder.Build()
+	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	if err != nil {
+		return nil, err
+	}
+	return &slowQueryRetriever{outputCols: tbl.Meta().Columns}, nil
+}
+
 func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
-	retriever := &slowQueryRetriever{}
+	retriever, err := newSlowQueryRetriever()
+	if err != nil {
+		return nil, err
+	}
 	// Ignore the error is ok for test.
 	terror.Log(retriever.initialize(context.Background(), sctx))
 	rows, err := parseLog(retriever, sctx, reader, logNum)
@@ -112,6 +134,7 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 # Plan_from_cache: true
 # Plan_from_binding: true
 # Succ: false
+# IsExplicitTxn: true
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -136,9 +159,9 @@ select * from t;`
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`update t set i = 1;,select * from t;`
 	c.Assert(expectRecordString, Equals, recordString)
 
@@ -159,9 +182,9 @@ select * from t;`
 	expectRecordString = `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,57,0.12,0.216905,` +
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`update t set i = 1;,select * from t;`
 	c.Assert(expectRecordString, Equals, recordString)
 
@@ -212,7 +235,7 @@ select * from t;
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
-	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
+	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -303,7 +326,7 @@ select * from t;
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
-	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
+	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2, failed field is Txn_start_ts, failed value is 405888132465033227#, error is strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 
 }
 
@@ -429,7 +452,7 @@ select 7;`
 	sctx.GetSessionVars().TimeZone = loc
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
-		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
+		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
 		if extractor.Enable {
 			startTime, err := ParseTime(cas.startTime)
 			c.Assert(err, IsNil)
@@ -437,8 +460,10 @@ select 7;`
 			c.Assert(err, IsNil)
 			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
-		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(context.Background(), sctx)
+		retriever, err := newSlowQueryRetriever()
+		c.Assert(err, IsNil)
+		retriever.extractor = extractor
+		err = retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
@@ -457,6 +482,51 @@ select 7;`
 			c.Assert(file.file.Close(), IsNil)
 		}
 		c.Assert(retriever.close(), IsNil)
+	}
+}
+
+func TestSplitbyColon(t *testing.T) {
+	cases := []struct {
+		line   string
+		fields []string
+		values []string
+	}{
+		{
+			"",
+			[]string{},
+			[]string{},
+		},
+		{
+			"123a",
+			[]string{},
+			[]string{"123a"},
+		},
+		{
+			"1a: 2b",
+			[]string{"1a"},
+			[]string{"2b"},
+		},
+		{
+			"1a: [2b 3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b 3c]", "5e"},
+		},
+		{
+			"1a: [2b,3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,3c]", "5e"},
+		},
+		{
+
+			"Time: 2021-09-08T14:39:54.506967433+08:00",
+			[]string{"Time"},
+			[]string{"2021-09-08T14:39:54.506967433+08:00"},
+		},
+	}
+	for _, c := range cases {
+		resFields, resValues := splitByColon(c.line)
+		assert.Equal(t, c.fields, resFields)
+		assert.Equal(t, c.values, resValues)
 	}
 }
 
@@ -552,7 +622,7 @@ select 9;`
 	sctx.GetSessionVars().TimeZone = loc
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
-		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0), Desc: true}
+		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0, Desc: true}
 		if extractor.Enable {
 			startTime, err := ParseTime(cas.startTime)
 			c.Assert(err, IsNil)
@@ -560,9 +630,11 @@ select 9;`
 			c.Assert(err, IsNil)
 			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
-		retriever := &slowQueryRetriever{extractor: extractor}
+		retriever, err := newSlowQueryRetriever()
+		c.Assert(err, IsNil)
+		retriever.extractor = extractor
 		sctx.GetSessionVars().SlowQueryFile = fileName4
-		err := retriever.initialize(context.Background(), sctx)
+		err = retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)

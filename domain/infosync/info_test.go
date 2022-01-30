@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,19 +21,102 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"reflect"
 	"runtime"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
+	"go.uber.org/goleak"
 )
 
-func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*topologyInfo, error) {
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	currentID := "test"
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)"))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
+		require.NoError(t, err)
+	}()
+
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	require.NoError(t, err)
+
+	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	require.NoError(t, err)
+
+	topology, err := info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+
+	v, ok := topology.Labels["foo"]
+	require.True(t, ok)
+	require.Equal(t, "bar", v)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+
+	err = util.DeleteKeyFromEtcd(nonTTLKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	// Refresh and re-test if the key exists
+	err = info.RestartTopology(ctx)
+	require.NoError(t, err)
+
+	topology, err = info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+
+	s, err := os.Executable()
+	require.NoError(t, err)
+
+	dir := path.Dir(s)
+	require.Equal(t, dir, topology.DeployPath)
+	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	// check ttl key
+	ttlExists, err := info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+
+	err = util.DeleteKeyFromEtcd(ttlKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	err = info.updateTopologyAliveness(ctx)
+	require.NoError(t, err)
+
+	ttlExists, err = info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+}
+
+func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
 	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
@@ -44,7 +128,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*topologyInfo, e
 	if len(resp.Kvs) != 1 {
 		return nil, errors.New("resp.Kvs error")
 	}
-	var ret topologyInfo
+	var ret TopologyInfo
 	err = json.Unmarshal(resp.Kvs[0].Value, &ret)
 	if err != nil {
 		return nil, err
@@ -64,128 +148,65 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 	return len(resp.Kvs) == 1, nil
 }
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+func TestPutBundlesRetry(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	require.NoError(t, err)
 
-var _ = Suite(&testSuite{})
+	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
+	require.NoError(t, err)
+	bundle = bundle.Reset(placement.RuleIndexTable, []int64{1024})
 
-type testSuite struct {
-}
+	t.Run("serviceErrorShouldNotRetry", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "1*return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
 
-func TestTopology(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	currentID := "test"
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.Error(t, err)
+		require.Equal(t, "[domain:8243]mock service error", err.Error())
 
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
+		require.True(t, got.IsEmpty())
+	})
 
-	cli := clus.RandClient()
+	t.Run("nonServiceErrorShouldRetry", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "3*return(false)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
 
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.NoError(t, err)
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, cli, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
 
-	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+		gotJSON, err := json.Marshal(got)
+		require.NoError(t, err)
 
-	if err != nil {
-		t.Fatal(err)
-	}
+		expectJSON, err := json.Marshal(bundle)
+		require.NoError(t, err)
 
-	topo, err := info.getTopologyFromEtcd(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+		require.Equal(t, expectJSON, gotJSON)
+	})
 
-	if topo.StartTimestamp != 1282967700000 {
-		t.Fatal("start_timestamp of topology info does not match")
-	}
-	if v, ok := topo.Labels["foo"]; !ok || v != "bar" {
-		t.Fatal("labels of topology info does not match")
-	}
+	t.Run("nonServiceErrorRetryAndFail", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "4*return(false)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
 
-	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {
-		t.Fatal("the info in etcd is not match with info.")
-	}
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.Error(t, err)
+		require.Equal(t, "mock other error", err.Error())
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
-
-	err = util.DeleteKeyFromEtcd(nonTTLKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Refresh and re-test if the key exists
-	err = info.RestartTopology(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	topo, err = info.getTopologyFromEtcd(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dir := path.Dir(s)
-
-	if topo.DeployPath != dir {
-		t.Fatal("DeployPath not match expected path")
-	}
-
-	if topo.StartTimestamp != 1282967700000 {
-		t.Fatal("start_timestamp of topology info does not match")
-	}
-
-	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {
-		t.Fatal("the info in etcd is not match with info.")
-	}
-
-	// check ttl key
-	ttlExists, err := info.ttlKeyExists(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ttlExists {
-		t.Fatal("ttl non-exists")
-	}
-
-	err = util.DeleteKeyFromEtcd(ttlKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = info.updateTopologyAliveness(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ttlExists, err = info.ttlKeyExists(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ttlExists {
-		t.Fatal("ttl non-exists")
-	}
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
+		require.True(t, got.IsEmpty())
+	})
 }

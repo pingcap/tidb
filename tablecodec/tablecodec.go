@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,12 +23,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
@@ -576,11 +577,11 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		datum.SetString(datum.GetString(), ft.Collate)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
-		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
-		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
@@ -979,6 +980,11 @@ func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
 }
 
+// IsTableKey is used to check whether the key is a table key.
+func IsTableKey(k []byte) bool {
+	return len(k) == 9 && k[0] == 't'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
@@ -1153,7 +1159,8 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	tailLen := 0
 	// Version info.
 	idxVal = append(idxVal, IndexVersionFlag)
@@ -1210,7 +1217,8 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 
 // genIndexValueVersion0 create index value for both local and global index.
 func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	newEncode := false
 	tailLen := 0
 	if !h.IsInt() && distinct {
@@ -1292,6 +1300,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 	if notStringType {
 		return
 	}
+	originalKind := v.Kind()
 	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
 	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
 		rs := bytes.Runes(v.GetBytes())
@@ -1303,7 +1312,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		}
 	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
 		v.SetBytes(v.GetBytes()[:idxCol.Length])
-		if v.Kind() == types.KindString {
+		if originalKind == types.KindString {
 			v.SetString(v.GetString(), tblCol.Collate)
 		}
 	}

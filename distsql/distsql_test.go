@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,146 +21,92 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int) (*selectResult, []*types.FieldType) {
-	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetDAGRequest(&tipb.DAGRequest{}).
-		SetDesc(false).
-		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(-1, -1)).
-		Build()
-	c.Assert(err, IsNil)
-
-	// 4 int64 types.
-	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
-	}
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-
-	// Test Next.
-	var response SelectResult
-	if planIDs == nil {
-		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
-	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
-	}
-
-	c.Assert(err, IsNil)
-	result, ok := response.(*selectResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.label, Equals, "dag")
-	c.Assert(result.sqlType, Equals, "general")
-	c.Assert(result.rowLen, Equals, len(colTypes))
-
-	resp, ok := result.resp.(*mockResponse)
-	c.Assert(ok, IsTrue)
-	resp.total = totalRows
-	resp.batch = batch
-
-	return result, colTypes
-}
-
-func (s *testSuite) TestSelectNormal(c *C) {
-	response, colTypes := s.createSelectNormal(1, 2, c, nil)
-	response.Fetch(context.TODO())
+func TestSelectNormal(t *testing.T) {
+	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
 	numAllRows := 0
 	for {
 		err := response.Next(context.TODO(), chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
-	c.Assert(numAllRows, Equals, 2)
-	err := response.Close()
-	c.Assert(err, IsNil)
-	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
+	require.Equal(t, 2, numAllRows)
+	require.NoError(t, response.Close())
+	require.Equal(t, int64(0), response.memTracker.BytesConsumed())
 }
 
-func (s *testSuite) TestSelectMemTracker(c *C) {
-	response, colTypes := s.createSelectNormal(2, 6, c, nil)
-	response.Fetch(context.TODO())
+func TestSelectMemTracker(t *testing.T) {
+	response, colTypes := createSelectNormal(t, 2, 6, nil, nil)
 
 	// Test Next.
 	chk := chunk.New(colTypes, 3, 3)
 	err := response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.IsFull(), Equals, true)
-	err = response.Close()
-	c.Assert(err, IsNil)
-	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
+	require.NoError(t, err)
+	require.True(t, chk.IsFull())
+	require.NoError(t, response.Close())
+	require.Equal(t, int64(0), response.memTracker.BytesConsumed())
 }
 
-func (s *testSuite) TestSelectNormalChunkSize(c *C) {
-	s.sctx.GetSessionVars().EnableChunkRPC = false
-	response, colTypes := s.createSelectNormal(100, 1000000, c, nil)
-	response.Fetch(context.TODO())
-	s.testChunkSize(response, colTypes, c)
-	c.Assert(response.Close(), IsNil)
-	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
+func TestSelectNormalChunkSize(t *testing.T) {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().EnableChunkRPC = false
+	response, colTypes := createSelectNormal(t, 100, 1000000, nil, sctx)
+	testChunkSize(t, response, colTypes)
+	require.NoError(t, response.Close())
+	require.Equal(t, int64(0), response.memTracker.BytesConsumed())
 }
 
-func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
+func TestSelectWithRuntimeStats(t *testing.T) {
 	planIDs := []int{1, 2, 3}
-	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
-	if len(response.copPlanIDs) != len(planIDs) {
-		c.Fatal("invalid copPlanIDs")
-	}
-	for i := range planIDs {
-		if response.copPlanIDs[i] != planIDs[i] {
-			c.Fatal("invalid copPlanIDs")
-		}
-	}
+	response, colTypes := createSelectNormal(t, 1, 2, planIDs, nil)
 
-	response.Fetch(context.TODO())
+	require.Equal(t, len(planIDs), len(response.copPlanIDs), "invalid copPlanIDs")
+	for i := range planIDs {
+		require.Equal(t, planIDs[i], response.copPlanIDs[i], "invalid copPlanIDs")
+	}
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
 	numAllRows := 0
 	for {
 		err := response.Next(context.TODO(), chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
-	c.Assert(numAllRows, Equals, 2)
-	err := response.Close()
-	c.Assert(err, IsNil)
+	require.Equal(t, 2, numAllRows)
+	require.NoError(t, response.Close())
 }
 
-func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+func TestSelectResultRuntimeStats(t *testing.T) {
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
@@ -170,16 +117,17 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		totalWaitTime:    time.Second,
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
+
 	s2 := *s1
-	stmtStats := execdetails.NewRuntimeStatsColl()
+	stmtStats := execdetails.NewRuntimeStatsColl(nil)
 	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
 	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
-	c.Assert(stats.String(), Equals, expect)
+	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
-	c.Assert(stats.String(), Equals, expect)
+	require.Equal(t, expect, stats.String())
 
 	s1.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
 		Count:   1,
@@ -188,9 +136,9 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	stmtStats.RegisterStats(2, s1)
 	stats = stmtStats.GetRootStats(2)
 	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
-	c.Assert(stats.String(), Equals, expect)
+	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
-	c.Assert(stats.String(), Equals, expect)
+	require.Equal(t, expect, stats.String())
 
 	s1 = &selectResultRuntimeStats{
 		copRespTime:      []time.Duration{time.Second},
@@ -201,181 +149,85 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
 	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
-	c.Assert(s1.String(), Equals, expect)
+	require.Equal(t, expect, s1.String())
 }
 
-func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
-	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetDAGRequest(&tipb.DAGRequest{}).
-		SetDesc(false).
-		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
-		SetStreaming(true).
-		Build()
-	c.Assert(err, IsNil)
-
-	// 4 int64 types.
-	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
-	}
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-
-	s.sctx.GetSessionVars().EnableStreaming = true
-
-	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
-	c.Assert(err, IsNil)
-	result, ok := response.(*streamResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.rowLen, Equals, len(colTypes))
-
-	resp, ok := result.resp.(*mockResponse)
-	c.Assert(ok, IsTrue)
-	resp.total = totalRows
-	resp.batch = batch
-
-	return result, colTypes
-}
-
-func (s *testSuite) TestSelectStreaming(c *C) {
-	response, colTypes := s.createSelectStreaming(1, 2, c)
-	response.Fetch(context.TODO())
-
+func TestSelectStreaming(t *testing.T) {
+	response, colTypes := createSelectStreaming(t, 1, 2)
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
 	numAllRows := 0
 	for {
 		err := response.Next(context.TODO(), chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
-	c.Assert(numAllRows, Equals, 2)
-	err := response.Close()
-	c.Assert(err, IsNil)
+	require.Equal(t, 2, numAllRows)
+	require.NoError(t, response.Close())
 }
 
-func (s *testSuite) TestSelectStreamingWithNextRaw(c *C) {
-	response, _ := s.createSelectStreaming(1, 2, c)
-	response.Fetch(context.TODO())
+func TestSelectStreamingWithNextRaw(t *testing.T) {
+	response, _ := createSelectStreaming(t, 1, 2)
 	data, err := response.NextRaw(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(len(data), Equals, 16)
+	require.NoError(t, err)
+	require.Len(t, data, 16)
 }
 
-func (s *testSuite) TestSelectStreamingChunkSize(c *C) {
-	response, colTypes := s.createSelectStreaming(100, 1000000, c)
-	response.Fetch(context.TODO())
-	s.testChunkSize(response, colTypes, c)
-	c.Assert(response.Close(), IsNil)
+func TestSelectStreamingChunkSize(t *testing.T) {
+	response, colTypes := createSelectStreaming(t, 100, 1000000)
+	testChunkSize(t, response, colTypes)
+	require.NoError(t, response.Close())
 }
 
-func (s *testSuite) testChunkSize(response SelectResult, colTypes []*types.FieldType, c *C) {
-	chk := chunk.New(colTypes, 32, 32)
-
-	err := response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-
-	chk.SetRequiredRows(1, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 1)
-
-	chk.SetRequiredRows(2, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 2)
-
-	chk.SetRequiredRows(17, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 17)
-
-	chk.SetRequiredRows(170, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-
-	chk.SetRequiredRows(32, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-
-	chk.SetRequiredRows(0, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-
-	chk.SetRequiredRows(-1, 32)
-	err = response.Next(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 32)
-}
-
-func (s *testSuite) TestAnalyze(c *C) {
-	s.sctx.GetSessionVars().EnableChunkRPC = false
+func TestAnalyze(t *testing.T) {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
 		Build()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
-	c.Assert(err, IsNil)
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx.MemTracker)
+	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.label, Equals, "analyze")
-	c.Assert(result.sqlType, Equals, "internal")
+	require.True(t, ok)
 
-	response.Fetch(context.TODO())
+	require.Equal(t, "analyze", result.label)
+	require.Equal(t, "internal", result.sqlType)
 
 	bytes, err := response.NextRaw(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 16)
+	require.NoError(t, err)
+	require.Len(t, bytes, 16)
 
-	err = response.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, response.Close())
 }
 
-func (s *testSuite) TestChecksum(c *C) {
-	s.sctx.GetSessionVars().EnableChunkRPC = false
+func TestChecksum(t *testing.T) {
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetChecksumRequest(&tipb.ChecksumRequest{}).
 		Build()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
-	c.Assert(err, IsNil)
+	response, err := Checksum(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars)
+	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.label, Equals, "checksum")
-	c.Assert(result.sqlType, Equals, "general")
-
-	response.Fetch(context.TODO())
+	require.True(t, ok)
+	require.Equal(t, "checksum", result.label)
+	require.Equal(t, "general", result.sqlType)
 
 	bytes, err := response.NextRaw(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 16)
+	require.NoError(t, err)
+	require.Len(t, bytes, 16)
 
-	err = response.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, response.Close())
 }
 
 // mockResponse implements kv.Response interface.
@@ -398,7 +250,7 @@ func (resp *mockResponse) Close() error {
 }
 
 // Next implements kv.Response interface.
-func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
+func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	resp.Lock()
 	defer resp.Unlock()
 
@@ -475,7 +327,25 @@ func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 // RespTime implements kv.ResultSubset interface.
 func (r *mockResultSubset) RespTime() time.Duration { return 0 }
 
-func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+func newMockSessionContext() sessionctx.Context {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
+		MemTracker:  memory.NewTracker(-1, -1),
+		DiskTracker: disk.NewTracker(-1, -1),
+	}
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{
+			MockResponse: &mockResponse{
+				ctx:   ctx,
+				batch: 1,
+				total: 2,
+			},
+		},
+	}
+	return ctx
+}
+
+func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
 	request, _ := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -511,52 +381,135 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 	return result, colTypes
 }
 
-func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		s := &testSuite{}
-		s.SetUpSuite(nil)
-		s.sctx.GetSessionVars().InitChunkSize = 32
-		s.sctx.GetSessionVars().MaxChunkSize = 1024
-		selectResult, colTypes := createSelectNormal(4000, 20000, s.sctx)
-		selectResult.Fetch(context.TODO())
-		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-		b.StartTimer()
-		for {
-			err := selectResult.Next(context.TODO(), chk)
-			if err != nil {
-				panic(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk.Reset()
-		}
-		s.TearDownSuite(nil)
-	}
+func testChunkSize(t *testing.T, response SelectResult, colTypes []*types.FieldType) {
+	chk := chunk.New(colTypes, 32, 32)
+
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
+
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
+
+	chk.SetRequiredRows(1, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 1, chk.NumRows())
+
+	chk.SetRequiredRows(2, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 2, chk.NumRows())
+
+	chk.SetRequiredRows(17, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 17, chk.NumRows())
+
+	chk.SetRequiredRows(170, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
+
+	chk.SetRequiredRows(32, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
+
+	chk.SetRequiredRows(0, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
+
+	chk.SetRequiredRows(-1, 32)
+	require.NoError(t, response.Next(context.TODO(), chk))
+	require.Equal(t, 32, chk.NumRows())
 }
 
-func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		s := &testSuite{}
-		s.SetUpSuite(nil)
-		s.sctx.GetSessionVars().InitChunkSize = 32
-		s.sctx.GetSessionVars().MaxChunkSize = 1024
-		selectResult, colTypes := createSelectNormal(32, 3200, s.sctx)
-		selectResult.Fetch(context.TODO())
-		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-		b.StartTimer()
-		for {
-			err := selectResult.Next(context.TODO(), chk)
-			if err != nil {
-				panic(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk.Reset()
-		}
-		s.TearDownSuite(nil)
+func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(variable.NewSessionVars()).
+		SetMemTracker(memory.NewTracker(-1, -1)).
+		Build()
+	require.NoError(t, err)
+
+	// 4 int64 types.
+	colTypes := []*types.FieldType{
+		{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+			Charset: charset.CharsetBin,
+			Collate: charset.CollationBin,
+		},
 	}
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+
+	if sctx == nil {
+		sctx = newMockSessionContext()
+	}
+
+	// Test Next.
+	var response SelectResult
+	if planIDs == nil {
+		response, err = Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	} else {
+		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
+	}
+
+	require.NoError(t, err)
+	result, ok := response.(*selectResult)
+
+	require.True(t, ok)
+	require.Equal(t, "general", result.sqlType)
+	require.Equal(t, "dag", result.label)
+	require.Equal(t, len(colTypes), result.rowLen)
+
+	resp, ok := result.resp.(*mockResponse)
+	require.True(t, ok)
+
+	resp.total = totalRows
+	resp.batch = batch
+
+	return result, colTypes
+}
+
+func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldType) {
+	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(variable.NewSessionVars()).
+		SetStreaming(true).
+		Build()
+	require.NoError(t, err)
+
+	// 4 int64 types.
+	colTypes := []*types.FieldType{
+		{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+			Charset: charset.CharsetBin,
+			Collate: charset.CollationBin,
+		},
+	}
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+
+	sctx := newMockSessionContext()
+	sctx.GetSessionVars().EnableStreaming = true
+
+	response, err := Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	require.NoError(t, err)
+	result, ok := response.(*streamResult)
+	require.True(t, ok)
+	require.Equal(t, len(colTypes), result.rowLen)
+
+	resp, ok := result.resp.(*mockResponse)
+	require.True(t, ok)
+	resp.total = totalRows
+	resp.batch = batch
+	return result, colTypes
 }

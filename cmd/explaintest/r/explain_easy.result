@@ -63,7 +63,7 @@ Delete	N/A	root		N/A
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
-Projection	9990.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
+Projection	9990.00	root		Column#7
 └─HashJoin	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg(Build)	7992.00	root		group by:test.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader	7992.00	root		data:HashAgg
@@ -108,9 +108,9 @@ HashJoin	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		ifnull(Column#10, 0)->Column#10
-└─MergeJoin	10000.00	root		left outer join, left key:test.t1.c1, right key:test.t1.c1
-  ├─Projection(Build)	8000.00	root		1->Column#10, test.t1.c1
+Projection	12500.00	root		ifnull(Column#10, 0)->Column#10
+└─MergeJoin	12500.00	root		left outer join, left key:test.t1.c1, right key:test.t1.c1
+  ├─Projection(Build)	10000.00	root		1->Column#10, test.t1.c1
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -124,11 +124,12 @@ Projection	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply	10000.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	1.00	root		test.t2.c1, test.t2.c2
-    └─IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-      ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Limit(Probe)	1.00	root		offset:0, count:1
+    └─Projection	1.00	root		test.t2.c1, test.t2.c2
+      └─IndexLookUp	1.00	root		
+        ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
+        │ └─IndexRangeScan	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
+        └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -190,35 +191,36 @@ TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	IN
 test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES	YES
 test	t4	1	idx	1	a	NULL		NULL	1	YES	NO
 test	t4	1	idx	2	b	NULL		NULL	1	YES	NO
-test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES	NO
+test	t4	1	expr_idx	1	NULL	NULL		`a` + `b` + 1	2	YES	NO
 explain format = 'brief' select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5
-└─StreamAgg	1.00	root		funcs:firstrow(Column#9)->Column#7
+└─StreamAgg	1.00	root		funcs:count(Column#9)->Column#7
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:firstrow(1)->Column#9
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#9
       └─Selection	10.00	cop[tikv]		eq(test.t1.c3, 100)
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select 1 from (select count(c2), count(c3) from t1) k;
 id	estRows	task	access object	operator info
 Projection	1.00	root		1->Column#6
-└─StreamAgg	1.00	root		funcs:firstrow(Column#14)->Column#9
+└─StreamAgg	1.00	root		funcs:count(Column#14)->Column#9
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:firstrow(1)->Column#14
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#14
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#6
-└─StreamAgg	1.00	root		funcs:firstrow(Column#13)->Column#8
+└─StreamAgg	1.00	root		funcs:count(Column#13)->Column#8
   └─TableReader	1.00	root		data:StreamAgg
-    └─StreamAgg	1.00	cop[tikv]		funcs:firstrow(1)->Column#13
+    └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#13
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(1) from (select count(c2) from t1 group by c3) k;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5
-└─HashAgg	8000.00	root		group by:test.t1.c3, funcs:firstrow(1)->Column#7
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashAgg	8000.00	root		group by:test.t1.c3, funcs:count(Column#9)->Column#7
+  └─TableReader	8000.00	root		data:HashAgg
+    └─HashAgg	8000.00	cop[tikv]		group by:test.t1.c3, funcs:count(1)->Column#9
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
@@ -387,7 +389,7 @@ Projection	5.00	root		Column#17
         └─Selection	2.40	cop[tikv]		eq(3, test.t.a)
           └─IndexRangeScan	3.00	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:true
 drop table if exists t;
-create table t(a int unsigned);
+create table t(a int unsigned not null);
 explain format = 'brief' select t.a = '123455' from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		eq(test.t.a, 123455)->Column#3
@@ -498,7 +500,7 @@ PRIMARY KEY (`id`)
 explain format = 'brief' SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#22
-└─HashAgg	8000.00	root		group by:Column#32, Column#33, Column#34, funcs:firstrow(1)->Column#31
+└─HashAgg	8000.00	root		group by:Column#32, Column#33, Column#34, funcs:count(1)->Column#31
   └─Projection	10000.01	root		Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#34
     └─HashJoin	10000.01	root		left outer join, equal:[eq(Column#16, test.test02.id)]
       ├─TableReader(Build)	10000.00	root		data:TableFullScan
@@ -507,7 +509,7 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
         ├─TableDual	8000.00	root		rows:0
         └─Projection	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
           └─TableReader	0.01	root		data:Selection
-            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202)
               └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);

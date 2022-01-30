@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,21 +16,16 @@ package types
 
 import (
 	"math"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testCompareSuite{})
-
-type testCompareSuite struct {
-}
-
-func (s *testCompareSuite) TestCompare(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCompare(t *testing.T) {
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -138,15 +134,14 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{NewDecFromInt(0), "hello", 0},
 	}
 
-	for i, t := range cmpTbl {
-		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := compareForTest(t.lhs, t.rhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.ret, comment)
+	for i, tt := range cmpTbl {
+		ret, err := compareForTest(tt.lhs, tt.rhs)
+		require.NoError(t, err)
+		require.Equal(t, tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 
-		ret, err = compareForTest(t.rhs, t.lhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, -t.ret, comment)
+		ret, err = compareForTest(tt.rhs, tt.lhs)
+		require.NoError(t, err)
+		require.Equal(t, -tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 	}
 }
 
@@ -155,11 +150,10 @@ func compareForTest(a, b interface{}) (int, error) {
 	sc.IgnoreTruncate = true
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
-	return aDatum.CompareDatum(sc, &bDatum)
+	return aDatum.Compare(sc, &bDatum, collate.GetBinaryCollator())
 }
 
-func (s *testCompareSuite) TestCompareDatum(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCompareDatum(t *testing.T) {
 	cmpTbl := []struct {
 		lhs Datum
 		rhs Datum
@@ -176,20 +170,18 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	for i, t := range cmpTbl {
-		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
-		ret, err := t.lhs.CompareDatum(sc, &t.rhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.ret, comment)
+	for i, tt := range cmpTbl {
+		ret, err := tt.lhs.Compare(sc, &tt.rhs, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equal(t, tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 
-		ret, err = t.rhs.CompareDatum(sc, &t.lhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, -t.ret, comment)
+		ret, err = tt.rhs.Compare(sc, &tt.lhs, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equal(t, -tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 	}
 }
 
-func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
-	defer testleak.AfterTest(c)()
+func TestVecCompareIntAndUint(t *testing.T) {
 	cmpTblUU := []struct {
 		lhs []uint64
 		rhs []uint64
@@ -199,12 +191,12 @@ func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
 		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 		{[]uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 	}
-	for _, t := range cmpTblUU {
+	for _, tt := range cmpTblUU {
 		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-		VecCompareUU(t.lhs, t.rhs, res)
-		c.Assert(len(res), Equals, len(t.ret))
+		VecCompareUU(tt.lhs, tt.rhs, res)
+		require.Len(t, res, len(tt.ret))
 		for i, v := range res {
-			c.Assert(v, Equals, t.ret[i])
+			require.Equal(t, tt.ret[i], v)
 		}
 	}
 
@@ -219,12 +211,12 @@ func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
 		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, -1, -1, -1, -1, -1}},
 		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 	}
-	for _, t := range cmpTblII {
+	for _, tt := range cmpTblII {
 		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-		VecCompareII(t.lhs, t.rhs, res)
-		c.Assert(len(res), Equals, len(t.ret))
+		VecCompareII(tt.lhs, tt.rhs, res)
+		require.Len(t, res, len(tt.ret))
 		for i, v := range res {
-			c.Assert(v, Equals, t.ret[i])
+			require.Equal(t, tt.ret[i], v)
 		}
 	}
 
@@ -238,12 +230,12 @@ func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
 		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
 		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
 	}
-	for _, t := range cmpTblIU {
+	for _, tt := range cmpTblIU {
 		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-		VecCompareIU(t.lhs, t.rhs, res)
-		c.Assert(len(res), Equals, len(t.ret))
+		VecCompareIU(tt.lhs, tt.rhs, res)
+		require.Len(t, res, len(tt.ret))
 		for i, v := range res {
-			c.Assert(v, Equals, t.ret[i])
+			require.Equal(t, tt.ret[i], v)
 		}
 	}
 
@@ -256,12 +248,12 @@ func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
 		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
 		{[]uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
 	}
-	for _, t := range cmpTblUI {
+	for _, tt := range cmpTblUI {
 		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-		VecCompareUI(t.lhs, t.rhs, res)
-		c.Assert(len(res), Equals, len(t.ret))
+		VecCompareUI(tt.lhs, tt.rhs, res)
+		require.Len(t, res, len(tt.ret))
 		for i, v := range res {
-			c.Assert(v, Equals, t.ret[i])
+			require.Equal(t, tt.ret[i], v)
 		}
 	}
 }

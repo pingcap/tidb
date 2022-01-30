@@ -8,27 +8,26 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package kv_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/assert"
 )
 
-type checkerSuite struct{}
-
-var _ = Suite(&checkerSuite{})
-
-func (s checkerSuite) TestIsRequestTypeSupported(c *C) {
+func TestIsRequestTypeSupported(t *testing.T) {
 	checker := kv.RequestTypeSupportedChecker{}.IsRequestTypeSupported
-	c.Assert(checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx), IsFalse)
-	c.Assert(checker(kv.ReqTypeAnalyze, 0), IsTrue)
-	c.Assert(checker(kv.ReqTypeChecksum, 0), IsFalse)
+	assert.True(t, checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	assert.False(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx))
+	assert.True(t, checker(kv.ReqTypeAnalyze, 0))
+	assert.False(t, checker(kv.ReqTypeChecksum, 0))
 }

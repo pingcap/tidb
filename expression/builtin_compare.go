@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,14 +18,15 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -48,12 +50,16 @@ var (
 	_ builtinFunc = &builtinGreatestRealSig{}
 	_ builtinFunc = &builtinGreatestDecimalSig{}
 	_ builtinFunc = &builtinGreatestStringSig{}
+	_ builtinFunc = &builtinGreatestDurationSig{}
 	_ builtinFunc = &builtinGreatestTimeSig{}
+	_ builtinFunc = &builtinGreatestCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinLeastIntSig{}
 	_ builtinFunc = &builtinLeastRealSig{}
 	_ builtinFunc = &builtinLeastDecimalSig{}
 	_ builtinFunc = &builtinLeastStringSig{}
 	_ builtinFunc = &builtinLeastTimeSig{}
+	_ builtinFunc = &builtinLeastDurationSig{}
+	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 
@@ -124,6 +130,11 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
+	}
+
+	fsp, err := getExpressionFsp(ctx, args[0])
+	if err != nil {
+		return nil, err
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
@@ -200,10 +211,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
-		bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
-		if err != nil {
-			return nil, err
-		}
+		bf.tp.Decimal = fsp
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	case types.ETJson:
@@ -399,12 +407,17 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 			}
 		}
 	}
+	if (args[0].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[0])) &&
+		(args[1].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[1])) &&
+		(args[2].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[2])) {
+		return types.ETInt
+	}
 
 	return cmpTp
 }
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) types.EvalType {
+func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
@@ -421,10 +434,11 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 
 		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
+			cmpStringAsDatetime = true
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType()
+	return aggType.EvalType(), cmpStringAsDatetime
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -446,12 +460,9 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp := resolveType4Extremum(args)
-	cmpAsDatetime := false
-	if tp == types.ETDatetime || tp == types.ETTimestamp {
-		cmpAsDatetime = true
-		tp = types.ETString
-	} else if tp == types.ETDuration {
+	tp, cmpStringAsDatetime := resolveType4Extremum(args)
+	if cmpStringAsDatetime {
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -465,11 +476,16 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	if cmpAsDatetime {
-		tp = types.ETDatetime
-	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		greastInitUnsignedFlag := false
+		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -479,13 +495,35 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		sig = &builtinGreatestStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
+		if cmpStringAsDatetime {
+			sig = &builtinGreatestCmpStringAsTimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
+		} else {
+			sig = &builtinGreatestStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
+		}
+	case types.ETDuration:
+		sig = &builtinGreatestDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
+}
+
+func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
+	for _, arg := range args {
+		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
+		if argFlen > flen {
+			flen = argFlen
+		}
+		if argDecimal > decimal {
+			decimal = argDecimal
+		}
+	}
+	return flen, decimal
 }
 
 type builtinGreatestIntSig struct {
@@ -608,23 +646,19 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type builtinGreatestTimeSig struct {
+type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGreatestTimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestTimeSig{}
+func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
+	newSig := &builtinGreatestCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinGreatestTimeSig.
+// evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var (
-		strRes  string
-		timeRes types.Time
-	)
+func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -643,14 +677,52 @@ func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull b
 		if i == 0 || strings.Compare(v, strRes) > 0 {
 			strRes = v
 		}
-		if i == 0 || t.Compare(timeRes) > 0 {
-			timeRes = t
+	}
+	return strRes, false, nil
+}
+
+type builtinGreatestTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGreatestTimeSig) Clone() builtinFunc {
+	newSig := &builtinGreatestTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
+		if isNull || err != nil {
+			return types.ZeroTime, true, err
+		}
+		if i == 0 || v.Compare(res) > 0 {
+			res = v
 		}
 	}
-	if timeRes.IsZero() {
-		res = strRes
-	} else {
-		res = timeRes.String()
+	return res, false, nil
+}
+
+type builtinGreatestDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGreatestDurationSig) Clone() builtinFunc {
+	newSig := &builtinGreatestDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGreatestDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
+		if isNull || err != nil {
+			return types.Duration{}, true, err
+		}
+		if i == 0 || v.Compare(res) > 0 {
+			res = v
+		}
 	}
 	return res, false, nil
 }
@@ -663,12 +735,9 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp := resolveType4Extremum(args)
-	cmpAsDatetime := false
-	if tp == types.ETDatetime || tp == types.ETTimestamp {
-		cmpAsDatetime = true
-		tp = types.ETString
-	} else if tp == types.ETDuration {
+	tp, cmpStringAsDatetime := resolveType4Extremum(args)
+	if cmpStringAsDatetime {
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -682,11 +751,16 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	if cmpAsDatetime {
-		tp = types.ETDatetime
-	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		leastInitUnsignedFlag := true
+		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		}
+
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -696,12 +770,21 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		sig = &builtinLeastStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
+		if cmpStringAsDatetime {
+			sig = &builtinLeastCmpStringAsTimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
+		} else {
+			sig = &builtinLeastStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastString)
+		}
+	case types.ETDuration:
+		sig = &builtinLeastDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
 }
 
@@ -825,24 +908,19 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	return
 }
 
-type builtinLeastTimeSig struct {
+type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLeastTimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastTimeSig{}
+func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
+	newSig := &builtinLeastCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinLeastTimeSig.
+// evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var (
-		// timeRes will be converted to a strRes only when the arguments is a valid datetime value.
-		strRes  string     // Record the strRes of each arguments.
-		timeRes types.Time // Record the time representation of a valid arguments.
-	)
+func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -860,15 +938,53 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		if i == 0 || strings.Compare(v, strRes) < 0 {
 			strRes = v
 		}
-		if i == 0 || t.Compare(timeRes) < 0 {
-			timeRes = t
-		}
 	}
 
-	if timeRes.IsZero() {
-		res = strRes
-	} else {
-		res = timeRes.String()
+	return strRes, false, nil
+}
+
+type builtinLeastTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLeastTimeSig) Clone() builtinFunc {
+	newSig := &builtinLeastTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
+		if isNull || err != nil {
+			return types.ZeroTime, true, err
+		}
+		if i == 0 || v.Compare(res) < 0 {
+			res = v
+		}
+	}
+	return res, false, nil
+}
+
+type builtinLeastDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLeastDurationSig) Clone() builtinFunc {
+	newSig := &builtinLeastDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLeastDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
+		if isNull || err != nil {
+			return types.Duration{}, true, err
+		}
+		if i == 0 || v.Compare(res) < 0 {
+			res = v
+		}
 	}
 	return res, false, nil
 }
@@ -1087,6 +1203,12 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
+func (c *compareFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
+}
+
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
@@ -1181,8 +1303,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		_, dstCollation := DeriveCollationFromExprs(ctx, lhs, rhs)
-		return genCompareString(dstCollation)
+		coll, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
+		return genCompareString(coll.Collation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1273,7 +1395,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.CompareDatum(sc, &con.Value)
+	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1339,21 +1461,43 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
+// This refine operation depends on the values of these args, but these values can change when using plan-cache.
+// So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
-	if ContainMutableConst(ctx, args) {
-		return args
-	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
+	arg0IsString := arg0Type.EvalType() == types.ETString
+	arg1IsString := arg1Type.EvalType() == types.ETString
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+	if MaybeOverOptimized4PlanCache(ctx, args) {
+		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
+		// here and skip this refine operation in all other cases for safety.
+		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
+			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			RemoveMutableConst(ctx, args)
+		} else {
+			return args
+		}
+	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+		// We should remove the mutable constant for correctness, because its value may be changed.
+		RemoveMutableConst(ctx, args)
+	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
-		finalArg1 = arg1
+		// Why check not null flag
+		// eg: int_col > const_val(which is less than min_int32)
+		// If int_col got null, compare result cannot be true
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
+			finalArg1 = arg1
+		}
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
@@ -1372,7 +1516,12 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		finalArg0 = arg0
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
+			finalArg0 = arg0
+		}
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
@@ -2746,4 +2895,16 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
+// For greatest, returns unsigned result if there is at least one argument is unsigned.
+// For least, returns signed result if there is at least one argument is signed.
+func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
+	for _, arg := range args {
+		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
+			return false
+		}
+	}
+	return true
 }

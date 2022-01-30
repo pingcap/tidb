@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,39 +19,32 @@ import (
 	"strconv"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestStrLenOfUint64Fast(t *testing.T) {
+	t.Run("RandomInput", func(t *testing.T) {
+		for i := 0; i < 1000000; i++ {
+			num := rand.Uint64()
+			expected := len(strconv.FormatUint(num, 10))
+			actual := StrLenOfUint64Fast(num)
+			require.Equal(t, expected, actual)
+		}
+	})
 
-var _ = Suite(&testMath{})
-
-type testMath struct{}
-
-func (s *testMath) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
-	for i := 0; i < 1000000; i++ {
-		num := rand.Uint64()
-		expected := len(strconv.FormatUint(num, 10))
-		actual := StrLenOfUint64Fast(num)
-		c.Assert(actual, Equals, expected)
-	}
-}
-
-func (s *testMath) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
-	nums := [22]uint64{0,
-		1, 12, 123, 1234, 12345,
-		123456, 1234567, 12345678, 123456789, 1234567890,
-		1234567891, 12345678912, 123456789123, 1234567891234, 12345678912345,
-		123456789123456, 1234567891234567, 12345678912345678, 123456789123456789,
-		123456789123457890,
-		^uint64(0),
-	}
-
-	for _, num := range nums {
-		expected := len(strconv.FormatUint(num, 10))
-		actual := StrLenOfUint64Fast(num)
-		c.Assert(actual, Equals, expected)
-	}
+	t.Run("ManualInput", func(t *testing.T) {
+		nums := [22]uint64{0,
+			1, 12, 123, 1234, 12345,
+			123456, 1234567, 12345678, 123456789, 1234567890,
+			1234567891, 12345678912, 123456789123, 1234567891234, 12345678912345,
+			123456789123456, 1234567891234567, 12345678912345678, 123456789123456789,
+			123456789123457890,
+			^uint64(0),
+		}
+		for _, num := range nums {
+			expected := len(strconv.FormatUint(num, 10))
+			actual := StrLenOfUint64Fast(num)
+			require.Equal(t, expected, actual)
+		}
+	})
 }

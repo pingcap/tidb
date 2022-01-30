@@ -8,188 +8,170 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package statistics_test
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testIntegrationSuite{})
-
-type testIntegrationSuite struct {
-	store    kv.Storage
-	do       *domain.Domain
-	testData testutil.TestData
-}
-
-func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	s.store, s.do, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testIntegrationSuite) TearDownSuite(c *C) {
-	s.do.Close()
-	c.Assert(s.store.Close(), IsNil)
-	testleak.AfterTest(c)()
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeVerTo2Behavior(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
 	tk.MustExec("analyze table t")
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), col.StatsVer)
 	}
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t ")
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), col.StatsVer)
 	}
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t ")
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), col.StatsVer)
 	}
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 }
 
-func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestFastAnalyzeOnVer2(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
 	_, err := tk.Exec("analyze table t")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	require.Error(t, err)
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
 	tk.MustExec("analyze table t")
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), col.StatsVer)
 	}
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	require.Error(t, err)
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	_, err = tk.Exec("analyze table t index idx")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+	require.Error(t, err)
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
 	_, err = tk.Exec("analyze table t index")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+	require.Error(t, err)
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
 	tk.MustExec("analyze table t")
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), col.StatsVer)
 	}
 	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 }
 
-func (s *testIntegrationSuite) TestHideAnalyzeVerOnShow(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
-	// TODO: remove this test when the version2 is GA.
-	c.Assert(len(tk.MustQuery("show variables like '%analyze_version%'").Rows()), Equals, 0)
-}
-
-func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestIncAnalyzeOnVer2(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("insert into t values(1, 1), (1, 2)")
 	tk.MustExec("analyze table t with 2 topn")
-	is := s.do.InfoSchema()
-	h := s.do.StatsHandle()
-	c.Assert(h.Update(is), IsNil)
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
 	tk.MustExec("insert into t values(2, 1), (2, 2), (2, 3), (3, 3), (4, 4), (4, 3), (4, 2), (4, 1)")
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, h.Update(is))
 	tk.MustExec("analyze incremental table t index idx with 2 topn")
 	// After analyze, there's two val in hist.
 	tk.MustQuery("show stats_buckets where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
-		"test t  idx 1 0 2 2 1 1 1",
-		"test t  idx 1 1 3 0 2 4 1",
+		"test t  idx 1 0 2 2 1 1 0",
+		"test t  idx 1 1 3 1 3 3 0",
 	))
 	// Two val in topn.
 	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
@@ -198,9 +180,10 @@ func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
 	))
 }
 
-func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestExpBackoffEstimation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
@@ -210,31 +193,33 @@ func (s *testIntegrationSuite) TestExpBackoffEstimation(c *C) {
 		input  []string
 		output [][]string
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
 	// And then query and a = 1 and b = 1 and c = 1 and d >= 3 and d <= 5. It's result should follow the exp backoff,
 	// which is 2/5 * (3/5)^{1/2} * (3/5)*{1/4} * 1^{1/8} * 5 = 1.3634.
 	for i := 0; i < inputLen-1; i++ {
-		s.testData.OnRecord(func() {
-			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 
 	// The last case is that no column is loaded and we get no stats at all.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`), IsNil)
-	s.testData.OnRecord(func() {
-		output[inputLen-1] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`))
+	testdata.OnRecord(func() {
+		output[inputLen-1] = testdata.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
 	})
 	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"), IsNil)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"))
 }
 
-func (s *testIntegrationSuite) TestGlobalStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestGlobalStats(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_analyze_version = 2;")
@@ -276,9 +261,9 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][5], Equals, "2")
-	c.Assert(result.Rows()[1][5], Equals, "3")
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "2", result.Rows()[0][5])
+	require.Equal(t, "3", result.Rows()[1][5])
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"PartitionUnion 2.00 root  ",
 		"├─IndexReader 1.00 root  index:IndexRangeScan",
@@ -296,10 +281,10 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	// And when executing related queries, neither Union nor pseudo-stats are used.
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 3)
-	c.Assert(result.Rows()[0][5], Equals, "5")
-	c.Assert(result.Rows()[1][5], Equals, "2")
-	c.Assert(result.Rows()[2][5], Equals, "3")
+	require.Len(t, result.Rows(), 3)
+	require.Equal(t, "5", result.Rows()[0][5])
+	require.Equal(t, "2", result.Rows()[1][5])
+	require.Equal(t, "3", result.Rows()[2][5])
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
 		"IndexReader 2.00 root partition:all index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
@@ -325,4 +310,164 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
 		"TableReader 6.00 root partition:all data:TableFullScan",
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+}
+
+func TestNULLOnFullSampling(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (1), (1), (2), (2), (3), (4), (null), (null), (null)")
+	var (
+		input  []string
+		output [][]string
+	)
+	tk.MustExec("analyze table t with 2 topn")
+	is := dom.InfoSchema()
+	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
+	statsTblT := h.GetTableStats(tblT.Meta())
+	// Check the null count is 3.
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(3), col.NullCount)
+	}
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	// Check the topn and buckets contains no null values.
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func TestAnalyzeSnapshot(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "3", rows[0][0])
+	s1Str := rows[0][1].(string)
+	s1, err := strconv.ParseUint(s1Str, 10, 64)
+	require.NoError(t, err)
+	require.True(t, s1 < math.MaxUint64)
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "6", rows[0][0])
+	s2Str := rows[0][1].(string)
+	s2, err := strconv.ParseUint(s2Str, 10, 64)
+	require.NoError(t, err)
+	require.True(t, s2 < math.MaxUint64)
+	require.True(t, s2 > s1)
+}
+
+func TestHistogramsWithSameTxnTS(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select version from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	v1 := rows[0][0].(string)
+	rows = tk.MustQuery("select version from mysql.stats_histograms").Rows()
+	require.Len(t, rows, 2)
+	v2 := rows[0][0].(string)
+	require.Equal(t, v1, v2)
+	v3 := rows[1][0].(string)
+	require.Equal(t, v2, v3)
+}
+
+func TestAnalyzeLongString(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a longtext);")
+	tk.MustExec("insert into t value(repeat(\"a\",65536));")
+	tk.MustExec("insert into t value(repeat(\"b\",65536));")
+	tk.MustExec("analyze table t with 0 topn")
+}
+
+func TestOutdatedStatsCheck(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	// To pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 1")
+	require.NoError(t, h.LoadNeededHistograms())
+
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("insert into t values (1)") // 35 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("delete from t limit 24") // 11 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("delete from t limit 1") // 10 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+}
+
+func hasPseudoStats(rows [][]interface{}) bool {
+	for i := range rows {
+		if strings.Contains(rows[i][4].(string), "stats:pseudo") {
+			return true
+		}
+	}
+	return false
 }

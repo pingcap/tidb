@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package ddl
 import (
 	"fmt"
 
-	parser_mysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -48,6 +49,8 @@ var (
 	errUnsupportedAlterTableWithValidation    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITH VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
+	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
+	errUnsupportedAlterCacheForSysTable       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
@@ -61,6 +64,8 @@ var (
 	errReorgPanic                             = dbterror.ClassDDL.NewStd(mysql.ErrReorgPanic)
 	errFkColumnCannotDrop                     = dbterror.ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
 	errFKIncompatibleColumns                  = dbterror.ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
+
+	errAlterReplicaForUnsupportedCharsetTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER table replica for table contain %s charset"), nil))
 
 	errOnlyOnRangeListPartition = dbterror.ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -111,8 +116,10 @@ var (
 	errUnsupportedIndexType                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
 	errWindowInvalidWindowFuncUse          = dbterror.ClassDDL.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
 
-	// ErrDupKeyName returns for duplicated key name
+	// ErrDupKeyName returns for duplicated key name.
 	ErrDupKeyName = dbterror.ClassDDL.NewStd(mysql.ErrDupKeyName)
+	// ErrFkDupName returns for duplicated FK name.
+	ErrFkDupName = dbterror.ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
 	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
@@ -139,6 +146,8 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
+	// ErrWrongUsage returns for wrong ddl syntax usage.
+	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = dbterror.ClassDDL.NewStd(mysql.ErrInvalidGroupFuncUse)
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
@@ -232,7 +241,7 @@ var (
 	// ErrAddColumnWithSequenceAsDefault is returned when the new added column with sequence's nextval as it's default value.
 	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
 	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
-	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index without allow-expression-index in config"), nil))
+	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
@@ -251,11 +260,17 @@ var (
 	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
 	ErrTableOptionInsertMethodUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionInsertMethodUnsupported)
 
-	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
-	ErrInvalidPlacementSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidPlacementSpec)
-
 	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
 	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)
+
+	// ErrPlacementPolicyWithDirectOption is returned when create/alter table with both placement policy and placement options existed.
+	ErrPlacementPolicyWithDirectOption = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyWithDirectOption)
+
+	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
+	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
+
+	// ErrPlacementDisabled  is returned when tidb_enable_alter_placement = 0
+	ErrPlacementDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Alter Placement Rule is disabled, please set 'tidb_enable_alter_placement' if you need to enable it", nil))
 
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
@@ -274,4 +289,25 @@ var (
 	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 
 	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
+
+	// ErrPartitionNoTemporary returns when partition at temporary mode
+	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
+
+	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
+	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
+	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
+	ErrOptOnCacheTable                  = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
+	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
+	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
+
+	// ErrUnsupportedLocalTempTableDDL returns when ddl operation unsupported for local temporary table
+	ErrUnsupportedLocalTempTableDDL = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support %s for local temporary table", nil))
+	// ErrInvalidAttributesSpec is returned when meeting invalid attributes.
+	ErrInvalidAttributesSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
+	// errFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
+	errFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	// errDependentByFunctionalIndex returns when the dropped column depends by expression index.
+	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
+	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
+	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
 )

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,15 +17,16 @@ package expression
 import (
 	"reflect"
 	"sync"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
@@ -84,7 +86,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	return
 }
 
-// tblToDtbl is a util function for test.
+// tblToDtbl is a utility function for test.
 func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
 	tbl := make([]map[string][]types.Datum, l)
@@ -119,35 +121,45 @@ func makeDatums(i interface{}) []types.Datum {
 	return types.MakeDatums(i)
 }
 
-func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
+func TestIsNullFunc(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), v.GetInt64())
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
 }
 
-func (s *testEvaluatorSuite) TestLock(c *C) {
+func TestLock(t *testing.T) {
+	ctx := createContext(t)
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
-	c.Assert(err, IsNil)
+	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums(nil, 1)))
+	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
-	c.Assert(err, IsNil)
+	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
+}
+
+func TestDisplayName(t *testing.T) {
+	require.Equal(t, "=", GetDisplayName(ast.EQ))
+	require.Equal(t, "<=>", GetDisplayName(ast.NullEQ))
+	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
+	require.Equal(t, "abs", GetDisplayName("abs"))
+	require.Equal(t, "other_unknown_func", GetDisplayName("other_unknown_func"))
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
@@ -176,3 +188,11 @@ var (
 	// MySQL varchar.
 	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
 )
+
+func getInt8Con() Expression {
+	return int8Con.Clone()
+}
+
+func getVarcharCon() Expression {
+	return varcharCon.Clone()
+}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,27 +18,20 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/goleak"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }
 
-type testSuite struct{}
-
-func (s *testSuite) SetUpSuite(c *C)    {}
-func (s *testSuite) TearDownSuite(c *C) {}
-func (s *testSuite) SetUpTest(c *C)     { testleak.BeforeTest() }
-func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
-
-var _ = Suite(&testSuite{})
-
-func (s *testSuite) TestLogFormat(c *C) {
+func TestLogFormat(t *testing.T) {
 	mem := new(memory.Tracker)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	info := &util.ProcessInfo{
@@ -57,23 +51,24 @@ func (s *testSuite) TestLogFormat(c *C) {
 	}
 	costTime := time.Second * 233
 	logFields := genLogFields(costTime, info)
-	c.Assert(len(logFields), Equals, 7)
-	c.Assert(logFields[0].Key, Equals, "cost_time")
-	c.Assert(logFields[0].String, Equals, "233s")
-	c.Assert(logFields[1].Key, Equals, "conn_id")
-	c.Assert(logFields[1].Integer, Equals, int64(233))
-	c.Assert(logFields[2].Key, Equals, "user")
-	c.Assert(logFields[2].String, Equals, "PingCAP")
-	c.Assert(logFields[3].Key, Equals, "database")
-	c.Assert(logFields[3].String, Equals, "Database")
-	c.Assert(logFields[4].Key, Equals, "txn_start_ts")
-	c.Assert(logFields[4].Integer, Equals, int64(23333))
-	c.Assert(logFields[5].Key, Equals, "mem_max")
-	c.Assert(logFields[5].String, Equals, "2013265920 Bytes (1.88 GB)")
-	c.Assert(logFields[6].Key, Equals, "sql")
-	c.Assert(logFields[6].String, Equals, "select * from table where a > 1")
+
+	assert.Len(t, logFields, 7)
+	assert.Equal(t, "cost_time", logFields[0].Key)
+	assert.Equal(t, "233s", logFields[0].String)
+	assert.Equal(t, "conn_id", logFields[1].Key)
+	assert.Equal(t, int64(233), logFields[1].Integer)
+	assert.Equal(t, "user", logFields[2].Key)
+	assert.Equal(t, "PingCAP", logFields[2].String)
+	assert.Equal(t, "database", logFields[3].Key)
+	assert.Equal(t, "Database", logFields[3].String)
+	assert.Equal(t, "txn_start_ts", logFields[4].Key)
+	assert.Equal(t, int64(23333), logFields[4].Integer)
+	assert.Equal(t, "mem_max", logFields[5].Key)
+	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
+	assert.Equal(t, "sql", logFields[6].Key)
+	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
 
 	info.RedactSQL = true
 	logFields = genLogFields(costTime, info)
-	c.Assert(logFields[6].String, Equals, "select * from table where `a` > ?")
+	assert.Equal(t, "select * from table where `a` > ?", logFields[6].String)
 }

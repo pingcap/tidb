@@ -9,6 +9,7 @@
 
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -30,14 +31,17 @@ function help_message()
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
                            Defaults to "bin/globalkilltest_tidb-server".
 
+    -p <pd-server-path>: Use pd-server in <pd-server-path> for testing.
+                         Defaults to "bin/pd-server".
+
+    -k <tikv-server-path>: Use tikv-server in <tikv-server-path> for testing.
+                           Defaults to "bin/tikv-server".
+
     --tidb_start_port <port>: First TiDB server listening port. port ~ port+2 will be used.
                               Defaults to "5000".
 
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
                                Defaults to "8000".
-
-    --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
-                            Defaults to "3379".
 
     --conn_lost <timeout in seconds>: Lost connection to PD timeout,
                                       should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>.
@@ -52,21 +56,12 @@ function help_message()
 '
 }
 
-function start_cluster()
-{
-   ${PD} --name=pd --data-dir=pd &>pd.log &
-   sleep 10
-   
-   ${TIKV} --pd=127.0.0.1:2379 -s tikv --addr=0.0.0.0:20160 --advertise-addr=127.0.0.1:20160 &>tikv.log  &
-   sleep 10
-}
-
 function clean_cluster()
 {
     set +e
-    killall -9 -r tidb-server
-    killall -9 -r tikv-server
-    killall -9 -r pd-server
+    pkill -9 -f tidb-server
+    pkill -9 -f tikv-server
+    pkill -9 -f pd-server
     set -e
 }
 
@@ -85,8 +80,6 @@ while getopts "h" opt; do
 done
 
 clean_cluster
-
-start_cluster
 
 go_tests
 

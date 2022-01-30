@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,7 +16,7 @@ package metrics
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -227,7 +228,16 @@ var (
 			Subsystem: "server",
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
-		}, []string{LblResult})
+		}, []string{LblType, LblResult})
+
+	PDApiExecutionHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "pd_api_execution_duration_seconds",
+			Help:      "Bucketed histogram of all pd api execution time (s)",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,22 +21,16 @@ import (
 	"time"
 	"unsafe"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTimeSuite{})
-
-type testTimeSuite struct {
-}
-
-func (s *testTimeSuite) TestTimeEncoding(c *C) {
+func TestTimeEncoding(t *testing.T) {
 	tests := []struct {
 		Year, Month, Day, Hour, Minute, Second, Microsecond int
 		Type                                                uint8
@@ -49,25 +44,24 @@ func (s *testTimeSuite) TestTimeEncoding(c *C) {
 
 	for ith, tt := range tests {
 		ct := types.FromDate(tt.Year, tt.Month, tt.Day, tt.Hour, tt.Minute, tt.Second, tt.Microsecond)
-		t := types.NewTime(ct, tt.Type, tt.Fsp)
-		c.Check(*((*uint64)(unsafe.Pointer(&t))), Equals, tt.Expect, Commentf("%d failed.", ith))
-		c.Check(t.CoreTime(), Equals, ct, Commentf("%d core time failed.", ith))
-		c.Check(t.Type(), Equals, tt.Type, Commentf("%d type failed.", ith))
-		c.Check(t.Fsp(), Equals, tt.Fsp, Commentf("%d fsp failed.", ith))
-		c.Check(t.Year(), Equals, tt.Year, Commentf("%d year failed.", ith))
-		c.Check(t.Month(), Equals, tt.Month, Commentf("%d month failed.", ith))
-		c.Check(t.Day(), Equals, tt.Day, Commentf("%d day failed.", ith))
-		c.Check(t.Hour(), Equals, tt.Hour, Commentf("%d hour failed.", ith))
-		c.Check(t.Minute(), Equals, tt.Minute, Commentf("%d minute failed.", ith))
-		c.Check(t.Second(), Equals, tt.Second, Commentf("%d second failed.", ith))
-		c.Check(t.Microsecond(), Equals, tt.Microsecond, Commentf("%d microsecond failed.", ith))
+		v := types.NewTime(ct, tt.Type, tt.Fsp)
+		require.Equalf(t, tt.Expect, *((*uint64)(unsafe.Pointer(&v))), "%d failed.", ith)
+		require.Equalf(t, ct, v.CoreTime(), "%d core time failed.", ith)
+		require.Equalf(t, tt.Type, v.Type(), "%d type failed.", ith)
+		require.Equalf(t, tt.Fsp, v.Fsp(), "%d fsp failed.", ith)
+		require.Equalf(t, tt.Year, v.Year(), "%d year failed.", ith)
+		require.Equalf(t, tt.Month, v.Month(), "%d month failed.", ith)
+		require.Equalf(t, tt.Day, v.Day(), "%d day failed.", ith)
+		require.Equalf(t, tt.Hour, v.Hour(), "%d hour failed.", ith)
+		require.Equalf(t, tt.Minute, v.Minute(), "%d minute failed.", ith)
+		require.Equalf(t, tt.Second, v.Second(), "%d second failed.", ith)
+		require.Equalf(t, tt.Microsecond, v.Microsecond(), "%d microsecond failed.", ith)
 	}
 }
 
-func (s *testTimeSuite) TestDateTime(c *C) {
+func TestDateTime(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -118,9 +112,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDatetime(sc, test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		v, err := types.ParseDatetime(sc, test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	fspTbl := []struct {
@@ -143,17 +137,20 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"1710.10+00", 0, "1710-10-00 00:00:00"},
 		{"2020-10:15", 0, "2020-10-15 00:00:00"},
 		{"2020.09-10:15", 0, "2020-09-10 15:00:00"},
+
+		// For issue 24387
+		{"2.0.8 hotfix", 6, "2002-00-08 00:00:00.000000"},
 	}
 
 	for _, test := range fspTbl {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.String())
 	}
 
-	t, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
-	c.Assert(t.Second(), Equals, 46)
-	c.Assert(t.Microsecond(), Equals, 0)
+	v, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
+	require.Equal(t, 46, v.Second())
+	require.Equal(t, 0, v.Microsecond())
 
 	// test error
 	errTable := []string{
@@ -177,13 +174,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDatetime(sc, test)
-		c.Assert(err != nil || sc.WarningCount() > 0, Equals, true)
+		require.True(t, err != nil || sc.WarningCount() > 0)
 		sc.SetWarnings(nil)
 	}
 }
 
-func (s *testTimeSuite) TestTimestamp(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTimestamp(t *testing.T) {
 	table := []struct {
 		Input  string
 		Expect string
@@ -192,9 +188,9 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		v, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	errTable := []string{
@@ -204,14 +200,13 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
-func (s *testTimeSuite) TestDate(c *C) {
+func TestDate(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -279,9 +274,9 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDate(sc, test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		v, err := types.ParseDate(sc, test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	errTable := []string{
@@ -300,14 +295,13 @@ func (s *testTimeSuite) TestDate(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDate(sc, test)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
-func (s *testTimeSuite) TestTime(c *C) {
+func TestTime(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -339,9 +333,9 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, types.MinFsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, types.MinFsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	table = []struct {
@@ -354,9 +348,9 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	errTable := []string{
@@ -367,12 +361,12 @@ func (s *testTimeSuite) TestTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 
-	t, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
-	c.Assert(err, NotNil)
-	c.Assert(t.String(), Equals, "838:59:59")
+	duration, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	require.Error(t, err)
+	require.Equal(t, "838:59:59", duration.String())
 
 	// test time compare
 	cmpTable := []struct {
@@ -385,22 +379,21 @@ func (s *testTimeSuite) TestTime(c *C) {
 		{0, 0, 0},
 	}
 
-	for _, t := range cmpTable {
+	for _, tt := range cmpTable {
 		t1 := types.Duration{
-			Duration: time.Duration(t.lhs),
+			Duration: time.Duration(tt.lhs),
 			Fsp:      types.DefaultFsp,
 		}
 		t2 := types.Duration{
-			Duration: time.Duration(t.rhs),
+			Duration: time.Duration(tt.rhs),
 			Fsp:      types.DefaultFsp,
 		}
 		ret := t1.Compare(t2)
-		c.Assert(ret, Equals, t.ret)
+		require.Equal(t, tt.ret, ret)
 	}
 }
 
-func (s *testTimeSuite) TestDurationAdd(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDurationAdd(t *testing.T) {
 	table := []struct {
 		Input    string
 		Fsp      int8
@@ -414,32 +407,31 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		t, err := types.ParseDuration(nil, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
+		duration, err := types.ParseDuration(nil, test.Input, test.Fsp)
+		require.NoError(t, err)
 		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
-		c.Assert(err, IsNil)
-		result, err := t.Add(ta)
-		c.Assert(err, IsNil)
-		c.Assert(result.String(), Equals, test.Expect)
+		require.NoError(t, err)
+		result, err := duration.Add(ta)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, result.String())
 	}
-	t, err := types.ParseDuration(nil, "00:00:00", 0)
-	c.Assert(err, IsNil)
+	duration, err := types.ParseDuration(nil, "00:00:00", 0)
+	require.NoError(t, err)
 	ta := new(types.Duration)
-	result, err := t.Add(*ta)
-	c.Assert(err, IsNil)
-	c.Assert(result.String(), Equals, "00:00:00")
+	result, err := duration.Add(*ta)
+	require.NoError(t, err)
+	require.Equal(t, "00:00:00", result.String())
 
-	t = types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	duration = types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
-	c.Assert(err, IsNil)
-	_, err = t.Add(tatmp)
-	c.Assert(err, NotNil)
+	require.NoError(t, err)
+	_, err = duration.Add(tatmp)
+	require.Error(t, err)
 }
 
-func (s *testTimeSuite) TestDurationSub(c *C) {
+func TestDurationSub(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input    string
 		Fsp      int8
@@ -451,20 +443,19 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
+		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		require.NoError(t, err)
 		ta, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
-		c.Assert(err, IsNil)
-		result, err := t.Sub(ta)
-		c.Assert(err, IsNil)
-		c.Assert(result.String(), Equals, test.Expect)
+		require.NoError(t, err)
+		result, err := duration.Sub(ta)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, result.String())
 	}
 }
 
-func (s *testTimeSuite) TestTimeFsp(c *C) {
+func TestTimeFsp(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Fsp    int8
@@ -483,9 +474,9 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	errTable := []struct {
@@ -497,11 +488,11 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
-func (s *testTimeSuite) TestYear(c *C) {
-	defer testleak.AfterTest(c)()
+
+func TestYear(t *testing.T) {
 	table := []struct {
 		Input  string
 		Expect int16
@@ -513,9 +504,9 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseYear(test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t, Equals, test.Expect)
+		year, err := types.ParseYear(test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, year)
 	}
 
 	valids := []struct {
@@ -531,9 +522,9 @@ func (s *testTimeSuite) TestYear(c *C) {
 	for _, test := range valids {
 		_, err := types.AdjustYear(test.Year, false)
 		if test.Expect {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		}
 	}
 
@@ -545,8 +536,8 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 	for _, test := range strYears {
 		res, err := types.AdjustYear(test.Year, true)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.Expect)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, res)
 	}
 
 	numYears := []struct {
@@ -557,49 +548,47 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 	for _, test := range numYears {
 		res, err := types.AdjustYear(test.Year, false)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.Expect)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, res)
 	}
 }
 
-func (s *testTimeSuite) TestCodec(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestCodec(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
-	t, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
-	c.Assert(err, NotNil)
+	_, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
+	require.Error(t, err)
 
-	t, err = types.ParseTimestamp(sc, "2010-10-10 10:11:11")
-	c.Assert(err, IsNil)
-	_, err = t.ToPackedUint()
-	c.Assert(err, IsNil)
+	t5, err := types.ParseTimestamp(sc, "2010-10-10 10:11:11")
+	require.NoError(t, err)
+	_, err = t5.ToPackedUint()
+	require.NoError(t, err)
 
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	packed, err := t1.ToPackedUint()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	t2 := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, 0)
 	err = t2.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t1.String(), Equals, t2.String())
+	require.NoError(t, err)
+	require.Equal(t, t2.String(), t1.String())
 
 	packed, _ = types.ZeroDatetime.ToPackedUint()
 
 	t3 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t3.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t3.String(), Equals, types.ZeroDatetime.String())
+	require.NoError(t, err)
+	require.Equal(t, types.ZeroDatetime.String(), t3.String())
 
-	t, err = types.ParseDatetime(nil, "0001-01-01 00:00:00")
-	c.Assert(err, IsNil)
-	packed, _ = t.ToPackedUint()
+	t5, err = types.ParseDatetime(nil, "0001-01-01 00:00:00")
+	require.NoError(t, err)
+	packed, _ = t5.ToPackedUint()
 
 	t4 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t4.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t4.String())
+	require.NoError(t, err)
+	require.Equal(t, t4.String(), t5.String())
 
 	tbl := []string{
 		"2000-01-01 00:00:00.000000",
@@ -609,20 +598,19 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+		v, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 
-		packed, _ = t.ToPackedUint()
+		packed, _ = v.ToPackedUint()
 
 		dest := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, types.MaxFsp)
 		err = dest.FromPackedUint(packed)
-		c.Assert(err, IsNil)
-		c.Assert(dest.String(), Equals, test)
+		require.NoError(t, err)
+		require.Equal(t, test, dest.String())
 	}
 }
 
-func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseTimeFromNum(t *testing.T) {
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -661,47 +649,46 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 
 	for ith, test := range table {
 		// testtypes.ParseDatetimeFromNum
-		t, err := types.ParseDatetimeFromNum(nil, test.Input)
+		t1, err := types.ParseDatetimeFromNum(nil, test.Input)
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil, Commentf("%d", ith))
+			require.Errorf(t, err, "%d", ith)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.Type(), Equals, mysql.TypeDatetime)
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeDatetime, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
+		require.Equal(t, test.ExpectDateTimeValue, t1.String())
 
 		// testtypes.ParseTimestampFromNum
-		t, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
+		t1, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
 			TimeZone: time.UTC,
 		}, test.Input)
 		if test.ExpectTimeStampError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil, Commentf("%d", ith))
-			c.Assert(t.Type(), Equals, mysql.TypeTimestamp)
+			require.NoErrorf(t, err, "%d", ith)
+			require.Equal(t, mysql.TypeTimestamp, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
+		require.Equal(t, test.ExpectTimeStampValue, t1.String())
 
 		// testtypes.ParseDateFromNum
-		t, err = types.ParseDateFromNum(nil, test.Input)
+		t1, err = types.ParseDateFromNum(nil, test.Input)
 
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.Type(), Equals, mysql.TypeDate)
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeDate, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectDateValue)
+		require.Equal(t, test.ExpectDateValue, t1.String())
 	}
 }
 
-func (s *testTimeSuite) TestToNumber(c *C) {
+func TestToNumber(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
-	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int8
@@ -719,9 +706,9 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 
 	// Fix issue #1046
@@ -742,9 +729,9 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
-		c.Assert(err, IsNil)
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 
 	tblDuration := []struct {
@@ -765,17 +752,16 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDuration {
-		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
+		v, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 }
 
-func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
+func TestParseTimeFromFloatString(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input       string
 		Fsp         int8
@@ -795,18 +781,17 @@ func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		if test.ExpectError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.String(), Equals, test.Expect)
+			require.NoError(t, err)
+			require.Equal(t, test.Expect, v.String())
 		}
 	}
 }
 
-func (s *testTimeSuite) TestParseFrac(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseFrac(t *testing.T) {
 	tbl := []struct {
 		S        string
 		Fsp      int8
@@ -834,19 +819,18 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 		{"999", 3, 999000, false},
 	}
 
-	for _, t := range tbl {
-		v, overflow, err := types.ParseFrac(t.S, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Ret)
-		c.Assert(overflow, Equals, t.Overflow)
+	for _, tt := range tbl {
+		v, overflow, err := types.ParseFrac(tt.S, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, v)
+		require.Equal(t, tt.Overflow, overflow)
 	}
 }
 
-func (s *testTimeSuite) TestRoundFrac(c *C) {
+func TestRoundFrac(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int8
@@ -865,16 +849,16 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		// {"2012-01-00 23:59:59.999999", 3, "2012-01-01 00:00:00.000"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(sc, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(sc, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 	// test different time zone
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
 	tbl = []struct {
 		Input  string
@@ -890,12 +874,12 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(sc, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(sc, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	tbl = []struct {
@@ -911,12 +895,12 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"-1 11:30:45.999999", 0, "-35:30:46"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseDuration(sc, t.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	cols := []struct {
@@ -930,17 +914,16 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 
 	for _, col := range cols {
 		res, err := types.RoundFrac(col.input, col.fsp)
-		c.Assert(res.Second(), Equals, col.output.Second())
-		c.Assert(err, IsNil)
+		require.Equal(t, col.output.Second(), res.Second())
+		require.NoError(t, err)
 	}
 }
 
-func (s *testTimeSuite) TestConvert(c *C) {
+func TestConvert(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
 	sc.TimeZone = losAngelesTz
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int8
@@ -955,12 +938,12 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"0000-00-00 00:00:00", 6, "00:00:00"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, t.Fsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, tt.Fsp)
+		require.NoError(t, err)
 		nv, err := v.ConvertToDuration()
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	tblDuration := []struct {
@@ -974,21 +957,20 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 	// test different time zone.
 	sc.TimeZone = time.UTC
-	for _, t := range tblDuration {
-		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tblDuration {
+		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
+		require.NoError(t, err)
 		year, month, day := time.Now().In(sc.TimeZone).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
-		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
-		c.Assert(err, IsNil)
-		t1, _ := t.GoTime(sc.TimeZone)
-		c.Assert(t1.Sub(n), Equals, v.Duration)
+		t1, err := v.ConvertToTime(sc, mysql.TypeDatetime)
+		require.NoError(t, err)
+		t2, _ := t1.GoTime(sc.TimeZone)
+		require.Equal(t, v.Duration, t2.Sub(n))
 	}
 }
 
-func (s *testTimeSuite) TestCompare(c *C) {
+func TestCompare(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1001,20 +983,20 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		{"0000-00-00 00:00:00", "0000-00-00 00:00:00", 0},
 	}
 
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 
-		ret, err := v1.CompareString(nil, t.Arg2)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
+		ret, err := v1.CompareString(nil, tt.Arg2)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, ret)
 	}
 
 	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	res, err := v1.CompareString(nil, "Test should error")
-	c.Assert(err, NotNil)
-	c.Assert(res, Equals, 0)
+	require.Error(t, err)
+	require.Equal(t, 0, res)
 
 	tbl = []struct {
 		Arg1 string
@@ -1026,18 +1008,17 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		{"11:11:11", "11:11:11.123", -1},
 	}
 
-	for _, t := range tbl {
-		v1, err := types.ParseDuration(nil, t.Arg1, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
+		require.NoError(t, err)
 
-		ret, err := v1.CompareString(nil, t.Arg2)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
+		ret, err := v1.CompareString(nil, tt.Arg2)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, ret)
 	}
 }
 
-func (s *testTimeSuite) TestDurationClock(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDurationClock(t *testing.T) {
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -1051,18 +1032,17 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 		{"2010-10-10 11:11:11.000011", 11, 11, 11, 11},
 	}
 
-	for _, t := range tbl {
-		d, err := types.ParseDuration(nil, t.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		c.Assert(d.Hour(), Equals, t.Hour)
-		c.Assert(d.Minute(), Equals, t.Minute)
-		c.Assert(d.Second(), Equals, t.Second)
-		c.Assert(d.MicroSecond(), Equals, t.MicroSecond)
+	for _, tt := range tbl {
+		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Hour, d.Hour())
+		require.Equal(t, tt.Minute, d.Minute())
+		require.Equal(t, tt.Second, d.Second())
+		require.Equal(t, tt.MicroSecond, d.MicroSecond())
 	}
 }
 
-func (s *testTimeSuite) TestParseDateFormat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseDateFormat(t *testing.T) {
 	tbl := []struct {
 		Input  string
 		Result []string
@@ -1079,13 +1059,13 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		{"xxx 10:10:10", nil},
 	}
 
-	for _, t := range tbl {
-		r := types.ParseDateFormat(t.Input)
-		c.Assert(r, DeepEquals, t.Result)
+	for _, tt := range tbl {
+		r := types.ParseDateFormat(tt.Input)
+		require.Equal(t, tt.Result, r)
 	}
 }
 
-func (s *testTimeSuite) TestTimestampDiff(c *C) {
+func TestTimestampDiff(t *testing.T) {
 	tests := []struct {
 		unit   string
 		t1     types.CoreTime
@@ -1104,11 +1084,11 @@ func (s *testTimeSuite) TestTimestampDiff(c *C) {
 	for _, test := range tests {
 		t1 := types.NewTime(test.t1, mysql.TypeDatetime, 6)
 		t2 := types.NewTime(test.t2, mysql.TypeDatetime, 6)
-		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+		require.Equal(t, test.expect, types.TimestampDiff(test.unit, t1, t2))
 	}
 }
 
-func (s *testTimeSuite) TestDateFSP(c *C) {
+func TestDateFSP(t *testing.T) {
 	tests := []struct {
 		date   string
 		expect int
@@ -1120,11 +1100,11 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 	}
 
 	for _, test := range tests {
-		c.Assert(types.DateFSP(test.date), Equals, test.expect)
+		require.Equal(t, test.expect, types.DateFSP(test.date))
 	}
 }
 
-func (s *testTimeSuite) TestConvertTimeZone(c *C) {
+func TestConvertTimeZone(t *testing.T) {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
 		input  types.CoreTime
@@ -1138,14 +1118,14 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	}
 
 	for _, test := range tests {
-		t := types.NewTime(test.input, 0, 0)
-		err := t.ConvertTimeZone(test.from, test.to)
-		c.Assert(err, IsNil)
-		c.Assert(t.Compare(types.NewTime(test.expect, 0, 0)), Equals, 0)
+		v := types.NewTime(test.input, 0, 0)
+		err := v.ConvertTimeZone(test.from, test.to)
+		require.NoError(t, err)
+		require.Equal(t, 0, v.Compare(types.NewTime(test.expect, 0, 0)))
 	}
 }
 
-func (s *testTimeSuite) TestTimeAdd(c *C) {
+func TestTimeAdd(t *testing.T) {
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1162,53 +1142,52 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		dur, err := types.ParseDuration(sc, t.Arg2, types.MaxFsp)
-		c.Assert(err, IsNil)
-		result, err := types.ParseTime(sc, t.Ret, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		dur, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
+		require.NoError(t, err)
+		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 		v2, err := v1.Add(sc, dur)
-		c.Assert(err, IsNil)
-		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.CoreTime(), result.CoreTime()))
+		require.NoError(t, err)
+		require.Equalf(t, 0, v2.Compare(result), "%v %v", v2.CoreTime(), result.CoreTime())
 	}
 }
 
-func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
-	t := types.MaxTime + 1
-	res, err := types.TruncateOverflowMySQLTime(t)
-	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, types.MaxTime)
+func TestTruncateOverflowMySQLTime(t *testing.T) {
+	v := types.MaxTime + 1
+	res, err := types.TruncateOverflowMySQLTime(v)
+	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
+	require.Equal(t, types.MaxTime, res)
 
-	t = types.MinTime - 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, types.MinTime)
+	v = types.MinTime - 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
+	require.Equal(t, types.MinTime, res)
 
-	t = types.MaxTime
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MaxTime)
+	v = types.MaxTime
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MaxTime, res)
 
-	t = types.MinTime
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MinTime)
+	v = types.MinTime
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MinTime, res)
 
-	t = types.MaxTime - 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MaxTime-1)
+	v = types.MaxTime - 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MaxTime-1, res)
 
-	t = types.MinTime + 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MinTime+1)
+	v = types.MinTime + 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MinTime+1, res)
 }
 
-func (s *testTimeSuite) TestCheckTimestamp(c *C) {
-
+func TestCheckTimestamp(t *testing.T) {
 	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
 
 	tests := []struct {
@@ -1250,12 +1229,12 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	},
 	}
 
-	for _, t := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
-		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+	for _, tt := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		if tt.expectRetError {
+			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+			require.NoErrorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		}
 	}
 
@@ -1307,17 +1286,17 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	},
 	}
 
-	for _, t := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
-		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+	for _, tt := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		if tt.expectRetError {
+			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+			require.NoErrorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		}
 	}
 }
 
-func (s *testTimeSuite) TestExtractDurationValue(c *C) {
+func TestExtractDurationValue(t *testing.T) {
 	tests := []struct {
 		unit   string
 		format string
@@ -1449,146 +1428,180 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 	for i, tt := range tests {
 		dur, err := types.ExtractDurationValue(tt.unit, tt.format)
 		if tt.failed {
-			c.Assert(err, NotNil, Commentf(failedComment+", dur: %v", i, tt.unit, tt.format, dur.String()))
+			require.Errorf(t, err, failedComment+", dur: %v", i, tt.unit, tt.format, dur.String())
 		} else {
-			c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
-			c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
+			require.NoErrorf(t, err, failedComment+", error stack: %s", i, tt.unit, tt.format, errors.ErrorStack(err))
+			require.Equalf(t, tt.ans, dur.String(), failedComment, i, tt.unit, tt.format)
 		}
 	}
 }
 
-func (s *testTimeSuite) TestCurrentTime(c *C) {
+func TestCurrentTime(t *testing.T) {
 	res := types.CurrentTime(mysql.TypeTimestamp)
-	c.Assert(res.Type(), Equals, mysql.TypeTimestamp)
-	c.Assert(res.Fsp(), Equals, int8(0))
+	require.Equal(t, mysql.TypeTimestamp, res.Type())
+	require.Equal(t, int8(0), res.Fsp())
 }
 
-func (s *testTimeSuite) TestInvalidZero(c *C) {
+func TestInvalidZero(t *testing.T) {
 	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
-	c.Assert(in.InvalidZero(), Equals, true)
+	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
-	c.Assert(in.InvalidZero(), Equals, true)
+	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 04, 12, 12, 00, 00, 00))
-	c.Assert(in.InvalidZero(), Equals, false)
+	require.False(t, in.InvalidZero())
 }
 
-func (s *testTimeSuite) TestGetFsp(c *C) {
+func TestGetFsp(t *testing.T) {
 	res := types.GetFsp("2019:04:12 14:00:00.123456")
-	c.Assert(res, Equals, int8(6))
+	require.Equal(t, int8(6), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1234567890")
-	c.Assert(res, Equals, int8(6))
+	require.Equal(t, int8(6), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1")
-	c.Assert(res, Equals, int8(1))
+	require.Equal(t, int8(1), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00")
-	c.Assert(res, Equals, int8(0))
+	require.Equal(t, int8(0), res)
 }
 
-func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
+func TestExtractDatetimeNum(t *testing.T) {
 	in := types.NewTime(types.FromDate(2019, 04, 12, 14, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err := types.ExtractDatetimeNum(&in, "day")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12))
+	require.NoError(t, err)
+	require.Equal(t, int64(12), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "week")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(14))
+	require.NoError(t, err)
+	require.Equal(t, int64(14), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(4))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(2019))
+	require.NoError(t, err)
+	require.Equal(t, int64(2019), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_MICROSECOND")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12140000000000))
+	require.NoError(t, err)
+	require.Equal(t, int64(12140000000000), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_SECOND")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12140000))
+	require.NoError(t, err)
+	require.Equal(t, int64(12140000), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_MINUTE")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(121400))
+	require.NoError(t, err)
+	require.Equal(t, int64(121400), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_HOUR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(1214))
+	require.NoError(t, err)
+	require.Equal(t, int64(1214), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR_MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(201904))
+	require.NoError(t, err)
+	require.Equal(t, int64(201904), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
+	require.Equal(t, int64(0), res)
+	require.Error(t, err)
+	require.Regexp(t, "^invalid unit", err)
 
 	in = types.NewTime(types.FromDate(0000, 00, 00, 00, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err = types.ExtractDatetimeNum(&in, "day")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "week")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 }
 
-func (s *testTimeSuite) TestExtractDurationNum(c *C) {
-	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
-	tbl := []struct {
+func TestExtractDurationNum(t *testing.T) {
+	type resultTbl struct {
 		unit   string
 		expect int64
-	}{
-		{"MICROSECOND", 31536},
-		{"SECOND", 0},
-		{"MINUTE", 0},
-		{"HOUR", 0},
-		{"SECOND_MICROSECOND", 31536},
-		{"MINUTE_MICROSECOND", 31536},
-		{"MINUTE_SECOND", 0},
-		{"HOUR_MICROSECOND", 31536},
-		{"HOUR_SECOND", 0},
-		{"HOUR_MINUTE", 0},
-		{"DAY_MICROSECOND", 31536},
-		{"DAY_SECOND", 0},
-		{"DAY_MINUTE", 0},
-		{"DAY_HOUR", 0},
+	}
+	type testCase struct {
+		in      types.Duration
+		resTbls []resultTbl
+	}
+	cases := []testCase{
+		{
+			in: types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 31536},
+				{"SECOND", 0},
+				{"MINUTE", 0},
+				{"HOUR", 0},
+				{"SECOND_MICROSECOND", 31536},
+				{"MINUTE_MICROSECOND", 31536},
+				{"MINUTE_SECOND", 0},
+				{"HOUR_MICROSECOND", 31536},
+				{"HOUR_SECOND", 0},
+				{"HOUR_MINUTE", 0},
+				{"DAY_MICROSECOND", 31536},
+				{"DAY_SECOND", 0},
+				{"DAY_MINUTE", 0},
+				{"DAY_HOUR", 0},
+			},
+		},
+		{
+			// "-10:59:1" = -10^9 * (10 * 3600 + 59 * 60 + 1)
+			in: types.Duration{Duration: time.Duration(-39541000000000), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 0},
+				{"SECOND", -1},
+				{"MINUTE", -59},
+				{"HOUR", -10},
+				{"SECOND_MICROSECOND", -1000000},
+				{"MINUTE_MICROSECOND", -5901000000},
+				{"MINUTE_SECOND", -5901},
+				{"HOUR_MICROSECOND", -105901000000},
+				{"HOUR_SECOND", -105901},
+				{"HOUR_MINUTE", -1059},
+				{"DAY_MICROSECOND", -105901000000},
+				{"DAY_SECOND", -105901},
+				{"DAY_MINUTE", -1059},
+				{"DAY_HOUR", -10},
+			},
+		},
 	}
 
-	for _, col := range tbl {
-		res, err := types.ExtractDurationNum(&in, col.unit)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, col.expect)
+	for _, testcase := range cases {
+		in := testcase.in
+		for _, col := range testcase.resTbls {
+			res, err := types.ExtractDurationNum(&in, col.unit)
+			require.NoError(t, err)
+			require.Equal(t, col.expect, res)
+		}
+		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
+		require.Equal(t, int64(0), res)
+		require.Error(t, err)
+		require.Regexp(t, "^invalid unit", err)
 	}
-	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
-func (s *testTimeSuite) TestParseDurationValue(c *C) {
+func TestParseDurationValue(t *testing.T) {
 	tbl := []struct {
 		format string
 		unit   string
@@ -1630,22 +1643,21 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
-		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
 		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
-		c.Assert(res1, Equals, col.res1, comment)
-		c.Assert(res2, Equals, col.res2, comment)
-		c.Assert(res3, Equals, col.res3, comment)
-		c.Assert(res4, Equals, col.res4, comment)
+		require.Equalf(t, col.res1, res1, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res2, res2, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res3, res3, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res4, res4, "Extract %v Unit %v", col.format, col.unit)
 		if col.err == nil {
-			c.Assert(err, IsNil, comment)
+			require.NoErrorf(t, err, "Extract %v Unit %v", col.format, col.unit)
 		} else {
-			c.Assert(col.err.Equal(err), IsTrue)
+			require.True(t, col.err.Equal(err))
 		}
 	}
 
 }
 
-func (s *testTimeSuite) TestIsClockUnit(c *C) {
+func TestIsClockUnit(t *testing.T) {
 	tbl := []struct {
 		input    string
 		expected bool
@@ -1668,60 +1680,60 @@ func (s *testTimeSuite) TestIsClockUnit(c *C) {
 	}
 	for _, col := range tbl {
 		output := types.IsClockUnit(col.input)
-		c.Assert(output, Equals, col.expected)
+		require.Equal(t, col.expected, output)
 	}
 }
 
-func (s *testTimeSuite) TestIsDateFormat(c *C) {
+func TestIsDateFormat(t *testing.T) {
 	input := "1234:321"
 	output := types.IsDateFormat(input)
-	c.Assert(output, Equals, false)
+	require.False(t, output)
 
 	input = "2019-04-01"
 	output = types.IsDateFormat(input)
-	c.Assert(output, Equals, true)
+	require.True(t, output)
 
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
-	c.Assert(output, Equals, true)
+	require.True(t, output)
 }
 
-func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
+func TestParseTimeFromInt64(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 
 	input := int64(20190412140000)
 	output, err := types.ParseTimeFromInt64(sc, input)
-	c.Assert(err, IsNil)
-	c.Assert(output.Fsp(), Equals, types.DefaultFsp)
-	c.Assert(output.Type(), Equals, mysql.TypeDatetime)
-	c.Assert(output.Year(), Equals, 2019)
-	c.Assert(output.Month(), Equals, 04)
-	c.Assert(output.Day(), Equals, 12)
-	c.Assert(output.Hour(), Equals, 14)
-	c.Assert(output.Minute(), Equals, 00)
-	c.Assert(output.Second(), Equals, 00)
-	c.Assert(output.Microsecond(), Equals, 00)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultFsp, output.Fsp())
+	require.Equal(t, mysql.TypeDatetime, output.Type())
+	require.Equal(t, 2019, output.Year())
+	require.Equal(t, 04, output.Month())
+	require.Equal(t, 12, output.Day())
+	require.Equal(t, 14, output.Hour())
+	require.Equal(t, 00, output.Minute())
+	require.Equal(t, 00, output.Second())
+	require.Equal(t, 00, output.Microsecond())
 }
 
-func (s *testTimeSuite) TestGetFormatType(c *C) {
+func TestGetFormatType(t *testing.T) {
 	input := "TEST"
 	isDuration, isDate := types.GetFormatType(input)
-	c.Assert(isDuration, Equals, false)
-	c.Assert(isDate, Equals, false)
+	require.False(t, isDuration)
+	require.False(t, isDate)
 
 	input = "%y %m %d 2019 04 01"
 	isDuration, isDate = types.GetFormatType(input)
-	c.Assert(isDuration, Equals, false)
-	c.Assert(isDate, Equals, true)
+	require.False(t, isDuration)
+	require.True(t, isDate)
 
 	input = "%h 30"
 	isDuration, isDate = types.GetFormatType(input)
-	c.Assert(isDuration, Equals, true)
-	c.Assert(isDate, Equals, false)
+	require.True(t, isDuration)
+	require.False(t, isDate)
 }
 
-func (s *testTimeSuite) TestgetFracIndex(c *C) {
+func TestGetFracIndex(t *testing.T) {
 	testCases := []struct {
 		str         string
 		expectIndex int
@@ -1732,14 +1744,13 @@ func (s *testTimeSuite) TestgetFracIndex(c *C) {
 	}
 	for _, testCase := range testCases {
 		index := types.GetFracIndex(testCase.str)
-		c.Assert(index, Equals, testCase.expectIndex)
+		require.Equal(t, testCase.expectIndex, index)
 	}
 }
 
-func (s *testTimeSuite) TestTimeOverflow(c *C) {
+func TestTimeOverflow(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Output bool
@@ -1762,15 +1773,15 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDatetime(sc, test.Input)
-		c.Assert(err, IsNil)
-		isOverflow, err := types.DateTimeIsOverflow(sc, t)
-		c.Assert(err, IsNil)
-		c.Assert(isOverflow, Equals, test.Output)
+		v, err := types.ParseDatetime(sc, test.Input)
+		require.NoError(t, err)
+		isOverflow, err := types.DateTimeIsOverflow(sc, v)
+		require.NoError(t, err)
+		require.Equal(t, test.Output, isOverflow)
 	}
 }
 
-func (s *testTimeSuite) TestTruncateFrac(c *C) {
+func TestTruncateFrac(t *testing.T) {
 	cols := []struct {
 		input  time.Time
 		fsp    int8
@@ -1782,11 +1793,12 @@ func (s *testTimeSuite) TestTruncateFrac(c *C) {
 
 	for _, col := range cols {
 		res, err := types.TruncateFrac(col.input, col.fsp)
-		c.Assert(res.Second(), Equals, col.output.Second())
-		c.Assert(err, IsNil)
+		require.Equal(t, col.output.Second(), res.Second())
+		require.NoError(t, err)
 	}
 }
-func (s *testTimeSuite) TestTimeSub(c *C) {
+
+func TestTimeSub(t *testing.T) {
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1800,19 +1812,19 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		v2, err := types.ParseTime(sc, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		dur, err := types.ParseDuration(sc, t.Ret, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		dur, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
+		require.NoError(t, err)
 		rec := v1.Sub(sc, &v2)
-		c.Assert(rec, Equals, dur)
+		require.Equal(t, dur, rec)
 	}
 }
 
-func (s *testTimeSuite) TestCheckMonthDay(c *C) {
+func TestCheckMonthDay(t *testing.T) {
 	dates := []struct {
 		date        types.CoreTime
 		isValidDate bool
@@ -1837,17 +1849,18 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		AllowInvalidDate: false,
 	}
 
-	for _, t := range dates {
-		tt := types.NewTime(t.date, mysql.TypeDate, types.DefaultFsp)
-		err := tt.Check(sc)
-		if t.isValidDate {
-			c.Check(err, IsNil)
+	for _, tt := range dates {
+		v := types.NewTime(tt.date, mysql.TypeDate, types.DefaultFsp)
+		err := v.Check(sc)
+		if tt.isValidDate {
+			require.NoError(t, err)
 		} else {
-			c.Check(types.ErrWrongValue.Equal(err), IsTrue)
+			require.True(t, types.ErrWrongValue.Equal(err))
 		}
 	}
 }
-func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
+
+func TestFormatIntWidthN(t *testing.T) {
 	cases := []struct {
 		num    int
 		width  int
@@ -1865,11 +1878,11 @@ func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 	}
 	for _, ca := range cases {
 		re := types.FormatIntWidthN(ca.num, ca.width)
-		c.Assert(re, Equals, ca.result)
+		require.Equal(t, ca.result, re)
 	}
 }
 
-func (s *testTimeSuite) TestFromGoTime(c *C) {
+func TestFromGoTime(t *testing.T) {
 	// Test rounding of nanosecond to millisecond.
 	cases := []struct {
 		input string
@@ -1889,16 +1902,16 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 	}
 
 	for ith, ca := range cases {
-		t, err := time.Parse(time.RFC3339Nano, ca.input)
-		c.Assert(err, IsNil)
+		v, err := time.Parse(time.RFC3339Nano, ca.input)
+		require.NoError(t, err)
 
-		t1 := types.FromGoTime(t)
-		c.Assert(t1, Equals, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), Commentf("idx %d", ith))
+		t1 := types.FromGoTime(v)
+		require.Equalf(t, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), t1, "idx %d", ith)
 	}
 
 }
 
-func (s *testTimeSuite) TestGetTimezone(c *C) {
+func TestGetTimezone(t *testing.T) {
 	cases := []struct {
 		input    string
 		idx      int
@@ -1922,11 +1935,11 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzSep, tzMinute := types.GetTimezone(ca.input)
-		c.Assert([5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, Equals, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, Commentf("idx %d", ith))
+		require.Equal(t, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
 	}
 }
 
-func (s *testTimeSuite) TestParseWithTimezone(c *C) {
+func TestParseWithTimezone(t *testing.T) {
 	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
 		offset := tzHour*60*60 + tzMinue*60
 		if tzSign == "-" {
@@ -1939,85 +1952,75 @@ func (s *testTimeSuite) TestParseWithTimezone(c *C) {
 	// we first parse the string literal, and convert it into UTC and then compare it with the ground truth time in UTC.
 	// note that sysTZ won't affect the physical time the string literal represents.
 	cases := []struct {
-		lit          string
-		fsp          int8
-		parseChecker Checker
-		gt           time.Time
-		sysTZ        *time.Location
+		lit   string
+		fsp   int8
+		gt    time.Time
+		sysTZ *time.Location
 	}{
 		{
 			"2006-01-02T15:04:05Z",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
 			getTZ("+", 0, 0),
 		},
 		{
 			"2006-01-02T15:04:05Z",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
 			getTZ("+", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50Z",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 0, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50+08",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 8, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50-0700",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("-", 7, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50+09:00",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 9, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2006-01-02T15:04:05+09:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 9, 0)),
 			getTZ("+", 8, 0),
 		},
 		{
 			"2006-01-02T15:04:05-02:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 2, 0)),
 			getTZ("+", 3, 0),
 		},
 		{
 			"2006-01-02T15:04:05-14:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 14, 0)),
 			getTZ("+", 14, 0),
 		},
 	}
 	for ith, ca := range cases {
-		t, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
-		c.Assert(err, ca.parseChecker, Commentf("tidb time parse misbehaved on %d", ith))
+		v, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
+		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue
 		}
-		t1, err := t.GoTime(ca.sysTZ)
-		c.Assert(err, IsNil, Commentf("tidb time convert failed on %d", ith))
-		c.Assert(t1.In(time.UTC), Equals, ca.gt.In(time.UTC), Commentf("parsed time mismatch on %dth case", ith))
+		t1, err := v.GoTime(ca.sysTZ)
+		require.NoErrorf(t, err, "tidb time convert failed on %d", ith)
+		require.Equalf(t, ca.gt.In(time.UTC), t1.In(time.UTC), "parsed time mismatch on %dth case", ith)
 	}
 }
 
@@ -2112,4 +2115,20 @@ func BenchmarkParseDatetimeFormat(b *testing.B) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	benchmarkDatetimeFormat(b, "datetime without timezone", sc, "2020-10-10T10:10:10")
 	benchmarkDatetimeFormat(b, "datetime with timezone", sc, "2020-10-10T10:10:10Z+08:00")
+}
+
+func benchmarkStrToDate(b *testing.B, name string, sc *stmtctx.StatementContext, str, format string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var t types.Time
+			t.StrToDate(sc, str, format)
+		}
+	})
+}
+
+func BenchmarkStrToDate(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	benchmarkStrToDate(b, "strToDate yyyyMMdd hhmmss ffff", sc, "31/05/2016 12:34:56.1234", "%d/%m/%Y %H:%i:%S.%f")
+	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", sc, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
+	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", sc, " 4:13:56 13/05/2019", "%T %d/%c/%Y")
 }

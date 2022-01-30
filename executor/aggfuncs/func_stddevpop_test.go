@@ -1,25 +1,40 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
-func (s *testSuite) TestMergePartialResult4Stddevpop(c *C) {
+func TestMergePartialResult4Stddevpop(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, 1.4142135623730951, 0.816496580927726, 1.3169567191065923),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestStddevpop(c *C) {
+func TestStddevpop(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, nil, 1.4142135623730951),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		testAggFunc(t, test)
 	}
 }

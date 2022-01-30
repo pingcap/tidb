@@ -89,71 +89,70 @@
         "test tint  b 0 1 6 1 6 8 0",
         "test tint  c 0 0 3 1 3 5 0",
         "test tint  c 0 1 6 1 6 8 0",
-        "test tint  singular 1 0 2 1 1 4 2",
-        "test tint  singular 1 1 6 1 5 8 4",
-        "test tint  multi 1 0 2 1 (1, 1) (4, 4) 2",
-        "test tint  multi 1 1 6 1 (5, 5) (8, 8) 4",
+        "test tint  singular 1 0 3 1 3 5 0",
+        "test tint  singular 1 1 6 1 6 8 0",
+        "test tint  multi 1 0 3 1 (3, 3) (5, 5) 0",
+        "test tint  multi 1 1 6 1 (6, 6) (8, 8) 0",
         "test tdouble  a 0 0 3 1 3 5 0",
         "test tdouble  a 0 1 6 1 6 8 0",
         "test tdouble  b 0 0 3 1 3 5 0",
         "test tdouble  b 0 1 6 1 6 8 0",
         "test tdouble  c 0 0 3 1 3 5 0",
         "test tdouble  c 0 1 6 1 6 8 0",
-        "test tdouble  singular 1 0 2 1 1 4 2",
-        "test tdouble  singular 1 1 6 1 5 8 4",
-        "test tdouble  multi 1 0 2 1 (1, 1) (4, 4) 2",
-        "test tdouble  multi 1 1 6 1 (5, 5) (8, 8) 4",
+        "test tdouble  singular 1 0 3 1 3 5 0",
+        "test tdouble  singular 1 1 6 1 6 8 0",
+        "test tdouble  multi 1 0 3 1 (3, 3) (5, 5) 0",
+        "test tdouble  multi 1 1 6 1 (6, 6) (8, 8) 0",
         "test tdecimal  a 0 0 3 1 3.00000000000000000000 5.00000000000000000000 0",
         "test tdecimal  a 0 1 6 1 6.00000000000000000000 8.00000000000000000000 0",
         "test tdecimal  b 0 0 3 1 3.00000000000000000000 5.00000000000000000000 0",
         "test tdecimal  b 0 1 6 1 6.00000000000000000000 8.00000000000000000000 0",
         "test tdecimal  c 0 0 3 1 3.00000000000000000000 5.00000000000000000000 0",
         "test tdecimal  c 0 1 6 1 6.00000000000000000000 8.00000000000000000000 0",
-        "test tdecimal  singular 1 0 2 1 1.00000000000000000000 4.00000000000000000000 2",
-        "test tdecimal  singular 1 1 6 1 5.00000000000000000000 8.00000000000000000000 4",
-        "test tdecimal  multi 1 0 2 1 (1.00000000000000000000, 1.00000000000000000000) (4.00000000000000000000, 4.00000000000000000000) 2",
-        "test tdecimal  multi 1 1 6 1 (5.00000000000000000000, 5.00000000000000000000) (8.00000000000000000000, 8.00000000000000000000) 4",
+        "test tdecimal  singular 1 0 3 1 3.00000000000000000000 5.00000000000000000000 0",
+        "test tdecimal  singular 1 1 6 1 6.00000000000000000000 8.00000000000000000000 0",
+        "test tdecimal  multi 1 0 3 1 (3.00000000000000000000, 3.00000000000000000000) (5.00000000000000000000, 5.00000000000000000000) 0",
+        "test tdecimal  multi 1 1 6 1 (6.00000000000000000000, 6.00000000000000000000) (8.00000000000000000000, 8.00000000000000000000) 0",
         "test tstring  a 0 0 3 1 3 5 0",
         "test tstring  a 0 1 6 1 6 8 0",
         "test tstring  b 0 0 3 1 3 5 0",
         "test tstring  b 0 1 6 1 6 8 0",
         "test tstring  c 0 0 3 1 3 5 0",
         "test tstring  c 0 1 6 1 6 8 0",
-        "test tstring  singular 1 0 2 1 1 4 2",
-        "test tstring  singular 1 1 6 1 5 8 4",
-        "test tstring  multi 1 0 2 1 (1, 1) (4, 4) 2",
-        "test tstring  multi 1 1 6 1 (5, 5) (8, 8) 4",
+        "test tstring  singular 1 0 3 1 3 5 0",
+        "test tstring  singular 1 1 6 1 6 8 0",
+        "test tstring  multi 1 0 3 1 (3, 3) (5, 5) 0",
+        "test tstring  multi 1 1 6 1 (6, 6) (8, 8) 0",
         "test tdatetime  a 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
         "test tdatetime  a 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
         "test tdatetime  b 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
         "test tdatetime  b 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
         "test tdatetime  c 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
         "test tdatetime  c 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
-        "test tdatetime  singular 1 0 0 0 2001-01-01 00:00:00 2001-01-02 00:00:00 0",
-        "test tdatetime  singular 1 1 2 1 2001-01-03 00:00:00 2001-01-04 00:00:00 2",
-        "test tdatetime  multi 1 0 0 0 (2001-01-01 00:00:00, 2001-01-01 00:00:00) (2001-01-02 00:00:00, 2001-01-02 00:00:00) 0",
-        "test tdatetime  multi 1 1 2 1 (2001-01-03 00:00:00, 2001-01-03 00:00:00) (2001-01-04 00:00:00, 2001-01-04 00:00:00) 2",
+        "test tdatetime  singular 1 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
+        "test tdatetime  singular 1 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
+        "test tdatetime  multi 1 0 1 1 (2001-01-03 00:00:00, 2001-01-03 00:00:00) (2001-01-03 00:00:00, 2001-01-03 00:00:00) 0",
+        "test tdatetime  multi 1 1 2 1 (2001-01-04 00:00:00, 2001-01-04 00:00:00) (2001-01-04 00:00:00, 2001-01-04 00:00:00) 0",
         "test tprefix  a 0 0 2 1 333 444 0",
         "test tprefix  a 0 1 4 1 555 666 0",
         "test tprefix  b 0 0 2 1 333 444 0",
         "test tprefix  b 0 1 4 1 555 666 0",
-        "test tprefix  prefixa 1 0 0 0 11 22 0",
-        "test tprefix  prefixa 1 1 2 1 33 44 2",
-        "test tprefix  prefixa 1 2 4 1 55 66 2",
+        "test tprefix  prefixa 1 0 2 1 33 44 0",
+        "test tprefix  prefixa 1 1 4 1 55 66 0",
         "test ct1  a 0 0 3 1 3 5 0",
         "test ct1  a 0 1 6 1 6 8 0",
         "test ct1  pk 0 0 3 1 3 5 0",
         "test ct1  pk 0 1 6 1 6 8 0",
-        "test ct1  PRIMARY 1 0 2 1 1 4 2",
-        "test ct1  PRIMARY 1 1 6 1 5 8 4",
+        "test ct1  PRIMARY 1 0 3 1 3 5 0",
+        "test ct1  PRIMARY 1 1 6 1 6 8 0",
         "test ct2  a 0 0 3 1 3 5 0",
         "test ct2  a 0 1 6 1 6 8 0",
         "test ct2  b 0 0 3 1 3 5 0",
         "test ct2  b 0 1 6 1 6 8 0",
         "test ct2  c 0 0 3 1 3 5 0",
         "test ct2  c 0 1 6 1 6 8 0",
-        "test ct2  PRIMARY 1 0 2 1 (1, 1) (4, 4) 2",
-        "test ct2  PRIMARY 1 1 6 1 (5, 5) (8, 8) 4"
+        "test ct2  PRIMARY 1 0 3 1 (3, 3) (5, 5) 0",
+        "test ct2  PRIMARY 1 1 6 1 (6, 6) (8, 8) 0"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -241,10 +240,9 @@
         "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
-        "IndexLookUp_11 0.00 root  ",
-        "├─IndexRangeScan_8(Build) 0.00 cop[tikv] table:tprefix, index:prefixa(a) range:[\"88\",\"88\"], keep order:false",
-        "└─Selection_10(Probe) 0.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
-        "  └─TableRowIDScan_9 0.00 cop[tikv] table:tprefix keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
+        "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -397,12 +395,12 @@
         "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
       ],
       [
-        "TableReader_6 4.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 4.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
+        "TableReader_6 5.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 5.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
       ],
       [
-        "TableReader_6 2.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
+        "TableReader_6 3.75 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 3.75 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
       ],
       [
         "TableReader_6 3.00 root  data:TableRangeScan_5",
@@ -419,6 +417,75 @@
       [
         "TableReader_6 1.00 root  data:TableRangeScan_5",
         "└─TableRangeScan_5 1.00 cop[tikv] table:ct2 range:[8 1,8 8], keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestTopNOutOfHist",
+    "Cases": [
+      [
+        "test topn_before_hist  a 0 1 4",
+        "test topn_before_hist  a 0 3 2",
+        "test topn_before_hist  idx 1 1 4",
+        "test topn_before_hist  idx 1 3 2",
+        "test topn_after_hist  a 0 2 2",
+        "test topn_after_hist  a 0 7 4",
+        "test topn_after_hist  idx 1 2 2",
+        "test topn_after_hist  idx 1 7 4",
+        "test topn_before_hist_no_index  a 0 1 4",
+        "test topn_before_hist_no_index  a 0 3 2",
+        "test topn_after_hist_no_index  a 0 2 2",
+        "test topn_after_hist_no_index  a 0 7 4"
+      ],
+      [
+        "test topn_before_hist  a 0 0 2 1 4 5 0",
+        "test topn_before_hist  a 0 1 3 1 6 6 0",
+        "test topn_before_hist  idx 1 0 2 1 4 5 0",
+        "test topn_before_hist  idx 1 1 3 1 6 6 0",
+        "test topn_after_hist  a 0 0 2 1 3 4 0",
+        "test topn_after_hist  a 0 1 3 1 5 5 0",
+        "test topn_after_hist  idx 1 0 2 1 3 4 0",
+        "test topn_after_hist  idx 1 1 3 1 5 5 0",
+        "test topn_before_hist_no_index  a 0 0 2 1 4 5 0",
+        "test topn_before_hist_no_index  a 0 1 3 1 6 6 0",
+        "test topn_after_hist_no_index  a 0 0 2 1 3 4 0",
+        "test topn_after_hist_no_index  a 0 1 3 1 5 5 0"
+      ],
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[1,1], keep order:false"
+      ],
+      [
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[2,2], keep order:false"
+      ],
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[7,7], keep order:false"
+      ],
+      [
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
+      ],
+      [
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  eq(test.topn_after_hist_no_index.a, 7)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_after_hist_no_index keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.topn_after_hist_no_index.a, 6)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_after_hist_no_index keep order:false"
+      ],
+      [
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  eq(test.topn_before_hist_no_index.a, 1)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_before_hist_no_index keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.topn_before_hist_no_index.a, 2)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_before_hist_no_index keep order:false"
       ]
     ]
   },
@@ -507,8 +574,8 @@
     "Name": "TestCollationColumnEstimate",
     "Cases": [
       [
-        "test t  a 0 0 2 2 \u0000A\u0000A\u0000A \u0000A\u0000A\u0000A 0",
-        "test t  a 0 1 4 2 \u0000B\u0000B\u0000B \u0000B\u0000B\u0000B 0"
+        "test t  a 0 \u0000A\u0000A\u0000A 2",
+        "test t  a 0 \u0000B\u0000B\u0000B 2"
       ],
       [
         "TableReader_7 2.00 root  data:Selection_6",
@@ -540,6 +607,156 @@
       {
         "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
         "Selectivity": 0.3125
+      }
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5,
+        "Count": 3
+      },
+      {
+        "Start": 5,
+        "End": 6,
+        "Count": 6
+      },
+      {
+        "Start": 5,
+        "End": 10,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 15,
+        "Count": 33
+      },
+      {
+        "Start": 10,
+        "End": 15,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 25,
+        "Count": 63
+      },
+      {
+        "Start": 25,
+        "End": 25,
+        "Count": 3
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900,
+        "Count": 752.004166655054
+      },
+      {
+        "Start": 900,
+        "End": 950,
+        "Count": 247.04782734719248
+      },
+      {
+        "Start": 950,
+        "End": 1000,
+        "Count": 226.14487557169574
+      },
+      {
+        "Start": 1000,
+        "End": 1050,
+        "Count": 205.24192379619902
+      },
+      {
+        "Start": 1050,
+        "End": 1100,
+        "Count": 184.33897202070227
+      },
+      {
+        "Start": 1150,
+        "End": 1200,
+        "Count": 142.53306846970884
+      },
+      {
+        "Start": 1200,
+        "End": 1300,
+        "Count": 214.85728161292752
+      },
+      {
+        "Start": 1300,
+        "End": 1400,
+        "Count": 131.2454745109406
+      },
+      {
+        "Start": 1400,
+        "End": 1500,
+        "Count": 47.650389770374105
+      },
+      {
+        "Start": 1500,
+        "End": 1600,
+        "Count": 7.5
+      },
+      {
+        "Start": 300,
+        "End": 899,
+        "Count": 4500
+      },
+      {
+        "Start": 800,
+        "End": 1000,
+        "Count": 1210.196869573942
+      },
+      {
+        "Start": 900,
+        "End": 1500,
+        "Count": 1502.495833344946
+      },
+      {
+        "Start": 300,
+        "End": 1500,
+        "Count": 4500
+      },
+      {
+        "Start": 200,
+        "End": 300,
+        "Count": 466.52882098990807
+      },
+      {
+        "Start": 100,
+        "End": 200,
+        "Count": 382.91701388792114
+      },
+      {
+        "Start": 200,
+        "End": 400,
+        "Count": 1230.0288209899081
+      },
+      {
+        "Start": 200,
+        "End": 1000,
+        "Count": 4500
+      },
+      {
+        "Start": 0,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 0,
+        "Count": 7.5
       }
     ]
   }

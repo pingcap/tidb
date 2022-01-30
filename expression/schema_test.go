@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,9 +16,14 @@ package expression
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
+
+type schemaGenerator struct {
+	colID int64
+}
 
 // generateKeys4Schema will generate keys for a given schema. Used only in this file.
 func generateKeys4Schema(schema *Schema) {
@@ -30,35 +36,39 @@ func generateKeys4Schema(schema *Schema) {
 }
 
 // generateSchema will generate a schema for test. Used only in this file.
-func (s *testEvalSuite) generateSchema(colCount int) *Schema {
+func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	cols := make([]*Column, 0, colCount)
 	for i := 0; i < colCount; i++ {
+		s.colID++
 		cols = append(cols, &Column{
-			UniqueID: s.allocColID(),
+			UniqueID: s.colID,
 		})
 	}
 	return NewSchema(cols...)
 }
 
-func (s *testEvalSuite) TestSchemaString(c *C) {
+func TestSchemaString(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
-	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []")
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []", schema.String())
 	generateKeys4Schema(schema)
-	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]")
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]", schema.String())
 }
 
-func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
+func TestSchemaRetrieveColumn(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
-		c.Assert(schema.RetrieveColumn(col), Equals, col)
+		require.Equal(t, col, schema.RetrieveColumn(col))
 	}
-	c.Assert(schema.RetrieveColumn(colOutSchema), IsNil)
+	require.Nil(t, schema.RetrieveColumn(colOutSchema))
 }
 
-func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
+func TestSchemaIsUniqueKey(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	generateKeys4Schema(schema)
 	colOutSchema := &Column{
@@ -66,26 +76,28 @@ func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
 	}
 	for i, col := range schema.Columns {
 		if i < len(schema.Columns)-1 {
-			c.Assert(schema.IsUniqueKey(col), Equals, true)
+			require.Equal(t, true, schema.IsUniqueKey(col))
 		} else {
-			c.Assert(schema.IsUniqueKey(col), Equals, false)
+			require.Equal(t, false, schema.IsUniqueKey(col))
 		}
 	}
-	c.Assert(schema.IsUniqueKey(colOutSchema), Equals, false)
+	require.Equal(t, false, schema.IsUniqueKey(colOutSchema))
 }
 
-func (s *testEvalSuite) TestSchemaContains(c *C) {
+func TestSchemaContains(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
-		c.Assert(schema.Contains(col), Equals, true)
+		require.Equal(t, true, schema.Contains(col))
 	}
-	c.Assert(schema.Contains(colOutSchema), Equals, false)
+	require.Equal(t, false, schema.Contains(colOutSchema))
 }
 
-func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
+func TestSchemaColumnsIndices(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
@@ -93,42 +105,45 @@ func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
 	for i := 0; i < len(schema.Columns)-1; i++ {
 		colIndices := schema.ColumnsIndices([]*Column{schema.Columns[i], schema.Columns[i+1]})
 		for j, res := range colIndices {
-			c.Assert(res, Equals, i+j)
+			require.Equal(t, i+j, res)
 		}
 	}
-	c.Assert(schema.ColumnsIndices([]*Column{schema.Columns[0], schema.Columns[1], colOutSchema, schema.Columns[2]}), IsNil)
+	require.Nil(t, schema.ColumnsIndices([]*Column{schema.Columns[0], schema.Columns[1], colOutSchema, schema.Columns[2]}))
 }
 
-func (s *testEvalSuite) TestSchemaColumnsByIndices(c *C) {
+func TestSchemaColumnsByIndices(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	indices := []int{0, 1, 2, 3}
 	retCols := schema.ColumnsByIndices(indices)
 	for i, ret := range retCols {
-		c.Assert(fmt.Sprintf("%p", schema.Columns[i]), Equals, fmt.Sprintf("%p", ret))
+		require.Equal(t, fmt.Sprintf("%p", ret), fmt.Sprintf("%p", schema.Columns[i]))
 	}
 }
 
-func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
+func TestSchemaMergeSchema(t *testing.T) {
+	s := &schemaGenerator{}
 	lSchema := s.generateSchema(5)
 	generateKeys4Schema(lSchema)
 
 	rSchema := s.generateSchema(5)
 	generateKeys4Schema(rSchema)
 
-	c.Assert(MergeSchema(nil, nil), IsNil)
-	c.Assert(MergeSchema(lSchema, nil).String(), Equals, lSchema.String())
-	c.Assert(MergeSchema(nil, rSchema).String(), Equals, rSchema.String())
+	require.Nil(t, MergeSchema(nil, nil))
+	require.Equal(t, lSchema.String(), MergeSchema(lSchema, nil).String())
+	require.Equal(t, rSchema.String(), MergeSchema(nil, rSchema).String())
 
 	schema := MergeSchema(lSchema, rSchema)
 	for i := 0; i < len(lSchema.Columns); i++ {
-		c.Assert(schema.Columns[i].UniqueID, Equals, lSchema.Columns[i].UniqueID)
+		require.Equal(t, lSchema.Columns[i].UniqueID, schema.Columns[i].UniqueID)
 	}
 	for i := 0; i < len(rSchema.Columns); i++ {
-		c.Assert(schema.Columns[i+len(lSchema.Columns)].UniqueID, Equals, rSchema.Columns[i].UniqueID)
+		require.Equal(t, rSchema.Columns[i].UniqueID, schema.Columns[i+len(lSchema.Columns)].UniqueID)
 	}
 }
 
-func (s *testEvalSuite) TestGetUsedList(c *C) {
+func TestGetUsedList(t *testing.T) {
+	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	var usedCols []*Column
 	usedCols = append(usedCols, schema.Columns[3])
@@ -137,5 +152,5 @@ func (s *testEvalSuite) TestGetUsedList(c *C) {
 	usedCols = append(usedCols, schema.Columns[3])
 
 	used := GetUsedList(usedCols, schema)
-	c.Assert(used, DeepEquals, []bool{false, true, false, true, false})
+	require.Equal(t, []bool{false, true, false, true, false}, used)
 }

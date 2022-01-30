@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -189,6 +190,9 @@ type MetricsSummaryRetriever struct {
 }
 
 func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -266,6 +270,9 @@ type MetricsSummaryByLabelRetriever struct {
 }
 
 func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}

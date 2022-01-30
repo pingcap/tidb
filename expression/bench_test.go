@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,24 +22,26 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type benchHelper struct {
@@ -216,8 +219,26 @@ type defaultRandGen struct {
 	*rand.Rand
 }
 
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
 func newDefaultRandGen() *defaultRandGen {
-	return &defaultRandGen{rand.New(rand.NewSource(int64(rand.Uint64())))}
+	return &defaultRandGen{rand.New(&lockedSource{src: rand.NewSource(int64(rand.Uint64()))})}
 }
 
 type defaultGener struct {
@@ -264,6 +285,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -287,23 +315,9 @@ func (g *defaultGener) gen() interface{} {
 type charInt64Gener struct{}
 
 func (g *charInt64Gener) gen() interface{} {
-	rand := time.Now().Nanosecond()
-	rand = rand % 1024
-	return int64(rand)
-}
-
-// charsetStringGener is used to generate "ascii" or "gbk"
-type charsetStringGener struct{}
-
-func (g *charsetStringGener) gen() interface{} {
-	rand := time.Now().Nanosecond() % 3
-	if rand == 0 {
-		return "ascii"
-	}
-	if rand == 1 {
-		return "utf8"
-	}
-	return "gbk"
+	nanosecond := time.Now().Nanosecond()
+	nanosecond = nanosecond % 1024
+	return int64(nanosecond)
 }
 
 // selectStringGener select one string randomly from the candidates array
@@ -642,6 +656,27 @@ func (g *ipv4MappedByteGener) gen() interface{} {
 	return string(ip[:net.IPv6len])
 }
 
+// uuidStrGener is used to generate uuid strings.
+type uuidStrGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidStrGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	return u.String()
+}
+
+// uuidBinGener is used to generate uuid binarys.
+type uuidBinGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidBinGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	bin, _ := u.MarshalBinary()
+	return string(bin)
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -866,12 +901,6 @@ func (g *randDurDecimal) gen() interface{} {
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
 }
 
-type randDurString struct{}
-
-func (g *randDurString) gen() interface{} {
-	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
-}
-
 // locationGener is used to generate location for the built-in function GetFormat.
 type locationGener struct {
 	nullRation float64
@@ -1088,68 +1117,68 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 
 // testVectorizedEvalOneVec is used to verify that the vectorized
 // expression is evaluated correctly during projection
-func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
+func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, fts, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			commentf := func(row int) CommentInterface {
-				return Commentf("func: %v, case %+v, row: %v, rowData: %v", funcName, testCase, row, input.GetRow(row).GetDatumRow(fts))
+			commentf := func(row int) string {
+				return fmt.Sprintf("func: %v, case %+v, row: %v, rowData: %v", funcName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			output2 := output.CopyConstruct()
-			c.Assert(evalOneVec(ctx, expr, input, output, 0), IsNil, Commentf("func: %v, case: %+v", funcName, testCase))
+			require.NoErrorf(t, evalOneVec(ctx, expr, input, output, 0), "func: %v, case: %+v", funcName, testCase)
 			it := chunk.NewIterator4Chunk(input)
-			c.Assert(evalOneColumn(ctx, expr, it, output2, 0), IsNil, Commentf("func: %v, case: %+v", funcName, testCase))
+			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
 			switch expr.GetType().EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetInt64(i), Equals, c2.GetInt64(i), commentf(i))
+						require.Equal(t, c1.GetInt64(i), c2.GetInt64(i), commentf(i))
 					}
 				}
 			case types.ETReal:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetFloat64(i), Equals, c2.GetFloat64(i), commentf(i))
+						require.Equal(t, c1.GetFloat64(i), c2.GetFloat64(i), commentf(i))
 					}
 				}
 			case types.ETDecimal:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetDecimal(i), DeepEquals, c2.GetDecimal(i), commentf(i))
+						require.Equal(t, c1.GetDecimal(i), c2.GetDecimal(i), commentf(i))
 					}
 				}
 			case types.ETDatetime, types.ETTimestamp:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetTime(i), DeepEquals, c2.GetTime(i), commentf(i))
+						require.Equal(t, c1.GetTime(i), c2.GetTime(i), commentf(i))
 					}
 				}
 			case types.ETDuration:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetDuration(i, 0), Equals, c2.GetDuration(i, 0), commentf(i))
+						require.Equal(t, c1.GetDuration(i, 0), c2.GetDuration(i, 0), commentf(i))
 					}
 				}
 			case types.ETJson:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetJSON(i), DeepEquals, c2.GetJSON(i), commentf(i))
+						require.Equal(t, c1.GetJSON(i), c2.GetJSON(i), commentf(i))
 					}
 				}
 			case types.ETString:
 				for i := 0; i < input.NumRows(); i++ {
-					c.Assert(c1.IsNull(i), Equals, c2.IsNull(i), commentf(i))
+					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
 					if !c1.IsNull(i) {
-						c.Assert(c1.GetString(i), Equals, c2.GetString(i), commentf(i))
+						require.Equal(t, c1.GetString(i), c2.GetString(i), commentf(i))
 					}
 				}
 			}
@@ -1289,7 +1318,7 @@ func removeTestOptions(args []string) []string {
 
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
-func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
+func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	testFunc := make(map[string]bool)
 	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
@@ -1300,7 +1329,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
 			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
@@ -1336,9 +1365,9 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
-			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-			commentf := func(row int) CommentInterface {
-				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
+			require.Truef(t, baseFunc.vectorized(), "func: %v, case: %+v", baseFuncName, testCase)
+			commentf := func(row int) string {
+				return fmt.Sprintf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
@@ -1346,125 +1375,125 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			switch testCase.retEvalType {
 			case types.ETInt:
 				err := baseFunc.vecEvalInt(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				i64s := output.Int64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalInt(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(val, Equals, i64s[i], commentf(i))
+						require.Equal(t, i64s[i], val, commentf(i))
 					}
 					i++
 				}
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				f64s := output.Float64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalReal(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(val, Equals, f64s[i], commentf(i))
+						require.Equal(t, f64s[i], val, commentf(i))
 					}
 					i++
 				}
 			case types.ETDecimal:
 				err := baseFunc.vecEvalDecimal(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.Decimals()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDecimal(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(*val, Equals, d64s[i], commentf(i))
+						require.Equal(t, d64s[i], *val, commentf(i))
 					}
 					i++
 				}
 			case types.ETDatetime, types.ETTimestamp:
 				err := baseFunc.vecEvalTime(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				t64s := output.Times()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalTime(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(val, Equals, t64s[i], commentf(i))
+						require.Equal(t, t64s[i], val, commentf(i))
 					}
 					i++
 				}
 			case types.ETDuration:
 				err := baseFunc.vecEvalDuration(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(val.Duration, Equals, d64s[i], commentf(i))
+						require.Equal(t, d64s[i], val.Duration, commentf(i))
 					}
 					i++
 				}
 			case types.ETJson:
 				err := baseFunc.vecEvalJSON(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalJSON(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
 						cmp := json.CompareBinary(val, output.GetJSON(i))
-						c.Assert(cmp, Equals, 0, commentf(i))
+						require.Zero(t, cmp, commentf(i))
 					}
 					i++
 				}
 			case types.ETString:
 				err := baseFunc.vecEvalString(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalString(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						c.Assert(val, Equals, output.GetString(i), commentf(i))
+						require.Equal(t, output.GetString(i), val, commentf(i))
 					}
 					i++
 				}
 			default:
-				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 
 			// check warnings
 			totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
-			c.Assert(2*vecWarnCnt, Equals, totalWarns)
+			require.Equal(t, totalWarns, 2*vecWarnCnt)
 			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			for i := 0; i < int(vecWarnCnt); i++ {
-				c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+				require.True(t, terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err))
 			}
 		}
 	}
@@ -1472,12 +1501,12 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 
 // testVectorizedBuiltinFuncForRand is used to verify that the vectorized
 // expression is evaluated correctly
-func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
+func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
-		c.Assert(strings.EqualFold("rand", funcName), Equals, true)
+		require.True(t, strings.EqualFold("rand", funcName))
 
 		for _, testCase := range testCases {
-			c.Assert(len(testCase.childrenTypes), Equals, 0)
+			require.Len(t, testCase.childrenTypes, 0)
 
 			ctx := mock.NewContext()
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
@@ -1485,20 +1514,20 @@ func testVectorizedBuiltinFuncForRand(c *C, vecExprCases vecExprBenchCases) {
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 			// do not forget to implement the vectorized method.
-			c.Assert(baseFunc.vectorized(), IsTrue, Commentf("func: %v", baseFuncName))
+			require.Truef(t, baseFunc.vectorized(), "func: %v", baseFuncName)
 			switch testCase.retEvalType {
 			case types.ETReal:
 				err := baseFunc.vecEvalReal(input, output)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
 				// check result
 				res := output.Float64s()
 				for _, v := range res {
-					c.Assert((0 <= v) && (v < 1), Equals, true)
+					require.True(t, (0 <= v) && (v < 1))
 				}
 			default:
-				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 			}
 		}
 	}
@@ -1785,27 +1814,6 @@ func generateRandomSel() []int {
 	return sel
 }
 
-func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
-	ctx := mock.NewContext()
-	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
-			c.Assert(err, IsNil)
-			it := chunk.NewIterator4Chunk(input)
-			i := 0
-			for row := it.Begin(); row != it.End(); row = it.Next() {
-				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
-				c.Assert(err, IsNil)
-				c.Assert(null, Equals, nulls[i])
-				c.Assert(ok, Equals, selected[i])
-				i++
-			}
-		}
-	}
-}
-
 func BenchmarkVecEvalBool(b *testing.B) {
 	ctx := mock.NewContext()
 	selected := make([]bool, 0, 1024)
@@ -1856,27 +1864,6 @@ func BenchmarkVecEvalBool(b *testing.B) {
 		}
 
 		combFunc(numCols)
-	}
-}
-
-func (s *testVectorizeSuite2) TestRowBasedFilterAndVectorizedFilter(c *C) {
-	ctx := mock.NewContext()
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			it := chunk.NewIterator4Chunk(input)
-			isNull := make([]bool, it.Len())
-			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
-			c.Assert(err, IsNil)
-			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
-			c.Assert(err2, IsNil)
-			length := it.Len()
-			for i := 0; i < length; i++ {
-				c.Assert(nulls2[i], Equals, nulls[i])
-				c.Assert(selected2[i], Equals, selected[i])
-			}
-		}
 	}
 }
 
@@ -1956,60 +1943,11 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	})
 }
 
-func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
-	ctx := mock.NewContext()
-	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
-	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
-	for numCols := 1; numCols <= 5; numCols++ {
-		for round := 0; round < 16; round++ {
-			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			it := chunk.NewIterator4Chunk(input)
-			isNull := make([]bool, it.Len())
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
-			c.Assert(err, IsNil)
-			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
-			c.Assert(err2, IsNil)
-			length := it.Len()
-			for i := 0; i < length; i++ {
-				c.Assert(nulls2[i], Equals, nulls[i])
-				c.Assert(selected2[i], Equals, selected[i])
-			}
-
-			// add test which sel is not nil
-			randomSel := generateRandomSel()
-			input.SetSel(randomSel)
-			it2 := chunk.NewIterator4Chunk(input)
-			isNull = isNull[:0]
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
-			c.Assert(err, IsNil)
-			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
-			c.Assert(err2, IsNil)
-			for i := 0; i < length; i++ {
-				c.Assert(nulls2[i], Equals, nulls[i])
-				c.Assert(selected4[i], Equals, selected3[i])
-			}
-
-			unselected := make([]bool, length)
-			// unselected[i] == false means that the i-th row is selected
-			for i := 0; i < length; i++ {
-				unselected[i] = true
-			}
-			for _, idx := range randomSel {
-				unselected[idx] = false
-			}
-			for i := range selected2 {
-				if selected2[i] && unselected[i] {
-					selected2[i] = false
-				}
-			}
-			for i := 0; i < length; i++ {
-				c.Assert(selected2[i], Equals, selected4[i])
-			}
-		}
-	}
-	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkCastIntAsIntRow,
+		BenchmarkCastIntAsIntVec,
+		BenchmarkVectorizedExecute,
+		BenchmarkScalarFunctionClone,
+	)
 }

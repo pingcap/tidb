@@ -1,0 +1,5 @@
+[lightning]
+table-concurrency = 4
+
+[tikv-importer]
+backend = 'local'

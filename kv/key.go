@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -58,7 +59,7 @@ func (k Key) PrefixNext() Key {
 	}
 	if i == -1 {
 		copy(buf, k)
-		buf = append(buf, 0)
+		buf = append(buf, 0) // nozero
 	}
 	return buf
 }
@@ -124,6 +125,12 @@ func (r *KeyRange) IsPoint() bool {
 	diffOneIdx := i
 	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
 		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
+}
+
+// Entry is the entry for key and value
+type Entry struct {
+	Key   Key
+	Value []byte
 }
 
 // Handle is the ID of a row.
@@ -424,7 +431,7 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 	}
 }
 
-// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
 // Now only used in global index.
 // TODO: support PartitionHandle in HandleMap.
 type PartitionHandle struct {

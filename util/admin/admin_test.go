@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,54 +17,23 @@ package admin_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	. "github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+func TestGetDDLInfo(t *testing.T) {
+	store, clean := newMockStore(t)
+	defer clean()
 
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-	store kv.Storage
-	ctx   *mock.Context
-}
-
-func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.ctx.Store = s.store
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func (s *testSuite) TestGetDDLInfo(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
 
 	dbInfo2 := &model.DBInfo{
 		ID:    2,
@@ -80,31 +50,40 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 		Type:     model.ActionAddIndex,
 		RowCount: 0,
 	}
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
+
+	err = m.EnQueueDDLJob(job)
+	require.NoError(t, err)
+
 	info, err := GetDDLInfo(txn)
-	c.Assert(err, IsNil)
-	c.Assert(info.Jobs, HasLen, 1)
-	c.Assert(info.Jobs[0], DeepEquals, job)
-	c.Assert(info.ReorgHandle, IsNil)
-	// Two jobs.
-	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
-	err = t.EnQueueDDLJob(job1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 1)
+	require.Equal(t, job, info.Jobs[0])
+	require.Nil(t, info.ReorgHandle)
+
+	// two jobs
+	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	err = m.EnQueueDDLJob(job1)
+	require.NoError(t, err)
+
 	info, err = GetDDLInfo(txn)
-	c.Assert(err, IsNil)
-	c.Assert(info.Jobs, HasLen, 2)
-	c.Assert(info.Jobs[0], DeepEquals, job)
-	c.Assert(info.Jobs[1], DeepEquals, job1)
-	c.Assert(info.ReorgHandle, IsNil)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 2)
+	require.Equal(t, job, info.Jobs[0])
+	require.Equal(t, job1, info.Jobs[1])
+	require.Nil(t, info.ReorgHandle)
+
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testSuite) TestGetDDLJobs(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+func TestGetDDLJobs(t *testing.T) {
+	store, clean := newMockStore(t)
+	defer clean()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
 	cnt := 10
 	jobs := make([]*model.Job, cnt)
 	var currJobs2 []*model.Job
@@ -114,11 +93,13 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = t.EnQueueDDLJob(jobs[i])
-		c.Assert(err, IsNil)
-		currJobs, err1 := GetDDLJobs(txn)
-		c.Assert(err1, IsNil)
-		c.Assert(currJobs, HasLen, i+1)
+		err = m.EnQueueDDLJob(jobs[i])
+		require.NoError(t, err)
+
+		currJobs, err := GetDDLJobs(txn)
+		require.NoError(t, err)
+		require.Len(t, currJobs, i+1)
+
 		currJobs2 = currJobs2[:0]
 		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
@@ -130,77 +111,61 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 			}
 			return false, nil
 		})
-		c.Assert(err, IsNil)
-		c.Assert(currJobs2, HasLen, i+1)
+		require.NoError(t, err)
+		require.Len(t, currJobs2, i+1)
 	}
 
 	currJobs, err := GetDDLJobs(txn)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	for i, job := range jobs {
-		c.Assert(job.ID, Equals, currJobs[i].ID)
-		c.Assert(job.SchemaID, Equals, int64(1))
-		c.Assert(job.Type, Equals, model.ActionCreateTable)
+		require.Equal(t, currJobs[i].ID, job.ID)
+		require.Equal(t, int64(1), job.SchemaID)
+		require.Equal(t, model.ActionCreateTable, job.Type)
 	}
-	c.Assert(currJobs, DeepEquals, currJobs2)
+	require.Equal(t, currJobs2, currJobs)
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func isJobsSorted(jobs []*model.Job) bool {
-	if len(jobs) <= 1 {
-		return true
-	}
-	for i := 1; i < len(jobs); i++ {
-		if jobs[i].ID <= jobs[i-1].ID {
-			return false
-		}
-	}
-	return true
-}
+func TestGetDDLJobsIsSort(t *testing.T) {
+	store, clean := newMockStore(t)
+	defer clean()
 
-func enQueueDDLJobs(c *C, t *meta.Meta, jobType model.ActionType, start, end int) {
-	for i := start; i < end; i++ {
-		job := &model.Job{
-			ID:       int64(i),
-			SchemaID: 1,
-			Type:     jobType,
-		}
-		err := t.EnQueueDDLJob(job)
-		c.Assert(err, IsNil)
-	}
-}
-
-func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	// insert 5 drop table jobs to DefaultJobListKey queue
-	t := meta.NewMeta(txn)
-	enQueueDDLJobs(c, t, model.ActionDropTable, 10, 15)
+	m := meta.NewMeta(txn)
+	enQueueDDLJobs(t, m, model.ActionDropTable, 10, 15)
 
 	// insert 5 create table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(c, t, model.ActionCreateTable, 0, 5)
+	enQueueDDLJobs(t, m, model.ActionCreateTable, 0, 5)
 
 	// insert add index jobs to AddIndexJobListKey queue
-	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
-	enQueueDDLJobs(c, t, model.ActionAddIndex, 5, 10)
+	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
 	currJobs, err := GetDDLJobs(txn)
-	c.Assert(err, IsNil)
-	c.Assert(currJobs, HasLen, 15)
+	require.NoError(t, err)
+	require.Len(t, currJobs, 15)
 
 	isSort := isJobsSorted(currJobs)
-	c.Assert(isSort, Equals, true)
+	require.True(t, isSort)
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testSuite) TestCancelJobs(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+func TestCancelJobs(t *testing.T) {
+	store, clean := newMockStore(t)
+	defer clean()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
 	cnt := 10
 	ids := make([]int64, cnt)
 	for i := 0; i < cnt; i++ {
@@ -216,27 +181,28 @@ func (s *testSuite) TestCancelJobs(c *C) {
 			job.State = model.JobStateCancelled
 		}
 		ids[i] = int64(i)
-		err = t.EnQueueDDLJob(job)
-		c.Assert(err, IsNil)
+		err = m.EnQueueDDLJob(job)
+		require.NoError(t, err)
 	}
 
 	errs, err := CancelJobs(txn, ids)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i, err := range errs {
 		if i == 0 {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 			continue
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	errs, err = CancelJobs(txn, []int64{})
-	c.Assert(err, IsNil)
-	c.Assert(errs, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, errs)
+
 	errs, err = CancelJobs(txn, []int64{-1})
-	c.Assert(err, IsNil)
-	c.Assert(errs[0], NotNil)
-	c.Assert(errs[0].Error(), Matches, "*DDL Job:-1 not found")
+	require.NoError(t, err)
+	require.Error(t, errs[0])
+	require.Regexp(t, "DDL Job:-1 not found$", errs[0].Error())
 
 	// test cancel finish job.
 	job := &model.Job{
@@ -245,24 +211,24 @@ func (s *testSuite) TestCancelJobs(c *C) {
 		Type:     model.ActionCreateTable,
 		State:    model.JobStateDone,
 	}
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
+	err = m.EnQueueDDLJob(job)
+	require.NoError(t, err)
 	errs, err = CancelJobs(txn, []int64{100})
-	c.Assert(err, IsNil)
-	c.Assert(errs[0], NotNil)
-	c.Assert(errs[0].Error(), Matches, "*This job:100 is finished, so can't be cancelled")
+	require.NoError(t, err)
+	require.Error(t, errs[0])
+	require.Regexp(t, "This job:100 is finished, so can't be cancelled$", errs[0].Error())
 
 	// test can't cancelable job.
 	job.Type = model.ActionDropIndex
 	job.SchemaState = model.StateWriteOnly
 	job.State = model.JobStateRunning
 	job.ID = 101
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
+	err = m.EnQueueDDLJob(job)
+	require.NoError(t, err)
 	errs, err = CancelJobs(txn, []int64{101})
-	c.Assert(err, IsNil)
-	c.Assert(errs[0], NotNil)
-	c.Assert(errs[0].Error(), Matches, "*This job:101 is almost finished, can't be cancelled now")
+	require.NoError(t, err)
+	require.Error(t, errs[0])
+	require.Regexp(t, "This job:101 is almost finished, can't be cancelled now$", errs[0].Error())
 
 	// When both types of jobs exist in the DDL queue,
 	// we first cancel the job with a larger ID.
@@ -290,28 +256,29 @@ func (s *testSuite) TestCancelJobs(c *C) {
 		TableID:  2,
 		Type:     model.ActionRepairTable,
 	}
-	err = t.EnQueueDDLJob(job, meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	err = t.EnQueueDDLJob(job1)
-	c.Assert(err, IsNil)
-	err = t.EnQueueDDLJob(job2, meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	err = t.EnQueueDDLJob(job3)
-	c.Assert(err, IsNil)
+	require.NoError(t, m.EnQueueDDLJob(job, meta.AddIndexJobListKey))
+	require.NoError(t, m.EnQueueDDLJob(job1))
+	require.NoError(t, m.EnQueueDDLJob(job2, meta.AddIndexJobListKey))
+	require.NoError(t, m.EnQueueDDLJob(job3))
+
 	errs, err = CancelJobs(txn, []int64{job1.ID, job.ID, job2.ID, job3.ID})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, err := range errs {
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+func TestGetHistoryDDLJobs(t *testing.T) {
+	store, clean := newMockStore(t)
+	defer clean()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
 	cnt := 11
 	jobs := make([]*model.Job, cnt)
 	for i := 0; i < cnt; i++ {
@@ -320,26 +287,29 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = t.AddHistoryDDLJob(jobs[i], true)
-		c.Assert(err, IsNil)
-		historyJobs, err1 := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
-		c.Assert(err1, IsNil)
+		err = m.AddHistoryDDLJob(jobs[i], true)
+		require.NoError(t, err)
+
+		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+		require.NoError(t, err)
+
 		if i+1 > MaxHistoryJobs {
-			c.Assert(historyJobs, HasLen, MaxHistoryJobs)
+			require.Len(t, historyJobs, MaxHistoryJobs)
 		} else {
-			c.Assert(historyJobs, HasLen, i+1)
+			require.Len(t, historyJobs, i+1)
 		}
 	}
 
 	delta := cnt - MaxHistoryJobs
 	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
-	c.Assert(err, IsNil)
-	c.Assert(historyJobs, HasLen, MaxHistoryJobs)
+	require.NoError(t, err)
+	require.Len(t, historyJobs, MaxHistoryJobs)
+
 	l := len(historyJobs) - 1
 	for i, job := range historyJobs {
-		c.Assert(job.ID, Equals, jobs[delta+l-i].ID)
-		c.Assert(job.SchemaID, Equals, int64(1))
-		c.Assert(job.Type, Equals, model.ActionCreateTable)
+		require.Equal(t, jobs[delta+l-i].ID, job.ID)
+		require.Equal(t, int64(1), job.SchemaID)
+		require.Equal(t, model.ActionCreateTable, job.Type)
 	}
 
 	var historyJobs2 []*model.Job
@@ -352,14 +322,14 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		}
 		return false, nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(historyJobs2, DeepEquals, historyJobs)
+	require.NoError(t, err)
+	require.Equal(t, historyJobs, historyJobs2)
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testSuite) TestIsJobRollbackable(c *C) {
+func TestIsJobRollbackable(t *testing.T) {
 	cases := []struct {
 		tp     model.ActionType
 		state  model.SchemaState
@@ -370,17 +340,18 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 		{model.ActionDropSchema, model.StateDeleteOnly, false},
 		{model.ActionDropColumn, model.StateDeleteOnly, false},
 		{model.ActionDropColumns, model.StateDeleteOnly, false},
+		{model.ActionDropIndexes, model.StateDeleteOnly, false},
 	}
 	job := &model.Job{}
 	for _, ca := range cases {
 		job.Type = ca.tp
 		job.SchemaState = ca.state
 		re := IsJobRollbackable(job)
-		c.Assert(re == ca.result, IsTrue)
+		require.Equal(t, ca.result, re)
 	}
 }
 
-func (s *testSuite) TestError(c *C) {
+func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrDataInConsistent,
 		ErrDDLJobNotFound,
@@ -389,6 +360,44 @@ func (s *testSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		require.NotEqual(t, mysql.ErrUnknown, code)
+		require.Equal(t, uint16(err.Code()), code)
+	}
+}
+
+func newMockStore(t *testing.T) (store kv.Storage, clean func()) {
+	var err error
+	store, err = mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	clean = func() {
+		err = store.Close()
+		require.NoError(t, err)
+	}
+
+	return
+}
+
+func isJobsSorted(jobs []*model.Job) bool {
+	if len(jobs) <= 1 {
+		return true
+	}
+	for i := 1; i < len(jobs); i++ {
+		if jobs[i].ID <= jobs[i-1].ID {
+			return false
+		}
+	}
+	return true
+}
+
+func enQueueDDLJobs(t *testing.T, m *meta.Meta, jobType model.ActionType, start, end int) {
+	for i := start; i < end; i++ {
+		job := &model.Job{
+			ID:       int64(i),
+			SchemaID: 1,
+			Type:     jobType,
+		}
+		err := m.EnQueueDDLJob(job)
+		require.NoError(t, err)
 	}
 }

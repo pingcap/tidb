@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,20 +19,13 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type stmtctxSuit struct{}
-
-var _ = Suite(&stmtctxSuit{})
-
-func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
+func TestCopTasksDetails(t *testing.T) {
 	ctx := new(stmtctx.StatementContext)
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
@@ -39,7 +33,7 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 			CalleeAddress: fmt.Sprintf("%v", i+1),
 			BackoffSleep:  make(map[string]time.Duration),
 			BackoffTimes:  make(map[string]int),
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(i+1),
 				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},
@@ -51,28 +45,28 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 		ctx.MergeExecDetails(d, nil)
 	}
 	d := ctx.CopTasksDetails()
-	c.Assert(d.NumCopTasks, Equals, 100)
-	c.Assert(d.AvgProcessTime, Equals, time.Second*101/2)
-	c.Assert(d.P90ProcessTime, Equals, time.Second*91)
-	c.Assert(d.MaxProcessTime, Equals, time.Second*100)
-	c.Assert(d.MaxProcessAddress, Equals, "100")
-	c.Assert(d.AvgWaitTime, Equals, time.Millisecond*101/2)
-	c.Assert(d.P90WaitTime, Equals, time.Millisecond*91)
-	c.Assert(d.MaxWaitTime, Equals, time.Millisecond*100)
-	c.Assert(d.MaxWaitAddress, Equals, "100")
+	require.Equal(t, 100, d.NumCopTasks)
+	require.Equal(t, time.Second*101/2, d.AvgProcessTime)
+	require.Equal(t, time.Second*91, d.P90ProcessTime)
+	require.Equal(t, time.Second*100, d.MaxProcessTime)
+	require.Equal(t, "100", d.MaxProcessAddress)
+	require.Equal(t, time.Millisecond*101/2, d.AvgWaitTime)
+	require.Equal(t, time.Millisecond*91, d.P90WaitTime)
+	require.Equal(t, time.Millisecond*100, d.MaxWaitTime)
+	require.Equal(t, "100", d.MaxWaitAddress)
 	fields := d.ToZapFields()
-	c.Assert(len(fields), Equals, 9)
+	require.Equal(t, 9, len(fields))
 	for _, backoff := range backoffs {
-		c.Assert(d.MaxBackoffAddress[backoff], Equals, "100")
-		c.Assert(d.MaxBackoffTime[backoff], Equals, 100*time.Millisecond*100)
-		c.Assert(d.P90BackoffTime[backoff], Equals, time.Millisecond*100*91)
-		c.Assert(d.AvgBackoffTime[backoff], Equals, time.Millisecond*100*101/2)
-		c.Assert(d.TotBackoffTimes[backoff], Equals, 101*50)
-		c.Assert(d.TotBackoffTime[backoff], Equals, 101*50*100*time.Millisecond)
+		require.Equal(t, "100", d.MaxBackoffAddress[backoff])
+		require.Equal(t, 100*time.Millisecond*100, d.MaxBackoffTime[backoff])
+		require.Equal(t, time.Millisecond*100*91, d.P90BackoffTime[backoff])
+		require.Equal(t, time.Millisecond*100*101/2, d.AvgBackoffTime[backoff])
+		require.Equal(t, 101*50, d.TotBackoffTimes[backoff])
+		require.Equal(t, 101*50*100*time.Millisecond, d.TotBackoffTime[backoff])
 	}
 }
 
-func (s *stmtctxSuit) TestStatementContextPushDownFLags(c *C) {
+func TestStatementContextPushDownFLags(t *testing.T) {
 	testCases := []struct {
 		in  *stmtctx.StatementContext
 		out uint64
@@ -93,6 +87,6 @@ func (s *stmtctxSuit) TestStatementContextPushDownFLags(c *C) {
 	}
 	for _, tt := range testCases {
 		got := tt.in.PushDownFlags()
-		c.Assert(got, Equals, tt.out, Commentf("get %v, want %v", got, tt.out))
+		require.Equal(t, tt.out, got)
 	}
 }

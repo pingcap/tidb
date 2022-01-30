@@ -8,59 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression_test
 
 import (
-	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 )
 
-var _ = Suite(&testFlagSimplifySuite{})
+func TestSimplifyExpressionByFlag(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-type testFlagSimplifySuite struct {
-	store    kv.Storage
-	dom      *domain.Domain
-	ctx      sessionctx.Context
-	testData testutil.TestData
-}
-
-func (s *testFlagSimplifySuite) cleanEnv(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
-func (s *testFlagSimplifySuite) SetUpSuite(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "flag_simplify")
-	c.Assert(err, IsNil)
-}
-
-func (s *testFlagSimplifySuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testFlagSimplifySuite) TestSimplifyExpressionByFlag(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a bigint unsigned not null, b bigint unsigned)")
@@ -70,11 +36,12 @@ func (s *testFlagSimplifySuite) TestSimplifyExpressionByFlag(c *C) {
 		SQL  string
 		Plan []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	flagSimplifyData := expression.GetFlagSimplifyData()
+	flagSimplifyData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}

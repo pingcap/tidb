@@ -8,9 +8,9 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !windows
 
 package owner
 
@@ -20,67 +20,50 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
-// Ignore this test on the windows platform, because calling unix socket with address in
-// host:port format fails on windows.
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-}
-
-func (s *testSuite) SetUpSuite(c *C) {
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-}
-
 var (
-	dialTimeout = 5 * time.Second
+	dialTimeout = 3 * time.Second
 	retryCnt    = math.MaxInt32
 )
 
-func (s *testSuite) TestFailNewSession(c *C) {
+func TestFailNewSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	_ = os.Remove("new_session:0")
 	ln, err := net.Listen("unix", "new_session:0")
+	require.NoError(t, err)
+
 	addr := ln.Addr()
 	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup
 	stop.Add(1)
+
 	go func() {
-		if err = srv.Serve(ln); err != nil {
-			c.Errorf("can't serve gRPC requests %v", err)
-		}
-		stop.Done()
+		defer stop.Done()
+		err = srv.Serve(ln)
+		assert.NoError(t, err)
 	}()
 
-	leakFunc := testleak.AfterTest(c)
 	defer func() {
 		srv.Stop()
 		stop.Wait()
-		leakFunc()
 	}()
 
 	func() {
@@ -88,17 +71,24 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
 		})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		defer func() {
 			if cli != nil {
-				cli.Close()
+				_ = cli.Close()
 			}
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"), IsNil)
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
 		}()
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`), IsNil)
-		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
+
+		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
+		// The config is hard coded, not way to control it outside.
+		// Call stack:
+		// https://github.com/etcd-io/etcd/blob/ae9734e/clientv3/concurrency/session.go#L38
+		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/client.go#L253
+		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/retry_interceptor.go#L63
+		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+		require.Truef(t, isContextDone, "err %v", err)
 	}()
 
 	func() {
@@ -106,17 +96,19 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
 		})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		defer func() {
 			if cli != nil {
-				cli.Close()
+				_ = cli.Close()
 			}
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"), IsNil)
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
 		}()
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`), IsNil)
-		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
-	}()
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`))
 
+		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
+		// The config is hard coded, not way to control it outside.
+		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		require.Truef(t, isContextDone, "err %v", err)
+	}()
 }

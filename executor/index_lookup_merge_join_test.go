@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor_test
 
 import (
@@ -10,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
+func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
@@ -28,7 +42,23 @@ func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
 
-func (s *testSuite9) TestIssue18068(c *C) {
+func (s *testSerialSuite) TestIssue28052(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`col_tinyint_key_signed` tinyint(4) DEFAULT NULL," +
+		"`col_year_key_signed` year(4) DEFAULT NULL," +
+		"KEY `col_tinyint_key_signed` (`col_tinyint_key_signed`)," +
+		"KEY `col_year_key_signed` (`col_year_key_signed`)" +
+		" ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("insert into t values(-100,NULL);")
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`").Check(testkit.Rows("1"))
+}
+
+func (s *testSerialSuite) TestIssue18068(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue18068", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue18068"), IsNil)
@@ -157,4 +187,23 @@ func (s *testSuite9) TestIssue20549(c *C) {
 		testkit.Rows("1"))
 	tk.MustQuery("SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;\n").Check(
 		testkit.Rows("1"))
+}
+
+func (s *testSuite9) TestIssue24473AndIssue25669(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
 }

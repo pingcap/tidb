@@ -8,10 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package kv_test
 
 import (
 	"bytes"
@@ -19,45 +20,41 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	. "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testKeySuite{})
-
-type testKeySuite struct {
-}
-
-func (s *testKeySuite) TestPartialNext(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPartialNext(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
-	c.Check(err, IsNil)
+	require.Nil(t, err)
 	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
-	c.Check(err, IsNil)
+	require.Nil(t, err)
 
 	// We only use first column value to seek.
 	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
-	c.Check(err, IsNil)
+	require.Nil(t, err)
 
 	nextKey := Key(seekKey).Next()
 	cmp := bytes.Compare(nextKey, keyA)
-	c.Assert(cmp, Equals, -1)
+	assert.Equal(t, -1, cmp)
 
 	// Use next partial key, we can skip all index keys with first column value equal to "abc".
 	nextPartialKey := Key(seekKey).PrefixNext()
 	cmp = bytes.Compare(nextPartialKey, keyA)
-	c.Assert(cmp, Equals, 1)
+	assert.Equal(t, 1, cmp)
 
 	cmp = bytes.Compare(nextPartialKey, keyB)
-	c.Assert(cmp, Equals, -1)
+	assert.Equal(t, -1, cmp)
 }
 
-func (s *testKeySuite) TestIsPoint(c *C) {
+func TestIsPoint(t *testing.T) {
 	tests := []struct {
 		start   []byte
 		end     []byte
@@ -99,111 +96,119 @@ func (s *testKeySuite) TestIsPoint(c *C) {
 			isPoint: false,
 		},
 	}
+
 	for _, tt := range tests {
 		kr := KeyRange{
 			StartKey: tt.start,
 			EndKey:   tt.end,
 		}
-		c.Check(kr.IsPoint(), Equals, tt.isPoint)
+		assert.Equal(t, tt.isPoint, kr.IsPoint())
 	}
 }
 
-func (s *testKeySuite) TestBasicFunc(c *C) {
-	c.Assert(IsTxnRetryableError(nil), IsFalse)
-	c.Assert(IsTxnRetryableError(ErrTxnRetryable), IsTrue)
-	c.Assert(IsTxnRetryableError(errors.New("test")), IsFalse)
+func TestBasicFunc(t *testing.T) {
+	assert.False(t, IsTxnRetryableError(nil))
+	assert.True(t, IsTxnRetryableError(ErrTxnRetryable))
+	assert.False(t, IsTxnRetryableError(errors.New("test")))
 }
 
-func (s *testKeySuite) TestHandle(c *C) {
+func TestHandle(t *testing.T) {
 	ih := IntHandle(100)
-	c.Assert(ih.IsInt(), IsTrue)
+	assert.True(t, ih.IsInt())
+
 	_, iv, _ := codec.DecodeInt(ih.Encoded())
-	c.Assert(iv, Equals, ih.IntValue())
+	assert.Equal(t, ih.IntValue(), iv)
+
 	ih2 := ih.Next()
-	c.Assert(ih2.IntValue(), Equals, int64(101))
-	c.Assert(ih.Equal(ih2), IsFalse)
-	c.Assert(ih.Compare(ih2), Equals, -1)
-	c.Assert(ih.String(), Equals, "100")
-	ch := mustNewCommonHandle(c, 100, "abc")
-	c.Assert(ch.IsInt(), IsFalse)
+	assert.Equal(t, int64(101), ih2.IntValue())
+	assert.False(t, ih.Equal(ih2))
+	assert.Equal(t, -1, ih.Compare(ih2))
+	assert.Equal(t, "100", ih.String())
+
+	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	assert.False(t, ch.IsInt())
+
 	ch2 := ch.Next()
-	c.Assert(ch.Equal(ch2), IsFalse)
-	c.Assert(ch.Compare(ch2), Equals, -1)
-	c.Assert(ch2.Encoded(), HasLen, len(ch.Encoded()))
-	c.Assert(ch.NumCols(), Equals, 2)
+	assert.False(t, ch.Equal(ch2))
+	assert.Equal(t, -1, ch.Compare(ch2))
+	assert.Len(t, ch2.Encoded(), len(ch.Encoded()))
+	assert.Equal(t, 2, ch.NumCols())
+
 	_, d, err := codec.DecodeOne(ch.EncodedCol(0))
-	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64(), Equals, int64(100))
+	assert.Nil(t, err)
+	assert.Equal(t, int64(100), d.GetInt64())
+
 	_, d, err = codec.DecodeOne(ch.EncodedCol(1))
-	c.Assert(err, IsNil)
-	c.Assert(d.GetString(), Equals, "abc")
-	c.Assert(ch.String(), Equals, "{100, abc}")
+	assert.Nil(t, err)
+	assert.Equal(t, "abc", d.GetString())
+	assert.Equal(t, "{100, abc}", ch.String())
 }
 
-func (s *testKeySuite) TestPaddingHandle(c *C) {
+func TestPaddingHandle(t *testing.T) {
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
-	c.Assert(err, IsNil)
-	c.Assert(len(encoded), Less, 9)
+	assert.Nil(t, err)
+	assert.Less(t, len(encoded), 9)
+
 	handle, err := NewCommonHandle(encoded)
-	c.Assert(err, IsNil)
-	c.Assert(handle.Encoded(), HasLen, 9)
-	c.Assert(handle.EncodedCol(0), BytesEquals, encoded)
+	assert.Nil(t, err)
+	assert.Len(t, handle.Encoded(), 9)
+	assert.Equal(t, encoded, handle.EncodedCol(0))
+
 	newHandle, err := NewCommonHandle(handle.Encoded())
-	c.Assert(err, IsNil)
-	c.Assert(newHandle.EncodedCol(0), BytesEquals, handle.EncodedCol(0))
+	assert.Nil(t, err)
+	assert.Equal(t, handle.EncodedCol(0), newHandle.EncodedCol(0))
 }
 
-func (s *testKeySuite) TestHandleMap(c *C) {
+func TestHandleMap(t *testing.T) {
 	m := NewHandleMap()
 	h := IntHandle(1)
+
 	m.Set(h, 1)
 	v, ok := m.Get(h)
-	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, 1)
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
+
 	m.Delete(h)
 	v, ok = m.Get(h)
-	c.Assert(ok, IsFalse)
-	c.Assert(v, IsNil)
-	ch := mustNewCommonHandle(c, 100, "abc")
+	assert.False(t, ok)
+	assert.Nil(t, v)
+
+	ch := testkit.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
-	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, "a")
+	assert.True(t, ok)
+	assert.Equal(t, "a", v)
+
 	m.Delete(ch)
 	v, ok = m.Get(ch)
-	c.Assert(ok, IsFalse)
-	c.Assert(v, IsNil)
+	assert.False(t, ok)
+	assert.Nil(t, v)
+
 	m.Set(ch, "a")
-	ch2 := mustNewCommonHandle(c, 101, "abc")
+	ch2 := testkit.MustNewCommonHandle(t, 101, "abc")
 	m.Set(ch2, "b")
-	ch3 := mustNewCommonHandle(c, 99, "def")
+	ch3 := testkit.MustNewCommonHandle(t, 99, "def")
 	m.Set(ch3, "c")
-	c.Assert(m.Len(), Equals, 3)
+	assert.Equal(t, 3, m.Len())
+
 	cnt := 0
 	m.Range(func(h Handle, val interface{}) bool {
 		cnt++
 		if h.Equal(ch) {
-			c.Assert(val, Equals, "a")
+			assert.Equal(t, "a", val)
 		} else if h.Equal(ch2) {
-			c.Assert(val, Equals, "b")
+			assert.Equal(t, "b", val)
 		} else {
-			c.Assert(val, Equals, "c")
+			assert.Equal(t, "c", val)
 		}
 		if cnt == 2 {
 			return false
 		}
 		return true
 	})
-	c.Assert(cnt, Equals, 2)
-}
 
-func mustNewCommonHandle(c *C, values ...interface{}) *CommonHandle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	c.Assert(err, IsNil)
-	ch, err := NewCommonHandle(encoded)
-	c.Assert(err, IsNil)
-	return ch
+	assert.Equal(t, 2, cnt)
 }
 
 func BenchmarkIsPoint(b *testing.B) {

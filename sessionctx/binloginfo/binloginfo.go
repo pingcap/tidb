@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,14 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -101,7 +101,7 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
-		schemaVer := ctx.GetSessionVars().TxnCtx.SchemaVersion
+		schemaVer := ctx.GetInfoSchema().SchemaMetaVersion()
 		v = &binlog.PrewriteValue{SchemaVersion: schemaVer}
 		vars.TxnCtx.Binlog = v
 	}
@@ -155,17 +155,15 @@ func WaitBinlogRecover(timeout time.Duration) error {
 	defer ticker.Stop()
 	start := time.Now()
 	for {
-		select {
-		case <-ticker.C:
-			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
-				return nil
-			}
-			if time.Since(start) > timeout {
-				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
-					zap.Duration("duration", timeout))
-				return errors.New("timeout")
-			}
+		<-ticker.C
+		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+			logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+			return nil
+		}
+		if time.Since(start) > timeout {
+			logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+				zap.Duration("duration", timeout))
+			return errors.New("timeout")
 		}
 	}
 }
@@ -295,7 +293,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		},
 		Client: client,
 	}
-	txn.SetOption(tikvstore.BinlogInfo, info)
+	txn.SetOption(kv.BinlogInfo, info)
 }
 
 const specialPrefix = `/*T! `

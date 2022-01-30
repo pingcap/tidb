@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,25 +23,92 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
 )
 
-type HelperTestSuite struct {
-	store helper.Storage
+func TestHotRegion(t *testing.T) {
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
+	require.NoError(t, err)
+
+	expected := map[uint64]helper.RegionMetric{
+		2: {
+			FlowBytes:    100,
+			MaxHotDegree: 1,
+			Count:        0,
+		},
+		4: {
+			FlowBytes:    200,
+			MaxHotDegree: 2,
+			Count:        0,
+		},
+	}
+	require.Equal(t, expected, regionMetric)
+
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr("test"),
+	}
+	require.NoError(t, err)
+
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
+	require.NoError(t, err)
 }
 
-var _ = Suite(new(HelperTestSuite))
+func TestGetRegionsTableInfo(t *testing.T) {
+	store, clean := createMockStore(t)
+	defer clean()
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+	h := helper.NewHelper(store)
+	regionsInfo := getMockTiKVRegionsInfo()
+	schemas := getMockRegionsTableInfoSchema()
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
+	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
+}
+
+func TestTiKVRegionsInfo(t *testing.T) {
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	regionsInfo, err := h.GetRegionsInfo()
+	require.NoError(t, err)
+	require.Equal(t, getMockTiKVRegionsInfo(), regionsInfo)
+}
+
+func TestTiKVStoresStat(t *testing.T) {
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+
+	stat, err := h.GetStoresStat()
+	require.NoError(t, err)
+
+	data, err := json.Marshal(stat)
+	require.NoError(t, err)
+
+	expected := `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`
+	require.Equal(t, expected, string(data))
 }
 
 type mockStore struct {
@@ -68,93 +136,40 @@ func (s *mockStore) Describe() string {
 	return ""
 }
 
-func (s *HelperTestSuite) SetUpSuite(c *C) {
-	url := s.mockPDHTTPServer(c)
-	time.Sleep(100 * time.Millisecond)
-	mockTikvStore, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
+	s, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
 	)
+	require.NoError(t, err)
 
-	s.store = &mockStore{
-		mockTikvStore.(helper.Storage),
-		[]string{url[len("http://"):]},
+	server := mockPDHTTPServer()
+
+	store = &mockStore{
+		s.(helper.Storage),
+		[]string{"invalid_pd_address", server.URL[len("http://"):]},
 	}
-	c.Assert(err, IsNil)
+
+	clean = func() {
+		server.Close()
+		require.NoError(t, store.Close())
+	}
+
+	return
 }
 
-func (s *HelperTestSuite) TestHotRegion(c *C) {
-	h := helper.Helper{
-		Store:       s.store,
-		RegionCache: s.store.GetRegionCache(),
-	}
-	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
-	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	expected := map[uint64]helper.RegionMetric{
-		2: {
-			FlowBytes:    100,
-			MaxHotDegree: 1,
-			Count:        0,
-		},
-		4: {
-			FlowBytes:    200,
-			MaxHotDegree: 2,
-			Count:        0,
-		},
-	}
-	c.Assert(regionMetric, DeepEquals, expected)
-	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr("test"),
-	}
-	c.Assert(err, IsNil)
-	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
-	c.Assert(res[0].RegionMetric, Not(Equals), res[1].RegionMetric)
-	c.Assert(err, IsNil, Commentf("err: %+v", err))
-}
-
-func (s *HelperTestSuite) TestGetRegionsTableInfo(c *C) {
-	h := helper.NewHelper(s.store)
-	regionsInfo := getMockTiKVRegionsInfo()
-	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
-	c.Assert(tableInfos, DeepEquals, getRegionsTableInfoAns(schemas))
-}
-
-func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {
-	h := helper.Helper{
-		Store:       s.store,
-		RegionCache: s.store.GetRegionCache(),
-	}
-	regionsInfo, err := h.GetRegionsInfo()
-	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	c.Assert(regionsInfo, DeepEquals, getMockTiKVRegionsInfo())
-}
-
-func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
-	h := helper.Helper{
-		Store:       s.store,
-		RegionCache: s.store.GetRegionCache(),
-	}
-	stat, err := h.GetStoresStat()
-	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	data, err := json.Marshal(stat)
-	c.Assert(err, IsNil)
-	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
-}
-
-func (s *HelperTestSuite) mockPDHTTPServer(c *C) (url string) {
+func mockPDHTTPServer() *httptest.Server {
 	router := mux.NewRouter()
-	router.HandleFunc(pdapi.HotRead, s.mockHotRegionResponse)
-	router.HandleFunc(pdapi.Regions, s.mockTiKVRegionsInfoResponse)
-	router.HandleFunc(pdapi.Stores, s.mockStoreStatResponse)
+	router.HandleFunc(pdapi.HotRead, mockHotRegionResponse)
+	router.HandleFunc(pdapi.Regions, mockTiKVRegionsInfoResponse)
+	router.HandleFunc(pdapi.Stores, mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	server := httptest.NewServer(serverMux)
-	return server.URL
+	return httptest.NewServer(serverMux)
 }
 
-func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http.Request) {
+func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	regionsStat := helper.HotRegionsStat{
@@ -346,7 +361,7 @@ func getMockTiKVRegionsInfo() *helper.RegionsInfo {
 	}
 }
 
-func (s *HelperTestSuite) mockTiKVRegionsInfoResponse(w http.ResponseWriter, req *http.Request) {
+func mockTiKVRegionsInfoResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	resp := getMockTiKVRegionsInfo()
@@ -360,7 +375,7 @@ func (s *HelperTestSuite) mockTiKVRegionsInfoResponse(w http.ResponseWriter, req
 	}
 }
 
-func (s *HelperTestSuite) mockStoreStatResponse(w http.ResponseWriter, req *http.Request) {
+func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	startTs, err := time.Parse(time.RFC3339, "2019-04-23T19:30:30+08:00")

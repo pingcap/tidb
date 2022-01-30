@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,11 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -108,7 +109,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
-	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+	switch strings.ToUpper(p.Table.Name.O) {
+	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
@@ -118,6 +120,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
+	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
+		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil
 }
@@ -255,15 +259,15 @@ func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
-func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
-	if p == nil {
-		return predicates, p
+func (b *PBPlanBuilder) predicatePushDown(physicalPlan PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+	if physicalPlan == nil {
+		return predicates, physicalPlan
 	}
-	switch p.(type) {
+	switch plan := physicalPlan.(type) {
 	case *PhysicalMemTable:
-		memTable := p.(*PhysicalMemTable)
+		memTable := plan
 		if memTable.Extractor == nil {
-			return predicates, p
+			return predicates, plan
 		}
 		names := make([]*types.FieldName, 0, len(memTable.Columns))
 		for _, col := range memTable.Columns {
@@ -284,8 +288,8 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
-		selection := p.(*PhysicalSelection)
-		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
+		selection := plan
+		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {
 			selection.Conditions = conditions
 			selection.SetChildren(child)
@@ -293,10 +297,10 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		}
 		return predicates, child
 	default:
-		if children := p.Children(); len(children) > 0 {
+		if children := plan.Children(); len(children) > 0 {
 			_, child := b.predicatePushDown(children[0], nil)
-			p.SetChildren(child)
+			plan.SetChildren(child)
 		}
-		return predicates, p
+		return predicates, plan
 	}
 }

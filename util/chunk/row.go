@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package chunk
 import (
 	"strconv"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -217,35 +218,35 @@ func (r Row) ToString(ft []*types.FieldType) string {
 	var buf []byte
 	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
 		if r.IsNull(colIdx) {
-			buf = append(buf, "nil, "...)
-			continue
-		}
-		switch ft[colIdx].EvalType() {
-		case types.ETInt:
-			buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
-		case types.ETString:
-			switch ft[colIdx].Tp {
-			case mysql.TypeEnum:
-				buf = append(buf, r.GetEnum(colIdx).String()...)
-			case mysql.TypeSet:
-				buf = append(buf, r.GetSet(colIdx).String()...)
-			default:
-				buf = append(buf, r.GetString(colIdx)...)
-			}
-		case types.ETDatetime, types.ETTimestamp:
-			buf = append(buf, r.GetTime(colIdx).String()...)
-		case types.ETDecimal:
-			buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
-		case types.ETDuration:
-			buf = append(buf, r.GetDuration(colIdx, ft[colIdx].Decimal).String()...)
-		case types.ETJson:
-			buf = append(buf, r.GetJSON(colIdx).String()...)
-		case types.ETReal:
-			switch ft[colIdx].Tp {
-			case mysql.TypeFloat:
-				buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
-			case mysql.TypeDouble:
-				buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
+			buf = append(buf, "NULL"...)
+		} else {
+			switch ft[colIdx].EvalType() {
+			case types.ETInt:
+				buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
+			case types.ETString:
+				switch ft[colIdx].Tp {
+				case mysql.TypeEnum:
+					buf = append(buf, r.GetEnum(colIdx).String()...)
+				case mysql.TypeSet:
+					buf = append(buf, r.GetSet(colIdx).String()...)
+				default:
+					buf = append(buf, r.GetString(colIdx)...)
+				}
+			case types.ETDatetime, types.ETTimestamp:
+				buf = append(buf, r.GetTime(colIdx).String()...)
+			case types.ETDecimal:
+				buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
+			case types.ETDuration:
+				buf = append(buf, r.GetDuration(colIdx, ft[colIdx].Decimal).String()...)
+			case types.ETJson:
+				buf = append(buf, r.GetJSON(colIdx).String()...)
+			case types.ETReal:
+				switch ft[colIdx].Tp {
+				case mysql.TypeFloat:
+					buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
+				case mysql.TypeDouble:
+					buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
+				}
 			}
 		}
 		if colIdx != r.Chunk().NumCols()-1 {

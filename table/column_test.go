@@ -8,35 +8,31 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package table
 
 import (
+	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-func (t *testTableSuite) TestString(c *C) {
-	defer testleak.AfterTest(c)()
+func TestString(t *testing.T) {
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
@@ -47,96 +43,100 @@ func (t *testTableSuite) TestString(c *C) {
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
 
-	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2) unsigned zerofill")
+	require.Equal(t, "tinyint(2) unsigned zerofill", col.GetTypeDesc())
 	col.ToInfo()
 	tbInfo := &model.TableInfo{}
-	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, false)
+	require.False(t, col.IsPKHandleColumn(tbInfo))
 	tbInfo.PKIsHandle = true
 	col.Flag |= mysql.PriKeyFlag
-	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, true)
+	require.True(t, col.IsPKHandleColumn(tbInfo))
 
 	cs := col.String()
-	c.Assert(len(cs), Greater, 0)
+	require.Greater(t, len(cs), 0)
 
 	col.Tp = mysql.TypeEnum
 	col.Flag = 0
 	col.Elems = []string{"a", "b"}
 
-	c.Assert(col.GetTypeDesc(), Equals, "enum('a','b')")
+	require.Equal(t, "enum('a','b')", col.GetTypeDesc())
 
 	col.Elems = []string{"'a'", "b"}
-	c.Assert(col.GetTypeDesc(), Equals, "enum('''a''','b')")
+	require.Equal(t, "enum('''a''','b')", col.GetTypeDesc())
 
 	col.Tp = mysql.TypeFloat
 	col.Flen = 8
 	col.Decimal = -1
-	c.Assert(col.GetTypeDesc(), Equals, "float")
+	require.Equal(t, "float", col.GetTypeDesc())
 
 	col.Decimal = 1
-	c.Assert(col.GetTypeDesc(), Equals, "float(8,1)")
+	require.Equal(t, "float(8,1)", col.GetTypeDesc())
 
 	col.Tp = mysql.TypeDatetime
 	col.Decimal = 6
-	c.Assert(col.GetTypeDesc(), Equals, "datetime(6)")
+	require.Equal(t, "datetime(6)", col.GetTypeDesc())
 
 	col.Decimal = 0
-	c.Assert(col.GetTypeDesc(), Equals, "datetime")
+	require.Equal(t, "datetime", col.GetTypeDesc())
 
 	col.Decimal = -1
-	c.Assert(col.GetTypeDesc(), Equals, "datetime")
+	require.Equal(t, "datetime", col.GetTypeDesc())
 }
 
-func (t *testTableSuite) TestFind(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFind(t *testing.T) {
 	cols := []*Column{
 		newCol("a"),
 		newCol("b"),
 		newCol("c"),
 	}
-	FindCols(cols, []string{"a"}, true)
-	FindCols(cols, []string{"d"}, true)
+	c, s := FindCols(cols, []string{"a"}, true)
+	require.Equal(t, cols[:1], c)
+	require.Equal(t, "", s)
+
+	c1, s1 := FindCols(cols, []string{"d"}, true)
+	require.Nil(t, c1)
+	require.Equal(t, "d", s1)
+
 	cols[0].Flag |= mysql.OnUpdateNowFlag
-	FindOnUpdateCols(cols)
+	c2 := FindOnUpdateCols(cols)
+	require.Equal(t, cols[:1], c2)
 }
 
-func (t *testTableSuite) TestCheck(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCheck(t *testing.T) {
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Column{col, col}
 	err := CheckOnce(cols)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	cols = cols[:1]
 	err = CheckNotNull(cols, types.MakeDatums(nil))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols[0].Flag |= mysql.NotNullFlag
 	err = CheckNotNull(cols, types.MakeDatums(nil))
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	err = CheckOnce([]*Column{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (t *testTableSuite) TestHandleBadNull(c *C) {
+func TestHandleBadNull(t *testing.T) {
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
 	d := types.Datum{}
 	err := col.HandleBadNull(&d, sc)
-	c.Assert(err, IsNil)
-	cmp, err := d.CompareDatum(sc, &types.Datum{})
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err := d.Compare(sc, &types.Datum{}, collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 
 	col.Flag |= mysql.NotNullFlag
 	err = col.HandleBadNull(&types.Datum{}, sc)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	sc.BadNullAsWarning = true
 	err = col.HandleBadNull(&types.Datum{}, sc)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (t *testTableSuite) TestDesc(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDesc(t *testing.T) {
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
 	NewColDesc(col)
@@ -144,20 +144,20 @@ func (t *testTableSuite) TestDesc(c *C) {
 	NewColDesc(col)
 	col.Flag = mysql.UniqueKeyFlag | mysql.OnUpdateNowFlag
 	desc := NewColDesc(col)
-	c.Assert(desc.Extra, Equals, "DEFAULT_GENERATED on update CURRENT_TIMESTAMP")
+	require.Equal(t, "DEFAULT_GENERATED on update CURRENT_TIMESTAMP", desc.Extra)
 	col.Flag = 0
 	col.GeneratedExprString = "test"
 	col.GeneratedStored = true
 	desc = NewColDesc(col)
-	c.Assert(desc.Extra, Equals, "STORED GENERATED")
+	require.Equal(t, "STORED GENERATED", desc.Extra)
 	col.GeneratedStored = false
 	desc = NewColDesc(col)
-	c.Assert(desc.Extra, Equals, "VIRTUAL GENERATED")
+	require.Equal(t, "VIRTUAL GENERATED", desc.Extra)
 	ColDescFieldNames(false)
 	ColDescFieldNames(true)
 }
 
-func (t *testTableSuite) TestGetZeroValue(c *C) {
+func TestGetZeroValue(t *testing.T) {
 	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
@@ -246,16 +246,18 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
-		zv := GetZeroValue(colInfo)
-		c.Assert(zv.Kind(), Equals, tt.value.Kind())
-		cmp, err := zv.CompareDatum(sc, &tt.value)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
+		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
+			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
+			zv := GetZeroValue(colInfo)
+			require.Equal(t, tt.value.Kind(), zv.Kind())
+			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.Collate))
+			require.NoError(t, err)
+			require.Equal(t, 0, cmp)
+		})
 	}
 }
 
-func (t *testTableSuite) TestCastValue(c *C) {
+func TestCastValue(t *testing.T) {
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -263,47 +265,47 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	}
 	colInfo.Charset = mysql.UTF8Charset
 	val, err := CastValue(ctx, types.Datum{}, &colInfo, false, false)
-	c.Assert(err, Equals, nil)
-	c.Assert(val.GetInt64(), Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), val.GetInt64())
 
 	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo, false, false)
-	c.Assert(err, Not(Equals), nil)
-	c.Assert(val.GetInt64(), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), val.GetInt64())
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,
 	}
 	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS, false, false)
-	c.Assert(err, IsNil)
-	c.Assert(val, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, val)
 
 	colInfoS.Charset = mysql.UTF8Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, false)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	colInfoS.Charset = mysql.UTF8Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	colInfoS.Charset = mysql.UTF8MB4Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, false)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	colInfoS.Charset = mysql.UTF8MB4Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	colInfoS.Charset = charset.CharsetASCII
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, false)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	colInfoS.Charset = charset.CharsetASCII
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (t *testTableSuite) TestGetDefaultValue(c *C) {
+func TestGetDefaultValue(t *testing.T) {
 	var nilDt types.Datum
 	nilDt.SetNull()
 	ctx := mock.NewContext()
@@ -450,13 +452,13 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
-			c.Assert(tt.err, NotNil, Commentf("%v", err))
+			require.Errorf(t, tt.err, "%v", err)
 			continue
 		}
 		if tt.colInfo.DefaultIsExpr {
-			c.Assert(val, DeepEquals, types.NewIntDatum(1))
+			require.Equal(t, types.NewIntDatum(1), val)
 		} else {
-			c.Assert(val, DeepEquals, tt.val)
+			require.Equal(t, tt.val, val)
 		}
 	}
 
@@ -464,11 +466,11 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
-			c.Assert(tt.err, NotNil, Commentf("%v", err))
+			require.Errorf(t, tt.err, "%v", err)
 			continue
 		}
 		if !tt.colInfo.DefaultIsExpr {
-			c.Assert(val, DeepEquals, tt.val)
+			require.Equal(t, tt.val, val)
 		}
 	}
 }

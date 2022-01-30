@@ -8,29 +8,24 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package fastrand
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRandSuite{})
-
-type testRandSuite struct {
-}
-
-func (s *testRandSuite) TestRand(c *C) {
+func TestRand(t *testing.T) {
 	x := Uint32N(1024)
-	c.Assert(x < 1024, IsTrue)
+	require.Less(t, x, uint32(1024))
 	y := Uint64N(1 << 63)
-	c.Assert(y < 1<<63, IsTrue)
+	require.Less(t, y, uint64(1<<63))
 
 	_ = Buf(20)
 	var arr [256]bool
@@ -44,8 +39,7 @@ func (s *testRandSuite) TestRand(c *C) {
 			sum++
 		}
 	}
-	fmt.Println(sum)
-	c.Assert(sum < 24, IsTrue)
+	require.Less(t, sum, 24)
 }
 
 func BenchmarkFastRand(b *testing.B) {

@@ -1,0 +1,16 @@
+[lightning]
+table-concurrency = 1
+region-concurrency = 1
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test"
+driver = "mysql"
+keep-after-success = true
+
+[mydumper]
+read-block-size = 1
+
+[tikv-importer]
+max-kv-pairs = 0
+

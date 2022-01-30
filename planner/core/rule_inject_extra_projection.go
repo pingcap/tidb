@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -62,8 +64,41 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
+	case *PhysicalUnionAll:
+		plan = injectProjBelowUnion(p)
 	}
 	return plan
+}
+
+func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
+	if !un.mpp {
+		return un
+	}
+	for i, ch := range un.children {
+		exprs := make([]expression.Expression, len(ch.Schema().Columns))
+		needChange := false
+		for i, dstCol := range un.schema.Columns {
+			dstType := dstCol.RetType
+			srcCol := ch.Schema().Columns[i]
+			srcCol.Index = i
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
+				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
+				needChange = true
+			} else {
+				exprs[i] = srcCol
+			}
+		}
+		if needChange {
+			proj := PhysicalProjection{
+				Exprs: exprs,
+			}.Init(un.ctx, ch.statsInfo(), 0)
+			proj.SetSchema(un.schema.Clone())
+			proj.SetChildren(ch)
+			un.children[i] = proj
+		}
+	}
+	return un
 }
 
 // wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
@@ -71,7 +106,6 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 // since the types of the args are already the expected.
 func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
 	for i := range aggFuncs {
-		aggFuncs[i].WrapCastAsDecimalForAggArgs(sctx)
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			aggFuncs[i].WrapCastForAggArgs(sctx)
 		}

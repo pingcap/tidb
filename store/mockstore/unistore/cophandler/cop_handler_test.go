@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,42 +17,30 @@ package cophandler
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
-	"github.com/ngaut/unistore/tikv/mvcc"
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testSuite struct{}
-
-func (ts testSuite) SetUpSuite(c *C) {}
-
-func (ts testSuite) TearDownSuite(c *C) {}
-
-var _ = Suite(testSuite{})
 
 const (
 	keyNumber         = 3
@@ -104,7 +93,7 @@ func makeATestMutaion(op kvrpcpb.Op, key []byte, value []byte) *kvrpcpb.Mutation
 	}
 }
 
-func prepareTestTableData(c *C, keyNumber int, tableID int64) *data {
+func prepareTestTableData(t *testing.T, keyNumber int, tableID int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldType{
@@ -128,7 +117,7 @@ func prepareTestTableData(c *C, keyNumber int, tableID int64) *data {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, encoder)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
 		encodedTestKVDatas[i] = &encodedTestKVData{encodedRowKey: rowKeyEncodedData, encodedRowValue: rowEncodedData}
 	}
@@ -161,7 +150,7 @@ func convertToPrefixNext(key []byte) []byte {
 		if key[i] == 255 {
 			key[i] = 0
 		} else {
-			key[i] += 1
+			key[i]++
 			return key
 		}
 	}
@@ -289,30 +278,30 @@ func (dagBuilder *dagBuilder) build() *tipb.DAGRequest {
 }
 
 // see tikv/src/coprocessor/util.rs for more detail
-func (ts testSuite) TestIsPrefixNext(c *C) {
-	c.Assert(isPrefixNext([]byte{}, []byte{0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0}, []byte{1}), IsTrue)
-	c.Assert(isPrefixNext([]byte{1}, []byte{2}), IsTrue)
-	c.Assert(isPrefixNext([]byte{255}, []byte{255, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{255, 255, 255}, []byte{255, 255, 255, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{1, 255}, []byte{2, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0, 1, 255}, []byte{0, 2, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0, 1, 255, 5}, []byte{0, 1, 255, 6}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0, 1, 5, 255}, []byte{0, 1, 6, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0, 1, 255, 255}, []byte{0, 2, 0, 0}), IsTrue)
-	c.Assert(isPrefixNext([]byte{0, 255, 255, 255}, []byte{1, 0, 0, 0}), IsTrue)
+func TestIsPrefixNext(t *testing.T) {
+	require.True(t, isPrefixNext([]byte{}, []byte{0}))
+	require.True(t, isPrefixNext([]byte{0}, []byte{1}))
+	require.True(t, isPrefixNext([]byte{1}, []byte{2}))
+	require.True(t, isPrefixNext([]byte{255}, []byte{255, 0}))
+	require.True(t, isPrefixNext([]byte{255, 255, 255}, []byte{255, 255, 255, 0}))
+	require.True(t, isPrefixNext([]byte{1, 255}, []byte{2, 0}))
+	require.True(t, isPrefixNext([]byte{0, 1, 255}, []byte{0, 2, 0}))
+	require.True(t, isPrefixNext([]byte{0, 1, 255, 5}, []byte{0, 1, 255, 6}))
+	require.True(t, isPrefixNext([]byte{0, 1, 5, 255}, []byte{0, 1, 6, 0}))
+	require.True(t, isPrefixNext([]byte{0, 1, 255, 255}, []byte{0, 2, 0, 0}))
+	require.True(t, isPrefixNext([]byte{0, 255, 255, 255}, []byte{1, 0, 0, 0}))
 }
 
-func (ts testSuite) TestPointGet(c *C) {
+func TestPointGet(t *testing.T) {
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
-	data := prepareTestTableData(c, keyNumber, tableID)
-	store, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
-	defer cleanTestStore(store)
-	c.Assert(err, IsNil)
-	errors := initTestData(store, data.encodedTestKVDatas)
-	c.Assert(errors, IsNil)
+	data := prepareTestTableData(t, keyNumber, tableID)
+	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
+	defer clean()
+
+	errs := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errs)
 
 	// point get should return nothing when handle is math.MinInt64
 	handle := int64(math.MinInt64)
@@ -324,9 +313,9 @@ func (ts testSuite) TestPointGet(c *C) {
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
-	c.Assert(len(chunks), Equals, 0)
-	c.Assert(err, IsNil)
-	c.Assert(rowCount, Equals, 0)
+	require.Len(t, chunks, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, rowCount)
 
 	// point get should return one row when handle = 0
 	handle = 0
@@ -338,30 +327,30 @@ func (ts testSuite) TestPointGet(c *C) {
 	dagCtx = newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err = buildExecutorsAndExecute(dagRequest, dagCtx)
-	c.Assert(err, IsNil)
-	c.Assert(rowCount, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, rowCount)
 	returnedRow, err := codec.Decode(chunks[0].RowsData, 2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// returned row should has 2 cols
-	c.Assert(len(returnedRow), Equals, 2)
+	require.Len(t, returnedRow, 2)
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
-	c.Assert(err, IsNil)
-	c.Assert(eq, Equals, 0)
-	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
-	c.Assert(err, IsNil)
-	c.Assert(eq, Equals, 0)
+	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, eq)
+	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, eq)
 }
 
-func (ts testSuite) TestClosureExecutor(c *C) {
-	data := prepareTestTableData(c, keyNumber, tableID)
-	store, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
-	defer cleanTestStore(store)
-	c.Assert(err, IsNil)
-	errors := initTestData(store, data.encodedTestKVDatas)
-	c.Assert(errors, IsNil)
+func TestClosureExecutor(t *testing.T) {
+	data := prepareTestTableData(t, keyNumber, tableID)
+	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
+	defer clean()
+
+	errs := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errs)
 
 	dagRequest := newDagBuilder().
 		setStartTs(dagRequestStartTs).
@@ -374,8 +363,8 @@ func (ts testSuite) TestClosureExecutor(c *C) {
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
 	_, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
-	c.Assert(err, IsNil)
-	c.Assert(rowCount, Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, rowCount)
 }
 
 func buildEQIntExpr(colID, val int64) *tipb.Expr {
@@ -407,8 +396,8 @@ type testStore struct {
 
 func (ts *testStore) prewrite(req *kvrpcpb.PrewriteRequest) {
 	for _, m := range req.Mutations {
-		lock := &mvcc.MvccLock{
-			MvccLockHdr: mvcc.MvccLockHdr{
+		lock := &mvcc.Lock{
+			LockHdr: mvcc.LockHdr{
 				StartTS:     req.StartVersion,
 				ForUpdateTS: req.ForUpdateTs,
 				TTL:         uint32(req.LockTtl),
@@ -442,33 +431,35 @@ func (ts *testStore) commit(keys [][]byte, startTS, commitTS uint64) error {
 	})
 }
 
-func newTestStore(dbPrefix string, logPrefix string) (*testStore, error) {
-	dbPath, err := ioutil.TempDir("", dbPrefix)
-	if err != nil {
-		return nil, err
-	}
-	LogPath, err := ioutil.TempDir("", logPrefix)
-	if err != nil {
-		return nil, err
-	}
+func newTestStore(t *testing.T, dbPrefix string, logPrefix string) (*testStore, func()) {
+	dbPath, err := os.MkdirTemp("", dbPrefix)
+	require.NoError(t, err)
+	LogPath, err := os.MkdirTemp("", logPrefix)
+	require.NoError(t, err)
 	db, err := createTestDB(dbPath, LogPath)
-	if err != nil {
-		return nil, err
-	}
+	require.NoError(t, err)
 	// Some raft store path problems could not be found using simple store in tests
 	// writer := NewDBWriter(dbBundle, safePoint)
 	kvPath := filepath.Join(dbPath, "kv")
 	raftPath := filepath.Join(dbPath, "raft")
 	snapPath := filepath.Join(dbPath, "snap")
-	os.MkdirAll(kvPath, os.ModePerm)
-	os.MkdirAll(raftPath, os.ModePerm)
-	os.Mkdir(snapPath, os.ModePerm)
+	err = os.MkdirAll(kvPath, os.ModePerm)
+	require.NoError(t, err)
+	err = os.MkdirAll(raftPath, os.ModePerm)
+	require.NoError(t, err)
+	err = os.Mkdir(snapPath, os.ModePerm)
+	require.NoError(t, err)
+
+	clean := func() {
+		require.NoError(t, db.Close())
+	}
+
 	return &testStore{
 		db:      db,
 		locks:   lockstore.NewMemStore(4096),
 		dbPath:  dbPath,
 		logPath: LogPath,
-	}, nil
+	}, clean
 }
 
 func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
@@ -478,9 +469,4 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 	opts.ValueDir = LogPath + subPath
 	opts.ManagedTxns = true
 	return badger.Open(opts)
-}
-
-func cleanTestStore(store *testStore) {
-	os.RemoveAll(store.dbPath)
-	os.RemoveAll(store.logPath)
 }

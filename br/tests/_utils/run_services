@@ -1,0 +1,268 @@
+#!/bin/sh
+#
+# Copyright 2019 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eu
+
+export PD_PEER_ADDR="127.0.0.1:2380"
+export PD_ADDR="127.0.0.1:2379"
+export TIDB_IP="127.0.0.1"
+export TIDB_PORT="4000"
+export TIDB_ADDR="127.0.0.1:4000"
+export TIDB_STATUS_ADDR="127.0.0.1:10080"
+# actual tikv_addr are TIKV_ADDR${i}
+export TIKV_ADDR="127.0.0.1:2016"
+export TIKV_STATUS_ADDR="127.0.0.1:2018"
+export TIKV_COUNT=3
+export TIFLASH_STATUS="127.0.0.1:17000"
+export TIFLASH_HTTP="127.0.0.1:8125"
+export IMPORTER_ADDR="127.0.0.1:8808"
+export TIKV_PIDS="${TEST_DIR:?}/tikv_pids.txt"
+
+cleanup_data() {
+    # Clean up data
+    for svc in "br" "tidb" "tiflash" "tikv" "pd" "importer"; do
+        find "$TEST_DIR" -maxdepth 1 -name "${svc}*" -type d -exec echo delete {} \; -exec rm -rf {} \; 2> /dev/null
+    done
+}
+
+stop() {
+    svc=$1
+    killall -v -1 "$svc" 2>/dev/null || return 0
+    sleep 1 # give some grace shutdown period
+    killall -v -9 "$svc" &>/dev/null || return 0
+}
+
+stop_services() {
+    for svc in "br" "tidb-server" "tiflash" "TiFlashMain" "tikv-server" "pd-server" "cdc" "minio" "tikv-importer"; do
+        stop $svc &
+    done
+    sleep 2 # give some time for the OS to reap all processes
+    lsof -n -P -i :2379 -i :4000 -i :10080 -i :20161 -i :20162 -i :20163 -i :20181 -i :20182 -i :20183 -i :17000 -i :8125 || true
+}
+
+start_services() {
+    max_retry=3
+    for retry_time in $(seq 1 $max_retry); do
+        # run it in a subshell so the failure won't stop execution.
+        if ( start_services_impl "$@" ); then
+            return 0
+        fi
+        stop_services
+        echo "Failed to start services, but let's retry it after $(( $retry_time * 30 )) seconds"
+        sleep $(( $retry_time * 30 ))
+    done
+    echo "Failed to start services after retry $max_retry times."
+    return 1
+}
+
+start_pd() {
+    echo "Starting PD..."
+    mkdir -p "$TEST_DIR/pd"
+    bin/pd-server \
+        --client-urls "https://$PD_ADDR" \
+        --peer-urls "https://$PD_PEER_ADDR" \
+        --log-file "$TEST_DIR/pd.log" \
+        --data-dir "$TEST_DIR/pd" \
+        --config $PD_CONFIG &
+    # wait until PD is online...
+    i=0
+    while ! run_curl "https://$PD_ADDR/pd/api/v1/version"; do
+       i=$((i+1))
+       if [ "$i" -gt 20 ]; then
+          echo 'Failed to start PD'
+          return 1
+       fi
+       sleep 3
+    done
+}
+
+kv_outage() {
+    dur=""
+    id=()
+    scale_in=false
+    scale_out=false
+    until [ $# -eq 0 ]; do
+        case $1 in
+            --duration | -d) shift; dur=$1 ;;
+            --id | -i) shift; id+=("$1") ;;
+            --scale-out) scale_out=true ;;
+            --kill) scale_in=true ;;
+        esac
+        shift
+    done
+
+    $scale_out || { 
+        for i in "${id[@]}"; do
+            target=$(cat "${TIKV_PIDS}_$i" | awk '{print $1}')
+            echo "killing TiKV $target(#$i)"
+            kill "$target" || true
+            sleep 1
+            kill -9 "$target" || true
+        done 
+    }
+    $scale_in || $scale_out || sleep "$dur"
+    $scale_in || {
+        for i in "${id[@]}"; do
+            if [ -e "${TIKV_PIDS}_$i" ]; then
+                TIKV_CONFIG=$(cat "${TIKV_PIDS}_$i" | awk '{print $2}')
+            else
+                TIKV_CONFIG=${TIKV_CONFIG:-"tests/config/tikv.toml"}
+            fi
+            start_tikv "$i"
+        done
+        # let tikv start up completely if backup is finished before tikv restarts
+        ensure_tikv
+        # sometimes even though a tikv node is stopped, pd also show is_intialized in ensure_tikv
+        sleep 1
+    }
+}
+
+start_tikv() {
+    i=$1
+    echo "Starting TiKV($i)..."
+    mkdir -p "$TEST_DIR/tikv${i}"
+    bin/tikv-server \
+        --pd "$PD_ADDR" \
+        -A "$TIKV_ADDR$i" \
+        --status-addr "$TIKV_STATUS_ADDR$i" \
+        --log-file "$TEST_DIR/tikv${i}.log" \
+        --log-level info \
+        -C "$TIKV_CONFIG" \
+        -s "$TEST_DIR/tikv${i}" &
+    pid=$!
+    echo -e "$pid\t$TIKV_CONFIG" > "${TIKV_PIDS}_${i}"
+}
+
+ensure_tikv() {
+    echo "Waiting initializing TiKV..."
+    while ! run_curl "https://$PD_ADDR/pd/api/v1/cluster/status" | grep '"is_initialized": true'; do
+       i=$((i+1))
+       if [ "$i" -gt 20 ]; then
+          echo 'Failed to initialize TiKV cluster'
+          return 1
+       fi
+       sleep 5
+    done
+}
+
+start_tidb() {
+    echo "Starting TiDB..."
+    bin/tidb-server \
+        -P 4000 \
+        --status 10080 \
+        --advertise-address="127.0.0.1" \
+        --store tikv \
+        --path "$PD_ADDR" \
+        --config "$TIDB_CONFIG" \
+        --log-file "$TEST_DIR/tidb.log" &
+
+    echo "Verifying TiDB is started..."
+    i=0
+    while ! run_curl "https://$TIDB_IP:10080/status"; do
+        i=$((i+1))
+        if [ "$i" -gt 50 ]; then
+            echo 'Failed to start TiDB'
+            return 1
+        fi
+        sleep 3
+    done
+}
+
+start_importer() {
+    echo "Starting Importer..."
+    bin/tikv-importer \
+        --addr "$IMPORTER_ADDR" \
+        --import-dir "$TEST_DIR/importer" \
+        --log-file "$TEST_DIR/importer.log" \
+        --config "tests/config/importer.toml" &
+}
+
+
+start_services_impl() {
+    stop_services || true
+    cleanup_data || true
+
+    TIDB_CONFIG="tests/config/tidb.toml"
+    TIKV_CONFIG="tests/config/tikv.toml"
+    PD_CONFIG="tests/config/pd.toml"
+    RUN_TIFLASH=true
+
+    while [[ $# -gt 0 ]]
+    do
+        local key="$1"
+
+        case $key in
+            --tidb-cfg)
+            TIDB_CONFIG="$2"
+            shift # past argument
+            shift # past value
+            ;;
+            --no-tiflash)
+            RUN_TIFLASH=false
+            shift # past argument
+            ;;
+            *)    # unknown option
+            echo "Unknown args $1"
+            exit 1
+            ;;
+        esac
+    done
+
+    rm -f "${TIKV_PIDS}*"
+
+    start_pd
+    # When using TDE, we add the master key to a file, and this master key is used to encrypt data key
+    echo -e "3b5896b5be691006e0f71c3040a29495ddcad20b14aff61806940ebd780d3c62" > "$TEST_DIR/master-key-file"
+    for i in $(seq $TIKV_COUNT); do
+        start_tikv "$i"
+    done
+    ensure_tikv
+    start_tidb
+    start_importer
+
+    if $RUN_TIFLASH; then
+        start_tiflash
+    fi
+
+    i=0
+    while ! run_curl "https://$PD_ADDR/pd/api/v1/cluster/status" | grep -q "\"is_initialized\": true"; do
+        i=$((i+1))
+        if [ "$i" -gt 20 ]; then
+            echo 'Failed to bootstrap cluster'
+            return 1
+        fi
+        sleep 3
+    done
+}
+
+start_tiflash() {
+    echo "Starting TiFlash..."
+    tests/_utils/make_tiflash_config
+    LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
+
+    i=0
+    while ! run_curl https://$TIFLASH_HTTP 1>/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -gt 20 ]; then
+            echo "failed to start tiflash"
+            return 1
+        fi
+        echo "TiFlash seems doesn't started, retrying..."
+        sleep 3
+    done
+
+    echo "TiFlash started."
+}

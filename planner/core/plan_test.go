@@ -6,8 +6,9 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by aprettyPrintlicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,9 +20,10 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
@@ -171,12 +173,12 @@ func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
-			output[i].Digest = digest
+			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
-		c.Assert(digest != lastDigest, IsTrue)
-		lastDigest = digest
+		c.Assert(digest.String() != lastDigest, IsTrue)
+		lastDigest = digest.String()
 	}
 }
 
@@ -209,6 +211,20 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	tk.MustExec("insert into t1 values (1,1,1);")
 	planTree = getPlanTree()
 	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 1) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "1->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 2) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "2->Column#1"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
@@ -404,10 +420,10 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
-		c.Assert(digest1, Equals, digest2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, comment)
-		c.Assert(digest1 != digest2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 
@@ -431,6 +447,36 @@ func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
 
 	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
 		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+}
+
+func (s *testPlanNormalize) TestExplainFormatHintRecoverableForTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	// Create virtual `tiflash` replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := tk.MustQuery("explain select * from t").Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
+
+	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
+	c.Assert(rows[0][0], Equals, "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
+
+	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
+	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 }
 
 func (s *testPlanNormalize) TestNthPlanHint(c *C) {
@@ -544,4 +590,52 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	for i := 0; i < c.N; i++ {
 		core.EncodePlan(p)
 	}
+}
+
+// Close issue 25729
+func (s *testPlanNormalize) TestIssue25729(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	// Case1
+	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
+			"Projection 0.10 root  test.tt.a, test.tt.b",
+			"└─IndexLookUp 0.10 root  ",
+			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
+	}
+
+	tk.MustExec("insert into tt values(4, 3);")
+	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
+
+	// Case2
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `a` varchar(10) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  KEY `expression_index` ((concat(`a`, `b`)))," +
+		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
+		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
+		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
+		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
+		");")
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader 0.10 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+
+		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
+			"Projection 33.33 root  test.t1.b",
+			"└─IndexReader 33.33 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
+	}
+	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
+	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
 }

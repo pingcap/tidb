@@ -8,148 +8,167 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
-	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-var _ = SerialSuites(&testConfigSuite{})
+func TestAtomicBoolUnmarshal(t *testing.T) {
+	type data struct {
+		Ab AtomicBool `toml:"ab"`
+	}
+	var d data
+	var firstBuffer bytes.Buffer
+	_, err := toml.Decode("ab=true", &d)
+	require.NoError(t, err)
+	require.True(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"true\"\n", firstBuffer.String())
+	firstBuffer.Reset()
 
-type testConfigSuite struct{}
+	_, err = toml.Decode("ab=false", &d)
+	require.NoError(t, err)
+	require.False(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+	_, err = toml.Decode("ab = 1", &d)
+	require.EqualError(t, err, "Invalid value for bool type: 1")
 }
 
-func (s *testConfigSuite) TestNullableBoolUnmarshal(c *C) {
+func TestNullableBoolUnmarshal(t *testing.T) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
-	c.Assert(err, IsNil)
-	c.Assert(nb, Equals, nbUnset)
+	require.NoError(t, err)
+	require.Equal(t, nbUnset, nb)
 
 	nb = nullableBool{true, false}
 	data, err = json.Marshal(nb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
-	c.Assert(err, IsNil)
-	c.Assert(nb, Equals, nbFalse)
+	require.NoError(t, err)
+	require.Equal(t, nbFalse, nb)
 
 	nb = nullableBool{true, true}
 	data, err = json.Marshal(nb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
-	c.Assert(err, IsNil)
-	c.Assert(nb, Equals, nbTrue)
+	require.NoError(t, err)
+	require.Equal(t, nbTrue, nb)
 
 	// Test for UnmarshalText
 	var log Log
 	_, err = toml.Decode("enable-error-stack = true", &log)
-	c.Assert(err, IsNil)
-	c.Assert(log.EnableErrorStack, Equals, nbTrue)
+	require.NoError(t, err)
+	require.Equal(t, nbTrue, log.EnableErrorStack)
 
 	_, err = toml.Decode("enable-error-stack = \"\"", &log)
-	c.Assert(err, IsNil)
-	c.Assert(log.EnableErrorStack, Equals, nbUnset)
+	require.NoError(t, err)
+	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	_, err = toml.Decode("enable-error-stack = 1", &log)
-	c.Assert(err, ErrorMatches, "Invalid value for bool type: 1")
-	c.Assert(log.EnableErrorStack, Equals, nbUnset)
+	require.EqualError(t, err, "Invalid value for bool type: 1")
+	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	// Test for UnmarshalJSON
 	err = json.Unmarshal([]byte("{\"enable-timestamp\":false}"), &log)
-	c.Assert(err, IsNil)
-	c.Assert(log.EnableTimestamp, Equals, nbFalse)
+	require.NoError(t, err)
+	require.Equal(t, nbFalse, log.EnableTimestamp)
 
 	err = json.Unmarshal([]byte("{\"disable-timestamp\":null}"), &log)
-	c.Assert(err, IsNil)
-	c.Assert(log.DisableTimestamp, Equals, nbUnset)
+	require.NoError(t, err)
+	require.Equal(t, nbUnset, log.DisableTimestamp)
 }
 
-func (s *testConfigSuite) TestLogConfig(c *C) {
+func TestLogConfig(t *testing.T) {
 	var conf Config
 	configFile := "log_config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
-		c.Assert(f.Close(), IsNil)
-		c.Assert(os.Remove(configFile), IsNil)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(configFile))
 	}()
 
-	var testLoad = func(confStr string, expectedEnableErrorStack, expectedDisableErrorStack, expectedEnableTimestamp, expectedDisableTimestamp nullableBool, resultedDisableTimestamp, resultedDisableErrorVerbose bool, valid Checker) {
+	var testLoad = func(confStr string, expectedEnableErrorStack, expectedDisableErrorStack, expectedEnableTimestamp, expectedDisableTimestamp nullableBool, resultedDisableTimestamp, resultedDisableErrorVerbose bool) {
 		conf = defaultConf
 		_, err = f.WriteString(confStr)
-		c.Assert(err, IsNil)
-		c.Assert(conf.Load(configFile), IsNil)
-		c.Assert(conf.Valid(), valid)
-		c.Assert(conf.Log.EnableErrorStack, Equals, expectedEnableErrorStack)
-		c.Assert(conf.Log.DisableErrorStack, Equals, expectedDisableErrorStack)
-		c.Assert(conf.Log.EnableTimestamp, Equals, expectedEnableTimestamp)
-		c.Assert(conf.Log.DisableTimestamp, Equals, expectedDisableTimestamp)
-		c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }))
+		require.NoError(t, err)
+		require.NoError(t, conf.Load(configFile))
+		require.NoError(t, conf.Valid())
+		require.Equal(t, expectedEnableErrorStack, conf.Log.EnableErrorStack)
+		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
+		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
+		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	testLoad(`
 [Log]
-`, nbUnset, nbUnset, nbUnset, nbUnset, false, true, IsNil)
+`, nbUnset, nbUnset, nbUnset, nbUnset, false, true)
 
 	testLoad(`
 [Log]
 enable-timestamp = false
-`, nbUnset, nbUnset, nbFalse, nbUnset, true, true, IsNil)
+`, nbUnset, nbUnset, nbFalse, nbUnset, true, true)
 
 	testLoad(`
 [Log]
 enable-timestamp = true
 disable-timestamp = false
-`, nbUnset, nbUnset, nbTrue, nbFalse, false, true, IsNil)
+`, nbUnset, nbUnset, nbTrue, nbFalse, false, true)
 
 	testLoad(`
 [Log]
 enable-timestamp = false
 disable-timestamp = true
-`, nbUnset, nbUnset, nbFalse, nbTrue, true, true, IsNil)
+`, nbUnset, nbUnset, nbFalse, nbTrue, true, true)
 
 	testLoad(`
 [Log]
 enable-timestamp = true
 disable-timestamp = true
-`, nbUnset, nbUnset, nbTrue, nbUnset, false, true, IsNil)
+`, nbUnset, nbUnset, nbTrue, nbUnset, false, true)
 
 	testLoad(`
 [Log]
 enable-error-stack = false
 disable-error-stack = false
-`, nbFalse, nbUnset, nbUnset, nbUnset, false, true, IsNil)
+`, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 
 }
 
-func (s *testConfigSuite) TestConfig(c *C) {
+func TestConfig(t *testing.T) {
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
@@ -158,28 +177,35 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
-	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
+	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// Make sure the server refuses to start if there's an unrecognized configuration option
 	_, err = f.WriteString(`
 unrecognized-option-test = true
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
 
-	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*invalid configuration option(?:.|\n)*")
-	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	match, err := regexp.Match("(?:.|\n)*invalid configuration option(?:.|\n)*", []byte(err.Error()))
+	require.NoError(t, err)
+	require.True(t, match)
+	require.Equal(t, uint32(0), conf.MaxServerConnections)
 
 	err = f.Truncate(0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = f.Seek(0, 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = f.WriteString(`
 token-limit = 0
@@ -209,6 +235,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -229,115 +256,142 @@ group= "abc"
 zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
+[status]
+grpc-keepalive-time = 20
+grpc-keepalive-timeout = 10
+grpc-concurrent-streams = 2048
+grpc-initial-window-size = 10240
+grpc-max-send-msg-size = 40960
 `)
 
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
 
-	c.Assert(conf.Load(configFile), IsNil)
+	require.NoError(t, conf.Load(configFile))
 
-	c.Assert(conf.ServerVersion, Equals, "test_version")
-	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
-	c.Assert(conf.Binlog.Enable, Equals, true)
-	c.Assert(conf.Binlog.Strategy, Equals, "hash")
+	require.True(t, conf.Binlog.Enable)
+	require.Equal(t, "hash", conf.Binlog.Strategy)
 
 	// Test that the value will be overwritten by the config file.
-	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
-	c.Assert(conf.AlterPrimaryKey, Equals, true)
-	c.Assert(conf.Performance.TCPNoDelay, Equals, false)
+	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
+	require.True(t, conf.AlterPrimaryKey)
+	require.False(t, conf.Performance.TCPNoDelay)
 
-	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
-	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
-	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
-	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
-	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
-	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
-	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
-	c.Assert(conf.TokenLimit, Equals, uint(1000))
-	c.Assert(conf.EnableTableLock, IsTrue)
-	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
-	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
-	c.Assert(conf.StmtSummary.Enable, Equals, false)
-	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
-	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
-	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
-	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
-	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
-	c.Assert(conf.EnableBatchDML, Equals, true)
-	c.Assert(conf.RepairMode, Equals, true)
-	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
-	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
-	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
-	c.Assert(conf.MaxIndexLength, Equals, 3080)
-	c.Assert(conf.IndexLimit, Equals, 70)
-	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
-	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
-	c.Assert(len(conf.Labels), Equals, 3)
-	c.Assert(conf.Labels["foo"], Equals, "bar")
-	c.Assert(conf.Labels["group"], Equals, "abc")
-	c.Assert(conf.Labels["zone"], Equals, "dc-1")
-	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
-	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
-	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
-	c.Assert(conf.EnableForwarding, Equals, true)
-	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+	require.Equal(t, "41s", conf.TiKVClient.CommitTimeout)
+	require.Equal(t, uint(123), conf.TiKVClient.AsyncCommit.KeysLimit)
+	require.Equal(t, uint64(1024), conf.TiKVClient.AsyncCommit.TotalKeySizeLimit)
+	require.Equal(t, uint(128), conf.TiKVClient.MaxBatchSize)
+	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
+	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
+	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, uint(1000), conf.TokenLimit)
+	require.True(t, conf.EnableTableLock)
+	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
+	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
+	require.False(t, conf.StmtSummary.Enable)
+	require.True(t, conf.StmtSummary.EnableInternalQuery)
+	require.Equal(t, uint(1000), conf.StmtSummary.MaxStmtCount)
+	require.Equal(t, uint(1024), conf.StmtSummary.MaxSQLLength)
+	require.Equal(t, 100, conf.StmtSummary.RefreshInterval)
+	require.Equal(t, 100, conf.StmtSummary.HistorySize)
+	require.True(t, conf.EnableBatchDML)
+	require.True(t, conf.RepairMode)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, uint32(200), conf.MaxServerConnections)
+	require.Equal(t, int64(10000), conf.MemQuotaQuery)
+	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
+	require.Equal(t, 3080, conf.MaxIndexLength)
+	require.Equal(t, 70, conf.IndexLimit)
+	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.True(t, conf.SkipRegisterToDashboard)
+	require.Equal(t, 3, len(conf.Labels))
+	require.Equal(t, "bar", conf.Labels["foo"])
+	require.Equal(t, "abc", conf.Labels["group"])
+	require.Equal(t, "dc-1", conf.Labels["zone"])
+	require.Equal(t, SpilledFileEncryptionMethodPlaintext, conf.Security.SpilledFileEncryptionMethod)
+	require.True(t, conf.DeprecateIntegerDisplayWidth)
+	require.False(t, conf.EnableEnumLengthLimit)
+	require.True(t, conf.EnableForwarding)
+	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
+	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
+	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.False(t, conf.Experimental.EnableNewCharset)
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
 	_, err = f.WriteString(`
 [log.file]
-log-rotate = true`)
-	c.Assert(err, IsNil)
+log-rotate = true
+[performance]
+mem-profile-interval="1m"`)
+	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
-	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
+	require.True(t, isAllDeprecatedConfigItems(tmp.UndecodedItems))
 
 	// Test telemetry config default value and whether it will be overwritten.
 	conf = NewConfig()
 	err = f.Truncate(0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = f.Seek(0, 0)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.EnableTelemetry, Equals, true)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.EnableTelemetry, Equals, true)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-telemetry = false
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.EnableTelemetry, Equals, false)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]
 spilled-file-encryption-method = "aes128-ctr"
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
-	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodAES128CTR)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, SpilledFileEncryptionMethodAES128CTR, conf.Security.SpilledFileEncryptionMethod)
 
-	c.Assert(f.Close(), IsNil)
-	c.Assert(os.Remove(configFile), IsNil)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
 
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
-	c.Assert(conf.Load(configFile), IsNil)
+	require.NoError(t, conf.Load(configFile))
 
-	// Make sure the example config is the same as default config.
-	c.Assert(conf, DeepEquals, GetGlobalConfig())
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
+	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }))
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -345,13 +399,13 @@ spilled-file-encryption-method = "aes128-ctr"
 		Reporter: &tracing.ReporterConfig{},
 		Sampler:  &tracing.SamplerConfig{Type: "const", Param: 1.0},
 	}
-	c.Assert(tracingConf, DeepEquals, conf.OpenTracing.ToTracingConfig())
+	require.Equal(t, conf.OpenTracing.ToTracingConfig(), tracingConf)
 
 	// Test for TLS config.
 	certFile := "cert.pem"
 	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
 MIIC+jCCAeKgAwIBAgIRALsvlisKJzXtiwKcv7toreswDQYJKoZIhvcNAQELBQAw
 EjEQMA4GA1UEChMHQWNtZSBDbzAeFw0xOTAzMTMwNzExNDhaFw0yMDAzMTIwNzEx
@@ -371,13 +425,13 @@ BvUPi88z3wGa8rmhn9dOvkwauLFU5i5dqoz6m9HXmaEKzAAigGzgU8vPDt/Dxxgu
 c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 -----END CERTIFICATE-----
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Close(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 
 	keyFile := "key.pem"
 	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEAxAsmOXGeEnHEHZOFwoBDcDi7BPdrmb7rQXGB5PJ3SKcbsUJ5
 kv9mnycVpXbioGrri5cEWK88L5lELpswdCyCSMGTd+yjHnqU7/nH9SL9FNU8Nj8l
@@ -406,26 +460,34 @@ d/8eU66iPNt/23iVAbqkF8mRpCxC0+O5HRqTEzgrlWKabXfmhYqIVjq+tkonJ0NU
 xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 -----END RSA PRIVATE KEY-----
 `)
-	c.Assert(err, IsNil)
-	c.Assert(f.Close(), IsNil)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 
 	conf.Security.ClusterSSLCA = certFile
 	conf.Security.ClusterSSLCert = certFile
 	conf.Security.ClusterSSLKey = keyFile
 	clusterSecurity := conf.Security.ClusterSecurity()
 	tlsConfig, err := clusterSecurity.ToTLSConfig()
-	c.Assert(err, IsNil)
-	c.Assert(tlsConfig, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tlsConfig)
 
 	// Note that on windows, we can't Remove a file if the file is not closed.
 	// The behavior is different on linux, we can always Remove a file even
 	// if it's open. The OS maintains a reference count for open/close, the file
 	// is recycled when the reference count drops to 0.
-	c.Assert(os.Remove(certFile), IsNil)
-	c.Assert(os.Remove(keyFile), IsNil)
+	require.NoError(t, os.Remove(certFile))
+	require.NoError(t, os.Remove(keyFile))
+
+	// test for config `toml` and `json` tag names
+	c1 := Config{}
+	st := reflect.TypeOf(c1)
+	for i := 0; i < st.NumField(); i++ {
+		field := st.Field(i)
+		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
+	}
 }
 
-func (s *testConfigSuite) TestOOMActionValid(c *C) {
+func TestOOMActionValid(t *testing.T) {
 	c1 := NewConfig()
 	tests := []struct {
 		oomAction string
@@ -439,11 +501,11 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	}
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, c1.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+func TestTxnTotalSizeLimitValid(t *testing.T) {
 	conf := NewConfig()
 	tests := []struct {
 		limit uint64
@@ -451,16 +513,18 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 	}{
 		{4 << 10, true},
 		{10 << 30, true},
-		{10<<30 + 1, false},
+		{10<<30 + 1, true},
+		{1 << 40, true},
+		{1<<40 + 1, false},
 	}
 
 	for _, tt := range tests {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
-		c.Assert(conf.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
+func TestPreparePlanCacheValid(t *testing.T) {
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
 		{Enabled: true, Capacity: 0}:                        false,
@@ -471,15 +535,15 @@ func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	}
 	for testCase, res := range tests {
 		conf.PreparedPlanCache = testCase
-		c.Assert(conf.Valid() == nil, Equals, res)
+		require.Equal(t, res, conf.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+func TestMaxIndexLength(t *testing.T) {
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {
 		conf.MaxIndexLength = indexLen
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefMaxIndexLength, true)
 	checkValid(DefMaxIndexLength-1, false)
@@ -487,11 +551,11 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
-func (s *testConfigSuite) TestIndexLimit(c *C) {
+func TestIndexLimit(t *testing.T) {
 	conf := NewConfig()
 	checkValid := func(indexLimit int, shouldBeValid bool) {
 		conf.IndexLimit = indexLimit
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefIndexLimit, true)
 	checkValid(DefIndexLimit-1, false)
@@ -499,11 +563,11 @@ func (s *testConfigSuite) TestIndexLimit(c *C) {
 	checkValid(DefMaxOfIndexLimit+1, false)
 }
 
-func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+func TestTableColumnCountLimit(t *testing.T) {
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
 		conf.TableColumnCountLimit = uint32(tableColumnLimit)
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefTableColumnCountLimit, true)
 	checkValid(DefTableColumnCountLimit-1, false)
@@ -511,7 +575,7 @@ func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
-func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
+func TestEncodeDefTempStorageDir(t *testing.T) {
 	tests := []struct {
 		host       string
 		statusHost string
@@ -535,11 +599,11 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
 		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
-		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
+		require.Equal(t, filepath.Join(dirPrefix, test.expect, "tmp-storage"), tempStorageDir)
 	}
 }
 
-func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
+func TestModifyThroughLDFlags(t *testing.T) {
 	tests := []struct {
 		Edition               string
 		CheckBeforeDropLDFlag string
@@ -563,9 +627,9 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
 
 		conf := GetGlobalConfig()
-		c.Assert(conf.EnableTelemetry, Equals, test.EnableTelemetry)
-		c.Assert(defaultConf.EnableTelemetry, Equals, test.EnableTelemetry)
-		c.Assert(CheckTableBeforeDrop, Equals, test.CheckTableBeforeDrop)
+		require.Equal(t, test.EnableTelemetry, conf.EnableTelemetry)
+		require.Equal(t, test.EnableTelemetry, defaultConf.EnableTelemetry)
+		require.Equal(t, test.CheckTableBeforeDrop, CheckTableBeforeDrop)
 	}
 
 	defaultConf.EnableTelemetry = originalEnableTelemetry
@@ -573,7 +637,7 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	StoreGlobalConfig(originalGlobalConfig)
 }
 
-func (s *testConfigSuite) TestSecurityValid(c *C) {
+func TestSecurityValid(t *testing.T) {
 	c1 := NewConfig()
 	tests := []struct {
 		spilledFileEncryptionMethod string
@@ -587,12 +651,26 @@ func (s *testConfigSuite) TestSecurityValid(c *C) {
 	}
 	for _, tt := range tests {
 		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, c1.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestTcpNoDelay(c *C) {
+func TestTcpNoDelay(t *testing.T) {
 	c1 := NewConfig()
 	//check default value
-	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
+	require.True(t, c1.Performance.TCPNoDelay)
+}
+
+func TestConfigExample(t *testing.T) {
+	conf := NewConfig()
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	metaData, err := toml.DecodeFile(configFile, conf)
+	require.NoError(t, err)
+	keys := metaData.Keys()
+	for _, key := range keys {
+		for _, s := range key {
+			require.False(t, ContainHiddenConfig(s))
+		}
+	}
 }

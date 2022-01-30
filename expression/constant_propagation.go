@@ -8,18 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -58,7 +60,8 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(s.ctx, con)
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().Collate))
+		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
 	return true, false
@@ -85,7 +88,7 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if !conOk {
 		return nil, nil
 	}
-	if ContainMutableConst(ctx, []Expression{con}) {
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		return nil, nil
 	}
 	if col.GetType().Collate != con.GetType().Collate {
@@ -147,11 +150,11 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			sf.FuncName.L == ast.If ||
 			sf.FuncName.L == ast.Case ||
 			sf.FuncName.L == ast.NullEQ) {
-		return false, false, cond
+		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
-			_, coll := cond.CharsetAndCollation(ctx)
+			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().Collate != coll {
 				continue
 			}
@@ -298,7 +301,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
@@ -348,6 +351,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
 	return s.conditions
 }
 
@@ -404,7 +408,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
@@ -533,6 +537,9 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
+	if s.nullSensitive {
+		return
+	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	var outerCol, innerCol *Column
@@ -553,9 +560,6 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			// `select *, t1.a in (select t2.b from t t2) from t t1`
 			// rows with t2.b is null would impact whether LeftOuterSemiJoin should output 0 or null if there
 			// is no row satisfying t2.b = t1.a
-			if s.nullSensitive {
-				continue
-			}
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
 			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
 				notNullExpr := BuildNotNullExpr(s.ctx, childCol)

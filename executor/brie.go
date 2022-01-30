@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,17 +22,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/br/pkg/glue"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	pd "github.com/tikv/pd/client"
 
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -39,12 +42,20 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 )
+
+const clearInterval = 10 * time.Minute
+
+var outdatedDuration = types.Duration{
+	Duration: 30 * time.Minute,
+	Fsp:      types.DefaultFsp,
+}
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
@@ -76,11 +87,13 @@ func (p *brieTaskProgress) Close() {
 type brieTaskInfo struct {
 	queueTime   types.Time
 	execTime    types.Time
+	finishTime  types.Time
 	kind        ast.BRIEKind
 	storage     string
 	connID      uint64
 	backupTS    uint64
 	archiveSize uint64
+	message     string
 }
 
 type brieQueueItem struct {
@@ -92,6 +105,8 @@ type brieQueueItem struct {
 type brieQueue struct {
 	nextID uint64
 	tasks  sync.Map
+
+	lastClearTime time.Time
 
 	workerCh chan struct{}
 }
@@ -151,8 +166,24 @@ func (bq *brieQueue) cancelTask(taskID uint64) {
 	if !ok {
 		return
 	}
-	bq.tasks.Delete(taskID)
 	item.(*brieQueueItem).cancel()
+}
+
+func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
+	if time.Since(bq.lastClearTime) < clearInterval {
+		return
+	}
+
+	bq.lastClearTime = time.Now()
+	currTime := types.CurrentTime(mysql.TypeDatetime)
+
+	bq.tasks.Range(func(key, value interface{}) bool {
+		item := value.(*brieQueueItem)
+		if d := currTime.Sub(sc, &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
+			bq.tasks.Delete(key)
+		}
+		return true
+	})
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
@@ -177,11 +208,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
-	}
-
 	cfg := task.Config{
 		TLS: task.TLSConfig{
 			CA:   tidbCfg.Security.ClusterSSLCA,
@@ -193,6 +219,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		Checksum:    true,
 		SendCreds:   true,
 		LogProgress: true,
+		CipherInfo: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
 	}
 
 	storageURL, err := url.Parse(s.Storage)
@@ -206,8 +235,25 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+	case "hdfs":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be hdfs when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			return nil
+		}
+	case "local", "file", "":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be local when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
+			return nil
+		}
 	default:
 		break
+	}
+
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
 	}
 
 	cfg.Storage = storageURL.String()
@@ -306,6 +352,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	bq := globalBRIEQueue
+	bq.clearTask(e.ctx.GetSessionVars().StmtCtx)
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
@@ -346,9 +393,12 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
+	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	if err != nil {
+		e.info.message = err.Error()
 		return err
 	}
+	e.info.message = ""
 
 	req.AppendString(0, e.info.storage)
 	req.AppendUint64(1, e.info.archiveSize)
@@ -378,11 +428,17 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 			e.result.AppendFloat64(2, 100.0*float64(current)/float64(item.progress.total))
 			e.result.AppendTime(3, item.info.queueTime)
 			e.result.AppendTime(4, item.info.execTime)
-			e.result.AppendNull(5) // FIXME: fill in finish time after keeping history.
+			e.result.AppendTime(5, item.info.finishTime)
 			e.result.AppendUint64(6, item.info.connID)
+			if len(item.info.message) > 0 {
+				e.result.AppendString(7, item.info.message)
+			} else {
+				e.result.AppendNull(7)
+			}
 		}
 		return true
 	})
+	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	return nil
 }
 
@@ -403,9 +459,20 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 }
 
 // Execute implements glue.Session
+// These queries execute without privilege checking, since the calling statements
+// such as BACKUP and RESTORE have already been privilege checked.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
-	// FIXME: br relies on a deprecated API, it may be unsafe
-	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, sql)
+	if err != nil {
+		return err
+	}
+	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
+	return err
+}
+
+func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	exec := gs.se.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err
 }
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,26 +30,29 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 )
 
 // Storage represents a storage that connects TiKV.
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
-	Begin() (kv.Transaction, error)
-	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
+	Begin(opts ...tikv.TxnOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
@@ -64,13 +68,15 @@ type Storage interface {
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
-	GetLockResolver() *tikv.LockResolver
+	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
+	GetMinSafeTS(txnScope string) uint64
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -91,7 +97,7 @@ func NewHelper(store Storage) *Helper {
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
@@ -100,13 +106,84 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("startKey", keyLocation.StartKey),
-			zap.Stringer("endKey", keyLocation.EndKey),
+			zap.Stringer("keyLocation", keyLocation),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
+}
+
+// MvccKV wraps the key's mvcc info in tikv.
+type MvccKV struct {
+	Key      string                        `json:"key"`
+	RegionID uint64                        `json:"region_id"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+}
+
+// GetMvccByStartTs gets Mvcc info by startTS from tikv.
+func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*MvccKV, error) {
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+	for {
+		curRegion, err := h.RegionCache.LocateKey(bo, startKey)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey), zap.Error(err))
+			return nil, derr.ToTiDBErr(err)
+		}
+
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		})
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
+		kvResp, err := h.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
+		if err := data.GetRegionError(); err != nil {
+			logutil.BgLogger().Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
+			continue
+		}
+
+		if len(data.GetError()) > 0 {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
+			return nil, errors.New(data.GetError())
+		}
+
+		key := data.GetKey()
+		if len(key) > 0 {
+			resp := &kvrpcpb.MvccGetByKeyResponse{Info: data.Info, RegionError: data.RegionError, Error: data.Error}
+			return &MvccKV{Key: strings.ToUpper(hex.EncodeToString(key)), Value: resp, RegionID: curRegion.Region.GetID()}, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
+			return nil, nil
+		}
+		startKey = kv.Key(curRegion.EndKey)
+	}
 }
 
 // StoreHotRegionInfos records all hog region stores.
@@ -148,35 +225,9 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
-	}
-	pdHosts, err := etcd.EtcdAddrs()
-	if err != nil {
-		return nil, err
-	}
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
-	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
-		}
-	}()
 	var regionResp StoreHotRegionInfos
-	err = json.NewDecoder(resp.Body).Decode(&regionResp)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if err := h.requestPD("GET", rw, nil, &regionResp); err != nil {
+		return nil, err
 	}
 	metricCnt := 0
 	for _, hotRegions := range regionResp.AsLeader {
@@ -467,8 +518,8 @@ type RegionEpoch struct {
 
 // RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
-	RegionPeer
-	DownSec int64 `json:"down_seconds"`
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
 }
 
 // RegionInfo stores the information of one region.
@@ -481,8 +532,8 @@ type RegionInfo struct {
 	Leader          RegionPeer       `json:"leader"`
 	DownPeers       []RegionPeerStat `json:"down_peers"`
 	PendingPeers    []RegionPeer     `json:"pending_peers"`
-	WrittenBytes    int64            `json:"written_bytes"`
-	ReadBytes       int64            `json:"read_bytes"`
+	WrittenBytes    uint64           `json:"written_bytes"`
+	ReadBytes       uint64           `json:"read_bytes"`
 	ApproximateSize int64            `json:"approximate_size"`
 	ApproximateKeys int64            `json:"approximate_keys"`
 
@@ -703,14 +754,26 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 		return errors.New("pd unavailable")
 	}
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
-	if err != nil {
-		return errors.Trace(err)
+	req := new(http.Request)
+	for _, host := range pdHosts {
+		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
+		if err != nil {
+			// Try to request from another PD node when some nodes may down.
+			if strings.Contains(err.Error(), "connection refused") {
+				continue
+			}
+			return errors.Trace(err)
+		}
 	}
+	if err != nil {
+		return err
+	}
+	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metrics.PDApiExecutionHistogram.WithLabelValues("common").Observe(time.Since(start).Seconds())
 
 	defer func() {
 		err = resp.Body.Close()
@@ -777,37 +840,9 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
-	}
-	pdHosts, err := etcd.EtcdAddrs()
-	if err != nil {
-		return nil, err
-	}
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
-	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
-		}
-	}()
 	var storesStat StoresStat
-	err = json.NewDecoder(resp.Body).Decode(&storesStat)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &storesStat, nil
+	err := h.requestPD("GET", pdapi.Stores, nil, &storesStat)
+	return &storesStat, err
 }
 
 // GetPDAddr return the PD Address.

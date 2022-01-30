@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,14 +22,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -45,17 +46,17 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-
-	s.dbInfo = testSchemaInfo(c, d, "test_column")
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	err := d.Stop()
 	c.Assert(err, IsNil)
+
+	s.dbInfo, err = testSchemaInfo(d, "test_column")
+	c.Assert(err, IsNil)
+	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
+	c.Assert(d.Stop(), IsNil)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
@@ -133,11 +134,12 @@ func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 
 func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(colName)},
+		SchemaID:        dbInfo.ID,
+		TableID:         tblInfo.ID,
+		Type:            model.ActionDropColumn,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: &model.MultiSchemaInfo{},
+		Args:            []interface{}{model.NewCIStr(colName)},
 	}
 }
 
@@ -148,7 +150,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
@@ -177,25 +179,26 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func (s *testColumnSuite) TestColumn(c *C) {
-	d := testNewDDLAndStart(
+func (s *testColumnSuite) TestColumnBasic(c *C) {
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -207,7 +210,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	i := int64(0)
@@ -835,16 +838,17 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -904,7 +908,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn(context.Background())
@@ -923,16 +927,17 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestAddColumns(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -998,7 +1003,7 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1008,16 +1013,17 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1084,16 +1090,17 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumns(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1153,13 +1160,14 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
+
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -1170,19 +1178,19 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")},
+		{"int", "int unsigned", nil},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, and tidb_enable_change_column_type is false")},
+		{"varchar(10)", "varchar(8)", nil},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
-		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("decimal change from decimal(2, 1) to decimal(3, 2), and tidb_enable_change_column_type is false")},
-		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("decimal change from decimal(2, 1) to decimal(2, 2), and tidb_enable_change_column_type is false")},
+		{"decimal(2,1)", "decimal(3,2)", nil},
+		{"decimal(2,1)", "decimal(2,2)", nil},
 		{"decimal(2,1)", "decimal(2,1)", nil},
-		{"decimal(2,1)", "int", errUnsupportedModifyColumn.GenWithStackByArgs("type int(11) not match origin decimal(2,1), and tidb_enable_change_column_type is false")},
-		{"decimal", "int", errUnsupportedModifyColumn.GenWithStackByArgs("type int(11) not match origin decimal(10,0), and tidb_enable_change_column_type is false")},
-		{"decimal(2,1)", "bigint", errUnsupportedModifyColumn.GenWithStackByArgs("type bigint(20) not match origin decimal(2,1), and tidb_enable_change_column_type is false")},
+		{"decimal(2,1)", "int", nil},
+		{"decimal", "int", nil},
+		{"decimal(2,1)", "bigint", nil},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
@@ -1220,12 +1228,12 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 }
 
 func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
 	// cause go routine in TiDB leak test.
 	defer func() {

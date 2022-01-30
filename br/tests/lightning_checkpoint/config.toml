@@ -1,0 +1,11 @@
+[lightning]
+table-concurrency = 1
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test_cppk"
+driver = "mysql"
+keep-after-success = "origin"
+
+[mydumper]
+read-block-size = 1

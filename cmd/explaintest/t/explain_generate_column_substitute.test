@@ -174,3 +174,88 @@ explain format = 'brief' select c0 from t0; -- TableRead
 drop table if exists t0;
 create table t0(c0 double, c1 float as (c0) unique);
 explain format = 'brief' select c0 from t0; -- TableRead
+
+drop table if exists tbl1;
+create table tbl1 (id int unsigned not null auto_increment primary key, s int, index((md5(s))));
+insert into tbl1 (id) select null; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1;
+update tbl1 set s=id%32;
+explain format = 'brief' select count(*) from tbl1 where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+
+drop table if exists t;
+create table t(a int, b varchar(10), key((lower(b)), (a+1)), key((upper(b))));
+insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
+analyze table t;
+desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
+desc format = 'brief' select * from t where not (lower(b) >= "a");
+desc format = 'brief' select count(upper(b)) from t group by upper(b);
+desc format = 'brief' select max(upper(b)) from t group by upper(b);
+desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
+desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+
+drop table if exists t;
+CREATE TABLE t (
+  `a` date DEFAULT NULL,
+  `b` datetime DEFAULT NULL,
+  `c` time DEFAULT NULL,
+  `d` timestamp NULL DEFAULT NULL,
+  `e` year(4) DEFAULT NULL,
+  KEY `expression_index` ((adddate(`a`, interval 10 microsecond))),
+  KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
+  KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
+);
+insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
+select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+desc format = 'brief' select b from t;
+
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+
+select @@tidb_allow_function_for_expression_index;
+
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+  `COL1` double NOT NULL,
+  `COL2` double NOT NULL,
+  `COL3` double DEFAULT NULL,
+  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');

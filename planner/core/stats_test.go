@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/util/hint"
@@ -69,14 +70,16 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		AggInput  string
 		JoinInput string
 	}
-	is := dom.InfoSchema()
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		comment := Commentf("case:%v sql: %s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		core.Preprocess(tk.Se, stmt, is)
-		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(tk.Se, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
+		tk.Se.GetSessionVars().PlanColumnID = 0
+		builder, _ := core.NewPlanBuilder().Init(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil, comment)
 		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
@@ -137,7 +140,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 	}
 }
 
-func (s *testStatsSuite) TestCardinalityGroupCols(c *C) {
+func (s *testStatsSuite) TestNDVGroupCols(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer func() {

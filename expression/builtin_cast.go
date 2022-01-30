@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,10 +28,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -193,6 +194,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
+		PropagateType(types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -283,6 +285,11 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
+		// so we build a from_binary function to do this check.
+		ft := args[0].GetType().Clone()
+		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
+		bf.args[0] = BuildFromBinaryFunction(ctx, args[0], ft)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -290,6 +297,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
+		if bf.tp.Flen == types.UnspecifiedLength {
+			bf.tp.Flen = args[0].GetType().Flen
+		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
@@ -912,10 +922,8 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-			if res == types.ZeroDuration {
-				return res, true, err
-			}
+			// ErrTruncatedWrongVal needs to be considered NULL.
+			return res, true, err
 		}
 	}
 	return res, false, err
@@ -1013,6 +1021,20 @@ type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
 }
 
+func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
+	decimal = mysql.NotFixedDec
+	flen = floatLength(srcDecimal, decimal)
+	return
+}
+
+func floatLength(srcDecimal int, decimalPar int) int {
+	const dblDIG = 15
+	if srcDecimal != mysql.NotFixedDec {
+		return dblDIG + 2 + decimalPar
+	}
+	return dblDIG + 8
+}
+
 func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
 	newSig := &builtinCastDecimalAsRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinCastFunc)
@@ -1077,10 +1099,8 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), int8(b.tp.Decimal))
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
+		// ErrTruncatedWrongVal needs to be considered NULL.
+		return res, true, err
 	}
 	return res, false, err
 }
@@ -1442,7 +1462,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1461,7 +1481,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1480,7 +1500,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp)
+	dur, err := val.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 	if err != nil {
 		return res, false, err
 	}
@@ -1806,8 +1826,20 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// BuildCastCollationFunction builds a ScalarFunction which casts the collation.
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+	if expr.GetType().Collate == ec.Collation {
+		return expr
+	}
+	tp := expr.GetType().Clone()
+	tp.Charset, tp.Collate = ec.Charset, ec.Collation
+	newExpr := BuildCastFunction(ctx, expr, tp)
+	return newExpr
+}
+
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1844,6 +1876,14 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
 func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
+	if expr.GetType().Tp == mysql.TypeEnum {
+		if col, ok := expr.(*Column); ok {
+			col = col.Clone().(*Column)
+			col.RetType = col.RetType.Clone()
+			expr = col
+		}
+		expr.GetType().Flag |= mysql.EnumSetAsIntFlag
+	}
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
@@ -1878,6 +1918,9 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
 	}
+	if tp.Flen == types.UnspecifiedLength || tp.Flen > mysql.MaxDecimalWidth {
+		tp.Flen = mysql.MaxDecimalWidth
+	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
@@ -1891,22 +1934,26 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	argLen := exprTp.Flen
-	// If expr is decimal, we should take the decimal point and negative sign
-	// into consideration, so we set `expr.GetType().Flen + 2` as the `argLen`.
+	// If expr is decimal, we should take the decimal point ,negative sign and the leading zero(0.xxx)
+	// into consideration, so we set `expr.GetType().Flen + 3` as the `argLen`.
 	// Since the length of float and double is not accurate, we do not handle
 	// them.
 	if exprTp.Tp == mysql.TypeNewDecimal && argLen != int(types.UnspecifiedFsp) {
-		argLen += 2
+		argLen += 3
 	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
 	}
-	// because we can't control the length of cast(float as char) for now, we can't determine the argLen
+	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
 	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	if expr.Coercibility() == CoercibilityExplicit {
+		tp.Charset, tp.Collate = expr.CharsetAndCollation()
+	} else {
+		tp.Charset, tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	}
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
@@ -1920,11 +1967,19 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
-	switch x := expr.GetType(); x.Tp {
-	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration:
-		tp.Decimal = x.Decimal
-	default:
+	switch x := expr.GetType().EvalType(); x {
+	case types.ETInt:
+		tp.Decimal = int(types.MinFsp)
+	case types.ETString, types.ETReal, types.ETJson:
 		tp.Decimal = int(types.MaxFsp)
+	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+		tp.Decimal = expr.GetType().Decimal
+	case types.ETDecimal:
+		tp.Decimal = expr.GetType().Decimal
+		if tp.Decimal > int(types.MaxFsp) {
+			tp.Decimal = int(types.MaxFsp)
+		}
+	default:
 	}
 	switch tp.Tp {
 	case mysql.TypeDate:
@@ -1974,4 +2029,93 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// TryPushCastIntoControlFunctionForHybridType try to push cast into control function for Hybrid Type.
+// If necessary, it will rebuild control function using changed args.
+// When a hybrid type is the output of a control function, the result may be as a numeric type to subsequent calculation
+// We should perform the `Cast` operation early to avoid using the wrong type for calculation
+// For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
+// If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
+// `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
+func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr
+	}
+
+	var wrapCastFunc func(ctx sessionctx.Context, expr Expression) Expression
+	switch tp.EvalType() {
+	case types.ETInt:
+		wrapCastFunc = WrapWithCastAsInt
+	case types.ETReal:
+		wrapCastFunc = WrapWithCastAsReal
+	default:
+		return expr
+	}
+
+	isHybrid := func(ft *types.FieldType) bool {
+		// todo: compatible with mysql control function using bit type. issue 24725
+		return ft.Hybrid() && ft.Tp != mysql.TypeBit
+	}
+
+	args := sf.GetArgs()
+	switch sf.FuncName.L {
+	case ast.If:
+		if isHybrid(args[1].GetType()) || isHybrid(args[2].GetType()) {
+			args[1] = wrapCastFunc(ctx, args[1])
+			args[2] = wrapCastFunc(ctx, args[2])
+			f, err := funcs[ast.If].getFunction(ctx, args)
+			if err != nil {
+				return expr
+			}
+			sf.RetType, sf.Function = f.getRetTp(), f
+			return sf
+		}
+	case ast.Case:
+		hasHybrid := false
+		for i := 0; i < len(args)-1; i += 2 {
+			hasHybrid = hasHybrid || isHybrid(args[i+1].GetType())
+		}
+		if len(args)%2 == 1 {
+			hasHybrid = hasHybrid || isHybrid(args[len(args)-1].GetType())
+		}
+		if !hasHybrid {
+			return expr
+		}
+
+		for i := 0; i < len(args)-1; i += 2 {
+			args[i+1] = wrapCastFunc(ctx, args[i+1])
+		}
+		if len(args)%2 == 1 {
+			args[len(args)-1] = wrapCastFunc(ctx, args[len(args)-1])
+		}
+		f, err := funcs[ast.Case].getFunction(ctx, args)
+		if err != nil {
+			return expr
+		}
+		sf.RetType, sf.Function = f.getRetTp(), f
+		return sf
+	case ast.Elt:
+		hasHybrid := false
+		for i := 1; i < len(args); i++ {
+			hasHybrid = hasHybrid || isHybrid(args[i].GetType())
+		}
+		if !hasHybrid {
+			return expr
+		}
+
+		for i := 1; i < len(args); i++ {
+			args[i] = wrapCastFunc(ctx, args[i])
+		}
+		f, err := funcs[ast.Elt].getFunction(ctx, args)
+		if err != nil {
+			return expr
+		}
+		sf.RetType, sf.Function = f.getRetTp(), f
+		return sf
+	default:
+		return expr
+	}
+	return expr
 }

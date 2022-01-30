@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,14 +16,18 @@ package util
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,12 +35,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -161,6 +166,16 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+
+	// If the warn is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
@@ -171,11 +186,13 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
+	ClusterTableInstanceColumnName = "INSTANCE"
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || dbLowerName == mysql.SystemDB
+	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
 }
 
 // IsMemDB checks whether dbLowerName is memory database.
@@ -187,6 +204,11 @@ func IsMemDB(dbLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// IsSysDB checks whether dbLowerName is system database.
+func IsSysDB(dbLowerName string) bool {
+	return dbLowerName == mysql.SystemDB
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -412,11 +434,8 @@ func init() {
 	}
 }
 
-// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
-// Otherwise calling information schema will cause import cycle problem.
-type SequenceSchema interface {
-	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
-}
+// GetSequenceByName could be used in expression package without import cycle problem.
+var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
@@ -428,9 +447,22 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
+	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
-		return
+		if !autoTLS {
+			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
+			return
+		}
+		autoReload = true
+		tempStoragePath := config.GetGlobalConfig().TempStoragePath
+		cert = filepath.Join(tempStoragePath, "/cert.pem")
+		key = filepath.Join(tempStoragePath, "/key.pem")
+		err = createTLSCertificates(cert, key, rsaKeySize)
+		if err != nil {
+			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
+			return
+		}
 	}
 
 	var tlsCert tls.Certificate
@@ -442,6 +474,28 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	}
 
 	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -451,7 +505,7 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
-		caCert, err = ioutil.ReadFile(ca)
+		caCert, err = os.ReadFile(ca)
 		if err != nil {
 			logutil.BgLogger().Warn("read file failed", zap.Error(err))
 			err = errors.Trace(err)
@@ -466,10 +520,29 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 			}
 		}
 	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
+	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
+		CipherSuites: cipherSuites,
 	}
 	return
 }
@@ -518,6 +591,14 @@ func initInternalClient() {
 	}
 }
 
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
+}
+
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
 func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
@@ -530,4 +611,77 @@ func GetLocalIP() string {
 		}
 	}
 	return ""
+}
+
+// QueryStrForLog trim the query if the query length more than 4096
+func QueryStrForLog(query string) string {
+	const size = 4096
+	if len(query) > size {
+		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
+	}
+	return query
+}
+
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
+	if err != nil {
+		return err
+	}
+
+	certValidity := 90 * 24 * time.Hour // 90 days
+	notBefore := time.Now()
+	notAfter := notBefore.Add(certValidity)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
+		SerialNumber: big.NewInt(1),
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		DNSNames:     []string{hostname},
+	}
+
+	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privkey.PublicKey, privkey)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certpath)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+	if err := certOut.Close(); err != nil {
+		return err
+	}
+
+	keyOut, err := os.OpenFile(keypath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privkey)
+	if err != nil {
+		return err
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return err
+	}
+
+	if err := keyOut.Close(); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
+	return nil
 }

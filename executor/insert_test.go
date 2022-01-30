@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,15 +23,16 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -238,6 +240,7 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
@@ -245,6 +248,9 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 }
 
 func (s *testSuite2) TestInsertReorgDelete(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -325,12 +331,34 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a char(10) charset utf8);`)
 	tk.MustExec(`insert into t1 values('我');`)
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
-	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("我 ?"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
-	_, err = tk.Exec(`insert into t values(2156);`)
-	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+	tk.MustGetErrMsg(`insert into t values(2156);`,
+		"[types:1264]Out of range value for column 'a' at row 1")
+
+	tk.MustExec(`DROP TABLE IF EXISTS ts`)
+	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
+	tk.MustExec(`SET @@sql_mode=''`)
+	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
+
+	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
+	_, err = tk.Exec(`INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00')`)
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect timestamp value: '1018-12-24 00:00:00' for column 'time1' at row 1`)
+	tk.MustExec(`DROP TABLE ts`)
+}
+
+func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a decimal(15,2));`)
+	tk.MustExec(`insert into t1 values (1111111111111.01);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`1111111111111.01`))
+	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -411,7 +439,7 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z')")
-	tk.MustQuery(fmt.Sprintf("select count(*) from t where ts > '2020-10-22T12:00:00Z'")).Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from t where ts > '2020-10-22T12:00:00Z'").Check(testkit.Rows("2"))
 
 	// test for datetime with fsp
 	fspCases := []struct {
@@ -1056,7 +1084,7 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
@@ -1432,10 +1460,10 @@ func (s *testSuite10) TestInsertRuntimeStat(c *C) {
 		Prefetch:             1 * time.Second,
 	}
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
-	c.Assert(stats.String(), Equals, "prepare:3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
+	c.Assert(stats.String(), Equals, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "prepare:6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
+	c.Assert(stats.String(), Equals, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
 }
 
 func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
@@ -1556,6 +1584,22 @@ func combination(items []string) func() []string {
 	}
 }
 
+// TestDuplicatedEntryErr See https://github.com/pingcap/tidb/issues/24582
+func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
+	tk.MustExec("insert into t1 values(1,'aaaaa');")
+	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	tk.MustExec("insert into t1 select 1, 'bb'")
+	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
+}
+
 func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1574,4 +1618,220 @@ func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
 	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
 	tk.MustExec("insert into bintest(h) values(0x61)")
 	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+var _ = SerialSuites(&testSuite13{&baseTestSuite{}})
+
+type testSuite13 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	// Test whether auto-inc is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+
+	// rebase
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(10)")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11"))
+	tk.MustExec("insert into temp_test(id) values(20), (30)")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11", "20", "30", "31", "32"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	// Test whether row id is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	threads := 8
+	loops := 1
+	wg := sync.WaitGroup{}
+	wg.Add(threads)
+
+	insertFunc := func() {
+		defer wg.Done()
+		newTk := testkit.NewTestKitWithInit(c, s.store)
+		newTk.MustExec("begin")
+		for i := 0; i < loops; i++ {
+			newTk.MustExec("insert temp_test value(0)")
+			newTk.MustExec("insert temp_test value(0), (0)")
+		}
+		maxID := strconv.Itoa(loops * 3)
+		newTk.MustQuery("select max(id) from temp_test").Check(testkit.Rows(maxID))
+		newTk.MustExec("commit")
+	}
+
+	for i := 0; i < threads; i++ {
+		go insertFunc()
+	}
+	wg.Wait()
+}
+
+func (s *testSuite13) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+}
+
+func (s *testSuite10) TestStringtoDecimal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id decimal(10))")
+	tk.MustGetErrCode("insert into t values('1sdf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1edf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('12Ea')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1E')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1e')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2A')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.3.4.5')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
+	tk.MustExec("insert into t values('12e-3')")
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSuite13) TestIssue17745(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists tt1")
+	tk.MustExec("create table tt1 (c1 decimal(64))")
+	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
+	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
+	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
+	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
+	tk.MustExec("drop table if exists tt1")
+	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
+	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
+}
+
+// TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
+func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("set global tidb_txn_mode='optimistic';")
+	tk.MustExec("set global tidb_disable_txn_auto_retry=false;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double auto_increment key, b int)")
+	tk.MustExec("insert into t values (146576794, 1)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t(b) select 1")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec(`use test`)
+	tk2.MustExec("begin")
+	tk2.MustExec("insert into t values (146576795, 1)")
+	tk2.MustExec("insert into t values (146576796, 1)")
+	tk2.MustExec("commit")
+
+	// since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
+	// which will duplicate with what has been inserted in tk1.
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
+}
+
+// https://github.com/pingcap/tidb/issues/29483.
+func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists replace_auto_id;")
+	tk.MustExec("create database replace_auto_id;")
+	tk.MustExec(`use replace_auto_id;`)
+
+	tk.MustExec("SET sql_mode='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a tinyint not null auto_increment primary key, b char(20));")
+	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
+	// Note that this error is different from MySQL's duplicated primary key error.
+	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }

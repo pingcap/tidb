@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,10 +22,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -42,7 +43,7 @@ type baseFuncDesc struct {
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	err := b.typeInfer(ctx)
+	err := b.TypeInfer(ctx)
 	return b, err
 }
 
@@ -83,8 +84,8 @@ func (a *baseFuncDesc) String() string {
 	return buffer.String()
 }
 
-// typeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
+// TypeInfer infers the arguments and return types of an function.
+func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
@@ -115,6 +116,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
+	case ast.AggFuncJsonArrayagg:
+		a.typeInfer4JsonFuncs(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
@@ -204,6 +207,14 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
+// TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
+// compatible with mysql.
+func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
+	if avgRetType.Tp == mysql.TypeNewDecimal {
+		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.Flen+22)
+	}
+}
+
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
@@ -243,6 +254,12 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
+	for i := 0; i < len(a.Args)-1; i++ {
+		if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+		}
+	}
+
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
@@ -309,7 +326,8 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.
-		a.RetTp = expression.InferType4ControlFuncs(a.Args[0], a.Args[2])
+		// FIXME: select lead(b collate utf8mb4_unicode_ci, 1, 'lead' collate utf8mb4_general_ci) over() as a from t; should report error.
+		a.RetTp, _ = expression.InferType4ControlFuncs(ctx, a.Name, a.Args[0], a.Args[2])
 	}
 }
 
@@ -362,19 +380,8 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonArrayagg:        {},
 	ast.AggFuncJsonObjectAgg:       {},
-}
-
-// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
-// with a cast as decimal function. See issue #19426
-func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
-	if a.Name == ast.AggFuncGroupConcat {
-		for i := 0; i < len(a.Args)-1; i++ {
-			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
-				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
-			}
-		}
-	}
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
@@ -411,6 +418,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
+		if a.Args[i].GetType().Tp == mysql.TypeNull {
+			continue
+		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -428,7 +438,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if col, ok := a.Args[i].(*expression.Column); ok {
 			col.RetType = types.NewFieldType(col.RetType.Tp)
 		}
-		// originTp is used when the the `Tp` of column is TypeFloat32 while
+		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)

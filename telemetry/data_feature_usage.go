@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,31 +16,72 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 
+	"github.com/pingcap/tidb/infoschema"
+	m "github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/metrics"
 )
 
 type featureUsage struct {
-	Txn          *TxnUsage       `json:"txn"`
-	ClusterIndex map[string]bool `json:"clusterIndex"`
+	// transaction usage information
+	Txn *TxnUsage `json:"txn"`
+	// cluster index usage information
+	// key is the first 6 characters of sha2(TABLE_NAME, 256)
+	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
+	TemporaryTable bool               `json:"temporaryTable"`
+	CTE            *m.CTEUsageCounter `json:"cte"`
+	CachedTable    bool               `json:"cachedTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-	// init
-	usageInfo := featureUsage{
-		ClusterIndex: make(map[string]bool),
+	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
+	if err != nil {
+		logutil.BgLogger().Info(err.Error())
+		return nil, err
 	}
 
-	// cluster index
+	// transaction related feature
+	txnUsage := getTxnUsageInfo(ctx)
+
+	// Avoid the circle dependency.
+	temporaryTable := ctx.(TemporaryOrCacheTableFeatureChecker).TemporaryTableExists()
+
+	cteUsage := getCTEUsageInfo()
+
+	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
+
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable}, nil
+}
+
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
+type ClusterIndexUsage map[string]TableClusteredInfo
+
+// TableClusteredInfo records the usage info of clusterindex of each table
+// CLUSTERED, NON_CLUSTERED, NA
+type TableClusteredInfo struct {
+	IsClustered   bool   `json:"isClustered"`   // True means CLUSTERED, False means NON_CLUSTERED
+	ClusterPKType string `json:"clusterPKType"` // INT means clustered PK type is int
+	// NON_INT means clustered PK type is not int
+	// NA means this field is no meaningful information
+}
+
+// getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
+	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+
+	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
 	stmt, err := exec.ParseWithParams(context.TODO(), `
-		SELECT left(sha2(TABLE_NAME, 256), 6) name, TIDB_PK_TYPE
+		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
-		ORDER BY name
+		ORDER BY table_name_hash
 		limit 10000`)
 	if err != nil {
 		return nil, err
@@ -48,21 +90,62 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			switch x := r.(type) {
+			case string:
+				err = errors.New(x)
+			case error:
+				err = x
+			default:
+				err = errors.New("unknown failure")
+			}
+		}
+	}()
+
+	err = ctx.RefreshTxnCtx(context.TODO())
+	if err != nil {
+		return nil, err
+	}
+	infoSchema := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+
+	// check ClusterIndex information for each table
+	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
+
 	for _, row := range rows {
-		if row.Len() < 2 {
+		if row.Len() < 4 {
 			continue
 		}
-		isClustered := false
+		tblClusteredInfo := TableClusteredInfo{false, "NA"}
 		if row.GetString(1) == "CLUSTERED" {
-			isClustered = true
+			tblClusteredInfo.IsClustered = true
+			table, err := infoSchema.TableByName(model.NewCIStr(row.GetString(2)), model.NewCIStr(row.GetString(3)))
+			if err != nil {
+				continue
+			}
+			tableInfo := table.Meta()
+			if tableInfo.PKIsHandle {
+				tblClusteredInfo.ClusterPKType = "INT"
+			} else if tableInfo.IsCommonHandle {
+				tblClusteredInfo.ClusterPKType = "NON_INT"
+			} else {
+				// if both CLUSTERED IS TURE and CLUSTERPKTYPE IS NA met, this else is hit
+				// it means the status of INFORMATION_SCHEMA.tables if not consistent with session.Context
+				// WE SHOULD treat this issue SERIOUSLY
+			}
 		}
-		usageInfo.ClusterIndex[row.GetString(0)] = isClustered
+		usage[row.GetString(0)] = tblClusteredInfo
 	}
 
-	// transaction related feature
-	usageInfo.Txn = GetTxnUsageInfo(ctx)
+	return &usage, nil
+}
 
-	return &usageInfo, nil
+// TemporaryOrCacheTableFeatureChecker is defined to avoid package circle dependency.
+// The session struct implements this interface.
+type TemporaryOrCacheTableFeatureChecker interface {
+	TemporaryTableExists() bool
+	CachedTableExists() bool
 }
 
 // TxnUsage records the usage info of transaction related features, including
@@ -74,16 +157,17 @@ type TxnUsage struct {
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
+var initialCTECounter m.CTEUsageCounter
 
-// GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
-func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+// getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
-		asyncCommitUsed = val == variable.BoolOn
+		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
-		onePCUsed = val == variable.BoolOn
+		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
@@ -92,4 +176,16 @@ func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 
 func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
+}
+
+// ResetCTEUsage resets CTE usages.
+func postReportCTEUsage() {
+	initialCTECounter = m.GetCTECounter()
+}
+
+// getCTEUsageInfo gets the CTE usages.
+func getCTEUsageInfo() *m.CTEUsageCounter {
+	curr := m.GetCTECounter()
+	diff := curr.Sub(initialCTECounter)
+	return &diff
 }

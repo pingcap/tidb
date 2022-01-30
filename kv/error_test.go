@@ -8,22 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package kv
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/stretchr/testify/assert"
 )
 
-type testErrorSuite struct{}
-
-var _ = Suite(testErrorSuite{})
-
-func (s testErrorSuite) TestError(c *C) {
+func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrNotExist,
 		ErrTxnRetryable,
@@ -35,8 +34,10 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrWriteConflict,
 		ErrWriteConflictInTiDB,
 	}
+
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		assert.NotEqual(t, mysql.ErrUnknown, code)
+		assert.Equal(t, uint16(err.Code()), code)
 	}
 }

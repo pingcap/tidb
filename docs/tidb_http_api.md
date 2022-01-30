@@ -289,6 +289,36 @@ timezone.*
     $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
     ```
 
+   If the handle is clustered, also specify the primary key column values in the query string
+
+   ```shell
+   $curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}
+   ```
+
+   ```shell
+   $curl http://127.0.0.1:10080/mvcc/index/test/t/idx\?a\=1.1\&b\=111\&c\=1
+   {
+       "key": "74800000000000003B5F69800000000000000203800000000000000105BFF199999999999A013131310000000000FA",
+       "region_id": 59,
+       "value": {
+           "info": {
+               "writes": [
+                   {
+                       "start_ts": 424752858505150464,
+                       "commit_ts": 424752858506461184,
+                       "short_value": "AH0B"
+                   }
+               ],
+               "values": [
+                   {
+                        "start_ts": 424752858505150464,
+                        "value": "AH0B"
+                   }
+               ]
+           }
+       }
+   }
+
 1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
 
     ```shell
@@ -492,3 +522,11 @@ timezone.*
     curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
     ```
 
+1. Get/Set the size of the Ballast Object
+
+    ```shell
+    # get current size of the ballast object
+    curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
+    # reset the size of the ballast object (2GB in this example)
+    curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+    ```

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,12 +23,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -47,15 +48,19 @@ type testColumnChangeSuite struct {
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	s.store = testCreateStore(c, "test_column_change")
-	s.dbInfo = &model.DBInfo{
-		Name: model.NewCIStr("test_column_change"),
-		ID:   1,
-	}
-	err := kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(t.CreateDatabase(s.dbInfo))
-	})
-	c.Check(err, IsNil)
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
+	c.Assert(err, IsNil)
+	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 
 func (s *testColumnChangeSuite) TearDownSuite(c *C) {
@@ -63,20 +68,21 @@ func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	// create table t (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo, err := testTableInfo(d, "t", 2)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
@@ -149,7 +155,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	d.SetHook(tc)
 	defaultValue := int64(3)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
 	tb := publicTable
@@ -159,12 +165,12 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -197,7 +203,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 			atomic.AddInt32(&errCount, -1)
 			genAutoRandErr = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				_, err1 := t.GenAutoRandomID(s.dbInfo.ID, tableID, 1)
+				_, err1 := t.GetAutoIDAccessors(s.dbInfo.ID, tableID).RandomID().Inc(1)
 				return err1
 			})
 		}
@@ -275,7 +281,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 	}
 	d.SetHook(tc)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	testCheckJobDone(c, d, job, true)
 }
 
@@ -301,7 +307,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		}
 	}
 	d.SetHook(tc)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
@@ -455,7 +461,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
 	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)

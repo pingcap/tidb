@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -281,7 +282,7 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	return statsInfos
 }
 
-// extractStringFromStringSet helps extract string info from set.StringSet
+// extractStringFromStringSet helps extract string info from set.StringSet.
 func extractStringFromStringSet(set set.StringSet) string {
 	if len(set) < 1 {
 		return ""
@@ -291,7 +292,33 @@ func extractStringFromStringSet(set set.StringSet) string {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
 	sort.Strings(l)
-	return fmt.Sprintf("%s", strings.Join(l, ","))
+	return strings.Join(l, ",")
+}
+
+// extractStringFromUint64Slice helps extract string info from uint64 slice.
+func extractStringFromUint64Slice(slice []uint64) string {
+	if len(slice) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(slice))
+	for _, k := range slice {
+		l = append(l, fmt.Sprintf(`%d`, k))
+	}
+	sort.Strings(l)
+	return strings.Join(l, ",")
+}
+
+// extractStringFromBoolSlice helps extract string info from bool slice.
+func extractStringFromBoolSlice(slice []bool) string {
+	if len(slice) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(slice))
+	for _, k := range slice {
+		l = append(l, fmt.Sprintf(`%t`, k))
+	}
+	sort.Strings(l)
+	return strings.Join(l, ",")
 }
 
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {

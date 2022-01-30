@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,11 +21,11 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -42,7 +43,6 @@ type requiredRowsSelectResult struct {
 	numNextCalled   int
 }
 
-func (r *requiredRowsSelectResult) Fetch(context.Context)                   {}
 func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
 func (r *requiredRowsSelectResult) Close() error                            { return nil }
 

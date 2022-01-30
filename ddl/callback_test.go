@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,13 @@ package ddl
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -38,6 +40,7 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 	return ti.BaseInterceptor.OnGetInfoSchema(ctx, is)
 }
 
+// TestDDLCallback is used to customize user callback themselves.
 type TestDDLCallback struct {
 	*BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
@@ -51,16 +54,33 @@ type TestDDLCallback struct {
 	onWatched              func(ctx context.Context)
 }
 
+// OnChanged mock the same behavior with the main DDL hook.
+func (tc *TestDDLCallback) OnChanged(err error) error {
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("performing DDL change, must reload")
+	if tc.Do != nil {
+		err = tc.Do.Reload()
+		if err != nil {
+			logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+// OnSchemaStateChanged mock the same behavior with the main ddl hook.
 func (tc *TestDDLCallback) OnSchemaStateChanged() {
 	if tc.Do != nil {
 		if err := tc.Do.Reload(); err != nil {
-			log.Warn("reload failed on schema state changed", zap.Error(err))
+			logutil.BgLogger().Warn("reload failed on schema state changed", zap.Error(err))
 		}
 	}
 }
 
+// OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	log.Info("on job run before", zap.String("job", job.String()))
+	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
@@ -73,8 +93,9 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	tc.BaseCallback.OnJobRunBefore(job)
 }
 
+// OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	log.Info("on job updated", zap.String("job", job.String()))
+	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
 	if tc.OnJobUpdatedExported != nil {
 		tc.OnJobUpdatedExported(job)
 		return
@@ -87,6 +108,7 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
+// OnWatched is used to run the user customized logic of `OnWatched` first.
 func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
@@ -96,14 +118,10 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	tc.BaseCallback.OnWatched(ctx)
 }
 
-func (s *testDDLSuite) TestCallback(c *C) {
+func TestCallback(t *testing.T) {
 	cb := &BaseCallback{}
-	c.Assert(cb.OnChanged(nil), IsNil)
+	require.Nil(t, cb.OnChanged(nil))
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
 	cb.OnWatched(context.TODO())
-}
-
-type DomainReloader interface {
-	Reload() error
 }

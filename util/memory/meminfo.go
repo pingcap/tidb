@@ -8,19 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package memory
 
 import (
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/shirou/gopsutil/mem"
 )
 
@@ -138,7 +139,7 @@ func init() {
 }
 
 func inContainer() bool {
-	v, err := ioutil.ReadFile(selfCGroupPath)
+	v, err := os.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
 	}
@@ -171,7 +172,7 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
 func readUint(path string) (uint64, error) {
-	v, err := ioutil.ReadFile(path)
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}

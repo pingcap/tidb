@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,12 +19,12 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -32,56 +33,76 @@ const (
 	testPow    = 10
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+func TestPrefix(t *testing.T) {
+	s, err := mockstore.NewMockStore()
+	require.Nil(t, err)
+	defer func() {
+		err := s.Close()
+		require.Nil(t, err)
+	}()
+
+	ctx := &mockContext{10000000, make(map[fmt.Stringer]interface{}), s, nil}
+	err = ctx.fillTxn()
+	require.Nil(t, err)
+	txn, err := ctx.GetTxn()
+	require.Nil(t, err)
+	err = util.DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
+	require.Nil(t, err)
+	err = ctx.CommitTxn()
+	require.Nil(t, err)
+
+	txn, err = s.Begin()
+	require.Nil(t, err)
+	k := []byte("key100jfowi878230")
+	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
+	require.Nil(t, err)
+	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
+		return true
+	})
+	require.Nil(t, err)
+	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
+		return false
+	})
+	require.Nil(t, err)
+	err = util.DelKeyWithPrefix(txn, []byte("key"))
+	require.Nil(t, err)
+	_, err = txn.Get(context.TODO(), k)
+	assert.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
+
+	err = txn.Commit(context.Background())
+	require.Nil(t, err)
 }
 
-var _ = Suite(&testPrefixSuite{})
-
-type testPrefixSuite struct {
-	s kv.Storage
+func TestPrefixFilter(t *testing.T) {
+	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
+	rowKey[8] = 0x00
+	rowKey[9] = 0x00
+	f := util.RowKeyPrefixFilter(rowKey)
+	assert.False(t, f(append(rowKey, []byte("akjdf3*(34")...)))
+	assert.True(t, f([]byte("sjfkdlsaf")))
 }
 
-func (s *testPrefixSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	s.s = store
-
-}
-
-func (s *testPrefixSuite) TearDownSuite(c *C) {
-	err := s.s.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func encodeInt(n int) []byte {
-	return []byte(fmt.Sprintf("%d", n))
-}
-
-type MockContext struct {
+type mockContext struct {
 	prefix int
 	values map[fmt.Stringer]interface{}
 	kv.Storage
 	txn kv.Transaction
 }
 
-func (c *MockContext) SetValue(key fmt.Stringer, value interface{}) {
+func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.values[key] = value
 }
 
-func (c *MockContext) Value(key fmt.Stringer) interface{} {
+func (c *mockContext) Value(key fmt.Stringer) interface{} {
 	value := c.values[key]
 	return value
 }
 
-func (c *MockContext) ClearValue(key fmt.Stringer) {
+func (c *mockContext) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
-func (c *MockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+func (c *mockContext) GetTxn() (kv.Transaction, error) {
 	var err error
 	c.txn, err = c.Begin()
 	if err != nil {
@@ -91,7 +112,7 @@ func (c *MockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return c.txn, nil
 }
 
-func (c *MockContext) fillTxn() error {
+func (c *mockContext) fillTxn() error {
 	if c.txn == nil {
 		return nil
 	}
@@ -108,53 +129,13 @@ func (c *MockContext) fillTxn() error {
 	return nil
 }
 
-func (c *MockContext) CommitTxn() error {
+func (c *mockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
 	return c.txn.Commit(context.Background())
 }
 
-func (s *testPrefixSuite) TestPrefix(c *C) {
-	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
-	err := ctx.fillTxn()
-	c.Assert(err, IsNil)
-	txn, err := ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	err = util.DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
-	c.Assert(err, IsNil)
-	err = ctx.CommitTxn()
-	c.Assert(err, IsNil)
-
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	k := []byte("key100jfowi878230")
-	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
-	c.Assert(err, IsNil)
-	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
-		return true
-	})
-	c.Assert(err, IsNil)
-	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
-		return false
-	})
-	c.Assert(err, IsNil)
-	err = util.DelKeyWithPrefix(txn, []byte("key"))
-	c.Assert(err, IsNil)
-	_, err = txn.Get(context.TODO(), k)
-	c.Assert(terror.ErrorEqual(kv.ErrNotExist, err), IsTrue)
-
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-}
-
-func (s *testPrefixSuite) TestPrefixFilter(c *C) {
-	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
-	rowKey[8] = 0x00
-	rowKey[9] = 0x00
-	f := util.RowKeyPrefixFilter(rowKey)
-	b := f(append(rowKey, []byte("akjdf3*(34")...))
-	c.Assert(b, IsFalse)
-	buf := f([]byte("sjfkdlsaf"))
-	c.Assert(buf, IsTrue)
+func encodeInt(n int) []byte {
+	return []byte(fmt.Sprintf("%d", n))
 }

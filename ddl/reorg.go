@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,18 +24,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -157,12 +156,41 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
+// runReorgJob is used as a portal to do the reorganization work.
+// eg:
+// 1: add index
+// 2: alter column type
+// 3: clean global index
+//
+// ddl goroutine >---------+
+//   ^                     |
+//   |                     |
+//   |                     |
+//   |                     | <---(doneCh)--- f()
+// HandleDDLQueue(...)     | <---(regular timeout)
+//   |                     | <---(ctx done)
+//   |                     |
+//   |                     |
+// A more ddl round  <-----+
+//
+// How can we cancel reorg job?
+//
+// The background reorg is continuously running except for several factors, for instances, ddl owner change,
+// logic error (kv duplicate when insert index / cast error when alter column), ctx done, and cancel signal.
+//
+// When `admin cancel ddl jobs xxx` takes effect, we will give this kind of reorg ddl one more round.
+// because we should pull the result from doneCh out, otherwise, the reorg worker will hang on `f()` logic,
+// which is a kind of goroutine leak.
+//
+// That's why we couldn't set the job to rollingback state directly in `convertJob2RollbackJob`, which is a
+// cancelling portal for admin cancel action.
+//
+// In other words, the cancelling signal is informed from the bottom up, we set the atomic cancel variable
+// in the cancelling portal to notify the lower worker goroutine, and fetch the cancel error from them in
+// the additional ddl round.
+//
+// After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
-	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-	if lease > 0 {
-		delayForAsyncCommit()
-	}
-
 	job := reorgInfo.Job
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
@@ -171,9 +199,16 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      time.Local,
 		}
 	}
 	if w.reorgCtx.doneCh == nil {
+		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
+		// for the later entrances.
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		if lease > 0 {
+			delayForAsyncCommit()
+		}
 		// start a reorganization job
 		w.wg.Add(1)
 		w.reorgCtx.doneCh = make(chan error, 1)
@@ -306,11 +341,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	stmt, err := executor.ParseWithParams(w.ddlJobCtx, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := executor.ExecRestrictedStmt(w.ddlJobCtx, stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -425,7 +460,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 		SetConcurrency(1).SetDesc(true)
 
 	builder.Request.NotFillCache = true
-	builder.Request.Priority = tikvstore.PriorityLow
+	builder.Request.Priority = kv.PriorityLow
 
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -436,7 +471,6 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
@@ -536,7 +570,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {

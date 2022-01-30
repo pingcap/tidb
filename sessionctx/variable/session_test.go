@@ -8,141 +8,163 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package variable_test
 
 import (
+	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
-var _ = SerialSuites(&testSessionSuite{})
-
-type testSessionSuite struct {
-}
-
-func (*testSessionSuite) TestSetSystemVariable(c *C) {
+func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
-	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
-	tests := []struct {
+	mtx := new(sync.Mutex)
+
+	testCases := []struct {
 		key   string
-		value interface{}
+		value string
 		err   bool
 	}{
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
-		{variable.TIDBMemQuotaQuery, "1024", false},
-		{variable.TIDBMemQuotaHashJoin, "1024", false},
-		{variable.TIDBMemQuotaMergeJoin, "1024", false},
-		{variable.TIDBMemQuotaSort, "1024", false},
-		{variable.TIDBMemQuotaTopn, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
+		{variable.TiDBMemQuotaQuery, "1024", false},
+		{variable.TiDBMemQuotaHashJoin, "1024", false},
+		{variable.TiDBMemQuotaMergeJoin, "1024", false},
+		{variable.TiDBMemQuotaSort, "1024", false},
+		{variable.TiDBMemQuotaTopn, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
-	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
-		if t.err {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-		}
+
+	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
+		t.Run(tc.key, func(t *testing.T) {
+			mtx.Lock()
+			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			mtx.Unlock()
+			if tc.err {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
-func (*testSessionSuite) TestSession(c *C) {
+func TestSession(t *testing.T) {
 	ctx := mock.NewContext()
 
 	ss := ctx.GetSessionVars().StmtCtx
-	c.Assert(ss, NotNil)
+	require.NotNil(t, ss)
 
 	// For AffectedRows
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.AffectedRows())
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.AffectedRows())
 
 	// For RecordRows
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.RecordRows())
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.FoundRows())
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.UpdatedRows())
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.UpdatedRows())
 
 	// For TouchedRows
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.TouchedRows())
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.TouchedRows())
 
 	// For CopiedRows
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.CopiedRows())
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.CopiedRows())
 
 	// For last insert id
 	ctx.GetSessionVars().SetLastInsertID(1)
-	c.Assert(ctx.GetSessionVars().StmtCtx.LastInsertID, Equals, uint64(1))
+	require.Equal(t, uint64(1), ctx.GetSessionVars().StmtCtx.LastInsertID)
 
 	ss.ResetForRetry()
-	c.Assert(ss.AffectedRows(), Equals, uint64(0))
-	c.Assert(ss.FoundRows(), Equals, uint64(0))
-	c.Assert(ss.UpdatedRows(), Equals, uint64(0))
-	c.Assert(ss.RecordRows(), Equals, uint64(0))
-	c.Assert(ss.TouchedRows(), Equals, uint64(0))
-	c.Assert(ss.CopiedRows(), Equals, uint64(0))
-	c.Assert(ss.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint64(0), ss.AffectedRows())
+	require.Equal(t, uint64(0), ss.FoundRows())
+	require.Equal(t, uint64(0), ss.UpdatedRows())
+	require.Equal(t, uint64(0), ss.RecordRows())
+	require.Equal(t, uint64(0), ss.TouchedRows())
+	require.Equal(t, uint64(0), ss.CopiedRows())
+	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func (*testSessionSuite) TestSlowLogFormat(c *C) {
+func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
 
 	seVar := ctx.GetSessionVars()
-	c.Assert(seVar, NotNil)
+	require.NotNil(t, seVar)
+
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
+}
+
+func TestSlowLogFormat(t *testing.T) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
+	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &execdetails.ScanDetail{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: execdetails.TimeDetail{
+		TimeDetail: util.TimeDetail{
 			ProcessTime: time.Second * time.Duration(2),
 			WaitTime:    time.Minute,
 		},
@@ -211,13 +233,16 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Succ: true`
+# Result_rows: 12345
+# Succ: true
+# IsExplicitTxn: true
+# IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql,
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         time.Duration(10),
 		TimeCompile:       time.Duration(10),
@@ -237,34 +262,37 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		PDTotal:           11 * time.Second,
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
+		ResultRows:        12345,
 		Succ:              true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
-		ExecRetryCount: 3,
-		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		ExecRetryCount:    3,
+		ExecRetryTime:     5*time.Second + time.Millisecond*100,
+		IsExplicitTxn:     true,
+		IsWriteCacheTable: true,
 	}
 	logString := seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+sql)
+	require.Equal(t, resultFields+"\n"+sql, logString)
 
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+"use test;\n"+sql)
-	c.Assert(seVar.CurrentDBChanged, IsFalse)
+	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
+	require.False(t, seVar.CurrentDBChanged)
 }
 
-func (*testSessionSuite) TestIsolationRead(c *C) {
+func TestIsolationRead(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
-	c.Assert(ok, Equals, false)
+	require.False(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
 }

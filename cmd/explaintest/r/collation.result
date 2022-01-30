@@ -1,0 +1,15 @@
+drop table if exists t;
+create table t(a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);
+insert into t values ('啊', '撒旦');
+select coercibility(concat(a, b)) from t;
+coercibility(concat(a, b))
+1
+select coercibility(convert(concat(a, b) using utf8mb4) collate utf8mb4_general_ci) from t;
+coercibility(convert(concat(a, b) using utf8mb4) collate utf8mb4_general_ci)
+0
+select coercibility(convert('a' using utf8mb4));
+coercibility(convert('a' using utf8mb4))
+2
+select coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci);
+coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci)
+0

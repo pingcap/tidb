@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -278,6 +279,12 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	for i, col := range p.OutputColumns {
 		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
 		if err != nil {
+			// Check if there is duplicate virtual expression column matched.
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(p.indexPlan.Schema())
+			if isOK {
+				p.OutputColumns[i] = newExprCol.(*expression.Column)
+				continue
+			}
 			return err
 		}
 		p.OutputColumns[i] = newCol.(*expression.Column)
@@ -346,10 +353,16 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	for i, expr := range p.Conditions {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
+			// Check if there is duplicate virtual expression column matched.
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.children[0].Schema())
+			if isOk {
+				p.Conditions[i] = newCond
+				continue
+			}
 			return err
 		}
 	}
-	return
+	return nil
 }
 
 // ResolveIndices implements Plan interface.
@@ -359,11 +372,11 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 		return err
 	}
 	for i, col := range p.HashCols {
-		colExpr, err1 := col.ResolveIndices(p.children[0].Schema())
+		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
 		if err1 != nil {
 			return err1
 		}
-		p.HashCols[i], _ = colExpr.(*expression.Column)
+		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
 	}
 	return err
 }
@@ -587,9 +600,12 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-		if err != nil {
-			return err
+		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
+		if asgn.Expr != nil {
+			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, set := range p.SetList {

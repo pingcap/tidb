@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,18 +18,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -60,7 +61,7 @@ func (s *testAnalyzeSuite) TearDownSuite(c *C) {
 
 func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
 	statsPath := filepath.Join("testdata", fileName)
-	bytes, err := ioutil.ReadFile(statsPath)
+	bytes, err := os.ReadFile(statsPath)
 	if err != nil {
 		return err
 	}
@@ -126,17 +127,20 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain format = 'brief' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader(Build) 5.99 root  data:Selection",
-		"│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
-		"│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"└─TableReader(Probe) 5.99 root  data:Selection",
-		"  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
-		"    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-	))
-	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
@@ -183,14 +187,20 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-
-	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 0`).Check(testkit.Rows(
-		`TableDual 0.00 root  rows:0`,
-	))
-
-	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
-		`TableDual 0.00 root  rows:0`,
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
@@ -210,7 +220,8 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
@@ -218,12 +229,20 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain format = 'brief' select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
-		"└─TableReader 2.00 root  data:HashAgg",
-		"  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
-		"    └─TableFullScan 8.00 cop[tikv] table:t keep order:false",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func constructInsertSQL(i, n int) string {
@@ -277,10 +296,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -312,10 +331,10 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -384,10 +403,10 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		stmt := stmts[0]
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		c.Assert(err, IsNil)
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -412,7 +431,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
@@ -420,18 +440,30 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	statistics.RatioOfPseudoEstimate.Store(10.0)
-	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader 29.77 root  data:Selection",
-		"└─Selection 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false",
-	))
-	statistics.RatioOfPseudoEstimate.Store(0.7)
-	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader 8.84 root  data:Selection",
-		"└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
-	))
+	var input []struct {
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
+	}
+	var output []struct {
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
+		Plan                         []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		testKit.Se.GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
+		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
+		plan := testKit.MustQuery(tt.SQL)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt.SQL
+			output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
+			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
@@ -453,7 +485,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t (id int, KEY id (id))")
+		testKit.MustExec("create table t (id int not null, KEY id (id))")
 		testKit.MustExec("insert into t values (1), (2), (3)")
 
 		sql := "select * from t where id = ?"
@@ -464,10 +496,10 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.InPrepare, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -551,20 +583,27 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	dom.StatsHandle().Update(dom.InfoSchema())
-	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
-	// the `a = 5 and c = 5` will get 10, it is not consistent.
-	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
-		Check(testkit.Rows(
-			"IndexLookUp 10.00 root  ",
-			"├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
-			"└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
-			"  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false",
-		))
+	err = dom.StatsHandle().Update(dom.InfoSchema())
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -693,14 +732,14 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()
@@ -827,6 +866,7 @@ func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
+	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
 	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)
@@ -962,4 +1002,265 @@ func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testAnalyzeSuite) TestBatchPointGetTablePartition(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1,t2,t3,t4,t5,t6")
+
+	testKit.MustExec("create table t1(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t1 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─Batch_Point_Get 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t1 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t1 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t1 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+
+	testKit.MustExec("create table t2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("insert into t2 values(1,1),(1,2),(2,1),(2,2)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t2, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t2 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t2 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─IndexReader 2.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t2, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+		"└─IndexReader 2.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t2, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t2 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t2 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t2 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t2 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t2 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+
+	testKit.MustExec("create table t3(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	testKit.MustExec("insert into t3 values(1,1),(1,2),(2,1),(2,2)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t3 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t3 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t3 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"PartitionUnion 0.04 root  ",
+		"├─Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t3 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t3 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t3 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t3 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t3 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t3 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t3 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+
+	testKit.MustExec("create table t4(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
+	testKit.MustExec("insert into t4 values(1,1),(1,2),(2,1),(2,2)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t4 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t4, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t4 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t4 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"PartitionUnion 0.04 root  ",
+		"├─TableReader 2.00 root  data:TableRangeScan",
+		"│ └─TableRangeScan 2.00 cop[tikv] table:t4, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+		"└─TableReader 2.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t4, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t4 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t4 where a in (1,2) and b = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p0 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t4 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t4 where a in (1,2) and b = 1").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 1",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t4 where a = 1 and b in (1,2)").Check(testkit.Rows(
+		"TableReader 2.00 root partition:all data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t4 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t4 where a = 1 and b in (1,2)").Sort().Check(testkit.Rows(
+		"1 1",
+		"1 2",
+	))
+
+	testKit.MustExec("create table t5(a int, b int, primary key(a)) partition by hash(a) partitions 2")
+	testKit.MustExec("insert into t5 values(1,0),(2,0),(3,0),(4,0)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,2) and 1 = 1").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─Batch_Point_Get 2.00 root table:t5 handle:[1 2], keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t5 handle:[1 2], keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t5 where a in (1,2) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,3) and 1 = 1").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t5 handle:[1 3], keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t5 where a in (1,3) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"3 0",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,2) and 1 = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t5 range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t5 where a in (1,2) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t5 where a in (1,3) and 1 = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t5 range:[1,1], [3,3], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t5 where a in (1,3) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"3 0",
+	))
+
+	testKit.MustExec("create table t6(a int, b int, primary key(a)) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
+	testKit.MustExec("insert into t6 values(1,0),(2,0),(3,0),(4,0)")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	testKit.MustQuery("explain format = 'brief' select * from t6 where a in (1,2) and 1 = 1").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t6, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t6 where a in (1,2) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t6 where a in (1,3) and 1 = 1").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─TableReader 2.00 root  data:TableRangeScan",
+		"│ └─TableRangeScan 2.00 cop[tikv] table:t6, partition:p0 range:[1,1], [3,3], keep order:false, stats:pseudo",
+		"└─TableReader 2.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t6, partition:p1 range:[1,1], [3,3], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t6 where a in (1,3) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"3 0",
+	))
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	testKit.MustQuery("explain format = 'brief' select * from t6 where a in (1,2) and 1 = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:p0 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t6 range:[1,1], [2,2], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t6 where a in (1,2) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"2 0",
+	))
+	testKit.MustQuery("explain format = 'brief' select * from t6 where a in (1,3) and 1 = 1").Check(testkit.Rows(
+		"TableReader 2.00 root partition:all data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t6 range:[1,1], [3,3], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery("select * from t6 where a in (1,3) and 1 = 1").Sort().Check(testkit.Rows(
+		"1 0",
+		"3 0",
+	))
+}
+
+// TestAppendIntPkToIndexTailForRangeBuilding tests for issue25219 https://github.com/pingcap/tidb/issues/25219.
+func (s *testAnalyzeSuite) TestAppendIntPkToIndexTailForRangeBuilding(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t25219(a int primary key, col3 int, col1 int, index idx(col3))")
+	tk.MustExec("insert into t25219 values(1, 1, 1)")
+	tk.MustExec("analyze table t25219")
+	tk.MustQuery("select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;").Check(testkit.Rows("1 1 1"))
 }

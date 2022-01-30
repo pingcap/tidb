@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -81,7 +82,7 @@ func InferSystemTZ() string {
 	case !ok:
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
-			if strings.Index(path, "posixrules") != -1 {
+			if strings.Contains(path, "posixrules") {
 				path, err1 = inferOneStepLinkForPath("/etc/localtime")
 				if err1 != nil {
 					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))

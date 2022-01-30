@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,38 +16,44 @@ package distsql
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
+func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
 	sr := selectResult{ctx: ctx, storeType: kv.TiKV}
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
+	require.Nil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
+
 	sr.rootPlanID = 1234
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
 
-	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
-	t := uint64(1)
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	i := uint64(1)
 	sr.selectResp = &tipb.SelectResponse{
 		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
-			{TimeProcessedNs: &t, NumProducedRows: &t, NumIterations: &t},
+			{TimeProcessedNs: &i, NumProducedRows: &i, NumIterations: &i},
 		},
 	}
-	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
+
+	require.NotEqual(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
+
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234), IsFalse)
+	require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
-	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
+	require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
+	require.Equal(t, len(sr.copPlanIDs), len(sr.selectResp.GetExecutionSummaries()))
+
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, "tikv").String(), Equals, "tikv_task:{time:1ns, loops:1}, scan_detail: {total_process_keys: 0, total_keys: 0, rocksdb: {delete_skipped_count: 0, key_skipped_count: 0, block: {cache_hit_count: 0, read_count: 0, read_byte: 0 Bytes}}}")
+	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, "tikv").String())
 }

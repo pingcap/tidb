@@ -1,7 +1,3 @@
-// Copyright 2016 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2016 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package table
 
@@ -23,16 +24,15 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -80,6 +80,16 @@ func FindCol(cols []*Column, name string) *Column {
 	return nil
 }
 
+// FindColLowerCase finds column in cols by name. It assumes the name is lowercase.
+func FindColLowerCase(cols []*Column, name string) *Column {
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+	return nil
+}
+
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
@@ -91,7 +101,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-// If any columns don't match, return nil and the first missing column's name
+// If any columns don't match, return nil and the first missing column's name.
+// Please consider FindColumns() first for a better performance.
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
@@ -109,6 +120,26 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 	}
 
 	return rcols, ""
+}
+
+// FindColumns finds columns in cols by names with a better performance than FindCols().
+// It assumes names are lowercase.
+func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*Column, missingOffset int) {
+	var rcols []*Column
+	for i, name := range names {
+		col := FindColLowerCase(cols, name)
+		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
+		} else {
+			return nil, i
+		}
+	}
+	return rcols, -1
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
@@ -139,25 +170,34 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongASCIIValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncatedWrongValueForField.FastGen("incorrect ascii value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	logutil.BgLogger().Error("incorrect ASCII value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	truncateVal := types.NewStringDatum(str[:i])
+	var strval strings.Builder
+	for j := 0; j < 6; j++ {
+		if len(str) > (i + j) {
+			if str[i+j] > unicode.MaxASCII {
+				fmt.Fprintf(&strval, "\\x%X", str[i+j])
+			} else {
+				strval.WriteRune(rune(str[i+j]))
+			}
+		}
+	}
+	if len(str) > i+6 {
+		strval.WriteString(`...`)
+	}
+	// TODO: Add 'at row %d'
+	err := ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", strval.String(), col.Name)
+	logutil.BgLogger().Error("incorrect string value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	err = sc.HandleTruncate(err)
-	return truncateVal, err
+	return err
 }
 
-func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	// Truncate to valid utf8 string.
-	truncateVal := types.NewStringDatum(str[:i])
-	err = sc.HandleTruncate(err)
-	return truncateVal, err
-}
-
+// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
+// Currently only called from CastValue.
+// returns:
+//   value (possibly adjusted)
+//   boolean; true if break error/warning handling in CastValue and return what was returned from this
+//   error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
@@ -186,11 +226,13 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 	ignoreErr := sc.DupKeyAsWarning
 
+	// Timestamp in MySQL is since EPOCH 1970-01-01 00:00:00 UTC and can by definition not have invalid dates!
+	// Zero date is special for MySQL timestamp and *NOT* 1970-01-01 00:00:00, but 0000-00-00 00:00:00!
 	// in MySQL 8.0, the Timestamp's case is different to Datetime/Date, as shown below:
 	//
 	// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
 	// | ------------ | ----------------- | ------- | ----------------- | -------- |
-	// | `0000-00-01` | Success + Warning | Error   | Success + Warning | Error    |
+	// | `0000-00-01` | Truncate + Warning| Error   | Truncate + Warning| Error    |
 	// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
 	//
 	// * **NZD**: NO_ZERO_DATE_MODE
@@ -206,9 +248,18 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 			sc.AppendWarning(innerErr)
 		}
 		return types.NewDatum(zeroV), true, nil
+	} else if tmIsInvalid && col.Tp == mysql.TypeTimestamp {
+		// Prevent from being stored! Invalid timestamp!
+		if mode.HasStrictMode() {
+			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		}
+		// no strict mode, truncate to 0000-00-00 00:00:00
+		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
+		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
-			if !mode.HasNoZeroDateMode() {
+			// Don't care NoZeroDate mode if time val is invalid.
+			if !tmIsInvalid && !mode.HasNoZeroDateMode() {
 				return types.NewDatum(zeroV), true, nil
 			}
 		} else if tm.InvalidZero() {
@@ -234,7 +285,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 // CastValue casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
-// If returnOverflow is true, don't handle overflow errors in this function.
+// If returnErr is true, directly return any conversion errors.
 // It's safe now and it's the same as the behavior of select statement.
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
@@ -255,7 +306,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
-		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
+		str, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+			str = val.GetString()
+		}
+		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	}
@@ -272,55 +328,46 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
-	if col.Charset == charset.CharsetASCII {
-		if ctx.GetSessionVars().SkipASCIICheck {
-			return casted, nil
-		}
-
+	if v := makeStringValidator(ctx, col); v != nil {
 		str := casted.GetString()
-		for i := 0; i < len(str); i++ {
-			if str[i] > unicode.MaxASCII {
-				casted, err = handleWrongASCIIValue(ctx, col, &casted, str, i)
-				break
-			}
+		strategy := charset.TruncateStrategyReplace
+		if val.Collation() == charset.CollationBin {
+			strategy = charset.TruncateStrategyTrim
 		}
-		if forceIgnoreTruncate {
-			err = nil
+		if newStr, invalidPos := v.Truncate(str, strategy); invalidPos >= 0 {
+			casted = types.NewStringDatum(newStr)
+			err = handleWrongCharsetValue(ctx, col, str, invalidPos)
 		}
-		return casted, err
 	}
-
-	if ctx.GetSessionVars().SkipUTF8Check {
-		return casted, nil
-	}
-
-	if !mysql.IsUTF8Charset(col.Charset) {
-		return casted, nil
-	}
-	str := casted.GetString()
-	utf8Charset := col.Charset == mysql.UTF8Charset
-	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	for i, w := 0, 0; i < len(str); i += w {
-		runeValue, width := utf8.DecodeRuneInString(str[i:])
-		if runeValue == utf8.RuneError {
-			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-				w = width
-				continue
-			}
-			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
-			break
-		} else if width > 3 && doMB4CharCheck {
-			// Handle non-BMP characters.
-			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
-			break
-		}
-		w = width
-	}
-
 	if forceIgnoreTruncate {
 		err = nil
 	}
 	return casted, err
+}
+
+func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
+	switch col.Charset {
+	case charset.CharsetASCII:
+		if ctx.GetSessionVars().SkipASCIICheck {
+			return nil
+		}
+		return charset.StringValidatorASCII{}
+	case charset.CharsetUTF8:
+		if ctx.GetSessionVars().SkipUTF8Check {
+			return nil
+		}
+		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
+		return charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
+	case charset.CharsetUTF8MB4:
+		if ctx.GetSessionVars().SkipUTF8Check {
+			return nil
+		}
+		return charset.StringValidatorUTF8{IsUTF8MB4: true}
+	case charset.CharsetLatin1, charset.CharsetBinary:
+		return nil
+	default:
+		return charset.StringValidatorOther{Charset: col.Charset}
+	}
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -503,7 +550,7 @@ func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultEx
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
 	var defaultExpr ast.ExprNode
 	expr := fmt.Sprintf("select %s", defaultValue)
-	stmts, _, err := parser.New().Parse(expr, "", "")
+	stmts, _, err := parser.New().ParseSQL(expr)
 	if err == nil {
 		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}

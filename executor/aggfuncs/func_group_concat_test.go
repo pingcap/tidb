@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,48 +17,52 @@ package aggfuncs_test
 import (
 	"bytes"
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
+func TestMergePartialResult4GroupConcat(t *testing.T) {
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
-	s.testMergePartialResult(c, test)
+	testMergePartialResult(t, test)
 }
 
-func (s *testSuite) TestGroupConcat(c *C) {
+func TestGroupConcat(t *testing.T) {
+	ctx := mock.NewContext()
+
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
-	s.testAggFunc(c, test)
+	testAggFunc(t, test)
 
 	test2 := buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00")
 	test2.orderBy = true
-	s.testMultiArgsAggFunc(c, test2)
+	testMultiArgsAggFunc(t, ctx, test2)
 
 	defer func() {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum("1024"))
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen, "1024")
+		require.NoError(t, err)
 	}()
 	// minimum GroupConcatMaxLen is 4
 	for i := 4; i <= 7; i++ {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(fmt.Sprint(i)))
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen, fmt.Sprint(i))
+		require.NoError(t, err)
 		test2 = buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00"[:i])
 		test2.orderBy = true
-		s.testMultiArgsAggFunc(c, test2)
+		testMultiArgsAggFunc(t, ctx, test2)
 	}
 }
 
-func (s *testSuite) TestMemGroupConcat(c *C) {
+func TestMemGroupConcat(t *testing.T) {
 	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize+aggfuncs.DefBytesBufferSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
@@ -71,8 +76,10 @@ func (s *testSuite) TestMemGroupConcat(c *C) {
 	multiArgsTest4.multiArgsAggTest.orderBy = true
 
 	multiArgsTests := []multiArgsAggMemTest{multiArgsTest1, multiArgsTest2, multiArgsTest3, multiArgsTest4}
-	for _, test := range multiArgsTests {
-		s.testMultiArgsAggMemFunc(c, test)
+	for i, test := range multiArgsTests {
+		t.Run(fmt.Sprintf("%s_%d", test.multiArgsAggTest.funcName, i), func(t *testing.T) {
+			testMultiArgsAggMemFunc(t, test)
+		})
 	}
 }
 

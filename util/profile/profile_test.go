@@ -8,51 +8,49 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package profile_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/profile"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-type profileSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-var _ = Suite(&profileSuite{})
-
-func (s *profileSuite) SetUpSuite(c *C) {
+func TestProfiles(t *testing.T) {
 	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	var store kv.Storage
+	var dom *domain.Domain
+
+	store, err = mockstore.NewMockStore()
+	require.Nil(t, err)
+	defer func() {
+		err := store.Close()
+		require.Nil(t, err)
+	}()
+
 	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
+	dom, err = session.BootstrapSession(store)
+	require.Nil(t, err)
+	defer dom.Close()
 
-func (s *profileSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *profileSuite) TestProfiles(c *C) {
 	oldValue := profile.CPUProfileInterval
 	profile.CPUProfileInterval = 2 * time.Second
 	defer func() {
 		profile.CPUProfileInterval = oldValue
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("select * from performance_schema.tidb_profile_cpu")
 	tk.MustExec("select * from performance_schema.tidb_profile_memory")
 	tk.MustExec("select * from performance_schema.tidb_profile_allocs")

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package types
 import (
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // FieldName records the names used for mysql protocol.
@@ -29,6 +30,13 @@ type FieldName struct {
 	ColName     model.CIStr
 
 	Hidden bool
+
+	// NotExplicitUsable is used for mark whether a column can be explicit used in SQL.
+	// update stmt can write `writeable` column implicitly but cannot use non-public columns explicit.
+	// e.g. update t set a = 10 where b = 10; which `b` is in `writeOnly` state
+	NotExplicitUsable bool
+
+	Redundant bool
 }
 
 const emptyName = "EMPTY_NAME"

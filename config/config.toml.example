@@ -16,7 +16,7 @@ store = "unistore"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-socket = ""
+socket = "/tmp/tidb-{Port}.sock"
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
@@ -136,7 +136,7 @@ enable-enum-length-limit = true
 # Log level: debug, info, warn, error, fatal.
 level = "info"
 
-# Log format, one of json, text, console.
+# Log format, one of json or text.
 format = "text"
 
 # Enable automatic timestamps in log output, if not set, it will be defaulted to true.
@@ -201,6 +201,20 @@ cluster-ssl-key = ""
 # Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
 # "plaintext" means encryption is disabled.
 spilled-file-encryption-method = "plaintext"
+
+# Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
+enable-sem = false
+
+# Automatic creation of TLS certificates.
+# Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
+# If this config is commented/missed, the value would be 'false' for the compatibility with TiDB versions that does not support it.
+auto-tls = true
+
+# Minium TLS version to use, e.g. "TLSv1.2"
+tls-version = ""
+
+# The RSA Key size for automatic generated RSA keys
+rsa-key-size = 4096
 
 [status]
 # If enable status report HTTP service.
@@ -286,18 +300,10 @@ txn-total-size-limit = 104857600
 txn-entry-size-limit = 6291456
 
 # The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 16
+committer-concurrency = 128
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
-
-# the interval duration between two memory profile into global tracker
-mem-profile-interval = "1m"
-
-# Index usage sync lease duration, which influences the time of dump index usage information to KV.
-# Here we set to 0 to not dump index usage information to KV,
-# because we have not completed GC and other functions.
-index-usage-sync-lease = "0s"
 
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
@@ -314,7 +320,7 @@ header-timeout = 5
 
 [prepared-plan-cache]
 enabled = false
-capacity = 100
+capacity = 1000
 memory-guard-ratio = 0.1
 
 [opentracing]
@@ -418,6 +424,9 @@ store-liveness-timeout = "1s"
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
+# If the number of keys that one prewrite request of one region involves exceed this threshold, it will use `ResolveLock` instead of `ResolveLockLite`.
+resolve-lock-lite-threshold = 16
+
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
@@ -445,6 +454,12 @@ strategy = "range"
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
+# The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
+deadlock-history-capacity = 10
+
+# Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+deadlock-history-collect-retryable = false
+
 [stmt-summary]
 # enable statement summary.
 enable = true
@@ -453,7 +468,7 @@ enable = true
 enable-internal-query = false
 
 # max number of statements kept in memory.
-max-stmt-count = 200
+max-stmt-count = 3000
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096

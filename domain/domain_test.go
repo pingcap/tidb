@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,43 +24,368 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/integration"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+// SubTestInfo is batched in TestDomainSerial
+func SubTestInfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	if !unixSocketAvailable() {
+		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/FailPlacement", `return(true)`))
+
+	s, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	mockStore := &mockEtcdBackend{
+		Storage: s,
+		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
+	ddlLease := 80 * time.Millisecond
+	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
+	defer func() {
+		dom.Close()
+		err := s.Close()
+		require.NoError(t, err)
+	}()
+
+	client := cluster.RandClient()
+	dom.etcdClient = client
+	// Mock new DDL and init the schema syncer with etcd client.
+	goCtx := context.Background()
+	dom.ddl = ddl.NewDDL(
+		goCtx,
+		ddl.WithEtcdClient(dom.GetEtcdClient()),
+		ddl.WithStore(s),
+		ddl.WithInfoCache(dom.infoCache),
+		ddl.WithLease(ddlLease),
+	)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`))
+	require.NoError(t, dom.Init(ddlLease, sysMockFactory))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL"))
+
+	// Test for GetServerInfo and GetServerInfoByID.
+	ddlID := dom.ddl.GetID()
+	serverInfo, err := infosync.GetServerInfo()
+	require.NoError(t, err)
+
+	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
+	require.NoError(t, err)
+
+	if serverInfo.ID != info.ID {
+		t.Fatalf("server self info %v, info %v", serverInfo, info)
+	}
+
+	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
+	require.Error(t, err)
+	require.Equal(t, "[info-syncer] get /tidb/server/info/not_exist_id failed", err.Error())
+
+	// Test for GetAllServerInfo.
+	infos, err := infosync.GetAllServerInfo(goCtx)
+	require.NoError(t, err)
+	require.Lenf(t, infos, 1, "server one info %v, info %v", infos[ddlID], info)
+	require.Equalf(t, info.ID, infos[ddlID].ID, "server one info %v, info %v", infos[ddlID], info)
+
+	// Test the scene where syncer.Done() gets the information.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`))
+	<-dom.ddl.SchemaSyncer().Done()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone"))
+	time.Sleep(15 * time.Millisecond)
+	syncerStarted := false
+	for i := 0; i < 1000; i++ {
+		if dom.SchemaValidator.IsStarted() {
+			syncerStarted = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.True(t, syncerStarted)
+
+	// Make sure loading schema is normal.
+	cs := &ast.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
+	ctx := mock.NewContext()
+	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil))
+	require.NoError(t, dom.Reload())
+	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
+
+	// Test for RemoveServerInfo.
+	dom.info.RemoveServerInfo()
+	infos, err = infosync.GetAllServerInfo(goCtx)
+	require.NoError(t, err)
+	require.Len(t, infos, 0)
+
+	// Test for acquireServerID & refreshServerIDTTL
+	err = dom.acquireServerID(goCtx)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, dom.ServerID())
+
+	err = dom.refreshServerIDTTL(goCtx)
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement"))
 }
 
-var _ = Suite(&testSuite{})
+// SubTestDomain is batched in TestDomainSerial
+func SubTestDomain(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
 
-type testSuite struct {
+	ddlLease := 80 * time.Millisecond
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
+	err = dom.Init(ddlLease, sysMockFactory)
+	require.NoError(t, err)
+
+	ctx := mock.NewContext()
+	ctx.Store = dom.Store()
+	dd := dom.DDL()
+	require.NotNil(t, dd)
+	require.Equal(t, 80*time.Millisecond, dd.GetLease())
+
+	snapTS := oracle.GoTimeToTS(time.Now())
+	cs := &ast.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil)
+	require.NoError(t, err)
+
+	// Test for fetchSchemasWithTables when "tables" isn't nil.
+	err = dd.CreateTable(ctx, &ast.CreateTableStmt{Table: &ast.TableName{
+		Schema: model.NewCIStr("aaa"),
+		Name:   model.NewCIStr("tbl")}})
+	require.NoError(t, err)
+
+	is := dom.InfoSchema()
+	require.NotNil(t, is)
+
+	// for updating the self schema version
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	require.NoError(t, err)
+
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	require.NotNil(t, snapIs)
+	require.NoError(t, err)
+
+	// Make sure that the self schema version doesn't be changed.
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	require.NoError(t, err)
+
+	// for GetSnapshotInfoSchema
+	currSnapTS := oracle.GoTimeToTS(time.Now())
+	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
+	require.NoError(t, err)
+	require.NotNil(t, currSnapTS)
+	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
+
+	// for GetSnapshotMeta
+	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("aaa"))
+	require.True(t, ok)
+
+	tbl, err := currSnapIs.TableByName(model.NewCIStr("aaa"), model.NewCIStr("tbl"))
+	require.NoError(t, err)
+
+	m, err := dom.GetSnapshotMeta(snapTS)
+	require.NoError(t, err)
+
+	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	require.Nil(t, tblInfo1)
+
+	m, err = dom.GetSnapshotMeta(currSnapTS)
+	require.NoError(t, err)
+
+	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
+	require.NoError(t, err)
+	require.Equal(t, tblInfo2, tbl.Meta())
+
+	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
+	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs, nil, nil)
+	require.NoError(t, err)
+
+	err = dom.Reload()
+	require.NoError(t, err)
+
+	// for schemaValidator
+	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	ts := ver.Ver
+	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, ResultSucc, res)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
+
+	err = dom.Reload()
+	require.Error(t, err)
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, ResultSucc, res)
+	time.Sleep(ddlLease)
+
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	ts = ver.Ver
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, ResultUnknown, res)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
+	err = dom.Reload()
+	require.NoError(t, err)
+
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, ResultSucc, res)
+
+	// For slow query.
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
+	time.Sleep(5 * time.Millisecond)
+
+	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
+	require.Len(t, result, 2)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
+	require.Len(t, result, 1)
+	require.Equal(t, "aaa", result[0].SQL)
+	require.Equal(t, time.Second, result[0].Duration)
+	require.True(t, result[0].Internal)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
+	require.Len(t, result, 3)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Equal(t, "aaa", result[2].SQL)
+	require.Equal(t, time.Second, result[2].Duration)
+	require.True(t, result[2].Internal)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
+	require.Len(t, result, 2)
+	require.Equal(t, "ccc", result[0].SQL)
+	require.Equal(t, 2*time.Second, result[0].Duration)
+	require.Equal(t, "bbb", result[1].SQL)
+	require.Equal(t, 3*time.Second, result[1].Duration)
+
+	metrics.PanicCounter.Reset()
+	// Since the stats lease is 0 now, so create a new ticker will panic.
+	// Test that they can recover from panic correctly.
+	dom.updateStatsWorker(ctx, nil)
+	dom.autoAnalyzeWorker(nil)
+	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
+	pb := &dto.Metric{}
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	require.Equal(t, float64(2), pb.GetCounter().GetValue())
+
+	scope := dom.GetScope("status")
+	require.Equal(t, variable.DefaultStatusVarScopeFlag, scope)
+
+	// For schema check, it tests for getting the result of "ResultUnknown".
+	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
+	originalRetryTime := SchemaOutOfDateRetryTimes
+	originalRetryInterval := SchemaOutOfDateRetryInterval
+	// Make sure it will retry one time and doesn't take a long time.
+	SchemaOutOfDateRetryTimes = 1
+	SchemaOutOfDateRetryInterval = int64(time.Millisecond * 1)
+	defer func() {
+		SchemaOutOfDateRetryTimes = originalRetryTime
+		SchemaOutOfDateRetryInterval = originalRetryInterval
+	}()
+	dom.SchemaValidator.Stop()
+	_, err = schemaChecker.Check(uint64(123456))
+	require.EqualError(t, err, ErrInfoSchemaExpired.Error())
+	dom.SchemaValidator.Reset()
+
+	// Test for reporting min start timestamp.
+	infoSyncer := dom.InfoSyncer()
+	sm := &mockSessionManager{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	infoSyncer.SetSessionManager(sm)
+	beforeTS := oracle.GoTimeToTS(time.Now())
+	infoSyncer.ReportMinStartTS(dom.Store())
+	afterTS := oracle.GoTimeToTS(time.Now())
+	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
+
+	now := time.Now()
+	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
+	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	sm.PS = []*util.ProcessInfo{
+		{CurTxnStartTS: 0},
+		{CurTxnStartTS: math.MaxUint64},
+		{CurTxnStartTS: lowerLimit},
+		{CurTxnStartTS: validTS},
+	}
+	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
+
+	err = store.Close()
+	require.NoError(t, err)
+
+	isClose := dom.isClose()
+	require.False(t, isClose)
+
+	dom.Close()
+	isClose = dom.isClose()
+	require.True(t, isClose)
+}
+
+// ETCD use ip:port as unix socket address, however this address is invalid on windows.
+// We have to skip some of the test in such case.
+// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
+func unixSocketAvailable() bool {
+	c, err := net.Listen("unix", "127.0.0.1:0")
+	if err == nil {
+		_ = c.Close()
+		return true
+	}
+	return false
 }
 
 func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
 }
 
-func sysMockFactory(dom *Domain) (pools.Resource, error) {
+func sysMockFactory(*Domain) (pools.Resource, error) {
 	return nil, nil
 }
 
@@ -71,173 +397,19 @@ type mockEtcdBackend struct {
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
+
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
 func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
-// ETCD use ip:port as unix socket address, however this address is invalid on windows.
-// We have to skip some of the test in such case.
-// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
-func unixSocketAvailable() bool {
-	c, err := net.Listen("unix", "127.0.0.1:0")
-	if err == nil {
-		c.Close()
-		return true
-	}
-	return false
-}
-
-func TestInfo(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/FailPlacement", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
-	}
-	if !unixSocketAvailable() {
-		return
-	}
-	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)()
-	ddlLease := 80 * time.Millisecond
-	s, err := mockstore.NewMockStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
-	mockStore := &mockEtcdBackend{
-		Storage: s,
-		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
-	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
-	defer func() {
-		dom.Close()
-		s.Close()
-	}()
-
-	cli := clus.RandClient()
-	dom.etcdClient = cli
-	// Mock new DDL and init the schema syncer with etcd client.
-	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(
-		goCtx,
-		ddl.WithEtcdClient(dom.GetEtcdClient()),
-		ddl.WithStore(s),
-		ddl.WithInfoHandle(dom.infoHandle),
-		ddl.WithLease(ddlLease),
-	)
-	err = dom.ddl.Start(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = dom.Init(ddlLease, sysMockFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Test for GetServerInfo and GetServerInfoByID.
-	ddlID := dom.ddl.GetID()
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if serverInfo.ID != info.ID {
-		t.Fatalf("server self info %v, info %v", serverInfo, info)
-	}
-	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
-	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
-		t.Fatal(err)
-	}
-
-	// Test for GetAllServerInfo.
-	infos, err := infosync.GetAllServerInfo(goCtx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[ddlID].ID != info.ID {
-		t.Fatalf("server one info %v, info %v", infos[ddlID], info)
-	}
-
-	// Test the scene where syncer.Done() gets the information.
-	err = failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-dom.ddl.SchemaSyncer().Done()
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(15 * time.Millisecond)
-	syncerStarted := false
-	for i := 0; i < 1000; i++ {
-		if dom.SchemaValidator.IsStarted() {
-			syncerStarted = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !syncerStarted {
-		t.Fatal("start syncer failed")
-	}
-	// Make sure loading schema is normal.
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
-	}
-	ctx := mock.NewContext()
-	err = dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = dom.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dom.InfoSchema().SchemaMetaVersion() != 1 {
-		t.Fatalf("update schema version failed, ver %d", dom.InfoSchema().SchemaMetaVersion())
-	}
-
-	// Test for RemoveServerInfo.
-	dom.info.RemoveServerInfo()
-	infos, err = infosync.GetAllServerInfo(goCtx)
-	if err != nil || len(infos) != 0 {
-		t.Fatalf("err %v, infos %v", err, infos)
-	}
-
-	// Test for acquireServerID & refreshServerIDTTL
-	err = dom.acquireServerID(goCtx)
-	if err != nil || dom.ServerID() == 0 {
-		t.Fatalf("dom.acquireServerID err %v, serverID %v", err, dom.ServerID())
-	}
-	err = dom.refreshServerIDTTL(goCtx)
-	if err != nil {
-		t.Fatalf("dom.refreshServerIDTTL err %v", err)
-	}
-
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement")
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -257,243 +429,12 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 	return &util.ProcessInfo{}, false
 }
 
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
+func (msm *mockSessionManager) Kill(uint64, bool) {}
 
 func (msm *mockSessionManager) KillAllConnections() {}
 
-func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+func (msm *mockSessionManager) UpdateTLSConfig(*tls.Config) {}
 
 func (msm *mockSessionManager) ServerID() uint64 {
 	return 1
-}
-
-func (*testSuite) TestT(c *C) {
-	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
-	err = dom.Init(ddlLease, sysMockFactory)
-	c.Assert(err, IsNil)
-	ctx := mock.NewContext()
-	ctx.Store = dom.Store()
-	dd := dom.DDL()
-	c.Assert(dd, NotNil)
-	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
-
-	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
-	}
-	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
-	c.Assert(err, IsNil)
-	// Test for fetchSchemasWithTables when "tables" isn't nil.
-	err = dd.CreateTable(ctx, &ast.CreateTableStmt{Table: &ast.TableName{
-		Schema: model.NewCIStr("aaa"),
-		Name:   model.NewCIStr("tbl")}})
-	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
-	c.Assert(is, NotNil)
-
-	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
-	cancel()
-	c.Assert(err, IsNil)
-	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
-	c.Assert(snapIs, NotNil)
-	c.Assert(err, IsNil)
-	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
-	cancel()
-	c.Assert(err, IsNil)
-
-	// for GetSnapshotInfoSchema
-	currSnapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
-	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
-	c.Assert(err, IsNil)
-	c.Assert(currSnapIs, NotNil)
-	c.Assert(currSnapIs.SchemaMetaVersion(), Equals, is.SchemaMetaVersion())
-
-	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("aaa"))
-	c.Assert(ok, IsTrue)
-	tbl, err := currSnapIs.TableByName(model.NewCIStr("aaa"), model.NewCIStr("tbl"))
-	c.Assert(err, IsNil)
-	m, err := dom.GetSnapshotMeta(snapTS)
-	c.Assert(err, IsNil)
-	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
-	c.Assert(tblInfo1, IsNil)
-	m, err = dom.GetSnapshotMeta(currSnapTS)
-	c.Assert(err, IsNil)
-	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta(), DeepEquals, tblInfo2)
-
-	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
-	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs)
-	c.Assert(err, IsNil)
-	err = dom.Reload()
-	c.Assert(err, IsNil)
-
-	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	ts := ver.Ver
-
-	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
-	c.Assert(succ, Equals, ResultSucc)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
-	err = dom.Reload()
-	c.Assert(err, NotNil)
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	c.Assert(succ, Equals, ResultSucc)
-	time.Sleep(ddlLease)
-
-	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	ts = ver.Ver
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	c.Assert(succ, Equals, ResultUnknown)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
-	err = dom.Reload()
-	c.Assert(err, IsNil)
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	c.Assert(succ, Equals, ResultSucc)
-
-	// For slow query.
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
-	time.Sleep(5 * time.Millisecond)
-
-	res := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
-	c.Assert(res, HasLen, 2)
-	c.Assert(res[0].SQL, Equals, "bbb")
-	c.Assert(res[0].Duration, Equals, 3*time.Second)
-	c.Assert(res[1].SQL, Equals, "ccc")
-	c.Assert(res[1].Duration, Equals, 2*time.Second)
-
-	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
-	c.Assert(res, HasLen, 1)
-	c.Assert(res[0].SQL, Equals, "aaa")
-	c.Assert(res[0].Duration, Equals, time.Second)
-	c.Assert(res[0].Internal, Equals, true)
-
-	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
-	c.Assert(res, HasLen, 3)
-	c.Assert(res[0].SQL, Equals, "bbb")
-	c.Assert(res[0].Duration, Equals, 3*time.Second)
-	c.Assert(res[1].SQL, Equals, "ccc")
-	c.Assert(res[1].Duration, Equals, 2*time.Second)
-	c.Assert(res[2].SQL, Equals, "aaa")
-	c.Assert(res[2].Duration, Equals, time.Second)
-	c.Assert(res[2].Internal, Equals, true)
-
-	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
-	c.Assert(res, HasLen, 2)
-	c.Assert(res[0].SQL, Equals, "ccc")
-	c.Assert(res[0].Duration, Equals, 2*time.Second)
-	c.Assert(res[1].SQL, Equals, "bbb")
-	c.Assert(res[1].Duration, Equals, 3*time.Second)
-
-	metrics.PanicCounter.Reset()
-	// Since the stats lease is 0 now, so create a new ticker will panic.
-	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(ctx, nil)
-	dom.autoAnalyzeWorker(nil)
-	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
-	pb := &dto.Metric{}
-	err = counter.Write(pb)
-	c.Assert(err, IsNil)
-	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
-
-	scope := dom.GetScope("status")
-	c.Assert(scope, Equals, variable.DefaultStatusVarScopeFlag)
-
-	// For schema check, it tests for getting the result of "ResultUnknown".
-	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
-	originalRetryTime := SchemaOutOfDateRetryTimes
-	originalRetryInterval := SchemaOutOfDateRetryInterval
-	// Make sure it will retry one time and doesn't take a long time.
-	SchemaOutOfDateRetryTimes = 1
-	SchemaOutOfDateRetryInterval = int64(time.Millisecond * 1)
-	defer func() {
-		SchemaOutOfDateRetryTimes = originalRetryTime
-		SchemaOutOfDateRetryInterval = originalRetryInterval
-	}()
-	dom.SchemaValidator.Stop()
-	_, err = schemaChecker.Check(uint64(123456))
-	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
-	dom.SchemaValidator.Reset()
-
-	// Test for reporting min start timestamp.
-	infoSyncer := dom.InfoSyncer()
-	sm := &mockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	infoSyncer.SetSessionManager(sm)
-	beforeTS := oracle.GoTimeToTS(time.Now())
-	infoSyncer.ReportMinStartTS(dom.Store())
-	afterTS := oracle.GoTimeToTS(time.Now())
-	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
-	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
-	validTS := oracle.GoTimeToTS(lowerLimit.Add(time.Minute))
-	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: oracle.GoTimeToTS(lowerLimit)},
-		{CurTxnStartTS: validTS},
-	}
-	infoSyncer.SetSessionManager(sm)
-	infoSyncer.ReportMinStartTS(dom.Store())
-	c.Assert(infoSyncer.GetMinStartTS() == validTS, IsTrue)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
-	isClose := dom.isClose()
-	c.Assert(isClose, IsFalse)
-	dom.Close()
-	isClose = dom.isClose()
-	c.Assert(isClose, IsTrue)
-}
-
-type testResource struct {
-	status int
-}
-
-func (tr *testResource) Close() { tr.status = 1 }
-
-func (*testSuite) TestSessionPool(c *C) {
-	f := func() (pools.Resource, error) { return &testResource{}, nil }
-	pool := newSessionPool(1, f)
-	tr, err := pool.Get()
-	c.Assert(err, IsNil)
-	tr1, err := pool.Get()
-	c.Assert(err, IsNil)
-	pool.Put(tr)
-	// Capacity is 1, so tr1 is closed.
-	pool.Put(tr1)
-	c.Assert(tr1.(*testResource).status, Equals, 1)
-	pool.Close()
-
-	pool.Close()
-	pool.Put(tr1)
-	tr, err = pool.Get()
-	c.Assert(err.Error(), Equals, "session pool closed")
-	c.Assert(tr, IsNil)
-}
-
-func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
-	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
-}
-
-func (*testSuite) TestServerIDConstant(c *C) {
-	c.Assert(lostConnectionToPDTimeout, Less, serverIDTTL)
 }

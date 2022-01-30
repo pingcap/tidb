@@ -175,17 +175,17 @@ a	b	c	e
 2	2.1	3	4.1
 desc select a+1 from t where a+1=3;
 id	estRows	task	access object	operator info
-IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
+Projection_4	10.00	root		plus(test.t.a, 1)
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1=3;
 a+1
 3
 desc select c from t where a+1=3;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t.c
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
 select c from t where a+1=3;
 c
 3
@@ -200,24 +200,25 @@ a	b	c	e
 1	2	2	3
 desc select b+a from t where b+a=3;
 id	estRows	task	access object	operator info
-IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
+Projection_4	10.00	root		plus(test.t.b, cast(test.t.a, double BINARY))
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
 select b+a from t where b+a=3;
 b+a
 3
 desc select e from t where b+a=3;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t.e
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
 select e from t where b+a=3;
 e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-IndexReader_6	30.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+Projection_4	30.00	root		plus(test.t.a, 1)
+└─IndexReader_6	30.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -238,8 +239,9 @@ a	b	c	e
 0	0	1	0
 desc select a+1 from t where a+1 between 1 and 4;
 id	estRows	task	access object	operator info
-IndexReader_6	250.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,4], keep order:false, stats:pseudo
+Projection_4	250.00	root		plus(test.t.a, 1)
+└─IndexReader_6	250.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,4], keep order:false, stats:pseudo
 select a+1 from t where a+1 between 1 and 4;
 a+1
 1
@@ -261,7 +263,7 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
+└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1), plus(test.t.b, cast(test.t.a, double BINARY))
   └─IndexLookUp_12	10000.00	root		
     ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
     └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -276,8 +278,9 @@ a	b	c	e
 5	-1	6	4
 desc select a+1 from t order by a+1;
 id	estRows	task	access object	operator info
-IndexReader_14	10000.00	root		index:IndexFullScan_13
-└─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
+Projection_5	10000.00	root		plus(test.t.a, 1)
+└─IndexReader_14	10000.00	root		index:IndexFullScan_13
+  └─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
 select a+1 from t order by a+1;
 a+1
 0
@@ -289,8 +292,9 @@ a+1
 6
 desc select b+a from t order by b+a;
 id	estRows	task	access object	operator info
-IndexReader_14	10000.00	root		index:IndexFullScan_13
-└─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	keep order:true, stats:pseudo
+Projection_5	10000.00	root		plus(test.t.b, cast(test.t.a, double BINARY))
+└─IndexReader_14	10000.00	root		index:IndexFullScan_13
+  └─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	keep order:true, stats:pseudo
 select b+a from t order by b+a;
 b+a
 -3
@@ -389,3 +393,180 @@ explain format = 'brief' select c0 from t0;
 id	estRows	task	access object	operator info
 TableReader	10000.00	root		data:TableFullScan
 └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+ -- TableRead
+drop table if exists tbl1;
+create table tbl1 (id int unsigned not null auto_increment primary key, s int, index((md5(s))));
+insert into tbl1 (id) select null;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+update tbl1 set s=id%32;
+explain format = 'brief' select count(*) from tbl1 where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#6)->Column#4
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#6
+    └─IndexRangeScan	250.00	cop[tikv]	table:tbl1, index:expression_index(md5(`s`))	range:["02e74f10e0327ad868d138f2b4fdd6f","02e74f10e0327ad868d138f2b4fdd6g"), keep order:false, stats:pseudo
+select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+count(*)
+64
+drop table if exists t;
+create table t(a int, b varchar(10), key((lower(b)), (a+1)), key((upper(b))));
+insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
+analyze table t;
+desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
+id	estRows	task	access object	operator info
+Projection	1.00	root		test.t.a, test.t.b
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select * from t where not (lower(b) >= "a");
+id	estRows	task	access object	operator info
+Projection	0.00	root		test.t.a, test.t.b
+└─IndexLookUp	0.00	root		
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select count(upper(b)) from t group by upper(b);
+id	estRows	task	access object	operator info
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:count(upper(test.t.b))->Column#7
+└─IndexReader	6.00	root		index:IndexFullScan
+  └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
+desc format = 'brief' select max(upper(b)) from t group by upper(b);
+id	estRows	task	access object	operator info
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:max(upper(test.t.b))->Column#7
+└─IndexReader	6.00	root		index:IndexFullScan
+  └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
+desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
+id	estRows	task	access object	operator info
+HashAgg	6.00	root		group by:Column#9, funcs:count(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+  └─TableReader	6.00	root		data:TableFullScan
+    └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+id	estRows	task	access object	operator info
+HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+  └─TableReader	6.00	root		data:TableFullScan
+    └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+drop table if exists t;
+CREATE TABLE t (
+`a` date DEFAULT NULL,
+`b` datetime DEFAULT NULL,
+`c` time DEFAULT NULL,
+`d` timestamp NULL DEFAULT NULL,
+`e` year(4) DEFAULT NULL,
+KEY `expression_index` ((adddate(`a`, interval 10 microsecond))),
+KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
+KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
+);
+insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
+select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:expression_index(`a` + 1)	keep order:false, stats:pseudo
+desc format = 'brief' select b from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+a
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+a
+齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙
+齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+a
+a
+b
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+a
+a
+b
+select @@tidb_allow_function_for_expression_index;
+@@tidb_allow_function_for_expression_index
+lower, md5, reverse, upper, vitess_hash
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+`COL1` double NOT NULL,
+`COL2` double NOT NULL,
+`COL3` double DEFAULT NULL,
+PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20

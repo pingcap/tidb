@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -54,25 +56,44 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
+// GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
+func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int8) (d types.Datum, err error) {
+	var t types.Time
+	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
+	if err != nil {
+		return d, err
+	}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
+func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int8) (t types.Time, err error) {
+	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
+	defaultTime, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return value, err
+	}
+	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
+		if err != nil {
+			return value, err
+		}
+	}
+	return value, nil
+}
+
 // GetTimeValue gets the time value with type tp.
 func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
-	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
+	var value types.Time
 
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			defaultTime, err := getStmtTimestamp(ctx)
-			if err != nil {
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
-			}
-			value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
-			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
-				if err != nil {
-					return d, err
-				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
@@ -132,6 +153,11 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		v := time.Unix(int64(val.(int)), 0)
+		failpoint.Return(v, nil)
+	})
+
 	now := time.Now()
 
 	if ctx == nil {
@@ -139,21 +165,15 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
+	timestampStr, err := variable.GetSessionOrGlobalSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return now, err
 	}
 
-	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if timestamp <= 0 {
-			return now, nil
-		}
-		return time.Unix(timestamp, 0), nil
+	timestamp, err := types.StrToFloat(sessionVars.StmtCtx, timestampStr, false)
+	if err != nil {
+		return time.Time{}, err
 	}
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	return stmtCtx.GetNowTsCached(), nil
+	seconds, fractionalSeconds := math.Modf(timestamp)
+	return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
 }

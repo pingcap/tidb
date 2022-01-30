@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,11 +17,12 @@ package types
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 )
 
@@ -56,6 +58,8 @@ const (
 	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
 	modeCeiling RoundMode = 0
+
+	pow10off int = 81
 )
 
 var (
@@ -107,6 +111,7 @@ var (
 		999999990,
 	}
 	zeroMyDecimal = MyDecimal{}
+	pow10off81    = [...]float64{1e-81, 1e-80, 1e-79, 1e-78, 1e-77, 1e-76, 1e-75, 1e-74, 1e-73, 1e-72, 1e-71, 1e-70, 1e-69, 1e-68, 1e-67, 1e-66, 1e-65, 1e-64, 1e-63, 1e-62, 1e-61, 1e-60, 1e-59, 1e-58, 1e-57, 1e-56, 1e-55, 1e-54, 1e-53, 1e-52, 1e-51, 1e-50, 1e-49, 1e-48, 1e-47, 1e-46, 1e-45, 1e-44, 1e-43, 1e-42, 1e-41, 1e-40, 1e-39, 1e-38, 1e-37, 1e-36, 1e-35, 1e-34, 1e-33, 1e-32, 1e-31, 1e-30, 1e-29, 1e-28, 1e-27, 1e-26, 1e-25, 1e-24, 1e-23, 1e-22, 1e-21, 1e-20, 1e-19, 1e-18, 1e-17, 1e-16, 1e-15, 1e-14, 1e-13, 1e-12, 1e-11, 1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28, 1e29, 1e30, 1e31, 1e32, 1e33, 1e34, 1e35, 1e36, 1e37, 1e38, 1e39, 1e40, 1e41, 1e42, 1e43, 1e44, 1e45, 1e46, 1e47, 1e48, 1e49, 1e50, 1e51, 1e52, 1e53, 1e54, 1e55, 1e56, 1e57, 1e58, 1e59, 1e60, 1e61, 1e62, 1e63, 1e64, 1e65, 1e66, 1e67, 1e68, 1e69, 1e70, 1e71, 1e72, 1e73, 1e74, 1e75, 1e76, 1e77, 1e78, 1e79, 1e80, 1e81}
 )
 
 // get the zero of MyDecimal with the specified result fraction digits
@@ -389,8 +394,6 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	// strErr is used to check str is bad number or not
-	var strErr error
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
@@ -421,8 +424,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 			endIdx++
 		}
 		digitsFrac = endIdx - strIdx - 1
-	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E' && str[strIdx] != ' ') {
-		strErr = ErrBadNumber
 	} else {
 		digitsFrac = 0
 		endIdx = strIdx
@@ -482,33 +483,40 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if innerIdx != 0 {
 		d.wordBuf[wordIdx] = word * powers10[digitsPerWord-innerIdx]
 	}
-	if endIdx+1 <= len(str) && (str[endIdx] == 'e' || str[endIdx] == 'E') {
-		exponent, err1 := strToInt(string(str[endIdx+1:]))
-		if err1 != nil {
-			err = errors.Cause(err1)
-			if err != ErrTruncated {
-				*d = zeroMyDecimal
-			}
-		}
-		if exponent > math.MaxInt32/2 {
-			negative := d.negative
-			maxDecimal(wordBufLen*digitsPerWord, 0, d)
-			d.negative = negative
-			err = ErrOverflow
-		}
-		if exponent < math.MinInt32/2 && err != ErrOverflow {
-			*d = zeroMyDecimal
-			err = ErrTruncated
-		}
-		if err != ErrOverflow {
-			shiftErr := d.Shift(int(exponent))
-			if shiftErr != nil {
-				if shiftErr == ErrOverflow {
-					negative := d.negative
-					maxDecimal(wordBufLen*digitsPerWord, 0, d)
-					d.negative = negative
+	if endIdx+1 <= len(str) {
+		if str[endIdx] == 'e' || str[endIdx] == 'E' {
+			exponent, err1 := strToInt(string(str[endIdx+1:]))
+			if err1 != nil {
+				err = errors.Cause(err1)
+				if err != ErrTruncated {
+					*d = zeroMyDecimal
 				}
-				err = shiftErr
+			}
+			if exponent > math.MaxInt32/2 {
+				negative := d.negative
+				maxDecimal(wordBufLen*digitsPerWord, 0, d)
+				d.negative = negative
+				err = ErrOverflow
+			}
+			if exponent < math.MinInt32/2 && err != ErrOverflow {
+				*d = zeroMyDecimal
+				err = ErrTruncated
+			}
+			if err != ErrOverflow {
+				shiftErr := d.Shift(int(exponent))
+				if shiftErr != nil {
+					if shiftErr == ErrOverflow {
+						negative := d.negative
+						maxDecimal(wordBufLen*digitsPerWord, 0, d)
+						d.negative = negative
+					}
+					err = shiftErr
+				}
+			}
+		} else {
+			trimstr := strings.TrimSpace(string(str[endIdx:]))
+			if len(trimstr) != 0 {
+				err = ErrTruncated
 			}
 		}
 	}
@@ -523,9 +531,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 		d.negative = false
 	}
 	d.resultFrac = d.digitsFrac
-	if strErr != nil {
-		return strErr
-	}
 	return err
 }
 
@@ -1084,12 +1089,45 @@ func (d *MyDecimal) FromFloat64(f float64) error {
 }
 
 // ToFloat64 converts decimal to float64 value.
-func (d *MyDecimal) ToFloat64() (float64, error) {
-	f, err := strconv.ParseFloat(d.String(), 64)
-	if err != nil {
-		err = ErrOverflow
+func (d *MyDecimal) ToFloat64() (f float64, err error) {
+	digitsInt := int(d.digitsInt)
+	digitsFrac := int(d.digitsFrac)
+	// https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64
+	// "The 53-bit significand precision gives from 15 to 17 significant decimal digits precision (2−53 ≈ 1.11 × 10−16).
+	// If a decimal string with at most 15 significant digits is converted to IEEE 754 double-precision representation,
+	// and then converted back to a decimal string with the same number of digits, the final result should match the original string."
+	// The new method is about 10.5X faster than the old one according to the benchmark in types/mydecimal_benchmark_test.go.
+	// The initial threshold here is 15, we adjusted it to 12 for compatibility with previous.
+	// We did a full test of 12 significant digits to make sure it's correct and behaves as before.
+	if digitsInt+digitsFrac > 12 {
+		f, err = strconv.ParseFloat(d.String(), 64)
+		if err != nil {
+			err = ErrOverflow
+		}
+		return
 	}
-	return f, err
+	wordsInt := (digitsInt-1)/digitsPerWord + 1
+	wordIdx := 0
+	for i := 0; i < digitsInt; i += digitsPerWord {
+		x := d.wordBuf[wordIdx]
+		wordIdx++
+		// Equivalent to f += float64(x) * math.Pow10((wordsInt-wordIdx)*digitsPerWord)
+		f += float64(x) * pow10off81[(wordsInt-wordIdx)*digitsPerWord+pow10off]
+	}
+	fracStart := wordIdx
+	for i := 0; i < digitsFrac; i += digitsPerWord {
+		x := d.wordBuf[wordIdx]
+		wordIdx++
+		// Equivalent to f += float64(x) * math.Pow10(-digitsPerWord*(wordIdx-fracStart))
+		f += float64(x) * pow10off81[-digitsPerWord*(wordIdx-fracStart)+pow10off]
+	}
+	// Equivalent to unit := math.Pow10(int(d.resultFrac))
+	unit := pow10off81[int(d.resultFrac)+pow10off]
+	f = math.Round(f*unit) / unit
+	if d.negative {
+		f = -f
+	}
+	return
 }
 
 /*

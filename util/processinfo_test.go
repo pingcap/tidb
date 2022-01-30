@@ -8,29 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package util_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(&testProcessInfoSuite{})
-
-type testProcessInfoSuite struct {
-}
-
-func (s *testProcessInfoSuite) SetUpSuite(c *C) {
-}
-
-func (s *testProcessInfoSuite) TearDownSuite(c *C) {
-}
-
-func (s *testProcessInfoSuite) TestGlobalConnID(c *C) {
+func TestGlobalConnID(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Experimental.EnableGlobalKill = true
@@ -43,29 +35,29 @@ func (s *testProcessInfoSuite) TestGlobalConnID(c *C) {
 		ServerID:    1001,
 		LocalConnID: 123,
 	}
-	c.Assert(connID.ID(), Equals, (uint64(1001)<<41)|(uint64(123)<<1)|1)
+	assert.Equal(t, (uint64(1001)<<41)|(uint64(123)<<1)|1, connID.ID())
 
 	next := connID.NextID()
-	c.Assert(next, Equals, (uint64(1001)<<41)|(uint64(124)<<1)|1)
+	assert.Equal(t, (uint64(1001)<<41)|(uint64(124)<<1)|1, next)
 
 	connID1, isTruncated, err := util.ParseGlobalConnID(next)
-	c.Assert(err, IsNil)
-	c.Assert(isTruncated, IsFalse)
-	c.Assert(connID1.ServerID, Equals, uint64(1001))
-	c.Assert(connID1.LocalConnID, Equals, uint64(124))
-	c.Assert(connID1.Is64bits, IsTrue)
+	assert.Nil(t, err)
+	assert.False(t, isTruncated)
+	assert.Equal(t, uint64(1001), connID1.ServerID)
+	assert.Equal(t, uint64(124), connID1.LocalConnID)
+	assert.True(t, connID1.Is64bits)
 
 	_, isTruncated, err = util.ParseGlobalConnID(101)
-	c.Assert(err, IsNil)
-	c.Assert(isTruncated, IsTrue)
+	assert.Nil(t, err)
+	assert.True(t, isTruncated)
 
 	_, _, err = util.ParseGlobalConnID(0x80000000_00000321)
-	c.Assert(err, NotNil)
+	assert.NotNil(t, err)
 
 	connID2 := util.GlobalConnID{
 		Is64bits:       true,
 		ServerIDGetter: func() uint64 { return 2002 },
 		LocalConnID:    123,
 	}
-	c.Assert(connID2.ID(), Equals, (uint64(2002)<<41)|(uint64(123)<<1)|1)
+	assert.Equal(t, (uint64(2002)<<41)|(uint64(123)<<1)|1, connID2.ID())
 }

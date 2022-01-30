@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,53 +18,16 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
-
-func (s *pkgTestSuite) testHashTables(c *C) {
-	var ht baseHashTable
-	test := func() {
-		ht.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
-		c.Check(ht.Get(1), DeepEquals, []chunk.RowPtr{{ChkIdx: 1, RowIdx: 1}})
-
-		rawData := map[uint64][]chunk.RowPtr{}
-		for i := uint64(0); i < 10; i++ {
-			for j := uint64(0); j < initialEntrySliceLen*i; j++ {
-				rawData[i] = append(rawData[i], chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			}
-		}
-		// put all rawData into ht vertically
-		for j := uint64(0); j < initialEntrySliceLen*9; j++ {
-			for i := 9; i >= 0; i-- {
-				i := uint64(i)
-				if !(j < initialEntrySliceLen*i) {
-					break
-				}
-				ht.Put(i, rawData[i][j])
-			}
-		}
-		// check
-		totalCount := 0
-		for i := uint64(0); i < 10; i++ {
-			totalCount += len(rawData[i])
-			c.Check(ht.Get(i), DeepEquals, rawData[i])
-		}
-		c.Check(ht.Len(), Equals, uint64(totalCount))
-	}
-	// test unsafeHashTable
-	ht = newUnsafeHashTable(0)
-	test()
-	// test ConcurrentMapHashTable
-	ht = newConcurrentMapHashTable()
-	test()
-}
 
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 6
@@ -119,28 +83,34 @@ func (h hashCollision) Sum(b []byte) []byte               { panic("not implement
 func (h hashCollision) Size() int                         { panic("not implemented") }
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
-func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
+func TestHashRowContainer(t *testing.T) {
 	hashFunc := fnv.New64
-	rowContainer := s.testHashRowContainer(c, hashFunc, false)
-	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
+	rowContainer, copiedRC := testHashRowContainer(t, hashFunc, false)
+	require.Equal(t, int64(0), rowContainer.stat.probeCollision)
 	// On windows time.Now() is imprecise, the elapse time may equal 0
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 
-	rowContainer = s.testHashRowContainer(c, hashFunc, true)
-	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	rowContainer, copiedRC = testHashRowContainer(t, hashFunc, true)
+	require.Equal(t, int64(0), rowContainer.stat.probeCollision)
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 
 	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
 		return h
 	}
-	rowContainer = s.testHashRowContainer(c, hashFuncCollision, false)
-	c.Assert(h.count > 0, IsTrue)
-	c.Assert(rowContainer.stat.probeCollision > 0, IsTrue)
-	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	rowContainer, copiedRC = testHashRowContainer(t, hashFuncCollision, false)
+	require.True(t, h.count > 0)
+	require.True(t, rowContainer.stat.probeCollision > int64(0))
+	require.True(t, rowContainer.stat.buildTableElapse >= 0)
+	require.Equal(t, rowContainer.stat.probeCollision, copiedRC.stat.probeCollision)
+	require.Equal(t, rowContainer.stat.buildTableElapse, copiedRC.stat.buildTableElapse)
 }
 
-func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {
+func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *hashRowContainer) {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -156,7 +126,8 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtx, hCtx.allTypes)
+	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
@@ -164,16 +135,16 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
 	err = rowContainer.PutChunk(chk0, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = rowContainer.PutChunk(chk1, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
-	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
-	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
+	require.Equal(t, spill, rowContainer.alreadySpilledSafeForTest())
+	require.Equal(t, spill, rowContainer.GetMemTracker().BytesConsumed() == 0)
+	require.Equal(t, !spill, rowContainer.GetMemTracker().BytesConsumed() > 0)
 	if rowContainer.alreadySpilledSafeForTest() {
-		c.Assert(rowContainer.GetDiskTracker(), NotNil)
-		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
+		require.NotNil(t, rowContainer.GetDiskTracker())
+		require.True(t, rowContainer.GetDiskTracker().BytesConsumed() > 0)
 	}
 
 	probeChk, probeColType := initProbeChunk(2)
@@ -185,9 +156,9 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
-	c.Assert(err, IsNil)
-	c.Assert(len(matched), Equals, 2)
-	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
-	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
-	return rowContainer
+	require.NoError(t, err)
+	require.Equal(t, 2, len(matched))
+	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))
+	require.Equal(t, chk1.GetRow(1).GetDatumRow(colTypes), matched[1].GetDatumRow(colTypes))
+	return rowContainer, copiedRC
 }

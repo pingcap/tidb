@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,14 @@ package statistics
 
 import (
 	"bytes"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -42,7 +45,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
-		needBucketNDV:   statsVer == Version2,
+		needBucketNDV:   statsVer >= Version2,
 	}
 }
 
@@ -65,7 +68,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).CompareDatum(b.sc, &data)
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -156,7 +159,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i].Value)
+		cmp, err := hg.GetUpper(bucketIdx).Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -210,15 +213,32 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
-// BuildColumnHistAndTopN build a histogram and TopN for a column from samples.
-func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, *TopN, error) {
+// BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
+func BuildHistAndTopN(
+	ctx sessionctx.Context,
+	numBuckets, numTopN int,
+	id int64,
+	collector *SampleCollector,
+	tp *types.FieldType,
+	isColumn bool,
+) (*Histogram, *TopN, error) {
+	var getComparedBytes func(datum types.Datum) ([]byte, error)
+	if isColumn {
+		getComparedBytes = func(datum types.Datum) ([]byte, error) {
+			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+		}
+	} else {
+		getComparedBytes = func(datum types.Datum) ([]byte, error) {
+			return datum.GetBytes(), nil
+		}
+	}
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
 	if ndv > count {
 		ndv = count
 	}
-	if count == 0 || len(collector.Samples) == 0 {
+	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -237,7 +257,7 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 
 	// the topNList is always sorted by count from more to less
 	topNList := make([]TopNMeta, 0, numTopN)
-	cur, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[0].Value)
+	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -246,9 +266,11 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 
 	// Iterate through the samples
 	for i := int64(0); i < sampleNum; i++ {
-		corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		if isColumn {
+			corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		}
 
-		sampleBytes, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -286,7 +308,9 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 	}
 
 	// Calc the correlation of the column between the handle column.
-	hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+	if isColumn {
+		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+	}
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
@@ -308,9 +332,11 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		}
 	}
 
+	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+
 	// Step2: exclude topn from samples
 	for i := int64(0); i < int64(len(samples)); i++ {
-		sampleBytes, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -344,4 +370,56 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 	}
 
 	return hg, topn, nil
+}
+
+// pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
+//   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
+	// If the sampleRows holds all rows. We just return the top-n directly.
+	if sampleRows == totalRows || totalRows <= 1 {
+		return topns
+	}
+	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
+	// storing later.
+	sumCount := uint64(0)
+	for i := 0; i < len(topns)-1; i++ {
+		sumCount += topns[i].Count
+	}
+	topNNum := len(topns)
+	for topNNum > 0 {
+		// Selectivity for the ones not in the top-n list.
+		// (1 - things in top-n list - null) / remained ndv.
+		selectivity := 1.0 - float64(sumCount)/float64(sampleRows) - float64(nullCount)/float64(totalRows)
+		if selectivity < 0.0 {
+			selectivity = 0
+		}
+		if selectivity > 1 {
+			selectivity = 1
+		}
+		otherNDV := float64(ndv) - float64(topNNum)
+		if otherNDV > 1 {
+			selectivity /= otherNDV
+		}
+		N := float64(totalRows)
+		n := float64(sampleRows)
+		K := N * float64(topns[topNNum-1].Count) / n
+		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
+		// Thus the variance is the following formula.
+		variance := n * K * (N - K) * (N - n) / (N * N * (N - 1))
+		stddev := math.Sqrt(variance)
+		// We choose the bound that plus two stddev of the sample frequency， plus an additional 0.5 for the continuity correction.
+		//   Note:
+		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
+		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
+			// If the current one is worth storing, the latter ones too. So we just break here.
+			break
+		}
+		// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.
+		topNNum--
+		if topNNum == 0 {
+			break
+		}
+		sumCount -= topns[topNNum-1].Count
+	}
+	return topns[:topNNum]
 }

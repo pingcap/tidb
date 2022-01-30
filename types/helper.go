@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package types
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -91,6 +93,12 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, errors.Trace(err)
+}
+
+// TruncateFloatToString is used to truncate float to string where dec is the number of digits after the decimal point.
+func TruncateFloatToString(f float64, dec int) string {
+	f = Truncate(f, dec)
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func isSpace(c byte) bool {
@@ -197,4 +205,26 @@ func strToInt(str string) (int64, error) {
 		r = -r
 	}
 	return int64(r), err
+}
+
+// DecimalLength2Precision gets the precision.
+func DecimalLength2Precision(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length--
+	}
+	if hasUnsignedFlag || length > 0 {
+		length--
+	}
+	return length
+}
+
+// Precision2LengthNoTruncation gets the length.
+func Precision2LengthNoTruncation(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length++
+	}
+	if hasUnsignedFlag || length > 0 {
+		length++
+	}
+	return length
 }

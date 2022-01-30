@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package privilege
 import (
 	"crypto/tls"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -46,17 +47,33 @@ type Manager interface {
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
+	// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
+	// without using the SUPER privilege as a fallback.
+	HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+
+	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
+	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
+	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+
+	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
+	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
+
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
+	// Requires exact match on user name and host name.
+	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) bool
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
-	GetAuthWithoutVerification(user, host string) (string, string, bool)
+	// Requires exact match on user name and host name.
+	GetAuthWithoutVerification(user, host string) bool
+
+	// MatchIdentity matches an identity
+	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
-	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
-	UserPrivilegesTable() [][]types.Datum
+	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
@@ -70,6 +87,12 @@ type Manager interface {
 
 	// GetAllRoles return all roles of user.
 	GetAllRoles(user, host string) []*auth.RoleIdentity
+
+	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
+	IsDynamicPrivilege(privNameInUpper string) bool
+
+	// Get the authentication plugin for a user
+	GetAuthPlugin(user, host string) (string, error)
 }
 
 const key keyType = 0

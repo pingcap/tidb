@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -38,6 +39,12 @@ const (
 	lineBreakerStr = "\n"
 	separator      = '\t'
 	separatorStr   = "\t"
+)
+
+var (
+	// PlanDiscardedEncoded indicates the discard plan because it is too long
+	PlanDiscardedEncoded = "[discard]"
+	planDiscardedDecoded = "(plan discarded because too long)"
 )
 
 var decoderPool = sync.Pool{
@@ -87,6 +94,9 @@ type planInfo struct {
 func (pd *planDecoder) decode(planString string) (string, error) {
 	str, err := decompress(planString)
 	if err != nil {
+		if planString == PlanDiscardedEncoded {
+			return planDiscardedDecoded, nil
+		}
 		return "", err
 	}
 	return pd.buildPlanTree(str)

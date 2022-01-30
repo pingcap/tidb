@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,16 +16,33 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testExpressionRewriterSuite{})
+var _ = SerialSuites(&testExpressionRewriterSuiteSerial{})
 
 type testExpressionRewriterSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testExpressionRewriterSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "expression_rewriter_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testExpressionRewriterSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+type testExpressionRewriterSuiteSerial struct {
 }
 
 func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
@@ -43,6 +61,17 @@ func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
 	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].Column.Name.L, Equals, "ifnull(a,b)")
+	c.Assert(rs.Close(), IsNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e int not null, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1(e int not null, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	rows := tk.MustQuery("select b from t where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
+	rows = tk.MustQuery("select b from t1 where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
@@ -394,4 +423,106 @@ func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
 	tk.MustExec("insert into t values(\"23:22:22\");")
 	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
 		testkit.Rows("23:22:22"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue24705(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
+	err = tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	c.Assert(err.Error(), Equals, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
+}
+
+func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a char(10) charset latin1 collate latin1_bin, c char(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t1 values ('a', 'B');")
+	tk.MustExec("insert into t1 values ('c', 'D');")
+	tk.MustQuery("select * from t1 where a between 'B' and c;").Check(testkit.Rows("c D"))
+	tk.MustQuery("explain select * from t1 where 'a' between 'g' and 'f';").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
+
+	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'")
+}
+
+func (s *testExpressionRewriterSuite) TestInsertOnDuplicateLazyMoreThan1Row(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE if exists t1, t2, source;")
+	tk.MustExec("CREATE TABLE t1(a INTEGER PRIMARY KEY);")
+	tk.MustExec("CREATE TABLE t2(a INTEGER);")
+	tk.MustExec("CREATE TABLE source (b INTEGER);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+	tk.MustExec("INSERT INTO t2 VALUES (1);")
+	tk.MustExec("INSERT INTO source VALUES (1),(1);")
+	// the on duplicate is not triggered by t1's primary key.
+	tk.MustGetErrCode("INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);", mysql.ErrSubqueryNo1Row)
+	// the on duplicate is not triggered.
+	tk.MustExec("INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);")
+	tk.MustExec("DROP TABLE if exists t1, t2, source;")
+}
+
+func (s *testExpressionRewriterSuite) TestMultiColInExpression(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,null),(null,3),(4,4)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t2 values(1,1),(2,null),(null,3),(5,4)")
+	tk.MustExec("analyze table t2")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
 }

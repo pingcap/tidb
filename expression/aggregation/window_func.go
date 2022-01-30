@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package aggregation
 import (
 	"strings"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -68,6 +69,22 @@ var noFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncPercentRank: {},
 	ast.WindowFuncRank:        {},
 	ast.WindowFuncRowNumber:   {},
+}
+
+var useDefaultFrameWindowFuncs = map[string]ast.FrameClause{
+	ast.WindowFuncRowNumber: {
+		Type: ast.Rows,
+		Extent: ast.FrameExtent{
+			Start: ast.FrameBound{Type: ast.CurrentRow},
+			End:   ast.FrameBound{Type: ast.CurrentRow},
+		},
+	},
+}
+
+// UseDefaultFrame indicates if the window function has a provided frame that will override user's designation
+func UseDefaultFrame(name string) (bool, ast.FrameClause) {
+	frame, ok := useDefaultFrameWindowFuncs[strings.ToLower(name)]
+	return ok, frame
 }
 
 // NeedFrame checks if the function need frame specification.

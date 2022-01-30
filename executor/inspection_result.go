@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -70,10 +71,6 @@ func (n inspectionName) name() string {
 
 func (f inspectionFilter) enable(name string) bool {
 	return len(f.set) == 0 || f.set.Exist(name)
-}
-
-func (f inspectionFilter) exist(name string) bool {
-	return len(f.set) > 0 && f.set.Exist(name)
 }
 
 type (
@@ -856,14 +853,14 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 		sql.Reset()
 		if len(rule.configKey) > 0 {
-			fmt.Fprintf(sql, `select t1.status_address, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from 
-				(select status_address, max(sum_value) as cpu from (select instance as status_address, sum(value) as sum_value from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance, time) as tmp group by tmp.status_address) as t1 join 
-				(select instance, value from information_schema.cluster_config where type='tikv' and %[5]s = '%[3]s') as t2 join 
+			fmt.Fprintf(sql, `select t1.status_address, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from
+				(select status_address, max(sum_value) as cpu from (select instance as status_address, sum(value) as sum_value from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance, time) as tmp group by tmp.status_address) as t1 join
+				(select instance, value from information_schema.cluster_config where type='tikv' and %[5]s = '%[3]s') as t2 join
 				(select instance,status_address from information_schema.cluster_info where type='tikv') as t3
 				on t1.status_address=t3.status_address and t2.instance=t3.instance where t1.cpu > (t2.value * %[2]f)`, rule.component, rule.threshold, rule.configKey, condition, "`key`")
 		} else {
-			fmt.Fprintf(sql, `select t1.instance, t1.cpu, %[2]f from 
-				(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 
+			fmt.Fprintf(sql, `select t1.instance, t1.cpu, %[2]f from
+				(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1
 				where t1.cpu > %[2]f;`, rule.component, rule.threshold, condition)
 		}
 		stmt, err := exec.ParseWithParams(ctx, sql.String())

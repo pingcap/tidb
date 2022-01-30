@@ -100,6 +100,18 @@
         "Hints": "use_index(@`sel_1` `test`.`t` )"
       },
       {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(test.t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
         "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
         "Best": "TableReader(Table(t))",
         "HasWarn": true,
@@ -110,6 +122,12 @@
         "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
         "HasWarn": true,
         "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e) */ * from t t1",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t1` )"
       },
       {
         "SQL": "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
@@ -124,6 +142,12 @@
         "Hints": "use_index(@`sel_1` `test`.`t1` )"
       },
       {
+        "SQL": "select /*+ FORCE_INDEX(t1, c_d_e) */ * from t t1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`)"
+      },
+      {
         "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
         "HasWarn": false,
@@ -136,13 +160,31 @@
         "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
       },
       {
+        "SQL": "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
         "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
         "HasWarn": false,
         "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
       },
       {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      },
+      {
         "SQL": "select /*+ USE_INDEX(t) */ f from t where f > 10",
+        "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t) */ f from t where f > 10",
         "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
         "HasWarn": false,
         "Hints": "use_index(@`sel_1` `test`.`t` )"
@@ -155,6 +197,12 @@
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, no_such_index) */ * from t",
         "Best": "TableReader(Table(t))",
         "HasWarn": true,
         "Hints": "use_index(@`sel_1` `test`.`t` )"
@@ -179,6 +227,30 @@
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
         "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
         "HasWarn": false,
         "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
@@ -782,7 +854,7 @@
       },
       {
         "SQL": "select sum(distinct a), avg(b + c) from t group by d",
-        "Best": "TableReader(Table(t))->Projection->HashAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
@@ -818,7 +890,7 @@
       },
       {
         "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->Projection}(test.t.a,test.t.a)->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
@@ -1233,12 +1305,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1])->HashAgg)->HashAgg->Sel([ne(Column#27, 0) 1])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1]))->HashAgg->Sel([ne(Column#28, 0) 1])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([ne(Column#28, 0)])}",
         "Warning": ""
       },
       {
@@ -1404,14 +1476,12 @@
         ],
         "Plan": [
           "Sort 12500.00 root  test.t1.c_int, test.t2.c_str",
-          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, test.t1.c_int, right key:test.t2.c_int, test.t2.c_int",
-          "  ├─Sort(Build) 10000.00 root  test.t2.c_int, test.t2.c_int",
-          "  │ └─UnionScan 10000.00 root  ",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) 10000.00 root  test.t1.c_int, test.t1.c_int",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, right key:test.t2.c_int",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       }
     ]
@@ -1500,15 +1570,15 @@
         "Warning": null
       },
       {
-        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where mod(a, 2) order by a limit 1",
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Selection 1.00 root  mod(test.tn.a, 2)",
+          "└─Selection 1.00 root  intdiv(test.tn.a, 2)",
           "  └─IndexReader 1.00 root  index:IndexFullScan",
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'mod'(signature: ModInt) can not be pushed to storage layer",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to storage layer now.",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
@@ -2232,6 +2302,67 @@
     ]
   },
   {
+    "Name": "TestINMJHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexMergeJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestEliminateMaxOneRow",
     "Cases": [
       {
@@ -2278,6 +2409,272 @@
           "        └─IndexRangeScan 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestEnumIndex",
+    "Cases": [
+      {
+        "SQL": "select e from t where e = 'b'",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e != 'b'",
+        "Plan": [
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"c\",\"c\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 'b'",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e >= 'b'",
+        "Plan": [
+          "IndexReader 20.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e < 'b'",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a"
+        ]
+      },
+      {
+        "SQL": "select e from t where e <= 'b'",
+        "Plan": [
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"b\",\"b\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e = 2",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e != 2",
+        "Plan": [
+          "IndexReader 6656.67 root  index:IndexRangeScan",
+          "└─IndexRangeScan 6656.67 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), (\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 2",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "a"
+        ]
+      },
+      {
+        "SQL": "select e from t where e >= 2",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e < 2",
+        "Plan": [
+          "IndexReader 3323.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e <= 2",
+        "Plan": [
+          "IndexReader 3323.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > ''",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 'd'",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select e from t where e > -1",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 5",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select e from t where e = ''",
+        "Plan": [
+          "IndexReader 20.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          ""
+        ]
+      },
+      {
+        "SQL": "select e from t where e != ''",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue27233",
+    "Cases": [
+      {
+        "SQL": "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;",
+        "Plan": [
+          "Sort 0.80 root  test.pk_s_multi_31.col2",
+          "└─Projection 0.80 root  test.pk_s_multi_31.col2",
+          "  └─Selection 0.80 root  gt(Column#7, 2)",
+          "    └─HashAgg 1.00 root  group by:test.pk_s_multi_31.col1, test.pk_s_multi_31.col2, funcs:firstrow(test.pk_s_multi_31.col2)->test.pk_s_multi_31.col2, funcs:count(distinct test.pk_s_multi_31.col1, test.pk_s_multi_31.col2)->Column#7",
+          "      └─HashJoin 100000000.00 root  CARTESIAN left outer join, other cond:gt(test.pk_s_multi_31.col1, test.pk_s_multi_31.col1)",
+          "        ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "        │ └─IndexFullScan 10000.00 cop[tikv] table:T2, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo",
+          "        └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "          └─IndexFullScan 10000.00 cop[tikv] table:T1, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "100"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSelectionPartialPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a > 1 and b > 1",
+        "Plan": [
+          "Selection 1111.11 root  gt(test.t1.b, 1)",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1",
+        "Plan": [
+          "Selection 370.37 root  gt(test.t2.b, 1)",
+          "└─IndexLookUp 1111.11 root  ",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
+          "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28316",
+    "Cases": [
+      {
+        "SQL": "select * from t where t.a < 3 and t.a < 3",
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

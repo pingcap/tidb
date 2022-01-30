@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,11 +18,11 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
@@ -90,6 +91,19 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	_, err = tk1.Exec("create sequence my_seq")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
+}
+
+// Test for sequence still works with a infoschema attached by temporary table
+func (s *testSequenceSuite) TestIssue28881(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop sequence if exists s")
+	tk.MustExec("create sequence s")
+	defer tk.MustExec("drop sequence s")
+	tk.MustExec("create temporary table tmp1 (id int)")
+
+	tk.MustQuery("select nextval(s)").Check(testkit.Rows("1"))
+	tk.MustQuery("select lastval(s)").Check(testkit.Rows("1"))
 }
 
 func (s *testSequenceSuite) TestDropSequence(c *C) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -126,7 +128,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -167,7 +169,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -282,7 +284,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -304,6 +306,9 @@ type LogicalPlan interface {
 
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
+
+	// buildLogicalPlanTrace clone necessary information from LogicalPlan
+	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -341,6 +346,12 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// Cost returns the estimated cost of the subplan.
+	Cost() float64
+
+	// SetCost set the cost of the subplan.
+	SetCost(cost float64)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -370,12 +381,32 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
+// buildLogicalPlanTrace implements LogicalPlan
+func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
+	}
+	return planTrace
+}
+
 type basePhysicalPlan struct {
 	basePlan
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	cost             float64
+}
+
+// Cost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -391,6 +422,9 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
+		if prop == nil {
+			continue
+		}
 		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil
@@ -406,7 +440,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
@@ -420,8 +454,8 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-// GetlogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
-func (p *baseLogicalPlan) GetlogicalTS4TaskMap() uint64 {
+// GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
+func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
@@ -463,7 +497,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetlogicalTS4TaskMap()
+		TS := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, TS)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,129 +20,84 @@ import (
 	"testing"
 
 	"github.com/Jeffail/gabs/v2"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
 )
 
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-	store       kv.Storage
-	dom         *domain.Domain
-	etcdCluster *integration.ClusterV3
-	se          session.Session
-}
-
-var telemetryTestT *testing.T
-
-func TestT(t *testing.T) {
-	telemetryTestT = t
-	TestingT(t)
-}
-
-func (s *testSuite) SetUpSuite(c *C) {
+func TestTrackingID(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		c.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
 
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer etcdCluster.Terminate(t)
 
-	etcdCluster := integration.NewClusterV3(telemetryTestT, &integration.ClusterConfig{Size: 1})
+	id, err := telemetry.GetTrackingID(etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.Equal(t, "", id)
 
+	id2, err := telemetry.ResetTrackingID(etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.NotEqual(t, "", id2)
+
+	id3, err := telemetry.GetTrackingID(etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.Equal(t, id2, id3)
+}
+
+func TestPreview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer etcdCluster.Terminate(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	defer se.Close()
 
-	s.store = store
-	s.dom = dom
-	s.etcdCluster = etcdCluster
-	s.se = se
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-	if runtime.GOOS == "windows" {
-		return
-	}
-	s.se.Close()
-	s.etcdCluster.Terminate(telemetryTestT)
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testSuite) Test01TrackingID(c *C) {
-	id, err := telemetry.GetTrackingID(s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, "")
-
-	id2, err := telemetry.ResetTrackingID(s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(id2 != "", Equals, true)
-
-	id3, err := telemetry.GetTrackingID(s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(id3, Equals, id2)
-}
-
-func (s *testSuite) Test02Preview(c *C) {
 	config.GetGlobalConfig().EnableTelemetry = false
-	r, err := telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(r, Equals, "")
+	r, err := telemetry.PreviewUsageData(se, etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.Equal(t, "", r)
 
-	trackingID, err := telemetry.ResetTrackingID(s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
+	trackingID, err := telemetry.ResetTrackingID(etcdCluster.RandClient())
+	require.NoError(t, err)
 
 	config.GetGlobalConfig().EnableTelemetry = true
-	r, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
+	r, err = telemetry.PreviewUsageData(se, etcdCluster.RandClient())
+	require.NoError(t, err)
 
 	jsonParsed, err := gabs.ParseJSON([]byte(r))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.Equal(t, trackingID, jsonParsed.Path("trackingId").Data().(string))
+	// Apple M1 doesn't contain cpuFlags
+	if !(runtime.GOARCH == "arm64" && runtime.GOOS == "darwin") {
+		require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
+	}
+	require.True(t, jsonParsed.ExistsP("hostExtra.os"))
+	require.Len(t, jsonParsed.Path("instances").Children(), 2)
+	require.Equal(t, "tidb", jsonParsed.Path("instances.0.instanceType").Data().(string))
+	require.Equal(t, "tikv", jsonParsed.Path("instances.1.instanceType").Data().(string))
+	require.True(t, jsonParsed.ExistsP("hardware"))
 
-	c.Assert(jsonParsed.Path("trackingId").Data().(string), Equals, trackingID)
-	c.Assert(jsonParsed.ExistsP("hostExtra.cpuFlags"), Equals, true)
-	c.Assert(jsonParsed.ExistsP("hostExtra.os"), Equals, true)
-	c.Assert(jsonParsed.Path("instances").Children(), HasLen, 2)
-	c.Assert(jsonParsed.Path("instances.0.instanceType").Data().(string), Equals, "tidb")
-	c.Assert(jsonParsed.Path("instances.1.instanceType").Data().(string), Equals, "tikv") // mocktikv
-	c.Assert(jsonParsed.ExistsP("hardware"), Equals, true)
+	_, err = se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 0")
+	require.NoError(t, err)
+	r, err = telemetry.PreviewUsageData(se, etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.Equal(t, "", r)
 
-	_, err = s.se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 0")
-	c.Assert(err, IsNil)
-	r, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(r, Equals, "")
-
-	_, err = s.se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 1")
+	_, err = se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 1")
 	config.GetGlobalConfig().EnableTelemetry = false
-	c.Assert(err, IsNil)
-	r, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-	c.Assert(r, Equals, "")
-}
+	require.NoError(t, err)
 
-func (s *testSuite) Test03Report(c *C) {
-	config.GetGlobalConfig().EnableTelemetry = false
-	err := telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-
-	status, err := telemetry.GetTelemetryStatus(s.etcdCluster.RandClient())
-	c.Assert(err, IsNil)
-
-	jsonParsed, err := gabs.ParseJSON([]byte(status))
-	c.Assert(err, IsNil)
-
-	c.Assert(jsonParsed.Path("is_error").Data().(bool), Equals, true)
-	c.Assert(jsonParsed.Path("error_msg").Data().(string), Equals, "telemetry is disabled")
-	c.Assert(jsonParsed.Path("is_request_sent").Data().(bool), Equals, false)
+	r, err = telemetry.PreviewUsageData(se, etcdCluster.RandClient())
+	require.NoError(t, err)
+	require.Equal(t, "", r)
 }

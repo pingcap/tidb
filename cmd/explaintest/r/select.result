@@ -359,17 +359,25 @@ insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:p2	data:Selection_6
-└─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+TableReader_9	10.00	root		data:Selection_8
+└─Selection_8	10.00	cop[tikv]		eq(test.th.a, -2)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 desc select * from th;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+PartitionUnion_9	30000.00	root		
+├─TableReader_11	10000.00	root		data:TableFullScan_10
+│ └─TableFullScan_10	10000.00	cop[tikv]	table:th, partition:p0	keep order:false, stats:pseudo
+├─TableReader_13	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_15	10000.00	root		data:TableFullScan_14
+  └─TableFullScan_14	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 desc select * from th partition (p2,p1);
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root	partition:p1,p2	data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+PartitionUnion_8	20000.00	root		
+├─TableReader_10	10000.00	root		data:TableFullScan_9
+│ └─TableFullScan_9	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_12	10000.00	root		data:TableFullScan_11
+  └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select a != any (select a from t t2) from t t1;
@@ -468,10 +476,10 @@ PRIMARY KEY (`id`)
 explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		minus(Column#5, test.t.x)->Column#7
-└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i)
+└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i rows between current row and current row)
   └─Sort	10000.00	root		test.t.i
-    └─TableReader	10000.00	root		data:TableRangeScan
-      └─TableRangeScan	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table precise_types (
 a BIGINT UNSIGNED NOT NULL,
 b BIGINT NOT NULL,
@@ -487,3 +495,7 @@ insert into precise_types values (
 SELECT a, b, c, d FROM precise_types;
 a	b	c	d
 18446744073709551614	-9223372036854775806	99999999999999999999.0	1.8446744073709552e19
+create table t3(a char(10), primary key (a));
+insert into t3 values ('a');
+select * from t3 where a > 0x80;
+Error 1105: Cannot convert string '80' from binary to utf8mb4

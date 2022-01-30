@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,11 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite1) TestExplainPrivileges(c *C) {
@@ -207,6 +209,7 @@ func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
 	s.checkExecutionInfo(c, tk, "explain analyze select k from t use index(k)")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkExecutionInfo(c, tk, "explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
 
 	tk.MustExec("CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  BIGINT NOT NULL,N_NAME       CHAR(25) NOT NULL,N_REGIONKEY  BIGINT NOT NULL,N_COMMENT    VARCHAR(152),PRIMARY KEY (N_NATIONKEY));")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS part  ( P_PARTKEY     BIGINT NOT NULL,P_NAME        VARCHAR(55) NOT NULL,P_MFGR        CHAR(25) NOT NULL,P_BRAND       CHAR(10) NOT NULL,P_TYPE        VARCHAR(25) NOT NULL,P_SIZE        BIGINT NOT NULL,P_CONTAINER   CHAR(10) NOT NULL,P_RETAILPRICE DECIMAL(15,2) NOT NULL,P_COMMENT     VARCHAR(23) NOT NULL,PRIMARY KEY (P_PARTKEY));")
@@ -320,9 +323,66 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 			sql:      "select count(*) from t_unistore_act_rows group by b",
 			expected: []string{"2", "2", "2", "4"},
 		},
+		{
+			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
+			expected: []string{"4", "4", "4", "4", "4"},
+		},
 	}
 
 	for _, test := range tests {
 		checkActRows(c, tk, test.sql, test.expected)
 	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
+
+	rows := tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Equals, "0 Bytes")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10240;")
+	rows = tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
+}
+
+func (s *testSuite) TestExplainStatementsSummary(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
+		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testutil.RowsWithSep("|",
+		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testutil.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testutil.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
+}
+
+func (s *testSuite) TestFix29401(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tt123;")
+	tk.MustExec(`CREATE TABLE tt123 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,37 +17,24 @@ package kv
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(&testTxnSuite{})
-
-type testTxnSuite struct {
+func TestBackOff(t *testing.T) {
+	mustBackOff(t, 1, 2)
+	mustBackOff(t, 2, 4)
+	mustBackOff(t, 3, 8)
+	mustBackOff(t, 100000, 100)
 }
 
-func (s *testTxnSuite) SetUpTest(c *C) {
+func mustBackOff(t *testing.T, cnt uint, sleep int) {
+	assert.LessOrEqual(t, BackOff(cnt), sleep*int(time.Millisecond))
 }
 
-func (s *testTxnSuite) TearDownTest(c *C) {
-}
-
-func (s *testTxnSuite) TestBackOff(c *C) {
-	defer testleak.AfterTest(c)()
-	mustBackOff(c, 1, 2)
-	mustBackOff(c, 2, 4)
-	mustBackOff(c, 3, 8)
-	mustBackOff(c, 100000, 100)
-}
-
-func mustBackOff(c *C, cnt uint, sleep int) {
-	c.Assert(BackOff(cnt), LessEqual, sleep*int(time.Millisecond))
-}
-
-func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
-	defer testleak.AfterTest(c)()
+func TestRetryExceedCountError(t *testing.T) {
 	defer func(cnt uint) {
 		maxRetryCnt = cnt
 	}(maxRetryCnt)
@@ -55,17 +43,17 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	err := RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
-	c.Assert(err, NotNil)
+	assert.NotNil(t, err)
 
 	err = RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return ErrTxnRetryable
 	})
-	c.Assert(err, NotNil)
+	assert.NotNil(t, err)
 
 	err = RunInNewTxn(context.Background(), &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return errors.New("do not retry")
 	})
-	c.Assert(err, NotNil)
+	assert.NotNil(t, err)
 
 	var cfg InjectionConfig
 	err1 := errors.New("foo")
@@ -75,5 +63,5 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	err = RunInNewTxn(context.Background(), storage, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
-	c.Assert(err, NotNil)
+	assert.NotNil(t, err)
 }

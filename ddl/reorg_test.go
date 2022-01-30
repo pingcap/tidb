@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
@@ -40,12 +41,12 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -59,7 +60,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
 	ctx.ClearValue(testCtxKey)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -191,12 +192,12 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -206,21 +207,23 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDLAndStart(
+	d2, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d2.Stop()
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d1, "test")
+	dbInfo, err := testSchemaInfo(d1, "test_reorg")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d1, dbInfo)
 
-	tblInfo := testTableInfo(c, d1, "t", 3)
+	tblInfo, err := testTableInfo(d1, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
 	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,13 +24,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -114,7 +115,7 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
-	builder, _ := NewPlanBuilder(MockContext(), nil, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -168,7 +169,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder, _ := NewPlanBuilder(ctx, nil, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		c.Assert(rewriter, NotNil)
@@ -231,7 +232,6 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		PkCols:          []*expression.Column{col},
 		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)

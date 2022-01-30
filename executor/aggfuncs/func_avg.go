@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,6 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -71,7 +74,14 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -105,10 +115,12 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return 0, nil
 }
 
-func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &avgOriginal4Decimal{}
+
+func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -124,7 +136,7 @@ func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, l
 		p.count++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -257,7 +269,14 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -325,10 +344,12 @@ type avgOriginal4Float64 struct {
 	avgOriginal4Float64HighPrecision
 }
 
-func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &avgOriginal4Float64{}
+
+func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -339,7 +360,7 @@ func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, l
 		p.count++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}

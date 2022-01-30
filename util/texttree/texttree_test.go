@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,29 +17,20 @@ package texttree_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/stretchr/testify/require"
 )
 
-type texttreeSuite struct{}
-
-var _ = Suite(&texttreeSuite{})
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+func TestPrettyIdentifier(t *testing.T) {
+	require.Equal(t, "test", texttree.PrettyIdentifier("test", "", false))
+	require.Equal(t, "  ├ ─test", texttree.PrettyIdentifier("test", "  │  ", false))
+	require.Equal(t, "\t\t├\t─test", texttree.PrettyIdentifier("test", "\t\t│\t\t", false))
+	require.Equal(t, "  └ ─test", texttree.PrettyIdentifier("test", "  │  ", true))
+	require.Equal(t, "\t\t└\t─test", texttree.PrettyIdentifier("test", "\t\t│\t\t", true))
 }
 
-func (s *texttreeSuite) TestPrettyIdentifier(c *C) {
-	c.Assert(texttree.PrettyIdentifier("test", "", false), Equals, "test")
-	c.Assert(texttree.PrettyIdentifier("test", "  │  ", false), Equals, "  ├ ─test")
-	c.Assert(texttree.PrettyIdentifier("test", "\t\t│\t\t", false), Equals, "\t\t├\t─test")
-	c.Assert(texttree.PrettyIdentifier("test", "  │  ", true), Equals, "  └ ─test")
-	c.Assert(texttree.PrettyIdentifier("test", "\t\t│\t\t", true), Equals, "\t\t└\t─test")
-}
-
-func (s *texttreeSuite) TestIndent4Child(c *C) {
-	c.Assert(texttree.Indent4Child("    ", false), Equals, "    │ ")
-	c.Assert(texttree.Indent4Child("    ", true), Equals, "    │ ")
-	c.Assert(texttree.Indent4Child("   │ ", true), Equals, "     │ ")
+func TestIndent4Child(t *testing.T) {
+	require.Equal(t, "    │ ", texttree.Indent4Child("    ", false))
+	require.Equal(t, "    │ ", texttree.Indent4Child("    ", true))
+	require.Equal(t, "     │ ", texttree.Indent4Child("   │ ", true))
 }

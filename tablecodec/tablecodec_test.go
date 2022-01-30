@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,39 +20,44 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testTableCodecSuite{})
-
-type testTableCodecSuite struct{}
 
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
-func (s *testTableCodecSuite) TestTableCodec(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTableCodec(t *testing.T) {
 	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
 	h, err := DecodeRowKey(key)
-	c.Assert(err, IsNil)
-	c.Assert(h.IntValue(), Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), h.IntValue())
 
 	key = EncodeRowKeyWithHandle(1, kv.IntHandle(2))
 	h, err = DecodeRowKey(key)
-	c.Assert(err, IsNil)
-	c.Assert(h.IntValue(), Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), h.IntValue())
+}
+
+// https://github.com/pingcap/tidb/issues/27687.
+func TestTableCodecInvalid(t *testing.T) {
+	tableID := int64(100)
+	buf := make([]byte, 0, 11)
+	buf = append(buf, 't')
+	buf = codec.EncodeInt(buf, tableID)
+	buf = append(buf, '_', 'r')
+	buf = codec.EncodeInt(buf, -9078412423848787968)
+	buf = append(buf, '0')
+	_, err := DecodeRowKey(buf)
+	require.NotNil(t, err)
+	require.Equal(t, "invalid encoded key", err.Error())
 }
 
 // column is a structure used for test
@@ -60,9 +66,7 @@ type column struct {
 	tp *types.FieldType
 }
 
-func (s *testTableCodecSuite) TestRowCodec(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestRowCodec(t *testing.T) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
@@ -86,8 +90,8 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 
 	// Decode
 	colMap := make(map[int64]*types.FieldType, len(row))
@@ -95,138 +99,146 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		colMap[col.id] = col.tp
 	}
 	r, err := DecodeRowToDatumMap(bs, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, len(row))
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Len(t, r, len(row))
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
-		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, &row[i])
-		c.Assert(err1, IsNil)
-		c.Assert(equal, Equals, 0, Commentf("expect: %v, got %v", row[i], v))
+		require.True(t, ok)
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		require.NoError(t, err1)
+		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
 
 	// colMap may contains more columns than encoded row.
 	// colMap[4] = types.NewFieldType(mysql.TypeFloat)
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, len(row))
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Len(t, r, len(row))
 	for i, col := range cols {
 		v, ok := r[col.id]
-		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, &row[i])
-		c.Assert(err1, IsNil)
-		c.Assert(equal, Equals, 0)
+		require.True(t, ok)
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		require.NoError(t, err1)
+		require.Equal(t, 0, equal)
 	}
 
 	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, len(row)-2)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Len(t, r, len(row)-2)
 	for i, col := range cols {
 		if i > 1 {
 			break
 		}
 		v, ok := r[col.id]
-		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, &row[i])
-		c.Assert(err1, IsNil)
-		c.Assert(equal, Equals, 0)
+		require.True(t, ok)
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		require.NoError(t, err1)
+		require.Equal(t, 0, equal)
 	}
 
 	// Make sure empty row return not nil value.
 	bs, err = EncodeOldRow(sc, []types.Datum{}, []int64{}, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, HasLen, 1)
+	require.NoError(t, err)
+	require.Len(t, bs, 1)
 
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(len(r), Equals, 0)
+	require.NoError(t, err)
+	require.Len(t, r, 0)
 }
 
-func (s *testTableCodecSuite) TestDecodeColumnValue(c *C) {
+func TestDecodeColumnValue(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 
 	// test timestamp
 	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
 	bs, err := EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone)
-	c.Assert(err, IsNil)
-	cmp, err := d1.CompareDatum(sc, &d)
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 
 	// test set
 	elems := []string{"a", "b", "c", "d", "e"}
 	e, _ := types.ParseSetValue(elems, uint64(1))
 	d = types.NewMysqlSetDatum(e, "")
 	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tp = types.NewFieldType(mysql.TypeSet)
 	tp.Elems = elems
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
-	c.Assert(err, IsNil)
-	cmp, err = d1.CompareDatum(sc, &d)
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 
 	// test bit
 	d = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3))
 	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tp = types.NewFieldType(mysql.TypeBit)
 	tp.Flen = 24
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
-	c.Assert(err, IsNil)
-	cmp, err = d1.CompareDatum(sc, &d)
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 
 	// test empty enum
 	d = types.NewMysqlEnumDatum(types.Enum{})
 	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
-	c.Assert(err, IsNil)
-	cmp, err = d1.CompareDatum(sc, &d)
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 }
 
-func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
+func TestUnflattenDatums(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
-	c.Assert(err, IsNil)
-	cmp, err := input[0].CompareDatum(sc, &output[0])
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	require.NoError(t, err)
+	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
+
+	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci")}
+	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
+	tps[0].Collate = "utf8mb4_unicode_ci"
+	output, err = UnflattenDatums(input, tps, sc.TimeZone)
+	require.NoError(t, err)
+	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
+	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
 }
 
-func (s *testTableCodecSuite) TestTimeCodec(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestTimeCodec(t *testing.T) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
@@ -239,10 +251,10 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	ts, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC},
 		"2016-06-23 11:30:45")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
 	du, err := types.ParseDuration(nil, "12:59:59.999999", 6)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
 	// Encode
@@ -253,8 +265,8 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 
 	// Decode
 	colMap := make(map[int64]*types.FieldType, colLen)
@@ -262,22 +274,20 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 		colMap[col.id] = col.tp
 	}
 	r, err := DecodeRowToDatumMap(bs, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, colLen)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Len(t, r, colLen)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
-		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, &row[i])
-		c.Assert(err1, IsNil)
-		c.Assert(equal, Equals, 0)
+		require.True(t, ok)
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		require.Nil(t, err1)
+		require.Equal(t, 0, equal)
 	}
 }
 
-func (s *testTableCodecSuite) TestCutRow(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestCutRow(t *testing.T) {
 	var err error
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
@@ -292,19 +302,19 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	data := make([][]byte, 3)
 	data[0], err = EncodeValue(sc, nil, row[0])
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	data[1], err = EncodeValue(sc, nil, row[1])
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	data[2], err = EncodeValue(sc, nil, row[2])
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
 	bs, err := EncodeOldRow(sc, row, colIDs, nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(bs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, bs)
 
 	// Decode
 	colMap := make(map[int64]int, 3)
@@ -312,145 +322,145 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 		colMap[col.id] = i
 	}
 	r, err := CutRowNew(bs, colMap)
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, 3)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Len(t, r, 3)
 	// Compare cut row and original row
 	for i := range colIDs {
-		c.Assert(r[i], DeepEquals, data[i])
+		require.Equal(t, data[i], r[i])
 	}
 	bs = []byte{codec.NilFlag}
 	r, err = CutRowNew(bs, colMap)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, r)
 	bs = nil
 	r, err = CutRowNew(bs, colMap)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, r)
 }
 
-func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
+func TestCutKeyNew(t *testing.T) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		valueBytes := valuesBytes[i]
 		var val types.Datum
 		_, val, _ = codec.DecodeOne(valueBytes)
-		c.Assert(val, DeepEquals, values[i])
+		require.Equal(t, values[i], val)
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
-	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+	require.Equal(t, types.NewIntDatum(100), handleVal)
 }
 
-func (s *testTableCodecSuite) TestCutKey(c *C) {
+func TestCutKey(t *testing.T) {
 	colIDs := []int64{1, 2, 3}
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 	valuesMap, handleBytes, err := CutIndexKey(indexKey, colIDs)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i, colID := range colIDs {
 		valueBytes := valuesMap[colID]
 		var val types.Datum
 		_, val, _ = codec.DecodeOne(valueBytes)
-		c.Assert(val, DeepEquals, values[i])
+		require.Equal(t, values[i], val)
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
-	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+	require.Equal(t, types.NewIntDatum(100), handleVal)
 }
 
-func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`), IsNil)
+func TestDecodeBadDecical(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal"))
 	}()
 	dec := types.NewDecFromStringForTest("0.111")
 	b, err := codec.EncodeDecimal(nil, dec, 0, 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Expect no panic.
 	_, _, err = codec.DecodeOne(b)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testTableCodecSuite) TestIndexKey(c *C) {
+func TestIndexKey(t *testing.T) {
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, []byte{})
 	tTableID, tIndexID, isRecordKey, err := DecodeKeyHead(indexKey)
-	c.Assert(err, IsNil)
-	c.Assert(tTableID, Equals, tableID)
-	c.Assert(tIndexID, Equals, indexID)
-	c.Assert(isRecordKey, IsFalse)
+	require.NoError(t, err)
+	require.Equal(t, tableID, tTableID)
+	require.Equal(t, indexID, tIndexID)
+	require.False(t, isRecordKey)
 }
 
-func (s *testTableCodecSuite) TestRecordKey(c *C) {
+func TestRecordKey(t *testing.T) {
 	tableID := int64(55)
 	tableKey := EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxUint32))
 	tTableID, _, isRecordKey, err := DecodeKeyHead(tableKey)
-	c.Assert(err, IsNil)
-	c.Assert(tTableID, Equals, tableID)
-	c.Assert(isRecordKey, IsTrue)
+	require.NoError(t, err)
+	require.Equal(t, tableID, tTableID)
+	require.True(t, isRecordKey)
 
 	encodedHandle := codec.EncodeInt(nil, math.MaxUint32)
 	rowKey := EncodeRowKey(tableID, encodedHandle)
-	c.Assert([]byte(tableKey), BytesEquals, []byte(rowKey))
+	require.Equal(t, []byte(rowKey), []byte(tableKey))
 	tTableID, handle, err := DecodeRecordKey(rowKey)
-	c.Assert(err, IsNil)
-	c.Assert(tTableID, Equals, tableID)
-	c.Assert(handle.IntValue(), Equals, int64(math.MaxUint32))
+	require.NoError(t, err)
+	require.Equal(t, tableID, tTableID)
+	require.Equal(t, int64(math.MaxUint32), handle.IntValue())
 
 	recordPrefix := GenTableRecordPrefix(tableID)
 	rowKey = EncodeRecordKey(recordPrefix, kv.IntHandle(math.MaxUint32))
-	c.Assert([]byte(tableKey), BytesEquals, []byte(rowKey))
+	require.Equal(t, []byte(rowKey), []byte(tableKey))
 
 	_, _, err = DecodeRecordKey(nil)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, _, err = DecodeRecordKey([]byte("abcdefghijklmnopqrstuvwxyz"))
-	c.Assert(err, NotNil)
-	c.Assert(DecodeTableID(nil), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), DecodeTableID(nil))
 }
 
-func (s *testTableCodecSuite) TestPrefix(c *C) {
+func TestPrefix(t *testing.T) {
 	const tableID int64 = 66
 	key := EncodeTablePrefix(tableID)
 	tTableID := DecodeTableID(key)
-	c.Assert(tTableID, Equals, tableID)
+	require.Equal(t, tableID, tTableID)
 
-	c.Assert(TablePrefix(), BytesEquals, tablePrefix)
+	require.Equal(t, tablePrefix, TablePrefix())
 
 	tablePrefix1 := GenTablePrefix(tableID)
-	c.Assert([]byte(tablePrefix1), BytesEquals, []byte(key))
+	require.Equal(t, []byte(key), []byte(tablePrefix1))
 
 	indexPrefix := EncodeTableIndexPrefix(tableID, math.MaxUint32)
 	tTableID, indexID, isRecordKey, err := DecodeKeyHead(indexPrefix)
-	c.Assert(err, IsNil)
-	c.Assert(tTableID, Equals, tableID)
-	c.Assert(indexID, Equals, int64(math.MaxUint32))
-	c.Assert(isRecordKey, IsFalse)
+	require.NoError(t, err)
+	require.Equal(t, tableID, tTableID)
+	require.Equal(t, int64(math.MaxUint32), indexID)
+	require.False(t, isRecordKey)
 
 	prefixKey := GenTableIndexPrefix(tableID)
-	c.Assert(DecodeTableID(prefixKey), Equals, tableID)
+	require.Equal(t, tableID, DecodeTableID(prefixKey))
 
-	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, RecordRowKeyLen)
-	c.Assert(TruncateToRowKeyLen(key), HasLen, len(key))
+	require.Len(t, TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), RecordRowKeyLen)
+	require.Len(t, TruncateToRowKeyLen(key), len(key))
 }
 
-func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
+func TestDecodeIndexKey(t *testing.T) {
 	tableID := int64(4)
 	indexID := int64(5)
 	values := []types.Datum{
@@ -474,44 +484,44 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 
 	decodeTableID, decodeIndexID, decodeValues, err := DecodeIndexKey(indexKey)
-	c.Assert(err, IsNil)
-	c.Assert(decodeTableID, Equals, tableID)
-	c.Assert(decodeIndexID, Equals, indexID)
-	c.Assert(decodeValues, DeepEquals, valueStrs)
+	require.NoError(t, err)
+	require.Equal(t, tableID, decodeTableID)
+	require.Equal(t, indexID, decodeIndexID)
+	require.Equal(t, valueStrs, decodeValues)
 }
 
-func (s *testTableCodecSuite) TestCutPrefix(c *C) {
+func TestCutPrefix(t *testing.T) {
 	key := EncodeTableIndexPrefix(42, 666)
 	res := CutRowKeyPrefix(key)
-	c.Assert(res, BytesEquals, []byte{0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x9a})
+	require.Equal(t, []byte{0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x9a}, res)
 	res = CutIndexPrefix(key)
-	c.Assert(res, BytesEquals, []byte{})
+	require.Equal(t, []byte{}, res)
 }
 
-func (s *testTableCodecSuite) TestRange(c *C) {
+func TestRange(t *testing.T) {
 	s1, e1 := GetTableHandleKeyRange(22)
 	s2, e2 := GetTableHandleKeyRange(23)
-	c.Assert(s1, Less, e1)
-	c.Assert(e1, Less, s2)
-	c.Assert(s2, Less, e2)
+	require.Less(t, string(s1), string(e1))
+	require.Less(t, string(e1), string(s2))
+	require.Less(t, string(s2), string(e2))
 
 	s1, e1 = GetTableIndexKeyRange(42, 666)
 	s2, e2 = GetTableIndexKeyRange(42, 667)
-	c.Assert(s1, Less, e1)
-	c.Assert(e1, Less, s2)
-	c.Assert(s2, Less, e2)
+	require.Less(t, string(s1), string(e1))
+	require.Less(t, string(e1), string(s2))
+	require.Less(t, string(s2), string(e2))
 }
 
-func (s *testTableCodecSuite) TestDecodeAutoIDMeta(c *C) {
+func TestDecodeAutoIDMeta(t *testing.T) {
 	keyBytes := []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe}
 	key, field, err := DecodeMetaKey(keyBytes)
-	c.Assert(err, IsNil)
-	c.Assert(string(key), Equals, "DB:56")
-	c.Assert(string(field), Equals, "TID:108")
+	require.NoError(t, err)
+	require.Equal(t, "DB:56", string(key))
+	require.Equal(t, "TID:108", string(field))
 }
 
 func BenchmarkHasTablePrefix(b *testing.B) {
@@ -552,7 +562,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 	}
 }
 
-func (s *testTableCodecSuite) TestError(c *C) {
+func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		errInvalidKey,
 		errInvalidRecordKey,
@@ -560,6 +570,13 @@ func (s *testTableCodecSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		require.NotEqual(t, code, mysql.ErrUnknown)
+		require.Equal(t, code, uint16(err.Code()))
 	}
+}
+
+func TestUntouchedIndexKValue(t *testing.T) {
+	untouchedIndexKey := []byte("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 }

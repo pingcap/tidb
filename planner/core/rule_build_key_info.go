@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,17 +17,17 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	buildKeyInfo(lp)
-	return lp, nil
+func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	buildKeyInfo(p)
+	return p, nil
 }
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
@@ -65,33 +66,52 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
-	col, ok := unique.(*expression.Column)
-	if !ok {
+func (p *LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+	if len(eqColIDs) == 0 {
 		return false
 	}
-	if !childSchema.IsUniqueKey(col) && !childSchema.IsUnique(col) {
-		return false
+	// We check `UniqueKeys` as well since the condition is `col = con | corr`, not `col <=> con | corr`.
+	keys := make([]expression.KeyInfo, 0, len(childSchema.Keys)+len(childSchema.UniqueKeys))
+	keys = append(keys, childSchema.Keys...)
+	keys = append(keys, childSchema.UniqueKeys...)
+	var maxOneRow bool
+	for _, cols := range keys {
+		maxOneRow = true
+		for _, c := range cols {
+			if _, ok := eqColIDs[c.UniqueID]; !ok {
+				maxOneRow = false
+				break
+			}
+		}
+		if maxOneRow {
+			return true
+		}
 	}
-	_, okCon := constOrCorCol.(*expression.Constant)
-	if okCon {
-		return true
-	}
-	_, okCorCol := constOrCorCol.(*expression.CorrelatedColumn)
-	return okCorCol
+	return false
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.maxOneRow {
+		return
+	}
+	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
-				p.maxOneRow = true
-				break
+			for i, arg := range sf.GetArgs() {
+				if col, isCol := arg.(*expression.Column); isCol {
+					_, isCon := sf.GetArgs()[1-i].(*expression.Constant)
+					_, isCorCol := sf.GetArgs()[1-i].(*expression.CorrelatedColumn)
+					if isCon || isCorCol {
+						eqCols[col.UniqueID] = struct{}{}
+					}
+					break
+				}
 			}
 		}
 	}
+	p.maxOneRow = p.checkMaxOneRowCond(eqCols, childSchema[0])
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
@@ -244,11 +264,26 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsIntHandlePath {
+	var latestIndexes map[int64]*model.IndexInfo
+	var changed bool
+	var err error
+	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
+	if ds.isForUpdateRead {
+		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+		if err != nil {
+			return
+		}
+	}
+	for _, index := range ds.table.Meta().Indices {
+		if ds.isForUpdateRead && changed {
+			latestIndex, ok := latestIndexes[index.ID]
+			if !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
+		} else if index.State != model.StatePublic {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)

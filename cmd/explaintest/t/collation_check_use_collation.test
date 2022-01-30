@@ -1,0 +1,23 @@
+# These tests check that the used collation is correct.
+
+# prepare database
+create database collation_check_use_collation;
+use collation_check_use_collation;
+
+# Check subquery.
+CREATE TABLE `t` (
+  `a` char(10) DEFAULT NULL
+);
+CREATE TABLE `t1` (
+  `a` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL
+);
+insert into t values ("a");
+insert into t1 values ("A");
+select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
+
+# cleanup environment
+use test

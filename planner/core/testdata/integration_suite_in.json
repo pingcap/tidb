@@ -20,6 +20,22 @@
     ]
   },
   {
+    "name": "TestAggColumnPrune",
+    "cases": [
+      "select count(1) from t join (select count(1) from t where false) as tmp",
+      "select count(1) from t join (select max(a) from t where false) as tmp",
+      "select count(1) from t join (select min(a) from t where false) as tmp",
+      "select count(1) from t join (select sum(a) from t where false) as tmp",
+      "select count(1) from t join (select avg(a) from t where false) as tmp",
+      "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+      "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+      "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e"
+    ]
+  },
+  {
     "name": "TestIndexJoinInnerIndexNDV",
     "cases": [
       // t2 should use idx2 instead of idx1, since idx2 has larger NDV.
@@ -168,8 +184,7 @@
       "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
       "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
-      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
-      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)"
     ]
   },
   {
@@ -271,6 +286,100 @@
       // Query with WHERE or ON should have the same plan, i.e, the Apply has been decorrelated.
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
+    ]
+  },
+  {
+    "name": "TestMultiColMaxOneRow",
+    "cases": [
+      "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
+      "select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1"
+    ]
+  },
+  {
+    "name": "TestIssue24095",
+    "cases": [
+      "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;"
+    ]
+  },
+  {
+    "name": "TestSequenceAsDataSource",
+    "cases": [
+      "select 1 from s1",
+      "select count(1) from s1",
+      "select count(*) from s1",
+      "select sum(1) from s1",
+      "select count(1) as cnt from s1 union select count(1) as cnt from s2"
+    ]
+  },
+  {
+    "name": "TestIsMatchProp",
+    "cases": [
+      "select a, b, c from t1 where a > 3 and b = 4 order by a, c",
+      "select * from t2 where a = 1 and c = 2 order by b, d",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c",
+      "select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d"
+    ]
+  },
+  {
+    "name": "TestHeuristicIndexSelection",
+    "cases": [
+      "select * from t1 where a = 3 or a = 5",
+      "select f, g from t1 where f = 2 and g in (3, 4, 5)",
+      "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
+      "select f, g from t1 where f = 2 and g > 3",
+      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
+      "select * from t3 where (a = 1 or a = 3) and b = 'xx'",
+      "select * from t4 where (a = 1 or a = 3) and b = 'xx'",
+      "select a, b from t3 where (a = 1 or a = 3) and b = 'xx'",
+      "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'",
+      "update t1 set b = 2 where a = 4 or a = 6",
+      "delete from t1 where f = 2 and g in (3, 4)",
+      "insert into t3 select a, b, c from t1 where f = 2",
+      "replace into t3 select a, b, c from t1 where a = 3"
+    ]
+  },
+  {
+    "name": "TestOutputSkylinePruningInfo",
+    "cases": [
+      "select * from t where a > 1 order by f",
+      "select * from t where f > 1",
+      "select f from t where f > 1",
+      "select * from t where f > 3 and g = 5",
+      "select * from t where g = 5 order by f",
+      "select * from t where d = 3 order by c, e"
+    ]
+  },
+  {
+    "name": "TestPreferRangeScanForUnsignedIntHandle",
+    "cases": [
+      "set tidb_opt_prefer_range_scan = 0",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1",
+      "set tidb_opt_prefer_range_scan = 1",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1"
+    ]
+  },
+  {
+    "name": "TestIssue27083",
+    "cases": [
+      "select * from t use index (idx_b) where b = 2 limit 1"
+    ]
+  },
+  {
+    "name": "TestGroupBySetVar",
+    "cases": [
+      "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+      // TODO: fix these two cases
+      "select @n:=@n+1 as e from ta group by e",
+      "select @n:=@n+a as e from ta group by e",
+      "select * from (select @n:=@n+1 as e from ta) tt group by e",
+      "select * from (select @n:=@n+a as e from ta) tt group by e",
+      "select a from ta group by @n:=@n+1",
+      "select a from ta group by @n:=@n+a"
     ]
   }
 ]

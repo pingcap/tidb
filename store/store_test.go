@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -26,9 +26,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -39,49 +37,23 @@ const (
 
 type brokenStore struct{}
 
-func (s *brokenStore) Open(schema string) (kv.Storage, error) {
+func (s *brokenStore) Open(_ string) (kv.Storage, error) {
 	return nil, kv.ErrTxnRetryable
 }
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	TestingT(t)
-}
-
-var _ = Suite(&testKVSuite{})
-
-type testKVSuite struct {
-	s kv.Storage
-}
-
-func (s *testKVSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	s.s = store
-}
-
-func (s *testKVSuite) TearDownSuite(c *C) {
-	err := s.s.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func insertData(c *C, txn kv.Transaction) {
+func insertData(t *testing.T, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		err := txn.Set(val, val)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func mustDel(c *C, txn kv.Transaction) {
+func mustDel(t *testing.T, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		err := txn.Delete(val)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
@@ -91,22 +63,22 @@ func encodeInt(n int) []byte {
 
 func decodeInt(s []byte) int {
 	var n int
-	fmt.Sscanf(string(s), "%010d", &n)
+	_, _ = fmt.Sscanf(string(s), "%010d", &n)
 	return n
 }
 
-func valToStr(c *C, iter kv.Iterator) string {
+func valToStr(iter kv.Iterator) string {
 	val := iter.Value()
 	return string(val)
 }
 
-func checkSeek(c *C, txn kv.Transaction) {
+func checkSeek(t *testing.T, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
 		iter, err := txn.Iter(val, nil)
-		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
-		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
+		require.NoError(t, err)
+		require.Equal(t, val, []byte(iter.Key()))
+		require.Equal(t, i*indexStep, decodeInt([]byte(valToStr(iter))))
 		iter.Close()
 	}
 
@@ -114,306 +86,378 @@ func checkSeek(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount-1; i++ {
 		val := encodeInt(i * indexStep)
 		iter, err := txn.Iter(val, nil)
-		c.Assert(err, IsNil)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
-		c.Assert(valToStr(c, iter), Equals, string(val))
+		require.NoError(t, err)
+		require.Equal(t, val, []byte(iter.Key()))
+		require.Equal(t, string(val), valToStr(iter))
 
 		err = iter.Next()
-		c.Assert(err, IsNil)
-		c.Assert(iter.Valid(), IsTrue)
+		require.NoError(t, err)
+		require.True(t, iter.Valid())
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert([]byte(iter.Key()), BytesEquals, val)
-		c.Assert(valToStr(c, iter), Equals, string(val))
+		require.Equal(t, val, []byte(iter.Key()))
+		require.Equal(t, string(val), valToStr(iter))
 		iter.Close()
 	}
 
 	// Non exist and beyond maximum seek test
 	iter, err := txn.Iter(encodeInt(testCount*indexStep), nil)
-	c.Assert(err, IsNil)
-	c.Assert(iter.Valid(), IsFalse)
+	require.NoError(t, err)
+	require.False(t, iter.Valid())
 
 	// Non exist but between existing keys seek test,
 	// it returns the smallest key that larger than the one we are seeking
 	inBetween := encodeInt((testCount-1)*indexStep - 1)
 	last := encodeInt((testCount - 1) * indexStep)
 	iter, err = txn.Iter(inBetween, nil)
-	c.Assert(err, IsNil)
-	c.Assert(iter.Valid(), IsTrue)
-	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
-	c.Assert([]byte(iter.Key()), BytesEquals, last)
+	require.NoError(t, err)
+	require.True(t, iter.Valid())
+	require.NotEqual(t, inBetween, []byte(iter.Key()))
+	require.Equal(t, last, []byte(iter.Key()))
 	iter.Close()
 }
 
-func mustNotGet(c *C, txn kv.Transaction) {
+func mustNotGet(t *testing.T, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
 		_, err := txn.Get(context.TODO(), s)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
-func mustGet(c *C, txn kv.Transaction) {
+func mustGet(t *testing.T, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)
 		val, err := txn.Get(context.TODO(), s)
-		c.Assert(err, IsNil)
-		c.Assert(string(val), Equals, string(s))
+		require.NoError(t, err)
+		require.Equal(t, string(s), string(val))
 	}
 }
 
-func (s *testKVSuite) TestNew(c *C) {
+func TestNew(t *testing.T) {
 	store, err := New("goleveldb://relative/path")
-	c.Assert(err, NotNil)
-	c.Assert(store, IsNil)
+	require.Error(t, err)
+	require.Nil(t, store)
 }
 
-func (s *testKVSuite) TestGetSet(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestGetSet(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
-	insertData(c, txn)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
-	mustGet(c, txn)
+	insertData(t, txn)
+
+	mustGet(t, txn)
 
 	// Check transaction results
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
 
-	mustGet(c, txn)
-	mustDel(c, txn)
+	mustGet(t, txn)
+	mustDel(t, txn)
 }
 
-func (s *testKVSuite) TestSeek(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestSeek(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
-	insertData(c, txn)
-	checkSeek(c, txn)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	insertData(t, txn)
+	checkSeek(t, txn)
 
 	// Check transaction results
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
 
-	checkSeek(c, txn)
-	mustDel(c, txn)
+	checkSeek(t, txn)
+	mustDel(t, txn)
 }
 
-func (s *testKVSuite) TestInc(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestInc(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	key := []byte("incKey")
 	n, err := kv.IncInt64(txn, key, 100)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), n)
 
 	// Check transaction results
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
 	n, err = kv.IncInt64(txn, key, -200)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(-100))
+	require.NoError(t, err)
+	require.Equal(t, int64(-100), n)
 
 	err = txn.Delete(key)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	n, err = kv.IncInt64(txn, key, 100)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), n)
 
 	err = txn.Delete(key)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestDelete(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestDelete(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
-	insertData(c, txn)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
-	mustDel(c, txn)
+	insertData(t, txn)
 
-	mustNotGet(c, txn)
+	mustDel(t, txn)
+
+	mustNotGet(t, txn)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Try get
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
-	mustNotGet(c, txn)
+	mustNotGet(t, txn)
 
 	// Insert again
-	insertData(c, txn)
+	insertData(t, txn)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Delete all
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
-	mustDel(c, txn)
+	mustDel(t, txn)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
-	mustNotGet(c, txn)
+	mustNotGet(t, txn)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestDelete2(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestDelete2(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	val := []byte("test")
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0003"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
-	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
+	require.NoError(t, txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0003"), val))
+	require.NoError(t, txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val))
+	require.NoError(t, txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val))
+	require.NoError(t, txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val))
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Delete all
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
 	it, err := txn.Iter([]byte("DATA_test_tbl_department_record__0000000001_0003"), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for it.Valid() {
 		err = txn.Delete(it.Key())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = it.Next()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 	it, _ = txn.Iter([]byte("DATA_test_tbl_department_record__000000000"), nil)
-	c.Assert(it.Valid(), IsFalse)
+	require.False(t, it.Valid())
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestSetNil(c *C) {
-	txn, err := s.s.Begin()
-	defer txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+func TestSetNil(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
+	require.NoError(t, err)
 	err = txn.Set([]byte("1"), nil)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testKVSuite) TestBasicSeek(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
-	txn.Set([]byte("1"), []byte("1"))
+func TestBasicSeek(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn.Set([]byte("1"), []byte("1")))
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
 
 	it, err := txn.Iter([]byte("2"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(it.Valid(), Equals, false)
-	txn.Delete([]byte("1"))
+	require.NoError(t, err)
+	require.False(t, it.Valid())
+	require.NoError(t, txn.Delete([]byte("1")))
 }
 
-func (s *testKVSuite) TestBasicTable(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestBasicTable(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	for i := 1; i < 5; i++ {
 		b := []byte(strconv.Itoa(i))
-		txn.Set(b, b)
+		require.NoError(t, txn.Set(b, b))
 	}
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
 
 	err = txn.Set([]byte("1"), []byte("1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	it, err := txn.Iter([]byte("0"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "1")
+	require.NoError(t, err)
+	require.Equal(t, "1", string(it.Key()))
 
 	err = txn.Set([]byte("0"), []byte("0"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	it, err = txn.Iter([]byte("0"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "0")
+	require.NoError(t, err)
+	require.Equal(t, "0", string(it.Key()))
 	err = txn.Delete([]byte("0"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn.Delete([]byte("1"))
+	require.NoError(t, txn.Delete([]byte("1")))
 	it, err = txn.Iter([]byte("0"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "2")
+	require.NoError(t, err)
+	require.Equal(t, "2", string(it.Key()))
 
 	err = txn.Delete([]byte("3"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	it, err = txn.Iter([]byte("2"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "2")
+	require.NoError(t, err)
+	require.Equal(t, "2", string(it.Key()))
 
 	it, err = txn.Iter([]byte("3"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "4")
+	require.NoError(t, err)
+	require.Equal(t, "4", string(it.Key()))
 	err = txn.Delete([]byte("2"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Delete([]byte("4"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestRollback(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+func TestRollback(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 
-	insertData(c, txn)
+	insertData(t, txn)
 
-	mustGet(c, txn)
+	mustGet(t, txn)
 
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
 
 	for i := startIndex; i < testCount; i++ {
 		_, err := txn.Get(context.TODO(), []byte(strconv.Itoa(i)))
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
-func (s *testKVSuite) TestSeekMin(c *C) {
+func TestSeekMin(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	rows := []struct {
 		key   string
 		value string
@@ -426,28 +470,34 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 		{"DATA_test_main_db_tbl_tbl_test_record__00000000000000000002_0003", "hello"},
 	}
 
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	for _, row := range rows {
-		txn.Set([]byte(row.key), []byte(row.value))
+		require.NoError(t, txn.Set([]byte(row.key), []byte(row.value)))
 	}
 
 	it, err := txn.Iter(nil, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for it.Valid() {
-		it.Next()
+		require.NoError(t, it.Next())
 	}
 
 	it, err = txn.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
-	c.Assert(err, IsNil)
-	c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
+	require.NoError(t, err)
+	require.Equal(t, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001", string(it.Key()))
 
 	for _, row := range rows {
-		txn.Delete([]byte(row.key))
+		require.NoError(t, txn.Delete([]byte(row.key)))
 	}
 }
 
-func (s *testKVSuite) TestConditionIfNotExist(c *C) {
+func TestConditionIfNotExist(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	var success int64
 	cnt := 100
 	b := []byte("1")
@@ -456,8 +506,8 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			txn, err := s.s.Begin()
-			c.Assert(err, IsNil)
+			txn, err := store.Begin()
+			require.NoError(t, err)
 			err = txn.Set(b, b)
 			if err != nil {
 				return
@@ -470,38 +520,44 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	}
 	wg.Wait()
 	// At least one txn can success.
-	c.Assert(success, Greater, int64(0))
+	require.Greater(t, success, int64(0))
 
 	// Clean up
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	err = txn.Delete(b)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestConditionIfEqual(c *C) {
+func TestConditionIfEqual(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	var success int64
 	cnt := 100
 	b := []byte("1")
 	var wg sync.WaitGroup
 	wg.Add(cnt)
 
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
-	txn.Set(b, b)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn.Set(b, b))
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
 			// Use txn1/err1 instead of txn/err is
 			// to pass `go tool vet -shadow` check.
-			txn1, err1 := s.s.Begin()
-			c.Assert(err1, IsNil)
-			txn1.Set(b, []byte("newValue"))
+			txn1, err1 := store.Begin()
+			require.NoError(t, err1)
+			require.NoError(t, txn1.Set(b, []byte("newValue")))
 			err1 = txn1.Commit(context.Background())
 			if err1 == nil {
 				atomic.AddInt64(&success, 1)
@@ -509,68 +565,82 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 		}()
 	}
 	wg.Wait()
-	c.Assert(success, Greater, int64(0))
+	require.Greater(t, success, int64(0))
 
 	// Clean up
-	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	require.NoError(t, err)
 	err = txn.Delete(b)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestConditionUpdate(c *C) {
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
-	txn.Delete([]byte("b"))
-	kv.IncInt64(txn, []byte("a"), 1)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-}
-
-func (s *testKVSuite) TestDBClose(c *C) {
-	c.Skip("don't know why it fails.")
+func TestConditionUpdate(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.NoError(t, txn.Delete([]byte("b")))
+	_, err = kv.IncInt64(txn, []byte("a"), 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
+
+func TestDBClose(t *testing.T) {
+	t.Skip("don't know why it fails.")
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	err = txn.Set([]byte("a"), []byte("b"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	require.Equal(t, 1, kv.MaxVersion.Cmp(ver), Equals)
 
 	snap := store.GetSnapshot(kv.MaxVersion)
 
 	_, err = snap.Get(context.TODO(), []byte("a"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	txn, err = store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = store.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = store.Begin()
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	_ = store.GetSnapshot(kv.MaxVersion)
 
 	err = txn.Set([]byte("a"), []byte("b"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testKVSuite) TestIsolationInc(c *C) {
+func TestIsolationInc(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	threadCnt := 4
 
 	ids := make(map[int64]struct{}, threadCnt*100)
@@ -583,18 +653,18 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				var id int64
-				err := kv.RunInNewTxn(context.Background(), s.s, true, func(ctx context.Context, txn kv.Transaction) error {
+				err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 					var err1 error
 					id, err1 = kv.IncInt64(txn, []byte("key"), 1)
 					return err1
 				})
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 
 				m.Lock()
 				_, ok := ids[id]
 				ids[id] = struct{}{}
 				m.Unlock()
-				c.Assert(ok, IsFalse)
+				require.False(t, ok)
 			}
 		}()
 	}
@@ -602,13 +672,21 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 	wg.Wait()
 
 	// delete
-	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
-	defer txn.Commit(context.Background())
-	txn.Delete([]byte("key"))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, txn.Commit(context.Background()))
+	}()
+	require.NoError(t, txn.Delete([]byte("key")))
 }
 
-func (s *testKVSuite) TestIsolationMultiInc(c *C) {
+func TestIsolationMultiInc(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	threadCnt := 4
 	incCnt := 100
 	keyCnt := 4
@@ -625,7 +703,7 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incCnt; j++ {
-				err := kv.RunInNewTxn(context.Background(), s.s, true, func(ctx context.Context, txn kv.Transaction) error {
+				err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := kv.IncInt64(txn, key, 1)
 						if err1 != nil {
@@ -635,51 +713,55 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 
 					return nil
 				})
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 			}
 		}()
 	}
 
 	wg.Wait()
 
-	err := kv.RunInNewTxn(context.Background(), s.s, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		for _, key := range keys {
 			id, err1 := kv.GetInt64(context.TODO(), txn, key)
 			if err1 != nil {
 				return err1
 			}
-			c.Assert(id, Equals, int64(threadCnt*incCnt))
-			txn.Delete(key)
+			require.Equal(t, int64(threadCnt*incCnt), id)
+			require.NoError(t, txn.Delete(key))
 		}
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testKVSuite) TestRetryOpenStore(c *C) {
+func TestRetryOpenStore(t *testing.T) {
 	begin := time.Now()
-	Register("dummy", &brokenStore{})
+	require.NoError(t, Register("dummy", &brokenStore{}))
 	store, err := newStoreWithRetry("dummy://dummy-store", 3)
 	if store != nil {
-		defer store.Close()
+		defer func() {
+			require.NoError(t, store.Close())
+		}()
 	}
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second), Commentf("elapse: %s", elapse))
+	require.GreaterOrEqual(t, uint64(elapse), uint64(3*time.Second))
 }
 
-func (s *testKVSuite) TestOpenStore(c *C) {
-	Register("open", &brokenStore{})
+func TestOpenStore(t *testing.T) {
+	require.NoError(t, Register("open", &brokenStore{}))
 	store, err := newStoreWithRetry(":", 3)
 	if store != nil {
-		defer store.Close()
+		defer func() {
+			require.NoError(t, store.Close())
+		}()
 	}
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testKVSuite) TestRegister(c *C) {
+func TestRegister(t *testing.T) {
 	err := Register("retry", &brokenStore{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = Register("retry", &brokenStore{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }

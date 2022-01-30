@@ -8,29 +8,34 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"bytes"
+	"context"
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
@@ -161,6 +166,29 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
+func ExtractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *CorrelatedColumn:
+		result = append(result, &v.Column)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = ExtractColumnsAndCorColumns(result, arg)
+		}
+	}
+	return result
+}
+
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
+func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
+	for _, expr := range list {
+		result = ExtractColumnsAndCorColumns(result, expr)
+	}
+	return result
+}
+
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
 func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
@@ -219,15 +247,21 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
+		substituted := false
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
-			return true, newFunc
+			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			if substituted {
+				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
+				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
+				e.SetCoercibility(v.Coercibility())
+				return true, e
+			}
+			return false, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		substituted := false
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
@@ -356,9 +390,32 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 	return expr, nil
 }
 
+func locateStringWithCollation(str, substr, coll string) int64 {
+	collator := collate.GetCollator(coll)
+	strKey := collator.Key(str)
+	subStrKey := collator.Key(substr)
+
+	index := bytes.Index(strKey, subStrKey)
+	if index == -1 || index == 0 {
+		return int64(index + 1)
+	}
+
+	// todo: we can use binary search to make it faster.
+	count := int64(0)
+	for {
+		r, size := utf8.DecodeRuneInString(str)
+		count += 1
+		index -= len(collator.Key(string(r)))
+		if index == 0 {
+			return count + 1
+		}
+		str = str[size:]
+	}
+}
+
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
-// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
-func timeZone2Duration(tz string) time.Duration {
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to int for use by time.FixedZone().
+func timeZone2int(tz string) int {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
@@ -369,7 +426,7 @@ func timeZone2Duration(tz string) time.Duration {
 	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
 	terror.Log(err)
-	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	return sign * ((h * 3600) + (m * 60))
 }
 
 var logicalOps = map[string]struct{}{
@@ -798,10 +855,6 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		if ContainMutableConst(ctx, []Expression{expr}) {
-			res = append(res, expr)
-			continue
-		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -876,12 +929,28 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
-// ContainMutableConst checks if the expressions contain a lazy constant.
-func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
-	// Treat all constants immutable if plan cache is not enabled for this query.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+// MaybeOverOptimized4PlanCache used to check whether an optimization can work
+// for the statement when we enable the plan cache.
+// In some situations, some optimizations maybe over-optimize and cache an
+// overOptimized plan. The cached plan may not get the correct result when we
+// reuse the plan for other statements.
+// For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
+// `$a==$b`, but it will cause wrong results when `$a!=$b`.
+// So we need to do the check here. The check includes the following aspects:
+// 1. Whether the plan cache switch is enable.
+// 2. Whether the statement can be cached.
+// 3. Whether the expressions contain a lazy constant.
+// TODO: Do more careful check here.
+func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return false
 	}
+	return containMutableConst(ctx, exprs)
+}
+
+// containMutableConst checks if the expressions contain a lazy constant.
+func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -889,12 +958,25 @@ func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if ContainMutableConst(ctx, v.GetArgs()) {
+			if containMutableConst(ctx, v.GetArgs()) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			v.ParamMarker = nil
+			v.DeferredExpr = nil
+		case *ScalarFunction:
+			RemoveMutableConst(ctx, v.GetArgs())
+		}
+	}
 }
 
 const (
@@ -949,7 +1031,7 @@ func GetFormatBytes(bytes float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
 	}
-	value := float64(bytes) / divisor
+	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
@@ -988,9 +1070,182 @@ func GetFormatNanoTime(time float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
 	}
-	value := float64(time) / divisor
+	value := time / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
 	return strconv.FormatFloat(value, 'f', 2, 64) + " " + unit
+}
+
+// SQLDigestTextRetriever is used to find the normalized SQL statement text by SQL digests in statements_summary table.
+// It's exported for test purposes. It's used by the `tidb_decode_sql_digests` builtin function, but also exposed to
+// be used in other modules.
+type SQLDigestTextRetriever struct {
+	// SQLDigestsMap is the place to put the digests that's requested for getting SQL text and also the place to put
+	// the query result.
+	SQLDigestsMap map[string]string
+
+	// Replace querying for test purposes.
+	mockLocalData  map[string]string
+	mockGlobalData map[string]string
+	// There are two ways for querying information: 1) query specified digests by WHERE IN query, or 2) query all
+	// information to avoid the too long WHERE IN clause. If there are more than `fetchAllLimit` digests needs to be
+	// queried, the second way will be chosen; otherwise, the first way will be chosen.
+	fetchAllLimit int
+}
+
+// NewSQLDigestTextRetriever creates a new SQLDigestTextRetriever.
+func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
+	return &SQLDigestTextRetriever{
+		SQLDigestsMap: make(map[string]string),
+		fetchAllLimit: 512,
+	}
+}
+
+func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []interface{}) (map[string]string, error) {
+	if len(inValues) == 0 {
+		return data, nil
+	}
+	res := make(map[string]string, len(inValues))
+	for _, digest := range inValues {
+		if text, ok := data[digest.(string)]; ok {
+			res[digest.(string)] = text
+		}
+	}
+	return res, nil
+}
+
+// runFetchDigestQuery runs query to the system tables to fetch the kv mapping of SQL digests and normalized SQL texts
+// of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
+// queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
+// queries the cluster version of these two tables.
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	// If mock data is set, query the mock data instead of the real statements_summary tables.
+	if !queryGlobal && r.mockLocalData != nil {
+		return r.runMockQuery(r.mockLocalData, inValues)
+	} else if queryGlobal && r.mockGlobalData != nil {
+		return r.runMockQuery(r.mockGlobalData, inValues)
+	}
+
+	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, errors.New("restricted sql can't be executed in this context")
+	}
+
+	// Information in statements_summary will be periodically moved to statements_summary_history. Union them together
+	// to avoid missing information when statements_summary is just cleared.
+	stmt := "select digest, digest_text from information_schema.statements_summary union distinct " +
+		"select digest, digest_text from information_schema.statements_summary_history"
+	if queryGlobal {
+		stmt = "select digest, digest_text from information_schema.cluster_statements_summary union distinct " +
+			"select digest, digest_text from information_schema.cluster_statements_summary_history"
+	}
+	// Add the where clause if `inValues` is specified.
+	if len(inValues) > 0 {
+		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
+	}
+
+	stmtNode, err := exec.ParseWithParams(ctx, stmt, inValues...)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmtNode)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]string, len(rows))
+	for _, row := range rows {
+		res[row.GetString(0)] = row.GetString(1)
+	}
+	return res, nil
+}
+
+func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string) {
+	for digest, text := range r.SQLDigestsMap {
+		if len(text) > 0 {
+			// The text of this digest is already known
+			continue
+		}
+		sqlText, ok := queryResult[digest]
+		if ok {
+			r.SQLDigestsMap[digest] = sqlText
+		}
+	}
+}
+
+// RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
+	if len(r.SQLDigestsMap) == 0 {
+		return nil
+	}
+
+	var queryResult map[string]string
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		inValues := make([]interface{}, 0, len(r.SQLDigestsMap))
+		for key := range r.SQLDigestsMap {
+			inValues = append(inValues, key)
+		}
+		var err error
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, inValues)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(queryResult) == len(r.SQLDigestsMap) {
+			r.SQLDigestsMap = queryResult
+			return nil
+		}
+	} else {
+		var err error
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	r.updateDigestInfo(queryResult)
+	return nil
+}
+
+// RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
+	err := r.RetrieveLocal(ctx, sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
+	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
+	// globally.
+	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
+		failpoint.Return(nil)
+	})
+
+	var unknownDigests []interface{}
+	for k, v := range r.SQLDigestsMap {
+		if len(v) == 0 {
+			unknownDigests = append(unknownDigests, k)
+		}
+	}
+
+	if len(unknownDigests) == 0 {
+		return nil
+	}
+
+	var queryResult map[string]string
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, unknownDigests)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	r.updateDigestInfo(queryResult)
+	return nil
 }

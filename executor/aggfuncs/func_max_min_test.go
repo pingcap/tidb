@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,16 +16,17 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, isMax bool) (memDeltas []int64, err error) {
@@ -92,7 +94,7 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
 }
 
-func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
+func TestMergePartialResult4MaxMin(t *testing.T) {
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
@@ -129,11 +131,14 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		test := test
+		t.Run(test.funcName, func(t *testing.T) {
+			testMergePartialResult(t, test)
+		})
 	}
 }
 
-func (s *testSuite) TestMaxMin(c *C) {
+func TestMaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
@@ -158,11 +163,14 @@ func (s *testSuite) TestMaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(0))),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		test := test
+		t.Run(test.funcName, func(t *testing.T) {
+			testAggFunc(t, test)
+		})
 	}
 }
 
-func (s *testSuite) TestMemMaxMin(c *C) {
+func TestMemMaxMin(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -211,7 +219,10 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		test := test
+		t.Run(test.aggTest.funcName, func(t *testing.T) {
+			testAggMemFunc(t, test)
+		})
 	}
 }
 
@@ -247,11 +258,20 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 	result.Check(testkit.Rows(tc.expect...))
 }
 
-func (s *testSuite) TestMaxSlidingWindow(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestMaxSlidingWindow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	testCases := []maxSlidingWindowTestCase{
 		{
 			rowType:       "bigint",
+			insertValue:   "(1), (3), (2)",
+			expect:        []string{"3", "3", "3"},
+			orderByExpect: []string{"1", "2", "3"},
+		},
+		{
+			rowType:       "int unsigned",
 			insertValue:   "(1), (3), (2)",
 			expect:        []string{"3", "3", "3"},
 			orderByExpect: []string{"1", "2", "3"},
@@ -305,11 +325,58 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	for _, o := range orderBy {
 		for _, f := range frameType {
 			for _, tc := range testCases {
-				tc.frameType = f
-				tc.orderBy = o
-				tk.MustExec("drop table if exists t;")
-				testMaxSlidingWindow(tk, tc)
+				t.Run(fmt.Sprintf("%s_%v_%d", tc.rowType, o, f), func(t *testing.T) {
+					tc.frameType = f
+					tc.orderBy = o
+					tk.MustExec("drop table if exists t;")
+					testMaxSlidingWindow(tk, tc)
+				})
 			}
 		}
+	}
+}
+
+func TestDequeReset(t *testing.T) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	deque.PushBack(0, 12)
+	deque.Reset()
+	require.Len(t, deque.Items, 0)
+	require.True(t, deque.IsMax)
+}
+
+func TestDequePushPop(t *testing.T) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	times := 15
+	// pushes element from back of deque
+	for i := 0; i < times; i++ {
+		if i != 0 {
+			front, isEnd := deque.Front()
+			require.False(t, isEnd)
+			require.Zero(t, front.Item)
+			require.Zero(t, front.Idx)
+		}
+		deque.PushBack(uint64(i), i)
+		back, isEnd := deque.Back()
+		require.False(t, isEnd)
+		require.Equal(t, back.Item, i)
+		require.Equal(t, back.Idx, uint64(i))
+	}
+
+	// pops element from back of deque
+	for i := 0; i < times; i++ {
+		pair, isEnd := deque.Back()
+		require.False(t, isEnd)
+		require.Equal(t, pair.Item, times-i-1)
+		require.Equal(t, pair.Idx, uint64(times-i-1))
+		front, isEnd := deque.Front()
+		require.False(t, isEnd)
+		require.Zero(t, front.Item)
+		require.Zero(t, front.Idx)
+		err := deque.PopBack()
+		require.NoError(t, err)
 	}
 }

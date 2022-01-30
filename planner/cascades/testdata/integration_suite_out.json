@@ -298,7 +298,7 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a",
         "Plan": [
-          "Projection_15 10000.00 root  test.t.a, cast(test.t.b, int(11))->Column#5",
+          "Projection_15 10000.00 root  test.t.a, test.t.b",
           "└─TableReader_16 10000.00 root  data:TableFullScan_17",
           "  └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
@@ -326,7 +326,7 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a",
         "Plan": [
-          "Projection_15 10000.00 root  test.t.a, cast(test.t.b, int(11))->Column#5",
+          "Projection_15 10000.00 root  test.t.a, test.t.b",
           "└─TableReader_16 10000.00 root  data:TableFullScan_17",
           "  └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
@@ -340,7 +340,7 @@
       {
         "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a",
         "Plan": [
-          "Projection_18 10000.00 root  test.t.a, cast(test.t.b, int(11))->Column#5",
+          "Projection_18 10000.00 root  test.t.a, test.t.b",
           "└─TableReader_19 10000.00 root  data:TableFullScan_20",
           "  └─TableFullScan_20 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
@@ -450,7 +450,7 @@
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
-          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
+          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, test.t.b, test.t.b, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
           "  └─Sort_22 8000.00 root  test.t.b",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
           "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(test.t.b), 0, 1), 0)",

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,15 +17,16 @@ package core
 import (
 	"strings"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // HandleCols is the interface that holds handle columns.
@@ -34,6 +36,7 @@ type HandleCols interface {
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
+	// The last column(s) of `row` must be the handle column(s).
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
@@ -46,8 +49,8 @@ type HandleCols interface {
 	// NumCols returns the number of columns.
 	NumCols() int
 	// Compare compares two datum rows by handle order.
-	Compare(a, b []types.Datum) (int, error)
-	// GetFieldTypes return field types of columns
+	Compare(a, b []types.Datum, ctors []collate.Collator) (int, error)
+	// GetFieldTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
 }
 
@@ -143,11 +146,11 @@ func (cb *CommonHandleCols) String() string {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
-	for _, col := range cb.columns {
+func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+	for i, col := range cb.columns {
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
-		cmp, err := aDatum.CompareDatum(cb.sc, bDatum)
+		cmp, err := aDatum.Compare(cb.sc, bDatum, ctors[i])
 		if err != nil {
 			return 0, err
 		}
@@ -235,7 +238,7 @@ func (ib *IntHandleCols) NumCols() int {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
+func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
 	aInt := a[ib.col.Index].GetInt64()
 	bInt := b[ib.col.Index].GetInt64()
 	if aInt == bInt {

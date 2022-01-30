@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -45,6 +46,16 @@ func calcFraction(lower, upper, value float64) float64 {
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
+	case types.KindFloat32:
+		return float64(value.GetFloat32())
+	case types.KindFloat64:
+		return value.GetFloat64()
+	case types.KindInt64:
+		return float64(value.GetInt64())
+	case types.KindUint64:
+		return float64(value.GetUint64())
+	case types.KindMysqlDuration:
+		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
 		scalar, err := value.GetMysqlDecimal().ToFloat64()
 		if err != nil {
@@ -70,6 +81,10 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			return 0
 		}
 		return convertBytesToScalar(bytes[commonPfxLen:])
+	case types.KindMinNotNull:
+		return -math.MaxFloat64
+	case types.KindMaxValue:
+		return math.MaxFloat64
 	default:
 		// do not know how to convert
 		return 0
@@ -129,14 +144,22 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	return 0.5
 }
 
-func commonPrefixLength(lower, upper []byte) int {
-	minLen := len(lower)
-	if minLen > len(upper) {
-		minLen = len(upper)
+func commonPrefixLength(strs ...[]byte) int {
+	if len(strs) == 0 {
+		return 0
+	}
+	minLen := len(strs[0])
+	for _, str := range strs {
+		if len(str) < minLen {
+			minLen = len(str)
+		}
 	}
 	for i := 0; i < minLen; i++ {
-		if lower[i] != upper[i] {
-			return i
+		a := strs[0][i]
+		for _, str := range strs {
+			if str[i] != a {
+				return i
+			}
 		}
 	}
 	return minLen
@@ -197,7 +220,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			return nil
 		}
 		remaining = remaining + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		if remaining >= maxNumStep || remaining < 0 {
 			return nil
 		}
 		values := make([]types.Datum, 0, remaining)
@@ -215,7 +238,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			return nil
 		}
 		remaining = remaining + 1 - uint64(exclude)
-		if remaining >= maxNumStep {
+		if remaining >= maxNumStep || remaining < 0 {
 			return nil
 		}
 		values := make([]types.Datum, 0, remaining)
@@ -233,7 +256,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		stepSize := int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		if remaining <= 0 || remaining >= maxNumStep {
 			return nil
 		}
 		startValue := int64(lowDur.Duration)
@@ -265,7 +288,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			stepSize = int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		// When `highTime` is much larger than `lowTime`, `remaining` may be overflowed to a negative value.
+		if remaining <= 0 || remaining >= maxNumStep {
 			return nil
 		}
 		startValue := lowTime

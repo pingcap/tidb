@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,10 +18,10 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -118,7 +119,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 }
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
+func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
@@ -138,12 +139,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 			apply.AttachOnConds(newConds)
 			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p)
+			return s.optimize(ctx, p, opt)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
 			if m.children[0].MaxOneRow() {
 				innerPlan = m.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(ctx, p)
+				return s.optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
 			for i, expr := range proj.Exprs {
@@ -156,14 +157,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, err := s.optimize(ctx, p)
+				np, err := s.optimize(ctx, p, opt)
 				if err != nil {
 					return nil, err
 				}
 				proj.SetChildren(np)
 				return proj, nil
 			}
-			return s.optimize(ctx, p)
+			return s.optimize(ctx, p, opt)
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0]
@@ -189,25 +190,31 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
 
 				for i, aggFunc := range agg.AggFuncs {
-					switch expr := aggFunc.Args[0].(type) {
-					case *expression.Column:
-						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
-							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
-							if err != nil {
-								return nil, err
+					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+					for _, arg := range aggFunc.Args {
+						switch expr := arg.(type) {
+						case *expression.Column:
+							if idx := apply.schema.ColumnIndex(expr); idx != -1 {
+								aggArgs = append(aggArgs, apply.schema.Columns[idx])
+							} else {
+								aggArgs = append(aggArgs, expr)
 							}
-							newAggFuncs = append(newAggFuncs, desc)
+						case *expression.ScalarFunction:
+							expr.RetType = expr.RetType.Clone()
+							expr.RetType.Flag &= ^mysql.NotNullFlag
+							aggArgs = append(aggArgs, expr)
+						default:
+							aggArgs = append(aggArgs, expr)
 						}
-					case *expression.ScalarFunction:
-						expr.RetType = expr.RetType.Clone()
-						expr.RetType.Flag &= ^mysql.NotNullFlag
-						newAggFuncs = append(newAggFuncs, aggFunc)
-					default:
-						newAggFuncs = append(newAggFuncs, aggFunc)
 					}
+					desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
+					if err != nil {
+						return nil, err
+					}
+					newAggFuncs = append(newAggFuncs, desc)
 				}
 				agg.AggFuncs = newAggFuncs
-				np, err := s.optimize(ctx, p)
+				np, err := s.optimize(ctx, p, opt)
 				if err != nil {
 					return nil, err
 				}
@@ -276,7 +283,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 							proj.SetChildren(apply)
 							p = proj
 						}
-						return s.optimize(ctx, p)
+						return s.optimize(ctx, p, opt)
 					}
 					sel.Conditions = originalExpr
 					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
@@ -287,12 +294,12 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 			// the top level Sort has no effect on the subquery's result.
 			innerPlan = sort.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p)
+			return s.optimize(ctx, p, opt)
 		}
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err := s.optimize(ctx, child)
+		np, err := s.optimize(ctx, child, opt)
 		if err != nil {
 			return nil, err
 		}

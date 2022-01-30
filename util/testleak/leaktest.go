@@ -1,7 +1,3 @@
-// Copyright 2013 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//go:build leak
 // +build leak
 
 package testleak
@@ -65,13 +68,14 @@ func interestingGoroutines() (gs []string) {
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
+		"github.com/tikv/client-go/v2/txnkv/transaction.keepAlive", // See https://github.com/tikv/client-go/issues/174
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {
 			return true
 		}
 		for _, ident := range ignoreList {
-			if strings.Contains(stack, ident) {
+			if strings.Contains(strings.ToLower(stack), strings.ToLower(ident)) {
 				return true
 			}
 		}

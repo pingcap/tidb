@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,12 +18,10 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -42,17 +41,18 @@ func (s *testPartitionSuite) TearDownSuite(c *C) {
 }
 
 func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_partition")
+	dbInfo, err := testSchemaInfo(d, "test_partition")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(c, d)
@@ -156,112 +156,4 @@ func testTruncatePartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
-}
-
-func testAddPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
-	ids, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
-	partitionInfo := &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
-		Expr:   tblInfo.Columns[0].Name.L,
-		Enable: true,
-		Definitions: []model.PartitionDefinition{
-			{
-				ID:       ids[0],
-				Name:     model.NewCIStr("p2"),
-				LessThan: []string{"300"},
-			},
-		},
-	}
-	addPartitionJob := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionInfo},
-	}
-	return d.doDDLJob(ctx, addPartitionJob)
-}
-
-func (s *testPartitionSuite) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C) {
-	d := testNewDDLAndStart(
-		context.Background(),
-		c,
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-	dbInfo := testSchemaInfo(c, d, "test_partition2")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
-	// Build a tableInfo with replica count = 1 while there is no real tiFlash store.
-	tblInfo := buildTableInfoWithReplicaInfo(c, d)
-	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-
-	err := testAddPartition(c, ctx, d, dbInfo, tblInfo)
-	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
-
-	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
-	originErrCountLimit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
-	defer func() {
-		variable.SetDDLErrorCountLimit(originErrCountLimit)
-	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica"), IsNil)
-	}()
-	err = testAddPartition(c, ctx, d, dbInfo, tblInfo)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete")
-}
-
-func buildTableInfoWithReplicaInfo(c *C, d *ddl) *model.TableInfo {
-	tbl := &model.TableInfo{
-		Name: model.NewCIStr("t1"),
-	}
-	col := &model.ColumnInfo{
-		Name:      model.NewCIStr("c"),
-		Offset:    0,
-		State:     model.StatePublic,
-		FieldType: *types.NewFieldType(mysql.TypeLong),
-		ID:        allocateColumnID(tbl),
-	}
-	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
-	tbl.ID = genIDs[0]
-	tbl.Columns = []*model.ColumnInfo{col}
-	tbl.Charset = "utf8"
-	tbl.Collate = "utf8_bin"
-	tbl.TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
-	}
-
-	partIDs, err := d.genGlobalIDs(2)
-	c.Assert(err, IsNil)
-	partInfo := &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
-		Expr:   tbl.Columns[0].Name.L,
-		Enable: true,
-		Definitions: []model.PartitionDefinition{
-			{
-				ID:       partIDs[0],
-				Name:     model.NewCIStr("p0"),
-				LessThan: []string{"100"},
-			},
-			{
-				ID:       partIDs[1],
-				Name:     model.NewCIStr("p1"),
-				LessThan: []string{"200"},
-			},
-		},
-	}
-	tbl.Partition = partInfo
-	return tbl
 }

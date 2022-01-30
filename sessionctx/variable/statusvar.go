@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -46,6 +47,25 @@ func RegisterStatistics(s Statistics) {
 	statisticsListLock.Lock()
 	statisticsList = append(statisticsList, s)
 	statisticsListLock.Unlock()
+}
+
+// UnregisterStatistics unregisters statistics.
+func UnregisterStatistics(s Statistics) {
+	statisticsListLock.Lock()
+	defer statisticsListLock.Unlock()
+	idx := -1
+	for i := range statisticsList {
+		if statisticsList[i] == s {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	last := len(statisticsList) - 1
+	statisticsList[idx] = statisticsList[last]
+	statisticsList[last] = nil
+	statisticsList = statisticsList[:last]
 }
 
 // GetStatusVars gets registered statistics status variables.
@@ -103,7 +123,6 @@ var tlsSupportedCiphers string
 
 // Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
 var tlsVersionString = map[uint16]string{
-	tls.VersionSSL30: "SSLv3",
 	tls.VersionTLS10: "TLSv1",
 	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
@@ -137,7 +156,11 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		statusVars["Ssl_version"] = tlsVersionString[vars.TLSConnectionState.Version]
+		if tlsVersion, tlsVersionKnown := tlsVersionString[vars.TLSConnectionState.Version]; tlsVersionKnown {
+			statusVars["Ssl_version"] = tlsVersion
+		} else {
+			statusVars["Ssl_version"] = "unknown_tls_version"
+		}
 	}
 
 	return statusVars, nil

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,19 +17,59 @@ package kv
 import (
 	"context"
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(testUtilsSuite{})
+func TestIncInt64(t *testing.T) {
+	mb := newMockMap()
+	key := Key("key")
+	v, err := IncInt64(mb, key, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(1), v)
 
-type testUtilsSuite struct {
+	v, err = IncInt64(mb, key, 10)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(11), v)
+
+	err = mb.Set(key, []byte("not int"))
+	assert.Nil(t, err)
+
+	_, err = IncInt64(mb, key, 1)
+	assert.NotNil(t, err)
+
+	// test int overflow
+	maxUint32 := int64(^uint32(0))
+	err = mb.Set(key, []byte(strconv.FormatInt(maxUint32, 10)))
+	assert.Nil(t, err)
+
+	v, err = IncInt64(mb, key, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, maxUint32+1, v)
+}
+
+func TestGetInt64(t *testing.T) {
+	mb := newMockMap()
+	key := Key("key")
+	v, err := GetInt64(context.TODO(), mb, key)
+	assert.Equal(t, int64(0), v)
+	assert.Nil(t, err)
+
+	_, err = IncInt64(mb, key, 15)
+	assert.Nil(t, err)
+	v, err = GetInt64(context.TODO(), mb, key)
+	assert.Equal(t, int64(15), v)
+	assert.Nil(t, err)
 }
 
 type mockMap struct {
 	index []Key
 	value [][]byte
 }
+
+var _ RetrieverMutator = &mockMap{}
 
 func newMockMap() *mockMap {
 	return &mockMap{
@@ -37,20 +78,24 @@ func newMockMap() *mockMap {
 	}
 }
 
-func (s *mockMap) Iter(k Key, upperBound Key) (Iterator, error) {
+func (s *mockMap) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	//TODO nothing.
+}
+
+func (s *mockMap) Iter(Key, Key) (Iterator, error) {
 	return nil, nil
 }
-func (s *mockMap) IterReverse(k Key) (Iterator, error) {
+func (s *mockMap) IterReverse(Key) (Iterator, error) {
 	return nil, nil
 }
 
-func (s *mockMap) Get(ctx context.Context, k Key) ([]byte, error) {
+func (s *mockMap) Get(_ context.Context, k Key) ([]byte, error) {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
 			return s.value[i], nil
 		}
 	}
-	return nil, nil
+	return nil, ErrNotExist
 }
 
 func (s *mockMap) Set(k Key, v []byte) error {
@@ -74,43 +119,4 @@ func (s *mockMap) Delete(k Key) error {
 		}
 	}
 	return nil
-}
-
-func (s testUtilsSuite) TestIncInt64(c *C) {
-	mb := newMockMap()
-	key := Key("key")
-	v, err := IncInt64(mb, key, 1)
-	c.Check(err, IsNil)
-	c.Check(v, Equals, int64(1))
-	v, err = IncInt64(mb, key, 10)
-	c.Check(err, IsNil)
-	c.Check(v, Equals, int64(11))
-
-	err = mb.Set(key, []byte("not int"))
-	c.Check(err, IsNil)
-	_, err = IncInt64(mb, key, 1)
-	c.Check(err, NotNil)
-
-	// test int overflow
-	maxUint32 := int64(^uint32(0))
-	err = mb.Set(key, []byte(strconv.FormatInt(maxUint32, 10)))
-	c.Check(err, IsNil)
-	v, err = IncInt64(mb, key, 1)
-	c.Check(err, IsNil)
-	c.Check(v, Equals, maxUint32+1)
-
-}
-
-func (s testUtilsSuite) TestGetInt64(c *C) {
-	mb := newMockMap()
-	key := Key("key")
-	v, err := GetInt64(context.TODO(), mb, key)
-	c.Check(v, Equals, int64(0))
-	c.Check(err, IsNil)
-
-	_, err = IncInt64(mb, key, 15)
-	c.Check(err, IsNil)
-	v, err = GetInt64(context.TODO(), mb, key)
-	c.Check(v, Equals, int64(15))
-	c.Check(err, IsNil)
 }

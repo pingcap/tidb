@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,243 +16,241 @@ package server
 
 import (
 	"strconv"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testUtilSuite{})
+func TestDumpBinaryTime(t *testing.T) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
+	require.NoError(t, err)
+	d := dumpBinaryDateTime(nil, parsedTime)
+	require.Equal(t, []byte{0}, d)
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	session.SetSchemaLease(0)
-	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
-}
-
-type testUtilSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *testUtilSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-}
-
-func (s *testUtilSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-
-	testleak.AfterTest(c)()
-}
-
-func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
-	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.000000")
-	c.Assert(err, IsNil)
-	d := dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{0})
-
-	t, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
+	parsedTime, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
 	// 199 & 7 composed to uint16 1991 (litter-endian)
 	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
-	c.Assert(d, DeepEquals, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0})
+	require.Equal(t, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0}, d)
 
-	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.000000")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{0})
-	t, err = types.ParseDatetime(nil, "1993-07-13 01:01:01.000000")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
+	parsedTime, err = types.ParseDatetime(sc, "0000-00-00 00:00:00.000000")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
+	require.Equal(t, []byte{0}, d)
+
+	parsedTime, err = types.ParseDatetime(sc, "1993-07-13 01:01:01.000000")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
 	// 201 & 7 composed to uint16 1993 (litter-endian)
-	c.Assert(d, DeepEquals, []byte{7, 201, 7, 7, 13, 1, 1, 1})
+	require.Equal(t, []byte{7, 201, 7, 7, 13, 1, 1, 1}, d)
 
-	t, err = types.ParseDate(nil, "0000-00-00")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{0})
-	t, err = types.ParseDate(nil, "1992-06-01")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
+	parsedTime, err = types.ParseDate(sc, "0000-00-00")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
+	require.Equal(t, []byte{0}, d)
+	parsedTime, err = types.ParseDate(sc, "1992-06-01")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
 	// 200 & 7 composed to uint16 1992 (litter-endian)
-	c.Assert(d, DeepEquals, []byte{4, 200, 7, 6, 1})
+	require.Equal(t, []byte{4, 200, 7, 6, 1}, d)
 
-	t, err = types.ParseDate(nil, "0000-00-00")
-	c.Assert(err, IsNil)
-	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{0})
+	parsedTime, err = types.ParseDate(sc, "0000-00-00")
+	require.NoError(t, err)
+	d = dumpBinaryDateTime(nil, parsedTime)
+	require.Equal(t, []byte{0}, d)
 
-	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.000000", 6)
-	c.Assert(err, IsNil)
+	myDuration, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
+	require.NoError(t, err)
 	d = dumpBinaryTime(myDuration.Duration)
-	c.Assert(d, DeepEquals, []byte{0})
+	require.Equal(t, []byte{0}, d)
 
 	d = dumpBinaryTime(0)
-	c.Assert(d, DeepEquals, []byte{0})
+	require.Equal(t, []byte{0}, d)
 
 	d = dumpBinaryTime(-1)
-	c.Assert(d, DeepEquals, []byte{12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	require.Equal(t, []byte{12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, d)
 
 	d = dumpBinaryTime(time.Nanosecond + 86400*1000*time.Microsecond)
-	c.Assert(d, DeepEquals, []byte{12, 0, 0, 0, 0, 0, 0, 1, 26, 128, 26, 6, 0})
+	require.Equal(t, []byte{12, 0, 0, 0, 0, 0, 0, 1, 26, 128, 26, 6, 0}, d)
 }
 
-func (s *testUtilSuite) TestDumpTextValue(c *C) {
+func TestResultEncoder(t *testing.T) {
+	// Encode bytes to utf-8.
+	d := newResultEncoder("utf-8")
+	src := []byte("test_string")
+	result := d.encodeMeta(src)
+	require.Equal(t, src, result)
+
+	// Encode bytes to GBK.
+	d = newResultEncoder("gbk")
+	result = d.encodeMeta([]byte("一"))
+	require.Equal(t, []byte{0xd2, 0xbb}, result)
+
+	// Encode bytes to binary.
+	d = newResultEncoder("binary")
+	result = d.encodeMeta([]byte("一"))
+	require.Equal(t, "一", string(result))
+}
+
+func TestDumpTextValue(t *testing.T) {
 	columns := []*ColumnInfo{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}
 
+	dp := newResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
-	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow())
-	c.Assert(err, IsNil)
+	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
+	require.NoError(t, err)
 	_, isNull, _, err := parseLengthEncodedBytes(bs)
-	c.Assert(err, IsNil)
-	c.Assert(isNull, IsTrue)
+	require.NoError(t, err)
+	require.True(t, isNull)
 
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "10")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "10", mustDecodeStr(t, bs))
 
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "11")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "11", mustDecodeStr(t, bs))
 
 	columns[0].Flag |= uint16(mysql.UnsignedFlag)
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "11")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "11", mustDecodeStr(t, bs))
 
 	columns[0].Type = mysql.TypeFloat
 	columns[0].Decimal = 1
 	f32 := types.NewFloat32Datum(1.2)
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "1.2")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "1.2", mustDecodeStr(t, bs))
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "1.20")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "1.20", mustDecodeStr(t, bs))
 
 	f64 := types.NewFloat64Datum(2.2)
 	columns[0].Type = mysql.TypeDouble
 	columns[0].Decimal = 1
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "2.2")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2.2", mustDecodeStr(t, bs))
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "2.20")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2.20", mustDecodeStr(t, bs))
 
 	columns[0].Type = mysql.TypeBlob
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "foo")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "foo", mustDecodeStr(t, bs))
 
 	columns[0].Type = mysql.TypeVarchar
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "bar")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "bar", mustDecodeStr(t, bs))
+
+	dp = newResultEncoder("gbk")
+	columns[0].Type = mysql.TypeVarchar
+	dt := []types.Datum{types.NewStringDatum("一")}
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
+
+	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
+	dp = newResultEncoder("binary")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	var d types.Datum
 
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
 
 	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
 	duration, err := types.ParseDuration(sc, "11:30:45", 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
 	columns[0].Decimal = 0
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "11:30:45")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "11:30:45", mustDecodeStr(t, bs))
 
 	d.SetMysqlDecimal(types.NewDecFromStringForTest("1.23"))
 	columns[0].Type = mysql.TypeNewDecimal
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "1.23")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "1.23", mustDecodeStr(t, bs))
 
 	year := types.NewIntDatum(0)
 	columns[0].Type = mysql.TypeYear
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "0000")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "0000", mustDecodeStr(t, bs))
 
 	year.SetInt64(1984)
 	columns[0].Type = mysql.TypeYear
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "1984")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "1984", mustDecodeStr(t, bs))
 
 	enum := types.NewMysqlEnumDatum(types.Enum{Name: "ename", Value: 0})
 	columns[0].Type = mysql.TypeEnum
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{enum}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{enum}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "ename", mustDecodeStr(t, bs))
 
 	set := types.Datum{}
 	set.SetMysqlSet(types.Set{Name: "sname", Value: 0}, mysql.DefaultCollationName)
 	columns[0].Type = mysql.TypeSet
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "sname")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "sname", mustDecodeStr(t, bs))
 
 	js := types.Datum{}
 	binaryJSON, err := json.ParseBinaryFromString(`{"a": 1, "b": 2}`)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	js.SetMysqlJSON(binaryJSON)
 	columns[0].Type = mysql.TypeJSON
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{js}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, `{"a": 1, "b": 2}`)
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{js}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, `{"a": 1, "b": 2}`, mustDecodeStr(t, bs))
 }
 
-func mustDecodeStr(c *C, b []byte) string {
+func mustDecodeStr(t *testing.T, b []byte) string {
 	str, _, _, err := parseLengthEncodedBytes(b)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return string(str)
 }
 
-func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
+func TestAppendFormatFloat(t *testing.T) {
 	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
@@ -428,12 +427,12 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			64,
 		},
 	}
-	for _, t := range tests {
-		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
+	for _, tc := range tests {
+		require.Equal(t, tc.out, string(appendFormatFloat(nil, tc.fVal, tc.prec, tc.bitSize)))
 	}
 }
 
-func (s *testUtilSuite) TestDumpLengthEncodedInt(c *C) {
+func TestDumpLengthEncodedInt(t *testing.T) {
 	testCases := []struct {
 		num    uint64
 		buffer []byte
@@ -457,11 +456,11 @@ func (s *testUtilSuite) TestDumpLengthEncodedInt(c *C) {
 	}
 	for _, tc := range testCases {
 		b := dumpLengthEncodedInt(nil, tc.num)
-		c.Assert(b, DeepEquals, tc.buffer)
+		require.Equal(t, tc.buffer, b)
 	}
 }
 
-func (s *testUtilSuite) TestParseLengthEncodedInt(c *C) {
+func TestParseLengthEncodedInt(t *testing.T) {
 	testCases := []struct {
 		buffer []byte
 		num    uint64
@@ -502,15 +501,14 @@ func (s *testUtilSuite) TestParseLengthEncodedInt(c *C) {
 
 	for _, tc := range testCases {
 		num, isNull, n := parseLengthEncodedInt(tc.buffer)
-		c.Assert(num, Equals, tc.num)
-		c.Assert(isNull, Equals, tc.isNull)
-		c.Assert(n, Equals, tc.n)
-
-		c.Assert(lengthEncodedIntSize(tc.num), Equals, tc.n)
+		require.Equal(t, tc.num, num)
+		require.Equal(t, tc.isNull, isNull)
+		require.Equal(t, tc.n, n)
+		require.Equal(t, tc.n, lengthEncodedIntSize(tc.num))
 	}
 }
 
-func (s *testUtilSuite) TestDumpUint(c *C) {
+func TestDumpUint(t *testing.T) {
 	testCases := []uint64{
 		0,
 		1,
@@ -523,36 +521,36 @@ func (s *testUtilSuite) TestDumpUint(c *C) {
 	}
 	for _, tc := range testCases {
 		b := dumpUint64(nil, tc)
-		c.Assert(len(b), Equals, 8)
-		c.Assert(parseUint64(b), Equals, tc)
+		require.Len(t, b, 8)
+		require.Equal(t, tc, parseUint64(b))
 	}
 }
 
-func (s *testUtilSuite) TestParseLengthEncodedBytes(c *C) {
+func TestParseLengthEncodedBytes(t *testing.T) {
 	buffer := []byte{'\xfb'}
 	b, isNull, n, err := parseLengthEncodedBytes(buffer)
-	c.Assert(b, IsNil)
-	c.Assert(isNull, IsTrue)
-	c.Assert(n, Equals, 1)
-	c.Assert(err, IsNil)
+	require.Nil(t, b)
+	require.True(t, isNull)
+	require.Equal(t, 1, n)
+	require.NoError(t, err)
 
 	buffer = []byte{0}
 	b, isNull, n, err = parseLengthEncodedBytes(buffer)
-	c.Assert(b, IsNil)
-	c.Assert(isNull, IsFalse)
-	c.Assert(n, Equals, 1)
-	c.Assert(err, IsNil)
+	require.Nil(t, b)
+	require.False(t, isNull)
+	require.Equal(t, 1, n)
+	require.NoError(t, err)
 
 	buffer = []byte{'\x01'}
 	b, isNull, n, err = parseLengthEncodedBytes(buffer)
-	c.Assert(b, IsNil)
-	c.Assert(isNull, IsFalse)
-	c.Assert(n, Equals, 2)
-	c.Assert(err.Error(), Equals, "EOF")
+	require.Nil(t, b)
+	require.False(t, isNull)
+	require.Equal(t, 2, n)
+	require.Equal(t, "EOF", err.Error())
 }
 
-func (s *testUtilSuite) TestParseNullTermString(c *C) {
-	for _, t := range []struct {
+func TestParseNullTermString(t *testing.T) {
+	for _, tc := range []struct {
 		input  string
 		str    string
 		remain string
@@ -578,9 +576,9 @@ func (s *testUtilSuite) TestParseNullTermString(c *C) {
 			"abcdef",
 		},
 	} {
-		str, remain := parseNullTermString([]byte(t.input))
-		c.Assert(string(str), Equals, t.str)
-		c.Assert(string(remain), Equals, t.remain)
+		str, remain := parseNullTermString([]byte(tc.input))
+		require.Equal(t, tc.str, string(str))
+		require.Equal(t, tc.remain, string(remain))
 	}
 }
 
@@ -588,5 +586,7 @@ func newTestConfig() *config.Config {
 	cfg := config.NewConfig()
 	cfg.Host = "127.0.0.1"
 	cfg.Status.StatusHost = "127.0.0.1"
+	cfg.Security.AutoTLS = false
+	cfg.Socket = ""
 	return cfg
 }

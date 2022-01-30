@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -157,36 +158,6 @@ func (l *List) Clear() {
 	l.chunks = nil
 	l.length = 0
 	l.consumedIdx = -1
-}
-
-// preAlloc4Row pre-allocates the storage memory for a Row.
-// NOTE: only used in test
-// 1. The List must be empty or holds no useful data.
-// 2. The schema of the Row must be the same with the List.
-// 3. This API is paired with the `Insert()` function, which inserts all the
-//    rows data into the List after the pre-allocation.
-func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
-	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
-		newChk := l.allocChunk()
-		l.chunks = append(l.chunks, newChk)
-		if chkIdx != l.consumedIdx {
-			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
-			l.consumedIdx = chkIdx
-		}
-		chkIdx++
-	}
-	chk := l.chunks[chkIdx]
-	rowIdx := chk.preAlloc(row)
-	l.length++
-	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: rowIdx}
-}
-
-// Insert inserts `row` on the position specified by `ptr`.
-// Note: Insert will cover the origin data, it should be called after
-// PreAlloc.
-func (l *List) Insert(ptr RowPtr, row Row) {
-	l.chunks[ptr.ChkIdx].insert(int(ptr.RowIdx), row)
 }
 
 // ListWalkFunc is used to walk the list.

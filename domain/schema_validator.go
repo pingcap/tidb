@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,13 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
 
@@ -45,9 +46,9 @@ type SchemaValidator interface {
 	// The latest schemaVer is valid within leaseGrantTime plus lease duration.
 	// Add the changed table IDs to the new schema information,
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
-	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *tikv.RelatedSchemaChange)
+	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *transaction.RelatedSchemaChange)
 	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*tikv.RelatedSchemaChange, checkResult)
+	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*transaction.RelatedSchemaChange, checkResult)
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
@@ -127,7 +128,7 @@ func (s *schemaValidator) Reset() {
 	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
-func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *tikv.RelatedSchemaChange) {
+func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
@@ -168,8 +169,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
-func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) (tikv.RelatedSchemaChange, bool) {
-	res := tikv.RelatedSchemaChange{}
+func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) (transaction.RelatedSchemaChange, bool) {
+	res := transaction.RelatedSchemaChange{}
 	if len(s.deltaSchemaInfos) == 0 {
 		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
 		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
@@ -221,7 +222,7 @@ func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 }
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*tikv.RelatedSchemaChange, checkResult) {
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*transaction.RelatedSchemaChange, checkResult) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
@@ -234,8 +235,10 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		// The DDL relatedPhysicalTableIDs is empty.
-		if len(relatedPhysicalTableIDs) == 0 {
+		// When a transaction executes a DDL and got an error, it should manually call this method to check if it is caused by schema change.
+		// And then it will pass a nil for relatedPhysicalTableIDs to indicate just check schema version.
+		// When a transaction only contains DML on temporary tables, relatedPhysicalTableIDs is [].
+		if relatedPhysicalTableIDs == nil {
 			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),
 				zap.Int64("latestSchemaVer", s.latestSchemaVer))
 			return nil, ResultFail
@@ -260,7 +263,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 	return nil, ResultSucc
 }
 
-func (s *schemaValidator) enqueue(schemaVersion int64, change *tikv.RelatedSchemaChange) {
+func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.RelatedSchemaChange) {
 	maxCnt := int(variable.GetMaxDeltaSchemaCount())
 	if maxCnt <= 0 {
 		logutil.BgLogger().Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))

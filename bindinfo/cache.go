@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +18,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
@@ -104,7 +105,8 @@ func (br *BindRecord) HasUsingBinding() bool {
 
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
-	for _, binding := range br.Bindings {
+	for i := range br.Bindings {
+		binding := br.Bindings[i]
 		if binding.ID == hint {
 			return &binding
 		}
@@ -159,7 +161,8 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.shallowCopy()
-	for _, rbind := range rBindRecord.Bindings {
+	for i := range rBindRecord.Bindings {
+		rbind := rBindRecord.Bindings[i]
 		found := false
 		for j, lbind := range lBindRecord.Bindings {
 			if lbind.isSame(&rbind) {
@@ -183,7 +186,8 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
 	}
 	result := br.shallowCopy()
-	for _, deletedBind := range deleted.Bindings {
+	for j := range deleted.Bindings {
+		deletedBind := deleted.Bindings[j]
 		for i, bind := range result.Bindings {
 			if bind.isSame(&deletedBind) {
 				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)

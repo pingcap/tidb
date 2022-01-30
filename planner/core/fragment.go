@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,17 +16,19 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -38,33 +41,51 @@ type Fragment struct {
 
 	// following fields are filled after scheduling.
 	ExchangeSender *PhysicalExchangeSender // data exporter
+
+	IsRoot bool
+
+	singleton bool // indicates if this is a task running on a single node.
+}
+
+type tasksAndFrags struct {
+	tasks []*kv.MPPTask
+	frags []*Fragment
 }
 
 type mppTaskGenerator struct {
-	ctx         sessionctx.Context
-	startTS     uint64
-	allocTaskID *int64
-	is          infoschema.InfoSchema
+	ctx     sessionctx.Context
+	startTS uint64
+	is      infoschema.InfoSchema
+	frags   []*Fragment
+	cache   map[int]tasksAndFrags
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, allocTaskID *int64, is infoschema.InfoSchema) ([]*kv.MPPTask, error) {
-	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, allocTaskID: allocTaskID, is: is}
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+	g := &mppTaskGenerator{
+		ctx:     ctx,
+		startTS: startTs,
+		is:      is,
+		cache:   make(map[int]tasksAndFrags),
+	}
 	return g.generateMPPTasks(sender)
 }
 
-func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
 	tidbTask := &kv.MPPTask{
 		StartTs: e.startTS,
 		ID:      -1,
 	}
-	rootTasks, err := e.generateMPPTasksForFragment(s)
+	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.TargetTasks = []*kv.MPPTask{tidbTask}
-	return rootTasks, nil
+	for _, frag := range frags {
+		frag.ExchangeSender.TargetTasks = []*kv.MPPTask{tidbTask}
+		frag.IsRoot = true
+	}
+	return e.frags, nil
 }
 
 type mppAddr struct {
@@ -84,10 +105,9 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		addr := task.Meta.GetAddress()
 		_, ok := addressMap[addr]
 		if !ok {
-			*e.allocTaskID++
 			mppTask := &kv.MPPTask{
 				Meta:    &mppAddr{addr: addr},
-				ID:      *e.allocTaskID,
+				ID:      e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
 				StartTs: e.startTS,
 				TableID: -1,
 			}
@@ -106,7 +126,10 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		}
 		f.TableScan = x
 	case *PhysicalExchangeReceiver:
+		f.singleton = x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
+	case *PhysicalUnionAll:
+		return errors.New("unexpected union all detected")
 	default:
 		for _, ch := range p.Children() {
 			if err := f.init(ch); err != nil {
@@ -117,20 +140,107 @@ func (f *Fragment) init(p PhysicalPlan) error {
 	return nil
 }
 
-func newFragment(s *PhysicalExchangeSender) (*Fragment, error) {
-	f := &Fragment{ExchangeSender: s}
-	s.Fragment = f
-	err := f.init(s)
-	return f, errors.Trace(err)
+// We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
+// This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
+// a new ioslated tree (and also a fragment) without union all. These trees (fragments then tasks) will
+// finally be gathered to TiDB or be exchanged to upper tasks again.
+// For instance, given a plan "select c1 from t union all select c1 from s"
+// after untwist, there will be two plans in `forest` slice:
+// - ExchangeSender -> Projection (c1) -> TableScan(t)
+// - ExchangeSender -> Projection (c2) -> TableScan(s)
+func untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+	cur := stack[len(stack)-1]
+	switch x := cur.(type) {
+	case *PhysicalTableScan, *PhysicalExchangeReceiver: // This should be the leave node.
+		p, err := stack[0].Clone()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		*forest = append(*forest, p.(*PhysicalExchangeSender))
+		for i := 1; i < len(stack); i++ {
+			if _, ok := stack[i].(*PhysicalUnionAll); ok {
+				continue
+			}
+			ch, err := stack[i].Clone()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if join, ok := p.(*PhysicalHashJoin); ok {
+				join.SetChild(1-join.InnerChildIdx, ch)
+			} else {
+				p.SetChildren(ch)
+			}
+			p = ch
+		}
+	case *PhysicalHashJoin:
+		stack = append(stack, x.children[1-x.InnerChildIdx])
+		err := untwistPlanAndRemoveUnionAll(stack, forest)
+		stack = stack[:len(stack)-1]
+		return errors.Trace(err)
+	case *PhysicalUnionAll:
+		for _, ch := range x.children {
+			stack = append(stack, ch)
+			err := untwistPlanAndRemoveUnionAll(stack, forest)
+			stack = stack[:len(stack)-1]
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	default:
+		if len(cur.Children()) != 1 {
+			return errors.Trace(errors.New("unexpected plan " + cur.ExplainID().String()))
+		}
+		ch := cur.Children()[0]
+		stack = append(stack, ch)
+		err := untwistPlanAndRemoveUnionAll(stack, forest)
+		stack = stack[:len(stack)-1]
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender) (tasks []*kv.MPPTask, err error) {
-	f, err := newFragment(s)
+func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
+	forest := make([]*PhysicalExchangeSender, 0, 1)
+	err := untwistPlanAndRemoveUnionAll([]PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fragments := make([]*Fragment, 0, len(forest))
+	for _, s := range forest {
+		f := &Fragment{ExchangeSender: s}
+		err = f.init(s)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fragments = append(fragments, f)
+	}
+	return fragments, nil
+}
+
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+	if cached, ok := e.cache[s.ID()]; ok {
+		return cached.tasks, cached.frags, nil
+	}
+	frags, err := buildFragments(s)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	results := make([]*kv.MPPTask, 0, len(frags))
+	for _, f := range frags {
+		tasks, err := e.generateMPPTasksForFragment(f)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		results = append(results, tasks...)
+	}
+	e.frags = append(e.frags, frags...)
+	e.cache[s.ID()] = tasksAndFrags{results, frags}
+	return results, frags, nil
+}
+
+func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, r := range f.ExchangeReceivers {
-		r.Tasks, err = e.generateMPPTasksForFragment(r.GetExchangeSender())
+		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -142,6 +252,9 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
+		if f.singleton {
+			childrenTasks = childrenTasks[0:1]
+		}
 		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
 	}
 	if err != nil {
@@ -151,8 +264,9 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(s *PhysicalExchangeSender
 		return nil, errors.New("cannot find mpp task")
 	}
 	for _, r := range f.ExchangeReceivers {
-		s := r.GetExchangeSender()
-		s.TargetTasks = tasks
+		for _, frag := range r.frags {
+			frag.ExchangeSender.TargetTasks = append(frag.ExchangeSender.TargetTasks, tasks...)
+		}
 	}
 	f.ExchangeSender.Tasks = tasks
 	return tasks, nil
@@ -200,7 +314,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		}
 	}
 
-	splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 	if ts.Table.GetPartitionInfo() != nil {
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
@@ -233,15 +347,21 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
-	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
+	req := &kv.MPPBuildTasksRequest{
+		KeyRanges: kvRanges,
+	}
+	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
+	if err != nil {
+		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
+		ttl = 30 * time.Second
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		*e.allocTaskID++
-		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: *e.allocTaskID, StartTs: e.startTS, TableID: tableID})
+		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: tableID})
 	}
 	return tasks, nil
 }

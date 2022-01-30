@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -28,14 +30,12 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 )
 
@@ -48,18 +48,19 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    time.Duration(config.Status.GRPCKeepAliveTime) * time.Second,
+			Timeout: time.Duration(config.Status.GRPCKeepAliveTimeout) * time.Second,
+		}),
+		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
+		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
+		grpc.MaxSendMsgSize(config.Status.GRPCMaxSendMsgSize),
+	)
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
 		sm:                sm,
-	}
-	// For redirection the cop task.
-	mocktikv.GRPCClientFactory = func() mocktikv.Client {
-		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
-	}
-	unistore.GRPCClientFactory = func() unistore.Client {
-		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
