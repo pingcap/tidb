@@ -138,6 +138,7 @@ func TestCreateTablesInDb(t *testing.T) {
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
+	ddlJobMap := make(map[restore.UniqueTableName]bool)
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -154,11 +155,12 @@ func TestCreateTablesInDb(t *testing.T) {
 				Collate: "utf8mb4_bin",
 			},
 		}
+		ddlJobMap[restore.UniqueTableName{dbSchema.Name.String(), tables[i].Info.Name.String()}] = false
 	}
 	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
 	require.Nil(t, err)
 
-	err = db.CreateTables(context.Background(), tables)
+	err = db.CreateTables(context.Background(), tables, ddlJobMap)
 	require.Nil(t, err)
 
 }
