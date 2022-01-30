@@ -208,9 +208,9 @@ func main() {
 	terror.RegisterFinish()
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func(graceful bool) {
+	signal.SetupSignalHandler(func(_ bool) {
 		svr.Close()
-		cleanup(svr, storage, dom, graceful)
+		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
@@ -710,13 +710,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
-	if graceful {
-		done := make(chan struct{})
-		svr.GracefulDown(context.Background(), done)
-	} else {
-		svr.TryGracefulDown()
-	}
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()

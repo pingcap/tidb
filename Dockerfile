@@ -33,6 +33,9 @@ WORKDIR /go/src/github.com/pingcap/tidb
 COPY go.mod .
 COPY go.sum .
 
+COPY ./parser/go.mod ./parser/
+COPY ./parser/go.sum ./parser/
+
 RUN GO111MODULE=on go mod download
 
 # Build real binaries

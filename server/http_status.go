@@ -510,7 +510,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
-	if s.inShutdownMode {
+	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

@@ -95,8 +95,6 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
 )
 
 var (
@@ -164,6 +162,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		quit:         make(chan struct{}),
 	}
 }
 
@@ -200,6 +199,9 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	// quit is close once clientConn quit Run().
+	quit          chan struct{}
+	cancelRunFunc context.CancelFunc
 }
 
 func (cc *clientConn) String() string {
@@ -1033,14 +1035,14 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.String("stack", string(buf)),
 			)
-			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+			err := cc.writeError(ctx, errors.Errorf("%v", r))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
+
+		err := cc.Close()
+		terror.Log(err)
+		close(cc.quit)
 	}()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -1049,18 +1051,24 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
-			// The judge below will not be hit by all means,
-			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+		if cc.server.inShutdownMode.Load() {
+			if !cc.ctx.GetSessionVars().InTxn() {
+				return
+			}
+		}
+
+		// Should always success now.
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
 			return
 		}
 
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
+		// default 28800(8h)
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
+		// TODO: to not block if inShutdownMode?
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
@@ -1083,6 +1091,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
+		// Should always success now.
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
@@ -1132,22 +1141,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
-}
-
-// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
-func (cc *clientConn) ShutdownOrNotify() bool {
-	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		return false
-	}
-	// If the client connection status is reading, it's safe to shutdown it.
-	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
-		return true
-	}
-	// If the client connection status is dispatching, we can't shutdown it immediately,
-	// so set the status to WaitShutdown as a notification, the loop in clientConn.Run
-	// will detect it and then exit.
-	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
-	return false
 }
 
 func errStrForLog(err error, enableRedactLog bool) string {
@@ -1993,7 +1986,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
+		if ctx.Err() != nil {
 			return false, executor.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultset(ctx, rs, false, status, 0); err != nil {
