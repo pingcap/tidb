@@ -606,7 +606,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -631,7 +631,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -845,7 +845,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 				}
 			}
 		}
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
+		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1294,7 +1294,7 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
 		}
 	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
-		if tp.Decimal != int(types.UnspecifiedFsp) && (tp.Decimal < int(types.MinFsp) || tp.Decimal > int(types.MaxFsp)) {
+		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Decimal, colName, types.MaxFsp)
 		}
 	}
@@ -1742,6 +1742,9 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 		return err
 	}
 	if err = checkAddPartitionOnTemporaryMode(tbInfo); err != nil {
+		return err
+	}
+	if err = checkPartitionColumnsUnique(tbInfo); err != nil {
 		return err
 	}
 
@@ -2194,9 +2197,6 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 
 		// append table job args
-		if len(job.Args) != 1 {
-			return errors.Trace(fmt.Errorf("except only one argument"))
-		}
 		info, ok := job.Args[0].(*model.TableInfo)
 		if !ok {
 			return errors.Trace(fmt.Errorf("except table info"))
