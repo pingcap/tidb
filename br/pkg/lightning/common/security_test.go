@@ -73,7 +73,7 @@ func TestGetJSONSecure(t *testing.T) {
 func TestInvalidTLS(t *testing.T) {
 	tempDir := t.TempDir()
 	caPath := filepath.Join(tempDir, "ca.pem")
-	_, err = common.NewTLS(caPath, "", "", "localhost")
+	_, err := common.NewTLS(caPath, "", "", "localhost")
 	require.Regexp(t, "could not read ca certificate:.*", err.Error())
 
 	err = os.WriteFile(caPath, []byte("invalid ca content"), 0o644)
