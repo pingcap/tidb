@@ -1441,17 +1441,17 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	return cc.writeOkWith(ctx, mysql.OKHeader, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, header byte, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
-	data = append(data, mysql.OKHeader)
+	data = append(data, header)
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1515,7 +1515,10 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // packets following it.
 // serverStatus, a flag bit represents server information
 // in the packet.
-func (cc *clientConn) writeEOF(serverStatus uint16) error {
+func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
+	if cc.capability&mysql.ClientDeprecateEof > 0 {
+		return cc.writeOkWith(ctx, mysql.EOFHeader, "", 0, 0, cc.ctx.Status()|serverStatus, cc.ctx.WarningCount())
+	}
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
@@ -2053,7 +2056,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+	return handled, cc.writeOkWith(ctx, mysql.OKHeader, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
 // handleFieldList returns the field list for a table.
@@ -2080,7 +2083,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 			return err
 		}
 	}
-	if err := cc.writeEOF(0); err != nil {
+	if err := cc.writeEOF(ctx, 0); err != nil {
 		return err
 	}
 	return cc.flush(ctx)
@@ -2125,7 +2128,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(ctx context.Context, columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -2138,7 +2141,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 			return err
 		}
 	}
-	return cc.writeEOF(serverStatus)
+	return cc.writeEOF(ctx, serverStatus)
 }
 
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -2176,7 +2179,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
-			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
+			if err = cc.writeColumnInfo(ctx, columns, serverStatus); err != nil {
 				return false, err
 			}
 			gotColumnInfo = true
@@ -2208,7 +2211,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	return false, cc.writeEOF(serverStatus)
+	return false, cc.writeEOF(ctx, serverStatus)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -2245,7 +2248,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 		terror.Call(rs.Close)
-		return cc.writeEOF(serverStatus)
+		return cc.writeEOF(ctx, serverStatus)
 	}
 
 	// construct the rows sent to the client according to fetchSize.
@@ -2283,7 +2286,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	return cc.writeEOF(serverStatus)
+	return cc.writeEOF(ctx, serverStatus)
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {

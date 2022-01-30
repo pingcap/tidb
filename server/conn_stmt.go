@@ -96,7 +96,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
+		if err := cc.writeEOF(ctx, mysql.ServerMoreResultsExists); err != nil {
 			return err
 		}
 	}
@@ -110,11 +110,13 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 				return err
 			}
 		}
+		//if err := cc.flush(ctx); err != nil {
+		//	return err
+		//}
 
-		if err := cc.writeEOF(0); err != nil {
+		if err := cc.writeEOF(ctx, 0); err != nil {
 			return err
 		}
-
 	}
 	return cc.flush(ctx)
 }
@@ -239,7 +241,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
 		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
+		err = cc.writeColumnInfo(ctx, rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return false, err
 		}
@@ -678,7 +680,7 @@ func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err err
 	default:
 		return mysql.ErrMalformPacket
 	}
-	if err = cc.writeEOF(0); err != nil {
+	if err = cc.writeEOF(ctx, 0); err != nil {
 		return err
 	}
 

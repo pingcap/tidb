@@ -155,6 +155,9 @@ const (
 	ClientPluginAuth
 	ClientConnectAtts
 	ClientPluginAuthLenencClientData
+	ClientCanHandleExpiredPasswords
+	ClientSessionTrack
+	ClientDeprecateEof
 )
 
 // Cache type information.
