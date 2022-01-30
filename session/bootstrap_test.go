@@ -220,7 +220,6 @@ func TestUpgrade(t *testing.T) {
 
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 
 	mustExec(t, se, "USE mysql")
@@ -265,6 +264,10 @@ func TestUpgrade(t *testing.T) {
 	ver, err = getBootstrapVersion(se1)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), ver)
+	dom.Close()
+	// Create a new session then upgrade() will run automatically.
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
 
 	se2 := createSessionAndSetID(t, store)
 	r = mustExec(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
@@ -289,6 +292,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "False", req.GetRow(0).GetString(0))
 	require.NoError(t, r.Close())
+	dom.Close()
 }
 
 func TestIssue17979_1(t *testing.T) {
