@@ -71,9 +71,7 @@ func TestGetJSONSecure(t *testing.T) {
 }
 
 func TestInvalidTLS(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "security_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 	caPath := filepath.Join(tempDir, "ca.pem")
 	_, err = common.NewTLS(caPath, "", "", "localhost")
 	require.Regexp(t, "could not read ca certificate:.*", err.Error())

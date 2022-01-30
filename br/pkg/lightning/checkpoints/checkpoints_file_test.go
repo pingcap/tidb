@@ -2,7 +2,6 @@ package checkpoints_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -28,14 +27,13 @@ func newTestConfig() *config.Config {
 }
 
 func newFileCheckpointsDB(t *testing.T) (*checkpoints.FileCheckpointsDB, func()) {
-	dir, err := os.MkdirTemp("", "checkpointDB***")
-	require.NoError(t, err)
+	dir := t.TempDir()
 	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
 	ctx := context.Background()
 
 	// 2. initialize with checkpoint data.
 	cfg := newTestConfig()
-	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
@@ -124,7 +122,6 @@ func newFileCheckpointsDB(t *testing.T) (*checkpoints.FileCheckpointsDB, func())
 	return cpdb, func() {
 		err := cpdb.Close()
 		require.NoError(t, err)
-		os.RemoveAll(dir)
 	}
 }
 
