@@ -90,11 +90,11 @@ func (p *Pool) Get(ctx context.Context) (*grpc.ClientConn, error) {
 }
 
 // NewConnPool creates a new Pool by the specified conn factory function and capacity.
-func NewConnPool(c int, nc func(ctx context.Context) (*grpc.ClientConn, error)) *Pool {
+func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *Pool {
 	return &Pool{
-		cap:     c,
-		conns:   make([]*grpc.ClientConn, 0, c),
-		newConn: nc,
+		cap:     capacity,
+		conns:   make([]*grpc.ClientConn, 0, capacity),
+		newConn: newConn,
 
 		mu: sync.Mutex{},
 	}
