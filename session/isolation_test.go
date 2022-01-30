@@ -52,15 +52,12 @@ func TestP0DirtyWrite(t *testing.T) {
 		session.ResetStoreForWithTiKVTest(store)
 		clean = func() {
 			store.Close()
-			if *withTiKV {
-				pdAddrChan <- pdAddr
-			}
+			pdAddrChan <- pdAddr
 		}
 	} else {
 		store, clean = testkit.CreateMockStore(t)
 	}
 	defer clean()
-	session.SetSchemaLease(45 * time.Minute)
 	session1 := testkit.NewTestKit(t, store)
 	session2 := testkit.NewTestKit(t, store)
 
