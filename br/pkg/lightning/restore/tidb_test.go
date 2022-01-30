@@ -21,7 +21,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
@@ -32,9 +31,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&tidbSuite{})
 
 type tidbSuite struct {
 	mockDB sqlmock.Sqlmock
@@ -42,146 +40,111 @@ type tidbSuite struct {
 	tiGlue glue.Glue
 }
 
-func TestTiDB(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *tidbSuite) SetUpTest(c *C) {
+func newTiDBSuite(t *testing.T) (*tidbSuite, func()) {
+	var s tidbSuite
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	s.mockDB = mock
 	defaultSQLMode, err := tmysql.GetSQLMode(tmysql.DefaultSQLMode)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
 	s.tiGlue = glue.NewExternalTiDBGlue(db, defaultSQLMode)
+	return &s, func() {
+		s.timgr.Close()
+		require.NoError(t, s.mockDB.ExpectationsWereMet())
+	}
 }
 
-func (s *tidbSuite) TearDownTest(c *C) {
-	s.timgr.Close()
-	c.Assert(s.mockDB.ExpectationsWereMet(), IsNil)
-}
+func TestCreateTableIfNotExistsStmt(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 
-func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	dbName := "testdb"
 	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
 		res, err := createIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return res
 	}
 
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE DATABASE `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;", ""),
-		DeepEquals,
-		[]string{"CREATE DATABASE IF NOT EXISTS `testdb` CHARACTER SET = utf8 COLLATE = utf8_general_ci;"},
-	)
+	require.Equal(t, []string{"CREATE DATABASE IF NOT EXISTS `testdb` CHARACTER SET = utf8 COLLATE = utf8_general_ci;"},
+		createSQLIfNotExistsStmt("CREATE DATABASE `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;", ""))
 
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"))
 
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
+		createSQLIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"))
 
 	// case insensitive
-	c.Assert(
-		createSQLIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));"},
+		createSQLIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"))
 
-	c.Assert(
-		createSQLIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));"},
+		createSQLIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"))
 
 	// only one "CREATE TABLE" is replaced
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"))
 
 	// test clustered index consistency
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY CLUSTERED COMMENT 'CREATE TABLE');", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] CLUSTERED */ COMMENT 'CREATE TABLE');"},
-	)
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) NONCLUSTERED);", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] NONCLUSTERED */);"},
-	)
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');"},
-	)
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) /*T![clustered_index] CLUSTERED */);", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] CLUSTERED */);"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] CLUSTERED */ COMMENT 'CREATE TABLE');"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY CLUSTERED COMMENT 'CREATE TABLE');", "foo"))
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] NONCLUSTERED */);"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) NONCLUSTERED);", "foo"))
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');", "foo"))
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] CLUSTERED */);"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) /*T![clustered_index] CLUSTERED */);", "foo"))
 
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY AUTO_RANDOM(2) COMMENT 'CREATE TABLE');", "foo"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![auto_rand] AUTO_RANDOM(2) */ COMMENT 'CREATE TABLE');"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![auto_rand] AUTO_RANDOM(2) */ COMMENT 'CREATE TABLE');"},
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY AUTO_RANDOM(2) COMMENT 'CREATE TABLE');", "foo"))
 
 	// upper case becomes shorter
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));"},
+		createSQLIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"))
 
 	// upper case becomes longer
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));"},
+		createSQLIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"))
 
 	// non-utf-8
-	c.Assert(
-		createSQLIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`???` TINYINT(1));"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`???` TINYINT(1));"},
+		createSQLIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"))
 
 	// renaming a table
-	c.Assert(
-		createSQLIfNotExistsStmt("create table foo(x int);", "ba`r"),
-		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);"},
-	)
+	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);"},
+		createSQLIfNotExistsStmt("create table foo(x int);", "ba`r"))
 
 	// conditional comments
-	c.Assert(
+	require.Equal(t, []string{
+		"SET NAMES 'binary';",
+		"SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
+	},
 		createSQLIfNotExistsStmt(`
 			/*!40101 SET NAMES binary*/;
 			/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
 			CREATE TABLE x.y (z double) ENGINE=InnoDB AUTO_INCREMENT=8343230 DEFAULT CHARSET=utf8;
-		`, "m"),
-		DeepEquals,
-		[]string{
-			"SET NAMES 'binary';",
-			"SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;",
-			"CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
-		},
-	)
+		`, "m"))
 
 	// create view
-	c.Assert(
+	require.Equal(t, []string{
+		"SET NAMES 'binary';",
+		"DROP TABLE IF EXISTS `testdb`.`m`;",
+		"DROP VIEW IF EXISTS `testdb`.`m`;",
+		"SET @`PREV_CHARACTER_SET_CLIENT`=@@`character_set_client`;",
+		"SET @`PREV_CHARACTER_SET_RESULTS`=@@`character_set_results`;",
+		"SET @`PREV_COLLATION_CONNECTION`=@@`collation_connection`;",
+		"SET @@SESSION.`character_set_client`=`utf8`;",
+		"SET @@SESSION.`character_set_results`=`utf8`;",
+		"SET @@SESSION.`collation_connection`=`utf8_general_ci`;",
+		"CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`192.168.198.178` SQL SECURITY DEFINER VIEW `testdb`.`m` (`s`) AS SELECT `s` FROM `db1`.`v1` WHERE `i`<2;",
+		"SET @@SESSION.`character_set_client`=@`PREV_CHARACTER_SET_CLIENT`;",
+		"SET @@SESSION.`character_set_results`=@`PREV_CHARACTER_SET_RESULTS`;",
+		"SET @@SESSION.`collation_connection`=@`PREV_COLLATION_CONNECTION`;",
+	},
 		createSQLIfNotExistsStmt(`
 			/*!40101 SET NAMES binary*/;
 			DROP TABLE IF EXISTS v2;
@@ -196,27 +159,12 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 			SET character_set_client = @PREV_CHARACTER_SET_CLIENT;
 			SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
 			SET collation_connection = @PREV_COLLATION_CONNECTION;
-		`, "m"),
-		DeepEquals,
-		[]string{
-			"SET NAMES 'binary';",
-			"DROP TABLE IF EXISTS `testdb`.`m`;",
-			"DROP VIEW IF EXISTS `testdb`.`m`;",
-			"SET @`PREV_CHARACTER_SET_CLIENT`=@@`character_set_client`;",
-			"SET @`PREV_CHARACTER_SET_RESULTS`=@@`character_set_results`;",
-			"SET @`PREV_COLLATION_CONNECTION`=@@`collation_connection`;",
-			"SET @@SESSION.`character_set_client`=`utf8`;",
-			"SET @@SESSION.`character_set_results`=`utf8`;",
-			"SET @@SESSION.`collation_connection`=`utf8_general_ci`;",
-			"CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`192.168.198.178` SQL SECURITY DEFINER VIEW `testdb`.`m` (`s`) AS SELECT `s` FROM `db1`.`v1` WHERE `i`<2;",
-			"SET @@SESSION.`character_set_client`=@`PREV_CHARACTER_SET_CLIENT`;",
-			"SET @@SESSION.`character_set_results`=@`PREV_CHARACTER_SET_RESULTS`;",
-			"SET @@SESSION.`collation_connection`=@`PREV_COLLATION_CONNECTION`;",
-		},
-	)
+		`, "m"))
 }
 
-func (s *tidbSuite) TestInitSchema(c *C) {
+func TestInitSchema(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -240,10 +188,12 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
 	})
 	s.mockDB.MatchExpectationsInOrder(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
+func TestInitSchemaSyntaxError(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -255,10 +205,12 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` with invalid syntax;",
 	})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
+func TestInitSchemaErrorLost(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -279,10 +231,12 @@ func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
 		"t1": "create table `t1` (a int);",
 		"t2": "create table t2 (a int primary key, b varchar(200));",
 	})
-	c.Assert(err, ErrorMatches, ".*Column length too big.*")
+	require.Regexp(t, ".*Column length too big.*", err.Error())
 }
 
-func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
+func TestInitSchemaUnsupportedSchemaError(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -300,10 +254,12 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` (a VARCHAR(999999999));",
 	})
-	c.Assert(err, ErrorMatches, ".*Column length too big.*")
+	require.Regexp(t, ".*Column length too big.*", err.Error())
 }
 
-func (s *tidbSuite) TestDropTable(c *C) {
+func TestDropTable(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -313,10 +269,12 @@ func (s *tidbSuite) TestDropTable(c *C) {
 		ExpectClose()
 
 	err := s.timgr.DropTable(ctx, "`db`.`table`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
+func TestLoadSchemaInfo(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	tableCntBefore := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
@@ -328,13 +286,13 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 			// an extra table that not exists in dbMetas
 			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
 		"", "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
 	sctx := mock.NewContext()
 	for i, node := range nodes {
-		c.Assert(node, FitsTypeOf, &ast.CreateTableStmt{})
+		require.IsType(t, node, &ast.CreateTableStmt{})
 		info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), int64(i+100))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		info.State = model.StatePublic
 		tableInfos = append(tableInfos, info)
 	}
@@ -356,11 +314,11 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 	}
 
 	loaded, err := LoadSchemaInfo(ctx, dbMetas, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
-		c.Assert(schema, Equals, "db")
+		require.Equal(t, "db", schema)
 		return tableInfos, nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(loaded, DeepEquals, map[string]*checkpoints.TidbDBInfo{
+	require.NoError(t, err)
+	require.Equal(t, map[string]*checkpoints.TidbDBInfo{
 		"db": {
 			Name: "db",
 			Tables: map[string]*checkpoints.TidbTableInfo{
@@ -378,23 +336,25 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 				},
 			},
 		},
-	})
+	}, loaded)
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-	c.Assert(tableCntAfter-tableCntBefore, Equals, 2.0)
+	require.Equal(t, 2.0, tableCntAfter-tableCntBefore)
 }
 
-func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
+func TestLoadSchemaInfoMissing(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 		return nil, errors.Errorf("[schema:1049]Unknown database '%s'", schema)
 	})
-	c.Assert(err, ErrorMatches, ".*Unknown database.*")
+	require.Regexp(t, ".*Unknown database.*", err.Error())
 }
 
-func (s *tidbSuite) TestGetGCLifetime(c *C) {
+func TestGetGCLifetime(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -404,11 +364,13 @@ func (s *tidbSuite) TestGetGCLifetime(c *C) {
 		ExpectClose()
 
 	res, err := ObtainGCLifeTime(ctx, s.timgr.db)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, "10m")
+	require.NoError(t, err)
+	require.Equal(t, "10m", res)
 }
 
-func (s *tidbSuite) TestSetGCLifetime(c *C) {
+func TestSetGCLifetime(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -419,10 +381,12 @@ func (s *tidbSuite) TestSetGCLifetime(c *C) {
 		ExpectClose()
 
 	err := UpdateGCLifeTime(ctx, s.timgr.db, "12m")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *tidbSuite) TestAlterAutoInc(c *C) {
+func TestAlterAutoInc(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -432,10 +396,12 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *tidbSuite) TestAlterAutoRandom(c *C) {
+func TestAlterAutoRandom(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -445,10 +411,12 @@ func (s *tidbSuite) TestAlterAutoRandom(c *C) {
 		ExpectClose()
 
 	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
+func TestObtainRowFormatVersionSucceed(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -470,7 +438,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 		ExpectClose()
 
 	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
-	c.Assert(sysVars, DeepEquals, map[string]string{
+	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
 		"div_precision_increment": "10",
@@ -479,10 +447,12 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 		"default_week_format":     "1",
 		"block_encryption_mode":   "aes-256-cbc",
 		"group_concat_max_len":    "1073741824",
-	})
+	}, sysVars)
 }
 
-func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
+func TestObtainRowFormatVersionFailure(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -496,7 +466,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 		ExpectClose()
 
 	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
-	c.Assert(sysVars, DeepEquals, map[string]string{
+	require.Equal(t, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
 		"div_precision_increment": "4",
@@ -505,10 +475,12 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 		"default_week_format":     "0",
 		"block_encryption_mode":   "aes-128-ecb",
 		"group_concat_max_len":    "1024",
-	})
+	}, sysVars)
 }
 
-func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
+func TestObtainNewCollationEnabled(t *testing.T) {
+	s, clean := newTiDBSuite(t)
+	defer clean()
 	ctx := context.Background()
 
 	s.mockDB.
@@ -521,14 +493,14 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnError(errors.New("mock permission deny"))
 	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	c.Assert(err, ErrorMatches, "obtain new collation enabled failed: mock permission deny")
+	require.Equal(t, "obtain new collation enabled failed: mock permission deny", err.Error())
 
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
 	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	c.Assert(err, IsNil)
-	c.Assert(version, Equals, false)
+	require.NoError(t, err)
+	require.Equal(t, false, version)
 
 	kvMap := map[string]bool{
 		"True":  true,
@@ -540,8 +512,8 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
 		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-		c.Assert(err, IsNil)
-		c.Assert(version, Equals, v)
+		require.NoError(t, err)
+		require.Equal(t, v, version)
 	}
 	s.mockDB.
 		ExpectClose()
