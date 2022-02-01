@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -31,7 +30,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -193,7 +191,7 @@ func TestShowGrantsPrivilege(t *testing.T) {
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
 	tk1 := testkit.NewTestKit(t, store)
 	err := tk1.QueryToErr("show grants for root")
-	require.Equal(t, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB).Error(), err.Error())
+	require.EqualError(t, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB), err.Error())
 	// Test show grants for user with auth host name `%`.
 	tk2 := testkit.NewTestKit(t, store)
 	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil))
@@ -210,13 +208,13 @@ func TestShowStatsPrivilege(t *testing.T) {
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
 	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
 	_, err := tk1.Exec("show stats_meta")
-	require.Equal(t, eqErr.Error(), err.Error())
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_BUCKETS")
-	require.Equal(t, eqErr.Error(), err.Error())
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_HEALTHY")
-	require.Equal(t, eqErr.Error(), err.Error())
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
-	require.Equal(t, eqErr.Error(), err.Error())
+	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
@@ -301,7 +299,7 @@ func TestIssue11165(t *testing.T) {
 
 // TestShow2 is moved from session_test
 func TestShow2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -405,8 +403,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in information_schema like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
-	ctx := tk.Session().(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
+	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
@@ -448,11 +445,11 @@ func TestShowCreateUser(t *testing.T) {
 	require.Equal(t, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error(), err.Error())
 
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
-	rows := tk.MustQuery("show create user current_user")
-	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.MustQuery("show create user current_user").
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
-	rows = tk.MustQuery("show create user current_user()")
-	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.MustQuery("show create user current_user()").
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	tk.MustExec("create user 'check_priv'")
 
@@ -465,14 +462,14 @@ func TestShowCreateUser(t *testing.T) {
 	require.Error(t, err)
 
 	// "show create user" for current user doesn't check privileges.
-	rows = tk1.MustQuery("show create user current_user")
-	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk1.MustQuery("show create user current_user").
+		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
 	// Compare only the start of the output as the salt changes every time.
-	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
+	rows := tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
 	require.Equal(t, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$", rows.Rows()[0][0].(string)[:78])
 	// Creating users with `IDENTIFIED WITH 'auth-socket'`
 	tk.MustExec("CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket'")
@@ -488,7 +485,7 @@ func TestShowCreateUser(t *testing.T) {
 }
 
 func TestUnprivilegedShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE testshow")
@@ -507,8 +504,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.MustExec("GRANT ALL ON testshow.t1 TO 'lowprivuser'")
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
-	ctx := tk.Session().(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
+	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
