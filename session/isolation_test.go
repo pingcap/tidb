@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
+	pdconfig "github.com/tikv/client-go/v2/config"
 )
 
 func TestIsolationWithTikv(t *testing.T) {
@@ -40,7 +41,9 @@ func TestIsolationWithTikv(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TxnLocalLatches.Enabled = false
 	})
-	store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+	store, err := d.OpenWithOptions(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr), driver.WithPDClientConfig(pdconfig.PDClient{
+		PDServerTimeout: 10,
+	}))
 	require.NoError(t, err)
 	err = clearStorage(store)
 	require.NoError(t, err)
