@@ -36,14 +36,12 @@
 package server
 
 import (
-	"bufio"
-	"io"
 	"time"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -55,35 +53,39 @@ var (
 
 // packetIO is a helper to read and write data in packet format.
 type packetIO struct {
-	bufReadConn *bufferedReadConn
-	bufWriter   *bufio.Writer
+	netpoll.Connection
+	// bufReadConn *bufferedReadConn
+	// bufWriter   *bufio.Writer
 	sequence    uint8
 	readTimeout time.Duration
 }
 
-func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
-	p := &packetIO{sequence: 0}
-	p.setBufferedReadConn(bufReadConn)
-	return p
-}
+// func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
+// 	p := &packetIO{sequence: 0}
+// 	p.setBufferedReadConn(bufReadConn)
+// 	return p
+// }
 
-func (p *packetIO) setBufferedReadConn(bufReadConn *bufferedReadConn) {
-	p.bufReadConn = bufReadConn
-	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
-}
+// func (p *packetIO) setBufferedReadConn(bufReadConn *bufferedReadConn) {
+// 	p.bufReadConn = bufReadConn
+// 	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
+// }
 
 func (p *packetIO) setReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
 
 func (p *packetIO) readOnePacket() ([]byte, error) {
-	var header [4]byte
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
+	//	var header [4]byte
+	// if p.readTimeout > 0 {
+	// 	if err := p.SetReadTimeout(p.readTimeout); err != nil {
+	// 		return nil, err
+	// 	}
+	// }
+	r := p.Reader()
+	header, err := r.Next(4)
+
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -96,26 +98,31 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
-	data := make([]byte, length)
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
+	// data := make([]byte, length)
+	// if p.readTimeout > 0 {
+	// 	if err := p.SetReadTimeout(p.readTimeout); err != nil {
+	// 		return nil, err
+	// 	}
+	// }
+
+	data, err := r.Next(length)
+
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return data, nil
+	buf := make([]byte, length)
+	copy(buf, data)
+	return buf, nil
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
-	if p.readTimeout == 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+	// release the previous buffer
+	r := p.Reader()
+	r.Release()
+
 	data, err := p.readOnePacket()
 	if err != nil {
+		println("read error", err.Error())
 		return nil, errors.Trace(err)
 	}
 
@@ -147,43 +154,58 @@ func (p *packetIO) writePacket(data []byte) error {
 	length := len(data) - 4
 	writePacketBytes.Observe(float64(len(data)))
 
-	for length >= mysql.MaxPayloadLen {
-		data[0] = 0xff
-		data[1] = 0xff
-		data[2] = 0xff
+	w := p.Writer()
+	// now we can ensure the length can't exceed maxpayload
+	// for length >= mysql.MaxPayloadLen {
+	// 	data[0] = 0xff
+	// 	data[1] = 0xff
+	// 	data[2] = 0xff
 
-		data[3] = p.sequence
+	// 	data[3] = p.sequence
 
-		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
-			return errors.Trace(mysql.ErrBadConn)
-		} else if n != (4 + mysql.MaxPayloadLen) {
-			return errors.Trace(mysql.ErrBadConn)
-		} else {
-			p.sequence++
-			length -= mysql.MaxPayloadLen
-			data = data[mysql.MaxPayloadLen:]
-		}
-	}
+	// 	buf, err := w.Malloc(len(data[:4+mysql.MaxPayloadLen]))
+	// 	if err != nil {
+	// 		return errors.Trace(mysql.ErrBadConn)
+	// 	}
+	// 	copy(buf, data[:4+mysql.MaxPayloadLen])
+	// 	// if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
+	// 	// 	return errors.Trace(mysql.ErrBadConn)
+	// 	// } else if n != (4 + mysql.MaxPayloadLen) {
+	// 	// 	return errors.Trace(mysql.ErrBadConn)
+	// 	// } else {
+	// 	p.sequence++
+	// 	length -= mysql.MaxPayloadLen
+	// 	data = data[mysql.MaxPayloadLen:]
+	// 	//}
+	// }
 
 	data[0] = byte(length)
 	data[1] = byte(length >> 8)
 	data[2] = byte(length >> 16)
 	data[3] = p.sequence
 
-	if n, err := p.bufWriter.Write(data); err != nil {
-		terror.Log(errors.Trace(err))
+	buf, err := w.Malloc(len(data))
+	if err != nil {
+		println("write err", err.Error())
 		return errors.Trace(mysql.ErrBadConn)
-	} else if n != len(data) {
-		return errors.Trace(mysql.ErrBadConn)
-	} else {
-		p.sequence++
-		return nil
 	}
+	copy(buf, data)
+	// if n, err := p.bufWriter.Write(data); err != nil {
+	// 	terror.Log(errors.Trace(err))
+	// 	return errors.Trace(mysql.ErrBadConn)
+	// } else if n != len(data) {
+	// 	return errors.Trace(mysql.ErrBadConn)
+	// } else {
+	p.sequence++
+	return nil
+	//}
 }
 
 func (p *packetIO) flush() error {
-	err := p.bufWriter.Flush()
+	r := p.Writer()
+	err := r.Flush()
 	if err != nil {
+		println("flush error", err.Error())
 		return errors.Trace(err)
 	}
 	return err

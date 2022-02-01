@@ -55,6 +55,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -170,16 +171,16 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt           *packetIO         // a helper to read and write data in packet format.
-	bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn       *tls.Conn         // TLS connection, nil if not TLS.
-	server        *Server           // a reference of server instance.
-	capability    uint32            // client capability affects the way server handles client request.
-	connectionID  uint64            // atomically allocated by a global variable, unique in process scope.
-	user          string            // user of the client.
-	dbname        string            // default database name.
-	salt          []byte            // random bytes used for authentication.
-	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
+	pkt *packetIO // a helper to read and write data in packet format.
+	// bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn       *tls.Conn       // TLS connection, nil if not TLS.
+	server        *Server         // a reference of server instance.
+	capability    uint32          // client capability affects the way server handles client request.
+	connectionID  uint64          // atomically allocated by a global variable, unique in process scope.
+	user          string          // user of the client.
+	dbname        string          // default database name.
+	salt          []byte          // random bytes used for authentication.
+	alloc         arena.Allocator // an memory allocator for reducing memory allocation.
 	chunkAlloc    chunk.Allocator
 	lastPacket    []byte            // latest sql query string, currently used for logging error.
 	ctx           *TiDBContext      // an interface to execute sql statements.
@@ -205,7 +206,7 @@ type clientConn struct {
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
-		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.pkt.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -316,10 +317,11 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		terror.Log(err)
-	}
+	// if cc.bufReadConn != nil {
+	// 	err := cc.bufReadConn.Close()
+	// 	terror.Log(err)
+	// }
+	cc.pkt.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -935,7 +937,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 		cc.peerHost = host
 		return
 	}
-	addr := cc.bufReadConn.RemoteAddr().String()
+	addr := cc.pkt.RemoteAddr().String()
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
 		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
@@ -1020,118 +1022,123 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
-func (cc *clientConn) Run(ctx context.Context) {
-	const size = 4096
-	defer func() {
-		r := recover()
-		if r != nil {
-			buf := make([]byte, size)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("connection running loop panic",
-				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
-				zap.String("err", fmt.Sprintf("%v", r)),
-				zap.String("stack", string(buf)),
-			)
-			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
-			terror.Log(err)
-			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
-		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
-		}
-	}()
+func (cc *clientConn) Run(ctx context.Context) error {
+	// const size = 4096
+	// defer func() {
+	// 	r := recover()
+	// 	if r != nil {
+	// 		buf := make([]byte, size)
+	// 		stackSize := runtime.Stack(buf, false)
+	// 		buf = buf[:stackSize]
+	// 		logutil.Logger(ctx).Error("connection running loop panic",
+	// 			zap.Stringer("lastSQL", getLastStmtInConn{cc}),
+	// 			zap.String("err", fmt.Sprintf("%v", r)),
+	// 			zap.String("stack", string(buf)),
+	// 		)
+	// 		err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+	// 		terror.Log(err)
+	// 		metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
+	// 	}
+	// 	if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+	// 		println("close connection")
+	// 		err := cc.Close()
+	// 		terror.Log(err)
+	// 	}
+	// }()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
-	for {
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
-			// The judge below will not be hit by all means,
-			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
-			return
-		}
-
-		cc.alloc.Reset()
-		// close connection when idle time is more than wait_timeout
-		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
-		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
-		start := time.Now()
-		data, err := cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Since(start)
-					logutil.Logger(ctx).Info("read packet timeout, close this connection",
-						zap.Duration("idle", idleTime),
-						zap.Uint64("waitTimeout", waitTimeout),
-						zap.Error(err),
-					)
-				} else {
-					errStack := errors.ErrorStack(err)
-					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Warn("read packet failed, close this connection",
-							zap.Error(errors.SuspendStack(err)))
-					}
-				}
-			}
-			disconnectByClientWithError.Inc()
-			return
-		}
-
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
-			return
-		}
-
-		startTime := time.Now()
-		err = cc.dispatch(ctx, data)
-		cc.chunkAlloc.Reset()
-		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
-			if terror.ErrorEqual(err, io.EOF) {
-				cc.addMetrics(data[0], startTime, nil)
-				disconnectNormal.Inc()
-				return
-			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
-				disconnectErrorUndetermined.Inc()
-				return
-			} else if terror.ErrCritical.Equal(err) {
-				metrics.CriticalErrorCounter.Add(1)
-				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
-			}
-			var txnMode string
-			if cc.ctx != nil {
-				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
-			}
-			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
-			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
-				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
-			} else {
-				var startTS uint64
-				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
-					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
-				}
-				logutil.Logger(ctx).Info("command dispatched failed",
-					zap.String("connInfo", cc.String()),
-					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("status", cc.SessionStatusToString()),
-					zap.Stringer("sql", getLastStmtInConn{cc}),
-					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", startTS),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-				)
-			}
-			err1 := cc.writeError(ctx, err)
-			terror.Log(err1)
-		}
-		cc.addMetrics(data[0], startTime, err)
-		cc.pkt.sequence = 0
+	// for {
+	if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+		// The judge below will not be hit by all means,
+		// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
+		atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+		return fmt.Errorf("status dispatching and dispatching???")
 	}
+
+	cc.alloc.Reset()
+	// close connection when idle time is more than wait_timeout
+	waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+	// disable readtimeout now
+	// cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+	start := time.Now()
+	data, err := cc.readPacket()
+	if err != nil {
+		println("read pacakge error", err.Error())
+		if terror.ErrorNotEqual(err, io.EOF) {
+			if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+				idleTime := time.Since(start)
+				logutil.Logger(ctx).Info("read packet timeout, close this connection",
+					zap.Duration("idle", idleTime),
+					zap.Uint64("waitTimeout", waitTimeout),
+					zap.Error(err),
+				)
+			} else {
+				errStack := errors.ErrorStack(err)
+				if !strings.Contains(errStack, "use of closed network connection") {
+					logutil.Logger(ctx).Warn("read packet failed, close this connection",
+						zap.Error(errors.SuspendStack(err)))
+				}
+			}
+		}
+		disconnectByClientWithError.Inc()
+		return err
+	}
+
+	if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+		return fmt.Errorf("status reading and dispatching???")
+	}
+
+	startTime := time.Now()
+	err = cc.dispatch(ctx, data)
+	cc.chunkAlloc.Reset()
+	if err != nil {
+		println("dispatch error", data[0], errors.ErrorStack(err))
+		cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+		if terror.ErrorEqual(err, io.EOF) {
+			cc.addMetrics(data[0], startTime, nil)
+			disconnectNormal.Inc()
+			return err
+		} else if terror.ErrResultUndetermined.Equal(err) {
+			logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+			disconnectErrorUndetermined.Inc()
+			return err
+		} else if terror.ErrCritical.Equal(err) {
+			metrics.CriticalErrorCounter.Add(1)
+			logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
+		}
+		var txnMode string
+		if cc.ctx != nil {
+			txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+		}
+		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+			logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
+		} else {
+			var startTS uint64
+			if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
+				startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+			}
+			logutil.Logger(ctx).Info("command dispatched failed",
+				zap.String("connInfo", cc.String()),
+				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("status", cc.SessionStatusToString()),
+				zap.Stringer("sql", getLastStmtInConn{cc}),
+				zap.String("txn_mode", txnMode),
+				zap.Uint64("timestamp", startTS),
+				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+			)
+		}
+		err1 := cc.writeError(ctx, err)
+		terror.Log(err1)
+	}
+	cc.addMetrics(data[0], startTime, err)
+	cc.pkt.sequence = 0
+	// }
+	return nil
 }
 
 // ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
@@ -1308,6 +1315,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	dataStr := string(hack.String(data))
+
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
@@ -2286,24 +2294,25 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	return cc.writeEOF(serverStatus)
 }
 
-func (cc *clientConn) setConn(conn net.Conn) {
-	cc.bufReadConn = newBufferedReadConn(conn)
+func (cc *clientConn) setConn(conn netpoll.Connection) {
+	// cc.bufReadConn = newBufferedReadConn(conn)
 	if cc.pkt == nil {
-		cc.pkt = newPacketIO(cc.bufReadConn)
+		cc.pkt = &packetIO{conn, 0, 0}
 	} else {
 		// Preserve current sequence number.
-		cc.pkt.setBufferedReadConn(cc.bufReadConn)
+		cc.pkt.Connection = conn
+		// cc.pkt.setBufferedReadConn(cc.bufReadConn)
 	}
 }
 
 func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
-	tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
-		return err
-	}
-	cc.setConn(tlsConn)
-	cc.tlsConn = tlsConn
+	// tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
+	// if err := tlsConn.Handshake(); err != nil {
+	// 	return err
+	// }
+	// cc.setConn(tlsConn)
+	// cc.tlsConn = tlsConn
 	return nil
 }
 
