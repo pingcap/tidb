@@ -72,9 +72,12 @@ func (e *SQLBindExec) dropSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		err := handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		return err
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
 }
 
 func (e *SQLBindExec) createSQLBind() error {
