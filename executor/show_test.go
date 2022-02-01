@@ -188,8 +188,8 @@ func TestShowGrantsPrivilege(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user show_grants")
 	tk.MustExec("show grants for show_grants")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
 	tk1 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
 	err := tk1.QueryToErr("show grants for root")
 	require.EqualError(t, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB), err.Error())
 	// Test show grants for user with auth host name `%`.
