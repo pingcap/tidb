@@ -205,7 +205,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk.MustExec("create user show_stats")
 	tk1 := testkit.NewTestKit(t, store)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
 	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
 	_, err := tk1.Exec("show stats_meta")
 	require.EqualError(t, err, eqErr.Error())
