@@ -17,6 +17,7 @@ package session_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,7 @@ func TestIsolationWithTikv(t *testing.T) {
 		require.NoError(t, store.Close())
 		pdAddrChan <- pdAddr
 	}()
+	time.Sleep(10 * time.Second)
 	t.Run("TestP0DirtyWrite", func(t *testing.T) {
 		p0DirtyWrite(t, store)
 	})
