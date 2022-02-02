@@ -366,11 +366,6 @@ func (s *Server) onPrepare(conn netpoll.Connection) context.Context {
 	clientConn := s.newConn(conn)
 	ctx := context.WithValue(context.Background(), clientConnKey("client-conn"), clientConn)
 	// println("prepare conn", clientConn.connectionID)
-	s.rwlock.Lock()
-	s.clients[clientConn.connectionID] = clientConn
-	connections := len(s.clients)
-	s.rwlock.Unlock()
-	metrics.ConnGauge.Set(float64(connections))
 
 	return ctx
 }
@@ -379,7 +374,17 @@ func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context
 	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
 	// println("on connect", clientConn.connectionID)
 
-	clientConn.handshake(ctx)
+	if err := clientConn.handshake(ctx); err != nil {
+		clientConn.Close()
+		return ctx
+	}
+
+	s.rwlock.Lock()
+	s.clients[clientConn.connectionID] = clientConn
+	connections := len(s.clients)
+	s.rwlock.Unlock()
+	metrics.ConnGauge.Set(float64(connections))
+
 	return ctx
 }
 
