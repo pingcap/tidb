@@ -17,9 +17,9 @@ package gctuner
 import (
 	"math"
 	"os"
-	"runtime/debug"
 	"strconv"
 
+	"github.com/pingcap/tidb/util"
 	atomicutil "go.uber.org/atomic"
 )
 
@@ -100,7 +100,6 @@ func (t *tuner) tuning() {
 		return
 	}
 	t.setGCPercent(calcGCPercent(inuse, threshold))
-	return
 }
 
 // threshold = inuse + inuse * (gcPercent / 100)
@@ -147,8 +146,9 @@ func (t *tuner) getThreshold() uint64 {
 }
 
 func (t *tuner) setGCPercent(percent uint32) uint32 {
-	t.gcPercent.Store(percent)
-	return uint32(debug.SetGCPercent(int(percent)))
+	result := uint32(util.SetGOGC(int(percent)))
+	t.gcPercent.Store(result)
+	return result
 }
 
 func (t *tuner) getGCPercent() uint32 {
