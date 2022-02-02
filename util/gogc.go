@@ -48,6 +48,7 @@ func GetGOGC() int {
 	return int(gogcValue.Load())
 }
 
+// GOGCStatSampler is a sampler for GOGC.
 type GOGCStatSampler struct {
 	last struct {
 		now         int64
@@ -58,6 +59,7 @@ type GOGCStatSampler struct {
 	exitChan   chan struct{}
 }
 
+// NewRuntimeStatSampler returns a sampler for GOGC.
 func NewRuntimeStatSampler() *GOGCStatSampler {
 	return &GOGCStatSampler{}
 }
@@ -80,6 +82,7 @@ func (gss *GOGCStatSampler) sample() {
 	metrics.GCPausePercent.Set(gcPauseRatio)
 }
 
+// Start is used to start the sampler.
 func (gss *GOGCStatSampler) Start() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -93,6 +96,7 @@ func (gss *GOGCStatSampler) Start() {
 	}
 }
 
+// Close is used to close the sampler.
 func (gss *GOGCStatSampler) Close() {
 	close(gss.exitChan)
 }
