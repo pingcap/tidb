@@ -1694,6 +1694,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDecimal) (res types.Time, isNull bool, err error) {
+	// 0 <= unixTimeStamp <= 32536771199.999999
 	if unixTimeStamp.IsNegative() {
 		return res, true, nil
 	}
