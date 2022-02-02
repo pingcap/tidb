@@ -3844,6 +3844,23 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
+	tbl, _ := builder.is.TableByID(tbInfo.ID)
+	explicitPartitionSelection := make(map[int64]bool)
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		pt := tbl.(table.PartitionedTable)
+		if len(v.PartitionInfo.PartitionNames) > 0 {
+			for _, partName := range v.PartitionInfo.PartitionNames {
+				partID := pi.GetIDByName(partName.L)
+				if partID != 0 {
+					explicitPartitionSelection[partID] = true
+				}
+			}
+		} else {
+			for _, partID := range pt.GetAllPartitionIDs() {
+				explicitPartitionSelection[partID] = true
+			}
+		}
+	}
 	if v.IsCommonHandle {
 		if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
@@ -3852,8 +3869,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
-
-		tbl, _ := builder.is.TableByID(tbInfo.ID)
 		pt := tbl.(table.PartitionedTable)
 		pe, err := tbl.(interface {
 			PartitionExpr() (*tables.PartitionExpr, error)
@@ -3875,6 +3890,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					return nil, err
 				}
 				pid := p.GetPhysicalID()
+				if _, ok := explicitPartitionSelection[pid]; !ok {
+					continue
+				}
 				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
 				if err != nil {
 					return nil, err
@@ -3890,6 +3908,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			kvRanges = make([]kv.KeyRange, 0, len(partitions)*len(lookUpContents))
 			for _, p := range partitions {
 				pid := p.GetPhysicalID()
+				if _, ok := explicitPartitionSelection[pid]; !ok {
+					continue
+				}
 				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 				if err != nil {
 					return nil, err
@@ -3908,7 +3929,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 
-	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
 	pe, err := tbl.(interface {
 		PartitionExpr() (*tables.PartitionExpr, error)
@@ -3929,6 +3949,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 			pid := p.GetPhysicalID()
+			if _, ok := explicitPartitionSelection[pid]; !ok {
+				continue
+			}
 			handle := kv.IntHandle(content.keys[0].GetInt64())
 			tmp := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
 			kvRanges = append(kvRanges, tmp...)
@@ -3941,6 +3964,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		}
 		for _, p := range partitions {
 			pid := p.GetPhysicalID()
+			if _, ok := explicitPartitionSelection[pid]; !ok {
+				continue
+			}
 			tmp := distsql.TableHandlesToKVRanges(pid, handles)
 			kvRanges = append(kvRanges, tmp...)
 		}

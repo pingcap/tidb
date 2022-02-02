@@ -846,6 +846,18 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	return ""
 }
 
+// GetIDByName gets the partition ID by Name.
+// 0 means Name not found!
+func (pi *PartitionInfo) GetIDByName(name string) int64 {
+	definitions := pi.Definitions
+	for i := range definitions {
+		if definitions[i].Name.L == strings.ToLower(name) {
+			return definitions[i].ID
+		}
+	}
+	return 0
+}
+
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
 	for _, pstate := range pi.States {
 		if pstate.ID == id {
