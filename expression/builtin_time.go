@@ -1701,7 +1701,9 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, err
 	}
-	if integralPart > int64(math.MaxInt64) {
+	// The max integralPart should not be larger than 32536771199.
+	// Refer to https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-28.html
+	if integralPart > 32536771199 {
 		return res, true, nil
 	}
 	// Split the integral part and fractional part of a decimal timestamp.
