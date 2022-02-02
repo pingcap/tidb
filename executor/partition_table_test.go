@@ -3121,3 +3121,85 @@ func (s *partitionTableSuite) TestIssue26251(c *C) {
 		c.Fail()
 	}
 }
+
+func (s *partitionTableSuite) TestLeftJoinForUpdate(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("create database TestLeftJoinForUpdate")
+	defer tk1.MustExec("drop database TestLeftJoinForUpdate")
+	tk1.MustExec("use TestLeftJoinForUpdate")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use TestLeftJoinForUpdate")
+	tk3 := testkit.NewTestKit(c, s.store)
+	tk3.MustExec("use TestLeftJoinForUpdate")
+
+	tk1.MustExec("drop table if exists nt, pt")
+	tk1.MustExec("create table nt (id int, col varchar(32), primary key (id))")
+	tk1.MustExec("create table pt (id int, col varchar(32), primary key (id)) partition by hash(id) partitions 4")
+
+	resetData := func() {
+		tk1.MustExec("truncate table nt")
+		tk1.MustExec("truncate table pt")
+		tk1.MustExec("insert into nt values (1, 'hello')")
+		tk1.MustExec("insert into pt values (2, 'test')")
+	}
+
+	// ========================== First round of test ==================
+	// partition table left join normal table.
+	// =================================================================
+	resetData()
+	ch := make(chan int, 10)
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Check(testkit.Rows("2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("update pt set col = 'xxx' where id = 2")
+		ch <- 2
+	}()
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Sort().Check(testkit.Rows("1 world 1 hello", "2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk3.MustExec("update nt set col = 'yyy' where id = 1")
+		ch <- 3
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	checkOrder := func() {
+		c.Assert(<-ch, Equals, 1)
+		v1 := <-ch
+		v2 := <-ch
+		c.Assert((v1 == 2 && v2 == 3) || (v1 == 3 && v2 == 2), IsTrue)
+	}
+	checkOrder()
+
+	// ========================== Another round of test ==================
+	// normal table left join partition table.
+	// ===================================================================
+	resetData()
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello <nil> <nil>"))
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello 1 world"))
+	go func() {
+		tk2.MustExec("replace into pt values (1, 'aaa')")
+		ch <- 2
+	}()
+	go func() {
+		tk3.MustExec("update nt set col = 'bbb' where id = 1")
+		ch <- 3
+	}()
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+	checkOrder()
+}
