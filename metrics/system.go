@@ -17,13 +17,6 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	GCCount = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "system",
-			Name:      "golang_gc_count",
-			Help:      "Total number of Golang GC runs",
-		})
 	GCPauseNS = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
