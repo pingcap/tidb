@@ -24,7 +24,9 @@ import (
 )
 
 const (
+	// DefaultMaxCost is the default max cost of memory.
 	MaxGCPercent uint32 = 500
+	// DefaultMinCost is the default min cost of memory.
 	MinGCPercent uint32 = 50
 )
 
