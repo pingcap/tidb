@@ -19,6 +19,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/metrics"
 )
@@ -46,4 +47,53 @@ func SetGOGC(val int) {
 // GetGOGC returns the current value of GOGC.
 func GetGOGC() int {
 	return int(atomic.LoadInt64(&gogcValue))
+}
+
+type GOGCStatSampler struct {
+	last struct {
+		now         int64
+		lastGC      time.Time
+		gcPauseTime uint64
+	}
+	GCRunCount uint64
+	exitChan   chan struct{}
+}
+
+func NewRuntimeStatSampler() *GOGCStatSampler {
+	return &GOGCStatSampler{}
+}
+
+var gc debug.GCStats
+
+func (gss *GOGCStatSampler) sample() {
+	debug.ReadGCStats(&gc)
+	now := time.Now().UnixNano()
+	dur := float64(now - gss.last.now)
+	gcPauseRatio := float64(uint64(gc.PauseTotal)-gss.last.gcPauseTime) / dur
+	if gss.last.lastGC.Before(gc.LastGC) {
+		gcIntervals := gc.LastGC.Sub(gss.last.lastGC)
+		gss.last.lastGC = gc.LastGC
+		metrics.GCIntervals.Set(float64(gcIntervals.Nanoseconds()))
+	}
+	gss.last.gcPauseTime = uint64(gc.PauseTotal)
+	metrics.GCCount.Set(float64(gc.NumGC))
+	metrics.GCPauseNS.Set(float64(gc.PauseTotal))
+	metrics.GCPausePercent.Set(gcPauseRatio)
+}
+
+func (gss *GOGCStatSampler) Start() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			gss.sample()
+		case <-gss.exitChan:
+			return
+		}
+	}
+}
+
+func (gss *GOGCStatSampler) Close() {
+	close(gss.exitChan)
 }

@@ -206,10 +206,12 @@ func main() {
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
 	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
 	terror.RegisterFinish()
-
+	rss := util.NewRuntimeStatSampler()
+	go rss.Start()
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
+		rss.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
 		close(exited)
