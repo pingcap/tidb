@@ -76,8 +76,8 @@ func (gss *GOGCStatSampler) sample() {
 		gss.last.lastGC = gc.LastGC
 		metrics.GCIntervals.Set(float64(gcIntervals.Nanoseconds()))
 	}
+	gss.last.now = now
 	gss.last.gcPauseTime = uint64(gc.PauseTotal)
-	metrics.GCPauseNS.Set(float64(gc.PauseTotal))
 	metrics.GCPausePercent.Set(gcPauseRatio)
 }
 

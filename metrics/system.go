@@ -17,14 +17,7 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	GCPauseNS = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "system",
-			Name:      "golang_gc_pause_ns",
-			Help:      "Total GC pause",
-		})
-
+	// GCPausePercent means Current GC pause percentage
 	GCPausePercent = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -32,6 +25,7 @@ var (
 			Name:      "golang_gc_pause_ns",
 			Help:      "Current GC pause percentage",
 		})
+	// GCIntervals means intervals between GC
 	GCIntervals = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
