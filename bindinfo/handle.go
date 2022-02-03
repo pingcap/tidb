@@ -393,7 +393,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (d
 		return 0, err
 	}
 
-	return uint64(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows()), nil
+	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
 
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.
