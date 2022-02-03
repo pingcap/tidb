@@ -414,8 +414,7 @@ func TestPlacementMode(t *testing.T) {
 
 	// invalid values
 	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
-	require.Error(t, err)
-	require.Equal(t, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'", err.Error())
+	require.EqualError(t, err, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'")
 
 	// ignore mode
 	tk.MustExec("set tidb_placement_mode='ignore'")
