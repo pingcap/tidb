@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
