@@ -379,11 +379,24 @@ func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context
 		return ctx
 	}
 
+	connectionID := clientConn.connectionID
 	s.rwlock.Lock()
-	s.clients[clientConn.connectionID] = clientConn
+	s.clients[connectionID] = clientConn
 	connections := len(s.clients)
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
+
+	callback := func(conn netpoll.Connection) error {
+		s.rwlock.Lock()
+		defer s.rwlock.Unlock()
+
+		if cc, ok := s.clients[connectionID]; ok {
+			return cc.closeWithoutLock()
+		}
+
+		return nil
+	}
+	conn.AddCloseCallback(callback)
 
 	return ctx
 }
