@@ -190,11 +190,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, count from mysql.stats_meta")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +211,7 @@ type tableHistID struct {
 
 func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -354,12 +346,9 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 		if len(schema.Collate) > 0 {
 			collation = schema.Collate // Overwrite default
 		}
-		var policyName, directPlacement interface{}
+		var policyName interface{}
 		if schema.PlacementPolicyRef != nil {
 			policyName = schema.PlacementPolicyRef.Name.O
-		}
-		if schema.DirectPlacementOpts != nil {
-			directPlacement = schema.DirectPlacementOpts.String()
 		}
 
 		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
@@ -372,7 +361,6 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 			collation,             // DEFAULT_COLLATION_NAME
 			nil,                   // SQL_PATH
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
-			directPlacement,       // TIDB_DIRECT_PLACEMENT
 		)
 		rows = append(rows, record)
 	}
@@ -584,12 +572,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
-				var policyName, directPlacement interface{}
+				var policyName interface{}
 				if table.PlacementPolicyRef != nil {
 					policyName = table.PlacementPolicyRef.Name.O
-				}
-				if table.DirectPlacementOpts != nil {
-					directPlacement = table.DirectPlacementOpts.String()
 				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
@@ -617,7 +602,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 					pkType,                // TIDB_PK_TYPE
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
-					directPlacement,       // TIDB_DIRECT_PLACEMENT
 				)
 				rows = append(rows, record)
 			} else {
@@ -647,7 +631,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					pkType,                // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
-					nil,                   // TIDB_DIRECT_PLACEMENT
 				)
 				rows = append(rows, record)
 			}
@@ -892,7 +875,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					nil,                   // TABLESPACE_NAME
 					nil,                   // TIDB_PARTITION_ID
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
-					nil,                   // TIDB_DIRECT_PLACEMENT
 				)
 				rows = append(rows, record)
 			} else {
@@ -949,12 +931,9 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 						partitionExpr = buf.String()
 					}
 
-					var policyName, directPlacement interface{}
+					var policyName interface{}
 					if pi.PlacementPolicyRef != nil {
 						policyName = pi.PlacementPolicyRef.Name.O
-					}
-					if pi.DirectPlacementOpts != nil {
-						directPlacement = pi.DirectPlacementOpts.String()
 					}
 					record := types.MakeDatums(
 						infoschema.CatalogVal, // TABLE_CATALOG
@@ -984,7 +963,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 						nil,                   // TABLESPACE_NAME
 						pi.ID,                 // TIDB_PARTITION_ID
 						policyName,            // TIDB_PLACEMENT_POLICY_NAME
-						directPlacement,       // TIDB_DIRECT_PLACEMENT
 					)
 					rows = append(rows, record)
 				}
@@ -2906,6 +2884,12 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 		// also convert them to LeaderConstraints and FollowerConstraints
 		// for better user experience searching for particular constraints
 
+		// Followers == 0 means not set, so the default value 2 will be used
+		followerCnt := policy.PlacementSettings.Followers
+		if followerCnt == 0 {
+			followerCnt = 2
+		}
+
 		row := types.MakeDatums(
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
@@ -2917,7 +2901,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.FollowerConstraints,
 			policy.PlacementSettings.LearnerConstraints,
 			policy.PlacementSettings.Schedule,
-			policy.PlacementSettings.Followers,
+			followerCnt,
 			policy.PlacementSettings.Learners,
 		)
 		rows = append(rows, row)

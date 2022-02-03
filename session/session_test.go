@@ -2162,11 +2162,13 @@ func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	originalRetryTime := domain.SchemaOutOfDateRetryTimes.Load()
+	originalRetryInterval := domain.SchemaOutOfDateRetryInterval.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(3)
+	domain.SchemaOutOfDateRetryInterval.Store(20 * time.Millisecond)
 	defer func() {
-		atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTime)
+		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -4054,7 +4056,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -4418,11 +4420,11 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParams(context.TODO(), true, "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParams(context.TODO(), true, "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4432,15 +4434,15 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParams(context.TODO(), true, "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()

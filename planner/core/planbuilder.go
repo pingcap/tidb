@@ -2196,11 +2196,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
-	if err != nil {
-		return nil, model.DefaultChoice, nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, model.DefaultChoice, nil, err
 	}
@@ -2869,8 +2865,26 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}.Init(b.ctx)
 	isView := false
 	isSequence := false
+
 	switch show.Tp {
-	case ast.ShowTables, ast.ShowTableStatus:
+	case ast.ShowColumns:
+		var extractor ShowColumnsTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// avoid to build Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowTables:
+		if p.DBName == "" {
+			return nil, ErrNoDB
+		}
+		var extractor ShowTablesTableExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowTableStatus:
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
@@ -3807,11 +3821,15 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
-	var insertErr error
+	var insertErr, deleteErr error
 	if user != nil {
 		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		deleteErr = ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {

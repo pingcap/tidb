@@ -56,10 +56,10 @@ SELECT * from t a, t2 b;
 SELECT * from t as a, t2 as b;
 SELECT * from t a left join t2 b on a.c1 = b.c1;
 
---error ER_DUP_FIELDNAME
+--error 1060
 SELECT * from (SELECT 1, 1) as a;
 
---error ER_DUP_FIELDNAME
+--error 1060
 SELECT * from (SELECT * FROM t, t2) as a;
 
 # Select bool field
@@ -253,5 +253,5 @@ SELECT a, b, c, d FROM precise_types;
 
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
---error ER_CANNOT_CONVERT_STRING
+--error 1105
 select * from t3 where a > 0x80;

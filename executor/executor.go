@@ -520,7 +520,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 }
 
 func ts2Time(timestamp uint64) types.Time {
-	duration := time.Duration(math.Pow10(9-int(types.DefaultFsp))) * time.Nanosecond
+	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
 	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
@@ -1734,7 +1734,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
-	sc.LogicalOptimizeTrace = nil
+	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
@@ -1878,7 +1878,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SkipUTF8Check = vars.SkipUTF8Check
 	sc.SkipASCIICheck = vars.SkipASCIICheck
-	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8
+	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8.Load()
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority

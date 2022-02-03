@@ -393,7 +393,6 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 	}
 	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
-	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
 }
 
