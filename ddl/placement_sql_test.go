@@ -251,10 +251,8 @@ PARTITION BY RANGE (c) (
 }
 
 func TestCreateSchemaWithPlacement(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 	defer func() {
