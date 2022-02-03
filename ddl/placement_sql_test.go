@@ -33,11 +33,8 @@ import (
 
 // TODO: Remove in https://github.com/pingcap/tidb/issues/27971 or change to use SQL PLACEMENT POLICY
 func TestPlacementPolicyCache(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
@@ -104,10 +101,8 @@ func TestPlacementPolicyCache(t *testing.T) {
 }
 
 func TestTxnScopeConstraint(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -388,10 +383,8 @@ func TestAlterDBPlacement(t *testing.T) {
 }
 
 func TestPlacementMode(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists db1")
@@ -422,7 +415,7 @@ func TestPlacementMode(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// invalid values
-	err = tk.ExecToErr("set tidb_placement_mode='aaa'")
+	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
 	require.Error(t, err)
 	require.Equal(t, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'", err.Error())
 
