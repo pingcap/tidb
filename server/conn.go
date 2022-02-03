@@ -1045,6 +1045,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
+	closeRead := false
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -1052,7 +1054,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		if cc.server.inShutdownMode.Load() {
-			if !cc.ctx.GetSessionVars().InTxn() {
+			if !cc.ctx.GetSessionVars().InTxn() && closeRead {
 				return
 			}
 		}
@@ -1089,6 +1091,17 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			disconnectByClientWithError.Inc()
 			return
+		}
+
+		if cc.server.inShutdownMode.Load() {
+			dataStr := string(data)
+			if strings.Contains(strings.ToLower(dataStr), "commit") {
+				if tcpConn, ok := cc.bufReadConn.Conn.(*net.TCPConn); ok {
+					logutil.Logger(ctx).Info("close connection read side")
+					terror.Log(tcpConn.CloseRead())
+				}
+			}
+			closeRead = true
 		}
 
 		// Should always success now.
@@ -1140,6 +1153,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
+		logutil.Logger(ctx).Debug("run statement success",
+			zap.Stringer("sql", getLastStmtInConn{cc}),
+			zap.Bool("intxn", cc.ctx.GetSessionVars().InTxn()),
+		)
 	}
 }
 

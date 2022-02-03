@@ -409,6 +409,8 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			return
 		}
 
+		logutil.BgLogger().Debug("accept new connection success")
+
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
 			uc, ok := conn.(*net.UnixConn)
@@ -512,7 +514,9 @@ func (s *Server) registerConn(conn *clientConn) {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
+		logger.Info("close connection directly when shutting down")
 		conn.Close()
 	}
 
