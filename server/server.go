@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -354,63 +356,71 @@ var eventLoop netpoll.EventLoop
 
 func (s *Server) createEventLoop() {
 	eventLoop, _ = netpoll.NewEventLoop(
-		s.onRequest,
-		netpoll.WithOnPrepare(s.onPrepare),
+		nil, // s.onRequest,
+		// netpoll.WithOnPrepare(s.onPrepare),
 		netpoll.WithOnConnect(s.onConnect),
 	)
 }
 
-type clientConnKey string
+// type clientConnKey string
 
-func (s *Server) onPrepare(conn netpoll.Connection) context.Context {
-	clientConn := s.newConn(conn)
-	ctx := context.WithValue(context.Background(), clientConnKey("client-conn"), clientConn)
-	// println("prepare conn", clientConn.connectionID)
+// func (s *Server) onPrepare(conn netpoll.Connection) context.Context {
+// 	clientConn := s.newConn(conn)
+// 	ctx := context.WithValue(context.Background(), clientConnKey("client-conn"), clientConn)
+// 	// println("prepare conn", clientConn.connectionID)
 
-	return ctx
-}
+// 	return ctx
+// }
 
 func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context.Context {
-	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
-	// println("on connect", clientConn.connectionID)
+	clientConn := s.newConn(conn)
 
-	if err := clientConn.handshake(ctx); err != nil {
-		clientConn.Close()
-		return ctx
-	}
-
-	connectionID := clientConn.connectionID
-	s.rwlock.Lock()
-	s.clients[connectionID] = clientConn
-	connections := len(s.clients)
-	s.rwlock.Unlock()
-	metrics.ConnGauge.Set(float64(connections))
-
-	callback := func(conn netpoll.Connection) error {
-		s.rwlock.Lock()
-		defer s.rwlock.Unlock()
-
-		if cc, ok := s.clients[connectionID]; ok {
-			return cc.closeWithoutLock()
-		}
-
-		return nil
-	}
-	conn.AddCloseCallback(callback)
+	go s.onConn(clientConn)
 
 	return ctx
 }
 
-func (s *Server) onRequest(ctx context.Context, conn netpoll.Connection) error {
-	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
-	// println("on request", clientConn.connectionID)
-	err := clientConn.Run(ctx)
-	if err != nil {
-		println("close connection", clientConn.connectionID, err.Error())
-		clientConn.Close()
-	}
-	return err
-}
+// func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context.Context {
+// 	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
+// 	// println("on connect", clientConn.connectionID)
+
+// 	if err := clientConn.handshake(ctx); err != nil {
+// 		clientConn.Close()
+// 		return ctx
+// 	}
+//
+// 	connectionID := clientConn.connectionID
+// 	s.rwlock.Lock()
+// 	s.clients[connectionID] = clientConn
+// 	connections := len(s.clients)
+// 	s.rwlock.Unlock()
+// 	metrics.ConnGauge.Set(float64(connections))
+
+// 	callback := func(conn netpoll.Connection) error {
+// 		s.rwlock.Lock()
+// 		defer s.rwlock.Unlock()
+
+// 		if cc, ok := s.clients[connectionID]; ok {
+// 			return cc.closeWithoutLock()
+// 		}
+
+// 		return nil
+// 	}
+// 	conn.AddCloseCallback(callback)
+
+// 	return ctx
+// }
+
+// func (s *Server) onRequest(ctx context.Context, conn netpoll.Connection) error {
+// 	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
+// 	// println("on request", clientConn.connectionID)
+// 	err := clientConn.Run(ctx)
+// 	if err != nil {
+// 		println("close connection", clientConn.connectionID, err.Error())
+// 		clientConn.Close()
+// 	}
+// 	return err
+// }
 
 // Run runs the server.
 func (s *Server) Run() error {
@@ -562,83 +572,83 @@ func (s *Server) Close() {
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
-// func (s *Server) onConn(conn *clientConn) {
-// 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
-// 	if err := conn.handshake(ctx); err != nil {
-// 		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
-// 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
-// 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-// 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-// 				if authPlugin.OnConnectionEvent != nil {
-// 					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
-// 					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
-// 				}
-// 				return nil
-// 			})
-// 			terror.Log(err)
-// 		}
-// 		if errors.Cause(err) == io.EOF {
-// 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
-// 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-// 				Debug("EOF", zap.String("remote addr", conn.pkt.RemoteAddr().String()))
-// 		} else {
-// 			metrics.HandShakeErrorCounter.Inc()
-// 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-// 				Warn("Server.onConn handshake", zap.Error(err),
-// 					zap.String("remote addr", conn.pkt.RemoteAddr().String()))
-// 		}
-// 		terror.Log(conn.Close())
-// 		return
-// 	}
+func (s *Server) onConn(conn *clientConn) {
+	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+	if err := conn.handshake(ctx); err != nil {
+		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
+			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+				if authPlugin.OnConnectionEvent != nil {
+					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
+					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
+				}
+				return nil
+			})
+			terror.Log(err)
+		}
+		if errors.Cause(err) == io.EOF {
+			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Debug("EOF", zap.String("remote addr", conn.pkt.RemoteAddr().String()))
+		} else {
+			metrics.HandShakeErrorCounter.Inc()
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Warn("Server.onConn handshake", zap.Error(err),
+					zap.String("remote addr", conn.pkt.RemoteAddr().String()))
+		}
+		terror.Log(conn.Close())
+		return
+	}
 
-// 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.pkt.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.pkt.RemoteAddr().String()))
 
-// 	defer func() {
-// 		logutil.Logger(ctx).Debug("connection closed")
-// 	}()
-// 	s.rwlock.Lock()
-// 	s.clients[conn.connectionID] = conn
-// 	connections := len(s.clients)
-// 	s.rwlock.Unlock()
-// 	metrics.ConnGauge.Set(float64(connections))
+	defer func() {
+		logutil.Logger(ctx).Debug("connection closed")
+	}()
+	s.rwlock.Lock()
+	s.clients[conn.connectionID] = conn
+	connections := len(s.clients)
+	s.rwlock.Unlock()
+	metrics.ConnGauge.Set(float64(connections))
 
-// 	sessionVars := conn.ctx.GetSessionVars()
-// 	if plugin.IsEnable(plugin.Audit) {
-// 		sessionVars.ConnectionInfo = conn.connectInfo()
-// 	}
-// 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-// 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-// 		if authPlugin.OnConnectionEvent != nil {
-// 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
-// 		}
-// 		return nil
-// 	})
-// 	if err != nil {
-// 		return
-// 	}
+	sessionVars := conn.ctx.GetSessionVars()
+	if plugin.IsEnable(plugin.Audit) {
+		sessionVars.ConnectionInfo = conn.connectInfo()
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
 
-// 	connectedTime := time.Now()
-// 	conn.Run(ctx)
+	connectedTime := time.Now()
+	conn.Run(ctx)
 
-// 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-// 		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
-// 		if sessionVars.ConnectionInfo == nil {
-// 			sessionVars.ConnectionInfo = conn.connectInfo()
-// 		}
-// 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-// 		if authPlugin.OnConnectionEvent != nil {
-// 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
-// 			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
-// 			if err != nil {
-// 				logutil.BgLogger().Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
-// 			}
-// 		}
-// 		return nil
-// 	})
-// 	if err != nil {
-// 		return
-// 	}
-// }
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
+			if err != nil {
+				logutil.BgLogger().Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+}
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := "Socket"

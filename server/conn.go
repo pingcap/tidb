@@ -1022,123 +1022,120 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
-func (cc *clientConn) Run(ctx context.Context) error {
-	// const size = 4096
-	// defer func() {
-	// 	r := recover()
-	// 	if r != nil {
-	// 		buf := make([]byte, size)
-	// 		stackSize := runtime.Stack(buf, false)
-	// 		buf = buf[:stackSize]
-	// 		logutil.Logger(ctx).Error("connection running loop panic",
-	// 			zap.Stringer("lastSQL", getLastStmtInConn{cc}),
-	// 			zap.String("err", fmt.Sprintf("%v", r)),
-	// 			zap.String("stack", string(buf)),
-	// 		)
-	// 		err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
-	// 		terror.Log(err)
-	// 		metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
-	// 	}
-	// 	if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-	// 		println("close connection")
-	// 		err := cc.Close()
-	// 		terror.Log(err)
-	// 	}
-	// }()
+func (cc *clientConn) Run(ctx context.Context) {
+	const size = 4096
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := make([]byte, size)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.Logger(ctx).Error("connection running loop panic",
+				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
+				zap.String("err", fmt.Sprintf("%v", r)),
+				zap.String("stack", string(buf)),
+			)
+			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
+			terror.Log(err)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
+		}
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+			err := cc.Close()
+			terror.Log(err)
+		}
+	}()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
-	// for {
-	if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
-		// The judge below will not be hit by all means,
-		// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-		atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
-		return fmt.Errorf("status dispatching and dispatching???")
-	}
+	for {
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+			// The judge below will not be hit by all means,
+			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
+			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			return
+		}
 
-	cc.alloc.Reset()
-	// close connection when idle time is more than wait_timeout
-	waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
-	// disable readtimeout now
-	// cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
-	start := time.Now()
-	data, err := cc.readPacket()
-	if err != nil {
-		println("read pacakge error", err.Error())
-		if terror.ErrorNotEqual(err, io.EOF) {
-			if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-				idleTime := time.Since(start)
-				logutil.Logger(ctx).Info("read packet timeout, close this connection",
-					zap.Duration("idle", idleTime),
-					zap.Uint64("waitTimeout", waitTimeout),
-					zap.Error(err),
-				)
-			} else {
-				errStack := errors.ErrorStack(err)
-				if !strings.Contains(errStack, "use of closed network connection") {
-					logutil.Logger(ctx).Warn("read packet failed, close this connection",
-						zap.Error(errors.SuspendStack(err)))
+		cc.alloc.Reset()
+		// close connection when idle time is more than wait_timeout
+		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		start := time.Now()
+		data, err := cc.readPacket()
+		if err != nil {
+			println("read pacakge error", err.Error())
+			if terror.ErrorNotEqual(err, io.EOF) {
+				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+					idleTime := time.Since(start)
+					logutil.Logger(ctx).Info("read packet timeout, close this connection",
+						zap.Duration("idle", idleTime),
+						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
+					)
+				} else {
+					errStack := errors.ErrorStack(err)
+					if !strings.Contains(errStack, "use of closed network connection") {
+						logutil.Logger(ctx).Warn("read packet failed, close this connection",
+							zap.Error(errors.SuspendStack(err)))
+					}
 				}
 			}
+			disconnectByClientWithError.Inc()
+			return
 		}
-		disconnectByClientWithError.Inc()
-		return err
-	}
 
-	if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
-		return fmt.Errorf("status reading and dispatching???")
-	}
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+			return
+		}
 
-	startTime := time.Now()
-	err = cc.dispatch(ctx, data)
-	cc.chunkAlloc.Reset()
-	if err != nil {
-		println("dispatch error", data[0], errors.ErrorStack(err))
-		cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
-		if terror.ErrorEqual(err, io.EOF) {
-			cc.addMetrics(data[0], startTime, nil)
-			disconnectNormal.Inc()
-			return err
-		} else if terror.ErrResultUndetermined.Equal(err) {
-			logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
-			disconnectErrorUndetermined.Inc()
-			return err
-		} else if terror.ErrCritical.Equal(err) {
-			metrics.CriticalErrorCounter.Add(1)
-			logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
-		}
-		var txnMode string
-		if cc.ctx != nil {
-			txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
-		}
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
-		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
-			logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
-		} else {
-			var startTS uint64
-			if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
-				startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+		startTime := time.Now()
+		err = cc.dispatch(ctx, data)
+		cc.chunkAlloc.Reset()
+		if err != nil {
+			println("dispatch error", data[0], errors.ErrorStack(err))
+			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			if terror.ErrorEqual(err, io.EOF) {
+				cc.addMetrics(data[0], startTime, nil)
+				disconnectNormal.Inc()
+				return
+			} else if terror.ErrResultUndetermined.Equal(err) {
+				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				disconnectErrorUndetermined.Inc()
+				return
+			} else if terror.ErrCritical.Equal(err) {
+				metrics.CriticalErrorCounter.Add(1)
+				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			logutil.Logger(ctx).Info("command dispatched failed",
-				zap.String("connInfo", cc.String()),
-				zap.String("command", mysql.Command2Str[data[0]]),
-				zap.String("status", cc.SessionStatusToString()),
-				zap.Stringer("sql", getLastStmtInConn{cc}),
-				zap.String("txn_mode", txnMode),
-				zap.Uint64("timestamp", startTS),
-				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-			)
+			var txnMode string
+			if cc.ctx != nil {
+				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			}
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
+			} else {
+				var startTS uint64
+				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
+					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+				}
+				logutil.Logger(ctx).Info("command dispatched failed",
+					zap.String("connInfo", cc.String()),
+					zap.String("command", mysql.Command2Str[data[0]]),
+					zap.String("status", cc.SessionStatusToString()),
+					zap.Stringer("sql", getLastStmtInConn{cc}),
+					zap.String("txn_mode", txnMode),
+					zap.Uint64("timestamp", startTS),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+				)
+			}
+			err1 := cc.writeError(ctx, err)
+			terror.Log(err1)
 		}
-		err1 := cc.writeError(ctx, err)
-		terror.Log(err1)
+		cc.addMetrics(data[0], startTime, err)
+		cc.pkt.sequence = 0
 	}
-	cc.addMetrics(data[0], startTime, err)
-	cc.pkt.sequence = 0
-	// }
-	return nil
 }
 
 // ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
