@@ -72,7 +72,6 @@ type task struct {
 
 var P int
 var workDir string
-var verbose bool = true
 
 func cmdList(args ...string) bool {
 	pkgs, err := listPackages()
@@ -393,17 +392,14 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	return res
 }
 
-func (n *numa) testCommandWithNumaCtl(exe, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
 	if old {
 		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		args := []string{"numactl", "--physcpubind", n.cpu, "--",
+		return exec.Command(
+			"numactl", "--physcpubind", n.cpu, "--",
 			exe,
 			"-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn}
-		if verbose {
-			fmt.Println(strings.Join(args, " "))
-		}
-		return exec.Command(args[0], args[1:]...)
+			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
 	}
 
 	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
