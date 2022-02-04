@@ -468,7 +468,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 	require.Greater(t, newMaxUsage, oriMaxUsage)
 
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
-	require.Equal(t, 4, len(res.Rows()))
+	require.Len(t, res.Rows(), 4)
 	// Parse "xxx KB" and check it's greater than 0.
 	memStr := res.Rows()[0][7].(string)
 	re, err := regexp.Compile("[0-9]+ KB")
