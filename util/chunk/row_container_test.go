@@ -304,8 +304,7 @@ func TestActionBlocked(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(starttime), 200*time.Millisecond)
 }
 
-
-func TestPanicWhenSort(t *testing.T){
+func TestPanicWhenSort(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	chk := NewChunkWithCapacity(fields, sz)
@@ -341,7 +340,7 @@ func TestPanicWhenSort(t *testing.T){
 	require.EqualError(t, rc.Add(chk), "out of memory quota when sorting")
 }
 
-func TestPanicWhenSpillToDisk(t *testing.T){
+func TestPanicWhenSpillToDisk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	chk := NewChunkWithCapacity(fields, sz)
