@@ -80,5 +80,5 @@ func TestTracePlanStmt(t *testing.T) {
 	rows := tk.MustQuery("trace plan select * from tp123").Rows()
 	require.Len(t, rows, 1)
 	require.Len(t, rows[0], 1)
-	require.Regexp(t, ".*zip", rows[0][0].(string))
+	require.Regexp(t, ".*zip", rows[0][0])
 }
