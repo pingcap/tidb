@@ -47,6 +47,29 @@ func Slice(s string) (b []byte) {
 	return
 }
 
+// BytesToInt64s converts []byte to []int64
+// The length of b must be the multiple of 8
+// Use at your own risk.
+func BytesToInt64s(b []byte) (r []int64) {
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pint64s := (*reflect.SliceHeader)(unsafe.Pointer(&r))
+	pint64s.Data = pbytes.Data
+	pint64s.Len = pbytes.Len / 8
+	pint64s.Cap = pbytes.Len / 8
+	return
+}
+
+// Int64sToBytes converts []int to []byte
+// Use at your own risk.
+func Int64sToBytes(b []int64) (r []byte) {
+	pint64s := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&r))
+	pbytes.Data = pint64s.Data
+	pbytes.Len = pint64s.Len * 8
+	pbytes.Cap = pint64s.Len * 8
+	return
+}
+
 // LoadFactor is the maximum average load of a bucket that triggers growth is 6.5 in Golang Map.
 // Represent as LoadFactorNum/LoadFactorDen, to allow integer math.
 // They are from the golang definition. ref: https://github.com/golang/go/blob/go1.13.15/src/runtime/map.go#L68-L71

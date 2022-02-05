@@ -63,3 +63,25 @@ func TestMutable(t *testing.T) {
 		t.Fatal("test mutable string fail")
 	}
 }
+
+func TestBytesAndInts(t *testing.T) {
+	a := make([]byte, 8)
+
+	b := BytesToInt64s(a)
+
+	if len(b) != 1 {
+		t.Fatalf("want 1 but got %d", len(b))
+	}
+
+	b[0] = 3
+
+	if a[0] != 3 {
+		t.Fatalf("want 3 but got %d", a[0])
+	}
+
+	c := Int64sToBytes(b)
+
+	if len(c) != len(a) {
+		t.Fatalf("want %d but got %d", len(a), len(c))
+	}
+}
