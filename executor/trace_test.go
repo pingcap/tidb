@@ -15,18 +15,22 @@
 package executor_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"testing"
+
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite1) TestTraceExec(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestTraceExec(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table trace (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
 	tk.MustExec(testSQL)
 	tk.MustExec("trace insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows := tk.MustQuery("trace select * from trace where id = 0;").Rows()
-	c.Assert(len(rows), GreaterEqual, 1)
+	require.GreaterOrEqual(t, len(rows), 1)
 
 	// +---------------------------+-----------------+------------+
 	// | operation                 | startTS         | duration   |
@@ -40,16 +44,16 @@ func (s *testSuite1) TestTraceExec(c *C) {
 	// |   └─recordSet.Next        | 22:08:38.249340 | 155.317µs  |
 	// +---------------------------+-----------------+------------+
 	rows = tk.MustQuery("trace format='row' select * from trace where id = 0;").Rows()
-	c.Assert(len(rows) > 1, IsTrue)
-	c.Assert(rowsOrdered(rows), IsTrue)
+	require.Greater(t, len(rows), 1)
+	require.True(t, rowsOrdered(rows))
 
 	rows = tk.MustQuery("trace format='row' delete from trace where id = 0").Rows()
-	c.Assert(len(rows) > 1, IsTrue)
-	c.Assert(rowsOrdered(rows), IsTrue)
+	require.Greater(t, len(rows), 1)
+	require.True(t, rowsOrdered(rows))
 
 	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
-	c.Assert(len(rows), GreaterEqual, 1)
+	require.GreaterOrEqual(t, len(rows), 1)
 }
 
 func rowsOrdered(rows [][]interface{}) bool {
@@ -67,12 +71,14 @@ func rowsOrdered(rows [][]interface{}) bool {
 	return true
 }
 
-func (s *testSuite1) TestTracePlanStmt(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestTracePlanStmt(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tp123(id int);")
 	rows := tk.MustQuery("trace plan select * from tp123").Rows()
-	c.Assert(rows, HasLen, 1)
-	c.Assert(rows[0], HasLen, 1)
-	c.Assert(rows[0][0].(string), Matches, ".*zip")
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 1)
+	require.Regexp(t, ".*zip", rows[0][0].(string))
 }
