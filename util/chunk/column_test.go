@@ -978,8 +978,9 @@ func BenchmarkNewColumnFixedMakeSlice(b *testing.B) {
 	cap := 2
 	elemLen := 8
 	n := 0
+	var c *Column
 	for i := 0; i < b.N; i++ {
-		c := &Column{
+		c = &Column{
 			elemBuf:    make([]byte, elemLen),
 			data:       make([]byte, 0, cap*elemLen),
 			nullBitmap: make([]byte, 0, (cap+7)>>3),
@@ -993,8 +994,9 @@ func BenchmarkNewColumnFixedMakeSlice2(b *testing.B) {
 	cap := 2
 	elemLen := 8
 	n := 0
+	var c *Column
 	for i := 0; i < b.N; i++ {
-		c := newFixedLenColumn(elemLen, cap)
+		c = newFixedLenColumn(elemLen, cap)
 
 		n = len(c.elemBuf) + len(c.data) + len(c.nullBitmap) + n
 	}
@@ -1004,8 +1006,9 @@ func BenchmarkNewColumnVarMakeSlice(b *testing.B) {
 	cap := 2
 	estimatedElemLen := 8
 	n := 0
+	var c *Column
 	for i := 0; i < b.N; i++ {
-		c := &Column{
+		c = &Column{
 			offsets:    make([]int64, 1, cap+1),
 			data:       make([]byte, 0, cap*estimatedElemLen),
 			nullBitmap: make([]byte, 0, (cap+7)>>3),
@@ -1020,6 +1023,7 @@ func BenchmarkNewColumnVarMakeSlice2(b *testing.B) {
 	estimatedElemLen := 8
 
 	n := 0
+	var c *Column
 	for i := 0; i < b.N; i++ {
 		len0 := (cap + 1) * 8
 		len1 := cap * estimatedElemLen
@@ -1027,7 +1031,7 @@ func BenchmarkNewColumnVarMakeSlice2(b *testing.B) {
 
 		buf := make([]byte, len0+len1+len2)
 
-		c := &Column{}
+		c = &Column{}
 
 		c.offsets = hack.BytesToInt64s(buf[0:len0])[0:1]
 		if cap > 0 {
@@ -1043,9 +1047,10 @@ func BenchmarkNewColumnVarMakeSlice3(b *testing.B) {
 	cap := 2
 
 	n := 0
+	var c *Column
 	for i := 0; i < b.N; i++ {
 
-		c := newVarLenColumn(cap)
+		c = newVarLenColumn(cap)
 
 		n = len(c.offsets) + len(c.data) + len(c.nullBitmap) + n
 	}
