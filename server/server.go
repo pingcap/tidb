@@ -507,15 +507,16 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
+	connections := len(s.clients)
 
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		conn.Close()
+		closeConn(conn, connections)
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	connections := len(s.clients)
+	connections = len(s.clients)
 	metrics.ConnGauge.Set(float64(connections))
 	return true
 }
@@ -523,13 +524,6 @@ func (s *Server) registerConn(conn *clientConn) bool {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	conn.cancelRunFunc = cancel
-	if !s.registerConn(conn) {
-		return
-	}
 
 	if err := conn.handshake(ctx); err != nil {
 		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
@@ -563,6 +557,10 @@ func (s *Server) onConn(conn *clientConn) {
 	defer func() {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
+
+	if !s.registerConn(conn) {
+		return
+	}
 
 	sessionVars := conn.ctx.GetSessionVars()
 	if plugin.IsEnable(plugin.Audit) {
@@ -652,6 +650,9 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
+			continue
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -699,7 +700,9 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	}
 
 	if !query {
-		conn.cancelRunFunc()
+		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
+		// this, it will end the dispatch loop and exit.
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 	killQuery(conn)
 }
@@ -732,8 +735,11 @@ func (s *Server) KillAllConnections() {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
+		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		if err := conn.closeWithoutLock(); err != nil {
+			terror.Log(err)
+		}
 		killQuery(conn)
-		conn.cancelRunFunc()
 	}
 }
 
@@ -772,10 +778,7 @@ func (s *Server) drainClients(drainWait time.Duration, cancelWait time.Duration)
 		logger.Info("timeout waiting all sessions quit")
 	}
 
-	for _, conn := range conns {
-		killQuery(conn)
-		conn.cancelRunFunc()
-	}
+	s.KillAllConnections()
 
 	select {
 	case <-allDone:

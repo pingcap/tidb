@@ -637,32 +637,6 @@ func TestShutDown(t *testing.T) {
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 }
 
-func TestShutdownOrNotify(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc := &clientConn{
-		connectionID: 1,
-		server: &Server{
-			capability: defaultCapability,
-		},
-		status: connStatusWaitShutdown,
-		ctx:    tc,
-	}
-	require.False(t, cc.ShutdownOrNotify())
-	cc.status = connStatusReading
-	require.True(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusShutdown, cc.status)
-	cc.status = connStatusDispatching
-	require.False(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusWaitShutdown, cc.status)
-}
-
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }

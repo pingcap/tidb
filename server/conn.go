@@ -95,6 +95,8 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
 )
 
 var (
@@ -200,8 +202,7 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	// quit is close once clientConn quit Run().
-	quit          chan struct{}
-	cancelRunFunc context.CancelFunc
+	quit chan struct{}
 }
 
 func (cc *clientConn) String() string {
@@ -1039,13 +1040,19 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+			err := cc.Close()
+			terror.Log(err)
+		}
 
-		err := cc.Close()
-		terror.Log(err)
 		close(cc.quit)
 	}()
 
-	// Client connection status changes between [dispatching] <=> [reading].
+	// Usually, client connection status changes between [dispatching] <=> [reading].
+	// When some event happens, server may notify this client connection by setting
+	// the status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change status
+	// by CAS operation, it would then take some actions accordingly.
 	for {
 		// Close connection between txn when we are going to shutdown server.
 		if cc.server.inShutdownMode.Load() {
@@ -1054,11 +1061,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
-		atomic.StoreInt32(&cc.status, connStatusReading)
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+			// The judge below will not be hit by all means,
+			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
+			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			return
+		}
 
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
-		// default 28800(8h)
+		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
@@ -1084,7 +1096,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		atomic.StoreInt32(&cc.status, connStatusDispatching)
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+			return
+		}
 
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
@@ -1976,7 +1990,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if ctx.Err() != nil {
+		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
 			return false, executor.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultset(ctx, rs, false, status, 0); err != nil {
