@@ -137,12 +137,6 @@ func newVarLenColumn(cap int) *Column {
 		c.nullBitmap = unsafe.Slice(&buf[len0+len1], len2)[0:0]
 	}
 
-	// c := &Column{
-	// 	offsets:    make([]int64, 1, cap+1),
-	// 	data:       make([]byte, 0, cap*estimatedElemLen),
-	// 	nullBitmap: make([]byte, 0, (cap+7)>>3),
-	// }
-
 	return c
 }
 

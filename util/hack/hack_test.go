@@ -84,4 +84,11 @@ func TestBytesAndInts(t *testing.T) {
 	if len(c) != len(a) {
 		t.Fatalf("want %d but got %d", len(a), len(c))
 	}
+
+	c[0] = 0
+	c[1] = 1
+
+	if b[0] != 256 {
+		t.Fatalf("want 4 but got %d", b[0])
+	}
 }

@@ -51,22 +51,14 @@ func Slice(s string) (b []byte) {
 // The length of b must be the multiple of 8
 // Use at your own risk.
 func BytesToInt64s(b []byte) (r []int64) {
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pint64s := (*reflect.SliceHeader)(unsafe.Pointer(&r))
-	pint64s.Data = pbytes.Data
-	pint64s.Len = pbytes.Len / 8
-	pint64s.Cap = pbytes.Len / 8
+	r = unsafe.Slice((*int64)(unsafe.Pointer(&b[0])), len(b)/8)
 	return
 }
 
 // Int64sToBytes converts []int to []byte
 // Use at your own risk.
 func Int64sToBytes(b []int64) (r []byte) {
-	pint64s := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&r))
-	pbytes.Data = pint64s.Data
-	pbytes.Len = pint64s.Len * 8
-	pbytes.Cap = pint64s.Len * 8
+	r = unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), len(b)*8)
 	return
 }
 
