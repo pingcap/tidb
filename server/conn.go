@@ -1045,24 +1045,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
-	closeRead := false
-
-	// Usually, client connection status changes between [dispatching] <=> [reading].
-	// When some event happens, server may notify this client connection by setting
-	// the status to special values, for example: kill or graceful shutdown.
-	// The client connection would detect the events when it fails to change status
-	// by CAS operation, it would then take some actions accordingly.
+	// Client connection status changes between [dispatching] <=> [reading].
 	for {
+		// Close connection between txn when we are going to shutdown server.
 		if cc.server.inShutdownMode.Load() {
-			if !cc.ctx.GetSessionVars().InTxn() && closeRead {
+			if !cc.ctx.GetSessionVars().InTxn() {
 				return
 			}
 		}
 
-		// Should always success now.
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
-			return
-		}
+		atomic.StoreInt32(&cc.status, connStatusReading)
 
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
@@ -1070,7 +1062,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
-		// TODO: to not block if inShutdownMode?
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
@@ -1093,21 +1084,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		if cc.server.inShutdownMode.Load() {
-			dataStr := string(data)
-			if strings.Contains(strings.ToLower(dataStr), "commit") {
-				if tcpConn, ok := cc.bufReadConn.Conn.(*net.TCPConn); ok {
-					logutil.Logger(ctx).Info("close connection read side")
-					terror.Log(tcpConn.CloseRead())
-				}
-			}
-			closeRead = true
-		}
-
-		// Should always success now.
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
-			return
-		}
+		atomic.StoreInt32(&cc.status, connStatusDispatching)
 
 		startTime := time.Now()
 		err = cc.dispatch(ctx, data)
@@ -1153,10 +1130,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
-		logutil.Logger(ctx).Debug("run statement success",
-			zap.Stringer("sql", getLastStmtInConn{cc}),
-			zap.Bool("intxn", cc.ctx.GetSessionVars().InTxn()),
-		)
 	}
 }
 

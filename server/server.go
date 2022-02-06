@@ -504,23 +504,33 @@ func (s *Server) Close() {
 	s.drainClients(drainClientWait, cancelClientWait)
 }
 
-func (s *Server) registerConn(conn *clientConn) {
+func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
-	s.clients[conn.connectionID] = conn
-	connections := len(s.clients)
-	metrics.ConnGauge.Set(float64(connections))
-	s.rwlock.Unlock()
-}
+	defer s.rwlock.Unlock()
 
-// onConn runs in its own goroutine, handles queries from this connection.
-func (s *Server) onConn(conn *clientConn) {
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
 		conn.Close()
+		return false
+	}
+	s.clients[conn.connectionID] = conn
+	connections := len(s.clients)
+	metrics.ConnGauge.Set(float64(connections))
+	return true
+}
+
+// onConn runs in its own goroutine, handles queries from this connection.
+func (s *Server) onConn(conn *clientConn) {
+	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	conn.cancelRunFunc = cancel
+	if !s.registerConn(conn) {
+		return
 	}
 
-	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
 		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
@@ -568,10 +578,6 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	conn.cancelRunFunc = cancel
-	s.registerConn(conn)
 
 	connectedTime := time.Now()
 	conn.Run(ctx)
