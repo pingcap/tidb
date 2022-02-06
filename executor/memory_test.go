@@ -52,7 +52,7 @@ func TestPBMemoryLeak(t *testing.T) {
 	rowCnt := 0
 	chk := record.NewChunk(nil)
 	for {
-		require.Nil(t, record.Next(context.Background(), chk))
+		require.NoError(t, record.Next(context.Background(), chk))
 		rowCnt += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
