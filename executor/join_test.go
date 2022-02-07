@@ -61,6 +61,7 @@ func TestJoinInDisk(t *testing.T) {
 	defer origin()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
 	})
 
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
