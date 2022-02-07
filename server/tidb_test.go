@@ -248,9 +248,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestStatusAPIWithTLS")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -294,9 +292,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestStatusAPIWithTLSCNCheck")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	caPath := filepath.Join(dir, "ca-cert-cn.pem")
 	serverKeyPath := filepath.Join(dir, "server-key-cn.pem")
@@ -381,11 +377,8 @@ func TestMultiStatements(t *testing.T) {
 }
 
 func TestSocketForwarding(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
@@ -417,11 +410,8 @@ func TestSocketForwarding(t *testing.T) {
 }
 
 func TestSocket(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
@@ -456,11 +446,8 @@ func TestSocket(t *testing.T) {
 }
 
 func TestSocketAndIp(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -625,11 +612,8 @@ func TestSocketAndIp(t *testing.T) {
 
 // TestOnlySocket for server configuration without network interface for mysql clients
 func TestOnlySocket(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -1799,11 +1783,8 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn fu
 }
 
 func TestLocalhostClientMapping(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
