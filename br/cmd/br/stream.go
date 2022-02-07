@@ -123,6 +123,8 @@ func newStreamStatusCommand() *cobra.Command {
 	return command
 }
 
+// TODO maybe we should use `br restore stream` rather than `br stream restore`
+// because the restore and stream task has no common flags.
 func newStreamRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "restore",
