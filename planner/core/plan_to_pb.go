@@ -454,6 +454,24 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorID}, nil
 }
 
+// ToPB converts FrameBound to tipb structure.
+func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, error) {
+	pbBound := &tipb.WindowFrameBound {
+		Type: tipb.WindowBoundType(fb.Type),
+		Unbounded: fb.UnBounded,
+	}
+	offset := fb.Num
+	pbBound.Offset = &offset
+
+	calcFuncs, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, fb.CalcFuncs, ctx.GetClient())
+	if err != nil {
+		return nil, err
+	}
+
+	pbBound.CalcFuncs = calcFuncs
+	return pbBound, nil
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -472,7 +490,25 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
 	}
 
-	// TODO before review: add fame protobufs.
+	if p.Frame != nil {
+		windowExec.Frame = &tipb.WindowFrame {
+			Type: tipb.WindowFrameType(p.Frame.Type),
+		}
+		if p.Frame.Start != nil {
+			start, err := p.Frame.Start.ToPB(ctx)
+			if err != nil {
+				return nil, err
+			}
+			windowExec.Frame.Start = start
+		}
+		if p.Frame.End != nil {
+			end, err := p.Frame.End.ToPB(ctx)
+			if err != nil {
+				return nil, err
+			}
+			windowExec.Frame.End = end
+		}
+	}
 
 	var err error
 	windowExec.Child, err = p.children[0].ToPB(ctx, storeType)
