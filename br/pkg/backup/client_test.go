@@ -45,7 +45,7 @@ type testBackup struct {
 }
 
 func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
-	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	s = new(testBackup)
 	s.mockPDClient = pdClient
@@ -66,6 +66,8 @@ func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
 	clean = func() {
 		mockMgr.Close()
 		s.cluster.Stop()
+		tikvClient.Close()
+		pdClient.Close()
 	}
 	return
 }
