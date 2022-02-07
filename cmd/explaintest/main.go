@@ -227,6 +227,14 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 			err = nil
 			break
 		}
+		if strings.Contains(err.Error(), expectedErr) {
+			if t.enableQueryLog {
+				t.buf.WriteString(fmt.Sprintf("%s\n", query.Query))
+			}
+			t.buf.WriteString(fmt.Sprintf("%s\n", err))
+			err = nil
+			break
+		}
 	}
 
 	if err != nil {
@@ -353,12 +361,14 @@ func (t *tester) execute(query query) error {
 		}
 
 		if err != nil && len(t.expectedErrs) > 0 {
-			// TODO: check whether this err is expected.
-			// but now we think it is.
-
-			// output expected err
-			t.buf.WriteString(fmt.Sprintf("%s\n", err))
-			err = nil
+			for _, expectErr := range t.expectedErrs {
+				if strings.Contains(err.Error(), expectErr) {
+					// output expected err
+					t.buf.WriteString(fmt.Sprintf("%s\n", err))
+					err = nil
+					break
+				}
+			}
 		}
 		// clear expected errors after we execute the first query
 		t.expectedErrs = nil
