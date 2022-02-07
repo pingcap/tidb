@@ -162,7 +162,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLReportDataHistogram)
 	prometheus.MustRegister(PDApiExecutionHistogram)
 	prometheus.MustRegister(CPUProfileCounter)
-
+	prometheus.MustRegister(GCPausePercent)
+	prometheus.MustRegister(GCIntervals)
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics

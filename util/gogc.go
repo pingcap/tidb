@@ -61,7 +61,9 @@ type GOGCStatSampler struct {
 
 // NewRuntimeStatSampler returns a sampler for GOGC.
 func NewRuntimeStatSampler() *GOGCStatSampler {
-	return &GOGCStatSampler{}
+	return &GOGCStatSampler{
+		exitChan: make(chan struct{}),
+	}
 }
 
 var gc debug.GCStats
