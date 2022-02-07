@@ -1280,7 +1280,7 @@ type PhysicalWindow struct {
 	Frame           *WindowFrame
 
 	// on which store the window function executes.
-	storeTp          kv.StoreType
+	storeTp kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

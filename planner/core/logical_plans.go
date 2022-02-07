@@ -1084,7 +1084,6 @@ func (wf *WindowFrame) Clone() *WindowFrame {
 	return cloned
 }
 
-
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1113,7 +1112,6 @@ func (fb *FrameBound) Clone() *FrameBound {
 
 	return cloned
 }
-
 
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {

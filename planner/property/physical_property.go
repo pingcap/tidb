@@ -317,13 +317,13 @@ func (p *PhysicalProperty) String() string {
 // property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:        		p.SortItems,
-		SortItemsForPartition:  p.SortItemsForPartition,
-		TaskTp:           		p.TaskTp,
-		ExpectedCnt:      		p.ExpectedCnt,
-		MPPPartitionTp:   		p.MPPPartitionTp,
-		MPPPartitionCols: 		p.MPPPartitionCols,
-		RejectSort:       		p.RejectSort,
+		SortItems:             p.SortItems,
+		SortItemsForPartition: p.SortItemsForPartition,
+		TaskTp:                p.TaskTp,
+		ExpectedCnt:           p.ExpectedCnt,
+		MPPPartitionTp:        p.MPPPartitionTp,
+		MPPPartitionCols:      p.MPPPartitionCols,
+		RejectSort:            p.RejectSort,
 	}
 	return prop
 }

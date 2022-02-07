@@ -90,7 +90,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{
-		ByItems: make([]*util.ByItems, 0, len(p.SortItems)),
+		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
 	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {

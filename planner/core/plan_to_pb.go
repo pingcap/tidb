@@ -456,8 +456,8 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 
 // ToPB converts FrameBound to tipb structure.
 func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, error) {
-	pbBound := &tipb.WindowFrameBound {
-		Type: tipb.WindowBoundType(fb.Type),
+	pbBound := &tipb.WindowFrameBound{
+		Type:      tipb.WindowBoundType(fb.Type),
 		Unbounded: fb.UnBounded,
 	}
 	offset := fb.Num
@@ -491,7 +491,7 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 	}
 
 	if p.Frame != nil {
-		windowExec.Frame = &tipb.WindowFrame {
+		windowExec.Frame = &tipb.WindowFrame{
 			Type: tipb.WindowFrameType(p.Frame.Type),
 		}
 		if p.Frame.Start != nil {
