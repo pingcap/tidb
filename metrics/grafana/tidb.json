@@ -3180,14 +3180,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_server_packet_io_bytes{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{type}}-rate",
               "refId": "A"
             },
             {
-              "expr": "sum(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "expr": "sum(tidb_server_packet_io_bytes{tidb_cluster=\"$tidb_cluster\"}) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{type}}-total",
