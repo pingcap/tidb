@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut
 
 default: server buildsucc
 
@@ -28,7 +28,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -115,18 +115,8 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-devgotest: failpoint-enable
-# grep regex: Filter out all tidb logs starting with:
-# - '[20' (like [2021/09/15 ...] [INFO]..)
-# - 'PASS:' to ignore passed tests
-# - 'ok ' to ignore passed directories
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-ut: failpoint-enable tools/bin/ut tools/bin/xprog
-	tools/bin/ut $(X);
+ut: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 gotest: failpoint-enable
@@ -135,13 +125,11 @@ gotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum
+gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) \
-	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
-	$(PACKAGES_TIDB_TESTS) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
