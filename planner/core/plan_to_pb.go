@@ -242,8 +242,16 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
+	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
 		hashCols = append(hashCols, col)
+		tp := expression.ToPBFieldType(col.RetType)
+		hashColTypes = append(hashColTypes, tp)
+	}
+	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
+	for _, column := range e.Schema().Columns {
+		pbType := expression.ToPBFieldType(column.RetType)
+		allFieldTypes = append(allFieldTypes, pbType)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
 	if err != nil {
@@ -254,6 +262,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		EncodedTaskMeta: encodedTask,
 		PartitionKeys:   hashColPb,
 		Child:           child,
+		Types:           hashColTypes,
+		AllFieldTypes:   allFieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
