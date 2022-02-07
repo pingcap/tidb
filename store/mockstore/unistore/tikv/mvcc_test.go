@@ -90,10 +90,8 @@ func CreateTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func NewTestStore(dbPrefix string, logPrefix string, t *testing.T) (*TestStore, func()) {
-	dbPath, err := os.MkdirTemp("", dbPrefix)
-	require.NoError(t, err)
-	LogPath, err := os.MkdirTemp("", logPrefix)
-	require.NoError(t, err)
+	dbPath := t.TempDir()
+	LogPath := t.TempDir()
 	safePoint := &SafePoint{}
 	db, err := CreateTestDB(dbPath, LogPath)
 	require.NoError(t, err)
