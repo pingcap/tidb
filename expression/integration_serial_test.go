@@ -1450,22 +1450,6 @@ func TestLikeWithCollation(t *testing.T) {
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
 }
 
-func TestCollationUnion(t *testing.T) {
-	// For issue 19694.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;").Check(testkit.Rows("2010-09-09", "2010-09-09  "))
-	res := tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 2)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	res = tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 1)
-}
-
 func TestCollationPrefixClusteredIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2065,7 +2049,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
 	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
+	require.Equal(t, types.ErrWrongValue.Code(), errors.Cause(err).(*terror.Error).Code(), "err %v", err)
 
 	// for weekday
 	result = tk.MustQuery(`select weekday("2012-12-20"), weekday("2012-12-21"), weekday("2012-12-22"), weekday("2012-12-23"), weekday("2012-12-24"), weekday("2012-12-25"), weekday("2012-12-26"), weekday("2012-12-27");`)

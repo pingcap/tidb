@@ -107,12 +107,7 @@ func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{})
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
 	}
