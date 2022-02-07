@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	testkit2 "github.com/pingcap/tidb/testkit"
+	testkit "github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
@@ -108,7 +108,7 @@ func TearDownHelper(s *tiflashDDLTestSuite) {
 	ddl.PollTiFlashInterval = 2 * time.Second
 }
 
-func ChangeGCSafePoint(tk *testkit2.TestKit, t time.Time, enable string, lifeTime string) {
+func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime string) {
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	lastSafePoint := t.Format(gcTimeFormat)
 	s := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -132,7 +132,7 @@ func CheckPlacementRule(tiflash *infosync.MockTiFlash, rule placement.TiFlashRul
 	return tiflash.CheckPlacementRule(rule)
 }
 
-func CheckFlashback(s *tiflashDDLTestSuite, tk *testkit2.TestKit, t *testing.T) {
+func CheckFlashback(s *tiflashDDLTestSuite, tk *testkit.TestKit, t *testing.T) {
 	// If table is dropped after tikv_gc_safe_point, it can be recovered
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "false", "10m0s")
 	defer func() {
@@ -153,12 +153,12 @@ func CheckFlashback(s *tiflashDDLTestSuite, tk *testkit2.TestKit, t *testing.T) 
 		for _, e := range tb.Meta().Partition.Definitions {
 			ruleName := fmt.Sprintf("table-%v-r", e.ID)
 			_, ok := s.tiflash.GetPlacementRule(ruleName)
-			require.Equal(t, true, ok)
+			require.True(t, ok)
 		}
 	} else {
 		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
 		_, ok := s.tiflash.GetPlacementRule(ruleName)
-		require.Equal(t, true, ok)
+		require.True(t, ok)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	}
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	require.NoError(t, err)
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	fCancel := TempDisableEmulatorGC()
 	defer fCancel()
 	// Disable emulator GC, otherwise delete range will be automatically called.
@@ -275,7 +275,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -305,7 +305,7 @@ func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 		require.Equal(t, true, tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
-			require.Equal(t, true, ok)
+			require.True(t, ok)
 			require.Equal(t, true, table.Accel)
 		}
 	}
@@ -317,7 +317,7 @@ func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -346,7 +346,7 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 		require.Equal(t, true, tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
-			require.Equal(t, true, ok)
+			require.True(t, ok)
 			require.Equal(t, true, table.Accel)
 		}
 	}
@@ -358,7 +358,7 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 func TestTiFlashReplicaAvailable(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -387,7 +387,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -405,7 +405,7 @@ func TestTiFlashTruncatePartition(t *testing.T) {
 func TestTiFlashFailTruncatePartition(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -429,7 +429,7 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 func TestTiFlashDropPartition(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -461,7 +461,7 @@ func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels 
 func TestTiFlashTruncateTable(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -489,7 +489,7 @@ func TestTiFlashTruncateTable(t *testing.T) {
 func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -511,7 +511,7 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 func TestSetPlacementRuleNormal(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -522,7 +522,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := CheckPlacementRule(s.tiflash, *expectRule)
-	require.Equal(t, true, res)
+	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
 	ChangeGCSafePoint(tk, time.Now().Add(+3*time.Second), "true", "10m0s")
@@ -534,7 +534,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = CheckPlacementRule(s.tiflash, *expectRule)
-	require.Equal(t, true, res)
+	require.True(t, res)
 }
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
@@ -566,7 +566,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	// Make SetPdLoop take effects.
 	time.Sleep(time.Second)
 
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash_gc")
 	tk.MustExec("create table ddltiflash_gc(z int)")
@@ -576,7 +576,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := CheckPlacementRule(s.tiflash, *expectRule)
-	require.Equal(t, true, res)
+	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
 	tk.MustExec("drop table ddltiflash_gc")
@@ -586,13 +586,13 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	res = CheckPlacementRule(s.tiflash, *expectRule)
-	require.Equal(t, false, res)
+	require.False(t, res)
 }
 
 func TestSetPlacementRuleFail(t *testing.T) {
 	s := &tiflashDDLTestSuite{}
 	require.NoError(t, SetUpHelper(s))
-	tk := testkit2.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	defer TearDownHelper(s)
 
 	tk.MustExec("use test")
@@ -608,5 +608,5 @@ func TestSetPlacementRuleFail(t *testing.T) {
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := CheckPlacementRule(s.tiflash, *expectRule)
-	require.Equal(t, res, false)
+	require.False(t, res)
 }
