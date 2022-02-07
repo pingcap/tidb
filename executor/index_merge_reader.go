@@ -118,6 +118,10 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialAccess  []bool
 }
 
+func (e *IndexMergeReaderExecutor) Table() table.Table {
+	return e.table
+}
+
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))

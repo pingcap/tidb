@@ -4183,29 +4183,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us.SetChildren(ds)
 		result = us
 	}
-	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
-		cachedTable := tbl.(table.CachedTable)
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
-		if cacheData != nil {
-			sessionVars.StmtCtx.ReadFromTableCache = true
-			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
-			us.SetChildren(ds)
-			result = us
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
-				startTS := txn.StartTS()
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(ctx, store, startTS, leaseDuration)
-			}
-		}
-	}
 
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)

@@ -28,6 +28,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func lastReadFromCache(tk *testkit.TestKit) bool {
+	return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+}
+
 func TestCacheTableBasicScan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -40,114 +44,87 @@ func TestCacheTableBasicScan(t *testing.T) {
 		"(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018)",
 	)
 	tk.MustExec("alter table tmp1 cache")
-	assertSelect := func() {
-		// For TableReader
-		// First read will read from original table
-		tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
+
+	// For TableReader
+	// First read will read from original table
+	tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
+		"5 105 1005", "7 117 1007", "9 109 1009",
+		"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
+	))
+	// Test for join two cache table
+	tk.MustExec("drop table if exists join_t1, join_t2, join_t3")
+	tk.MustExec("create table join_t1  (id int)")
+	tk.MustExec("insert into join_t1 values(1)")
+	tk.MustExec("alter table join_t1 cache")
+	tk.MustQuery("select *from join_t1").Check(testkit.Rows("1"))
+	tk.MustExec("create table join_t2  (id int)")
+	tk.MustExec("insert into join_t2 values(2)")
+	tk.MustExec("alter table join_t2 cache")
+	tk.MustQuery("select *from join_t2").Check(testkit.Rows("2"))
+	tk.MustExec("create table join_t3 (id int)")
+	tk.MustExec("insert into join_t3 values(3)")
+	planUsed := false
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select *from join_t1 join join_t2").Check(testkit.Rows("1 2"))
+		if lastReadFromCache(tk) {
+			planUsed = true
+			break
+		}
+	}
+	require.True(t, planUsed)
+
+	// Test for join a cache table and a normal table
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select * from join_t1 join join_t3").Check(testkit.Rows("1 3"))
+		if lastReadFromCache(tk) {
+			// if tk.HasPlan("select *from join_t1 join join_t3", "UnionScan") {
+			planUsed = true
+			break
+		}
+	}
+	require.True(t, planUsed)
+
+	// Second read will from cache table
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("select * from tmp1 where id>4 order by id").Check(testkit.Rows(
 			"5 105 1005", "7 117 1007", "9 109 1009",
 			"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
 		))
-		// Test for join two cache table
-		tk.MustExec("drop table if exists join_t1, join_t2, join_t3")
-		tk.MustExec("create table join_t1  (id int)")
-		tk.MustExec("insert into join_t1 values(1)")
-		tk.MustExec("alter table join_t1 cache")
-		tk.MustQuery("select *from join_t1").Check(testkit.Rows("1"))
-		tk.MustExec("create table join_t2  (id int)")
-		tk.MustExec("insert into join_t2 values(2)")
-		tk.MustExec("alter table join_t2 cache")
-		tk.MustQuery("select *from join_t2").Check(testkit.Rows("2"))
-		tk.MustExec("create table join_t3 (id int)")
-		tk.MustExec("insert into join_t3 values(3)")
-		planUsed := false
-		for i := 0; i < 10; i++ {
-			tk.MustQuery("select *from join_t1 join join_t2").Check(testkit.Rows("1 2"))
-			if tk.HasPlan("select *from join_t1 join join_t2", "UnionScan") {
-				planUsed = true
-				break
-			}
+		if lastReadFromCache(tk) {
+			// if tk.HasPlan("select * from tmp1 where id>4 order by id", "UnionScan") {
+			planUsed = true
+			break
 		}
-		require.True(t, planUsed)
-		result := tk.MustQuery("explain format = 'brief' select *from join_t1 join join_t2")
-		result.Check(testkit.Rows(
-			"HashJoin 100000000.00 root  CARTESIAN inner join",
-			"├─UnionScan(Build) 10000.00 root  ",
-			"│ └─TableReader 10000.00 root  data:TableFullScan",
-			"│   └─TableFullScan 10000.00 cop[tikv] table:join_t2 keep order:false, stats:pseudo",
-			"└─UnionScan(Probe) 10000.00 root  ",
-			"  └─TableReader 10000.00 root  data:TableFullScan",
-			"    └─TableFullScan 10000.00 cop[tikv] table:join_t1 keep order:false, stats:pseudo"))
-		// Test for join a cache table and a normal table
-		for i := 0; i < 10; i++ {
-			tk.MustQuery("select *from join_t1 join join_t3").Check(testkit.Rows("1 3"))
-			if tk.HasPlan("select *from join_t1 join join_t3", "UnionScan") {
-				planUsed = true
-				break
-			}
-		}
-		require.True(t, planUsed)
-		result = tk.MustQuery("explain format = 'brief' select *from join_t1 join join_t3")
-		result.Check(testkit.Rows(
-			"Projection 100000000.00 root  test.join_t1.id, test.join_t3.id",
-			"└─HashJoin 100000000.00 root  CARTESIAN inner join",
-			"  ├─UnionScan(Build) 10000.00 root  ",
-			"  │ └─TableReader 10000.00 root  data:TableFullScan",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:join_t1 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-			"    └─TableFullScan 10000.00 cop[tikv] table:join_t3 keep order:false, stats:pseudo"))
+	}
+	require.True(t, planUsed)
 
-		// Second read will from cache table
-		for i := 0; i < 100; i++ {
-			tk.MustQuery("select * from tmp1 where id>4 order by id").Check(testkit.Rows(
-				"5 105 1005", "7 117 1007", "9 109 1009",
-				"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
-			))
-			if tk.HasPlan("select * from tmp1 where id>4 order by id", "UnionScan") {
-				planUsed = true
-				break
-			}
-		}
-		require.True(t, planUsed)
-		result = tk.MustQuery("explain format = 'brief' select * from tmp1 where id>4 order by id")
-		result.Check(testkit.Rows("UnionScan 3333.33 root  gt(test.tmp1.id, 4)",
-			"└─TableReader 3333.33 root  data:TableRangeScan",
-			"  └─TableRangeScan 3333.33 cop[tikv] table:tmp1 range:(4,+inf], keep order:true, stats:pseudo"))
-		// For IndexLookUpReader
-		for i := 0; i < 10; i++ {
-			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
-				"5 105 1005", "9 109 1009", "10 110 1010",
-				"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
-			))
-			if tk.HasPlan("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u", "UnionScan") {
-				planUsed = true
-				break
-			}
-		}
-		require.True(t, planUsed)
-		result = tk.MustQuery("explain format = 'brief' select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u")
-		result.Check(testkit.Rows("UnionScan 3333.33 root  gt(test.tmp1.u, 101)",
-			"└─IndexLookUp 3333.33 root  ",
-			"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tmp1, index:u(u) range:(101,+inf], keep order:true, stats:pseudo",
-			"  └─TableRowIDScan(Probe) 3333.33 cop[tikv] table:tmp1 keep order:false, stats:pseudo"))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexReader
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
-			"3 113", "5 105", "7 117", "9 109", "10 110",
-			"12 112", "14 114", "16 116", "18 118",
-		))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexMerge, cache table should not use index merge
-		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
-			"9 109 1009", "10 110 1010",
+	// For IndexLookUpReader
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
+			"5 105 1005", "9 109 1009", "10 110 1010",
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
-
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on TableCache."))
+		if lastReadFromCache(tk) {
+			planUsed = true
+			break
+		}
 	}
-	assertSelect()
+	require.True(t, planUsed)
 
+	// For IndexReader
+	tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
+		"3 113", "5 105", "7 117", "9 109", "10 110",
+		"12 112", "14 114", "16 116", "18 118",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// For IndexMerge, cache table should not use index merge
+	tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
+		"9 109 1009", "10 110 1010",
+		"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
+	))
+
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestCacheCondition(t *testing.T) {
@@ -160,44 +137,51 @@ func TestCacheCondition(t *testing.T) {
 	tk.MustExec("alter table t2 cache")
 
 	// Explain should not trigger cache.
-	tk.MustQuery("explain select * from t2")
 	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain select * from t2")
 		time.Sleep(100 * time.Millisecond)
-		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Insert should not trigger cache.
 	tk.MustExec("insert into t2 values (1,1)")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
-		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id > 0")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
-		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+		require.False(t, lastReadFromCache(tk))
 	}
 	// Contains PointGet Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
-		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
 	tk.MustExec("delete from t2 where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
-		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
-	for !tk.HasPlan("select * from t2 where id>0", "UnionScan") {
-		tk.MustExec("select * from t2")
+	cacheUsed := false
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("select * from t2")
+		if lastReadFromCache(tk) {
+			cacheUsed = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
+	require.True(t, cacheUsed)
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
@@ -215,31 +199,38 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 
 	tk.MustExec("alter table write_tmp1 cache")
 	// Read and add read lock
-	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001",
-		"3 113 1003"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "3 113 1003"))
 	// read lock should valid
 	var i int
 	for i = 0; i < 10; i++ {
-		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
+		if lastReadFromCache(tk) {
 			break
 		}
 		// Wait for the cache to be loaded.
 		time.Sleep(50 * time.Millisecond)
+		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "3 113 1003"))
 	}
 	require.True(t, i < 10)
 
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
 	// write lock exists
-	require.False(t, tk.HasPlan("select * from write_tmp1", "UnionScan"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001",
+		"2 222 222",
+		"3 113 1003"))
+	require.False(t, lastReadFromCache(tk))
+
 	// wait write lock expire and check cache can be used again
-	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
-		tk.MustExec("select * from write_tmp1")
+	for !lastReadFromCache(tk) {
+		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows(
+			"1 101 1001",
+			"2 222 222",
+			"3 113 1003"))
 	}
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
-		tk.MustExec("select * from write_tmp1")
+	for !lastReadFromCache(tk) {
+		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	}
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 }
@@ -258,7 +249,8 @@ func TestCacheTableComplexRead(t *testing.T) {
 	var i int
 	for i = 0; i < 100; i++ {
 		time.Sleep(100 * time.Millisecond)
-		if tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+		tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+		if lastReadFromCache(tk1) {
 			break
 		}
 	}
@@ -269,14 +261,16 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
 	for i = 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
-		if tk2.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+		tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+		if lastReadFromCache(tk2) {
 			break
 		}
 	}
 	require.True(t, i < 10)
 	tk2.MustExec("commit")
 
-	tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan")
+	tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+	require.True(t, lastReadFromCache(tk1))
 	tk1.MustExec("commit")
 }
 
@@ -298,7 +292,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
 	cacheUsed := false
 	for i := 0; i < 100; i++ {
-		if tk1.HasPlan("select * from aba", "UnionScan") {
+		tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+		if lastReadFromCache(tk1) {
 			cacheUsed = true
 			break
 		}
@@ -309,7 +304,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustExec("begin")
 	cacheUsed = false
 	for i := 0; i < 100; i++ {
-		if tk1.HasPlan("select * from aba", "UnionScan") {
+		tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+		if lastReadFromCache(tk1) {
 			cacheUsed = true
 			break
 		}
@@ -323,7 +319,7 @@ func TestBeginSleepABA(t *testing.T) {
 	cacheUsed = false
 	for i := 0; i < 100; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
-		if tk2.HasPlan("select * from aba", "UnionScan") {
+		if lastReadFromCache(tk2) {
 			cacheUsed = true
 			break
 		}
@@ -332,7 +328,8 @@ func TestBeginSleepABA(t *testing.T) {
 	require.True(t, cacheUsed)
 
 	// tk1 should not use the staled cache, because the data is changed.
-	require.False(t, tk1.HasPlan("select * from aba", "UnionScan"))
+	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+	require.False(t, lastReadFromCache(tk1))
 }
 
 func TestCacheTablePointGet(t *testing.T) {
@@ -469,13 +466,13 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")
 	tk.MustExec("alter table wait_tb1 cache")
-	tk.MustExec("select *from wait_tb1")
 	var i int
 	for i = 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		if tk.HasPlan("select *from wait_tb1", "UnionScan") {
+		tk.MustQuery("select * from wait_tb1").Check(testkit.Rows())
+		if lastReadFromCache(tk) {
 			break
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	require.True(t, i < 10)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -511,10 +508,10 @@ func TestTableCacheLeaseVariable(t *testing.T) {
 	tk.MustExec(`insert into test_lease_variable(c0, c1, c2) values (1, null, 'green');`)
 	tk.MustExec(`alter table test_lease_variable cache;`)
 
-	tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
 	cached := false
 	for i := 0; i < 20; i++ {
-		if tk.HasPlan("select * from test_lease_variable", "UnionScan") {
+		tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
+		if lastReadFromCache(tk) {
 			cached = true
 			break
 		}

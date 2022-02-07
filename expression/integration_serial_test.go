@@ -3897,7 +3897,7 @@ func TestPreparePlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
-func TestPreparePlanCacheNotForCacheTable(t *testing.T) {
+func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -3918,28 +3918,24 @@ func TestPreparePlanCacheNotForCacheTable(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("alter table t cache")
 
-	var useCache bool
+	var readFromTableCache bool
 	for i := 0; i < 50; i++ {
 		tk.MustQuery("select * from t where a = 1")
-		if tk.HasPlan("select * from t where a = 1", "Union") {
-			useCache = true
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			readFromTableCache = true
+			break
 		}
 	}
-	require.True(t, useCache)
+	require.True(t, readFromTableCache)
 	// already read cache after reading first time
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Projection 10.00 root  test.t.a",
-		"└─UnionScan 10.00 root  eq(test.t.a, 1)",
-		"  └─TableReader 10.00 root  data:Selection",
-		"    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
-		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-
 	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
 	tk.MustExec("set @a = 1;")
 	tk.MustExec("execute stmt using @a;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt using @a;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	readFromTableCache = tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	require.True(t, readFromTableCache)
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestIssue16205(t *testing.T) {
