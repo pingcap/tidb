@@ -131,9 +131,7 @@ func TestTLSBasic(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSBasic")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -198,9 +196,7 @@ func TestTLSVerify(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSVerify")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
