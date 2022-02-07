@@ -143,10 +143,10 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	tk.MustExec("set names latin1 collate latin1_swedish_ci")
+	tk.MustExec("set names latin1 collate latin1_bin")
 	charset, collation = vars.GetCharsetInfo()
 	c.Assert(charset, Equals, "latin1")
-	c.Assert(collation, Equals, "latin1_swedish_ci")
+	c.Assert(collation, Equals, "latin1_bin")
 
 	tk.MustExec("set names utf8 collate default")
 	charset, collation = vars.GetCharsetInfo()
@@ -1517,6 +1517,7 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
 		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
 		{nil, "", false},
+		{&expression.Constant{Value: types.NewDatum(`["no","no","lz4","lz4","lz4","zstd","zstd"]`), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"[\"no\",\"no\",\"lz4\",\"lz4\",\"lz4\",\"zstd\",\"zstd\"]"}`, true},
 	}
 
 	ctx := mock.NewContext()

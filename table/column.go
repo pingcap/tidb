@@ -561,7 +561,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			defer func() { sc.TimeZone = originalTZ }()
 		}
 	}
-	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, int8(col.Decimal))
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}

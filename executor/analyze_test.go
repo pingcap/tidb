@@ -182,12 +182,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -243,12 +241,10 @@ func TestAnalyzeParameters(t *testing.T) {
 }
 
 func TestAnalyzeTooLongColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json)")
@@ -669,10 +665,9 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 }
 
 func TestExtractTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_extract_topn")
 	tk.MustExec("use test_extract_topn")
@@ -724,12 +719,10 @@ func TestExtractTopN(t *testing.T) {
 }
 
 func TestHashInTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
@@ -1312,7 +1305,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, 2, len(col0.Buckets))
 
 	// manual analyze uses the table-level persisted options by merging the new options
-	tk.MustExec("analyze table t columns a,b with 0.9 samplerate, 3 buckets")
+	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1327,7 +1320,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0.9", rs.Rows()[0][2])
+	require.Equal(t, "1", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
