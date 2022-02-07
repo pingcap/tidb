@@ -966,7 +966,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// string functions.
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		ast.Reverse, ast.LTrim, ast.RTrim                   /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
 
 		// json functions.
@@ -980,6 +980,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
 		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.Sysdate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
