@@ -1651,20 +1651,6 @@ func (s *SessionVars) GetReadableTxnMode() string {
 	return txnMode
 }
 
-func (s *SessionVars) setTxnMode(val string) error {
-	switch strings.ToUpper(val) {
-	case ast.Pessimistic:
-		s.TxnMode = ast.Pessimistic
-	case ast.Optimistic:
-		s.TxnMode = ast.Optimistic
-	case "":
-		s.TxnMode = ""
-	default:
-		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
-	}
-	return nil
-}
-
 // SetPrevStmtDigest sets the digest of the previous statement.
 func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
 	s.prevStmtDigest = prevStmtDigest

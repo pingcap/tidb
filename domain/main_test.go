@@ -17,7 +17,6 @@ package domain_test
 import (
 	"testing"
 
-	. "github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
@@ -29,12 +28,4 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-// TestDomainSerial handles tests in serial
-func TestDomainSerial(t *testing.T) {
-	// these tests should run in serial for failpoint is global
-	t.Run("info", SubTestInfo)
-	t.Run("domain", SubTestDomain)
-	t.Run("domainSession", SubTestDomainSession)
 }
