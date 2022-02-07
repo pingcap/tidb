@@ -252,16 +252,13 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
-		if f.singleton {
+		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
 		}
 		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(tasks) == 0 {
-		return nil, errors.New("cannot find mpp task")
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
