@@ -47,7 +47,7 @@ const (
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
-	defaultFlagDdlBatchSize   = 1
+	defaultFlagDdlBatchSize   = 128
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
