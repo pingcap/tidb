@@ -844,7 +844,7 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 func IsRuntimeConstExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if _, ok := getUnFoldableFunctions(x.GetCtx().GetSessionVars().SysdateIsNow)[x.FuncName.L]; ok {
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return false
 		}
 		for _, arg := range x.GetArgs() {

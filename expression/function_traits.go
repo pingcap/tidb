@@ -32,17 +32,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:         {},
 }
 
-func getUnFoldableFunctions(sysdateIsNow bool) map[string]struct{} {
-	t := make(map[string]struct{}, len(unFoldableFunctions))
-	for k, v := range unFoldableFunctions {
-		t[k] = v
-	}
-	if sysdateIsNow {
-		delete(t, ast.Sysdate)
-	}
-	return t
-}
-
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
 var unFoldableFunctions = map[string]struct{}{
 	ast.Sysdate:   {},

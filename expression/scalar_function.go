@@ -187,6 +187,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildFromBinaryFunction(ctx, args[0], retType), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
+	case ast.Sysdate:
+		if ctx.GetSessionVars().SysdateIsNow {
+			funcName = ast.Now
+		}
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -320,7 +324,7 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 // ConstItem implements Expression interface.
 func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
-	if _, ok := getUnFoldableFunctions(sc.SysdateIsNow)[sf.FuncName.L]; ok {
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {
