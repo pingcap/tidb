@@ -160,6 +160,7 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
+		// TODO use `br restore stream` rather than `br stream restore`
 		fallthrough
 	default:
 		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
