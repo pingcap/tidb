@@ -990,7 +990,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := cpdb.path + ".tmp"
-	if err := os.WriteFile(tmpPath, serialized, 0o600); err != nil { // nolint:gosec
+	if err := os.WriteFile(tmpPath, serialized, 0o600); err != nil {
 		return errors.Trace(err)
 	}
 	if err := os.Rename(tmpPath, cpdb.path); err != nil {
