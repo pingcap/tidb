@@ -34,7 +34,7 @@ StreamAgg	1.00	root		funcs:group_concat(distinct collation_agg_func.t.value orde
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value order by 1)) from t;
 upper(group_concat(distinct value order by 1))
-ABC,DEF
+ABC,ABC,DEF
 desc format='brief' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 order by Column#7 separator ",")->Column#5
@@ -51,7 +51,7 @@ StreamAgg	1.00	root		funcs:group_concat(distinct collation_agg_func.t.value sepa
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value)) from t;
 upper(group_concat(distinct value))
-ABC,DEF
+ABC,ABC,DEF
 desc format='brief' select group_concat(distinct value collate utf8mb4_bin) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 separator ",")->Column#5
@@ -68,7 +68,7 @@ StreamAgg	1.00	root		funcs:count(distinct collation_agg_func.t.value)->Column#5
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value) from t;
 count(distinct value)
-2
+3
 desc format='brief' select count(distinct value collate utf8mb4_bin) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(distinct Column#6)->Column#5
@@ -85,7 +85,7 @@ StreamAgg	1.00	root		funcs:count(distinct collation_agg_func.t.value, collation_
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value, value1) from t;
 count(distinct value, value1)
-3
+4
 desc format='brief' select count(distinct value collate utf8mb4_bin, value1) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(distinct Column#6, Column#7)->Column#5
@@ -102,7 +102,7 @@ HashAgg	1.00	root		funcs:approx_count_distinct(collation_agg_func.t.value)->Colu
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_count_distinct(value) from t;
 approx_count_distinct(value)
-2
+3
 desc format='brief' select approx_count_distinct(value collate utf8mb4_bin) from t;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:approx_count_distinct(Column#6)->Column#5
@@ -119,7 +119,7 @@ HashAgg	1.00	root		funcs:approx_count_distinct(collation_agg_func.t.value, colla
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_count_distinct(value, value1) from t;
 approx_count_distinct(value, value1)
-3
+4
 desc format='brief' select approx_count_distinct(value collate utf8mb4_bin, value1) from t;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:approx_count_distinct(Column#6, Column#7)->Column#5
@@ -132,10 +132,13 @@ approx_count_distinct(value collate utf8mb4_bin, value1)
 create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
 insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
 insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
+Error 1265: Data truncated for column 'b' at row 1
 insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
+Error 1265: Data truncated for column 'b' at row 1
 insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
+Error 1265: Data truncated for column 'b' at row 1
 split table tt by (0), (1), (2), (3), (4), (5);
 desc format='brief' select min(a) from tt;
 id	estRows	task	access object	operator info
@@ -147,7 +150,7 @@ StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
         └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(a) from tt;
 min(a)
-a
+B
 desc format='brief' select min(a collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
@@ -161,7 +164,7 @@ StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
               └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(a collate utf8mb4_bin) from tt;
 min(a collate utf8mb4_bin)
-A
+B
 desc format='brief' select max(a) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(collation_agg_func.tt.a)->Column#6
@@ -195,7 +198,7 @@ StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
     └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(b) from tt;
 min(b)
-a
+B
 desc format='brief' select min(b collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
@@ -224,7 +227,7 @@ HashAgg	1.00	root		funcs:min(collation_agg_func.tt.c)->Column#6
   └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(c) from tt;
 min(c)
-a
+B
 desc format='brief' select min(c collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:min(Column#7)->Column#6
@@ -255,11 +258,21 @@ StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.d)->Column#6
         └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(d) from tt;
 min(d)
-{"A": "A"}
+{"B": "B"}
 desc format='brief' select min(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, json BINARY)->Column#8
+  └─Projection	1.00	root		collation_agg_func.tt.d
+    └─TopN	1.00	root		Column#7, offset:0, count:1
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, json BINARY)->Column#7
+        └─TableReader	1.00	root		data:TopN
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY), offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
+              └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+min(d collate utf8mb4_bin)
+{"B": "B"}
 desc format='brief' select max(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(collation_agg_func.tt.d)->Column#6
@@ -272,8 +285,18 @@ select max(d) from tt;
 max(d)
 {"c": "c"}
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, json BINARY)->Column#8
+  └─Projection	1.00	root		collation_agg_func.tt.d
+    └─TopN	1.00	root		Column#7:desc, offset:0, count:1
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, json BINARY)->Column#7
+        └─TableReader	1.00	root		data:TopN
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY):desc, offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
+              └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select max(d collate utf8mb4_bin) from tt;
-Error 1253: COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'
+max(d collate utf8mb4_bin)
+{"c": "c"}
 drop database collation_agg_func;
 use test
