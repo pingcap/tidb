@@ -501,6 +501,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -520,6 +521,7 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(errors.Trace(conn.Close()))
 		return
 	}
+	conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
