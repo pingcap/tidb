@@ -472,8 +472,7 @@ func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServ
 
 	// create gRPC servers
 	for _, typ := range []string{"tidb", "tikv", "pd"} {
-		tmpDir, err := os.MkdirTemp("", typ)
-		c.Assert(err, IsNil)
+		tmpDir := c.MkDir()
 
 		server := grpc.NewServer()
 		logFile := filepath.Join(tmpDir, fmt.Sprintf("%s.log", typ))
