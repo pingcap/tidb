@@ -793,6 +793,7 @@ func TestEval(t *testing.T) {
 }
 
 func TestPBToExprWithNewCollation(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
 
@@ -827,6 +828,8 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, cs.expName, cons.Value.Collation())
 	}
+
+	collate.SetNewCollationEnabledForTest(true)
 
 	for _, cs := range cases {
 		ft := types.NewFieldType(mysql.TypeString)
