@@ -1138,7 +1138,7 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 	}
 	for _, idxSpec := range IndexPartSpecifications {
 		// -1 => unspecified/full, > 0 OK, 0 => error
-		if idxSpec.Length == 0 {
+		if idxSpec.Expr == nil && idxSpec.Length == 0 {
 			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
 		}
 	}
