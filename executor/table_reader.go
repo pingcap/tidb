@@ -132,6 +132,7 @@ func (i offsetOptional) value() int {
 	return int(i - 1)
 }
 
+// Table implements the dataSourceExecutor interface.
 func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
 }

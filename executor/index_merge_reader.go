@@ -118,6 +118,7 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialAccess  []bool
 }
 
+// Table implements the dataSourceExecutor interface.
 func (e *IndexMergeReaderExecutor) Table() table.Table {
 	return e.table
 }

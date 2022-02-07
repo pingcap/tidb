@@ -200,6 +200,7 @@ type IndexReaderExecutor struct {
 	dummy bool
 }
 
+// Table implements the dataSourceExecutor interface.
 func (e *IndexReaderExecutor) Table() table.Table {
 	return e.table
 }
@@ -407,6 +408,7 @@ type checkIndexValue struct {
 	idxTblCols []*table.Column
 }
 
+// Table implements the dataSourceExecutor interface.
 func (e *IndexLookUpExecutor) Table() table.Table {
 	return e.table
 }
