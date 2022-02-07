@@ -69,6 +69,25 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 	return ts, err
 }
 
+func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan) (*tableScanExec, error) {
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ts := &tableScanExec{
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
+		startTS:     b.req.StartTs,
+		kvRanges:    ranges,
+		dbReader:    b.dbReader,
+	}
+	for _, col := range pb.Columns {
+		ft := fieldTypeFromPBColumn(col)
+		ts.fieldTypes = append(ts.fieldTypes, ft)
+	}
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	return ts, err
+}
+
 func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchSenderExec, error) {
 	child, err := b.buildMPPExecutor(pb.Child)
 	if err != nil {
@@ -316,6 +335,9 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildMPPProj(exec.Projection)
 	case tipb.ExecType_TypeSelection:
 		return b.buildMPPSel(exec.Selection)
+	case tipb.ExecType_TypePartitionTableScan:
+		ts := exec.PartitionTableScan
+		return b.buildMPPPartitionTableScan(ts)
 	default:
 		return nil, errors.Errorf("Do not support executor %s", exec.Tp.String())
 	}

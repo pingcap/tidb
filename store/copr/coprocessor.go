@@ -154,6 +154,8 @@ type copTask struct {
 	eventCb    trxevents.EventCallback
 	paging     bool
 	pagingSize uint64
+
+	partitionID int64
 }
 
 func (r *copTask) String() string {

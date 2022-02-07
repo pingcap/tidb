@@ -217,6 +217,16 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
+func (builder *RequestBuilder) SetPIDs(PIDs []int64) *RequestBuilder {
+	builder.PIDs = PIDs
+	return builder
+}
+
+func (builder *RequestBuilder) SetKeyRangeForPartition(Key [][]kv.KeyRange) *RequestBuilder {
+	builder.KeyRangesForPartitions = Key
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:

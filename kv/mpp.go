@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
@@ -25,6 +26,8 @@ import (
 type MPPTaskMeta interface {
 	// GetAddress indicates which node this task should execute on.
 	GetAddress() string
+	// GetTableRegions indicates which regions this task should execute on.
+	GetTableRegions() []*coprocessor.TableRegions
 }
 
 // MPPTask means the minimum execution unit of a mpp computation job.
@@ -33,6 +36,8 @@ type MPPTask struct {
 	ID      int64       // mppTaskID
 	StartTs uint64
 	TableID int64 // physical table id
+
+	TableIDs []int64 // for partition table
 }
 
 // ToPB generates the pb structure.
@@ -72,6 +77,9 @@ type MPPDispatchRequest struct {
 	StartTs   uint64
 	ID        int64 // identify a single task
 	State     MppTaskStates
+
+	// for partition table
+	TableIDs []int64
 }
 
 // MPPClient accepts and processes mpp requests.
@@ -79,6 +87,8 @@ type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
+
+	ConstructMPPTasksForPartition(context.Context, *MPPBuildTaskRequestForPartition, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
@@ -89,4 +99,10 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
+}
+
+type MPPBuildTaskRequestForPartition struct {
+	KeyRanges    [][]KeyRange
+	PartitionIDs []int64
+	StartTS      uint64
 }

@@ -280,20 +280,33 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-		// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		var results []distsql.SelectResult
-		for _, kvReq := range kvReqs {
+		if !e.batchCop {
+			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
+			var results []distsql.SelectResult
+			for _, kvReq := range kvReqs {
+				result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, result)
+			}
+			return distsql.NewSerialSelectResults(results), nil
+		} else {
+			// Use PartitionTable Scan
+			kvReq, err := e.buildKVForPartitionTableScan(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
 			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result)
+			return distsql.NewSerialSelectResults([]distsql.SelectResult{result}), nil
 		}
-		return distsql.NewSerialSelectResults(results), nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
@@ -317,7 +330,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	var kvReqs []*kv.Request
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
+		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true, nil); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -340,6 +353,39 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		kvReqs = append(kvReqs, kvReq)
 	}
 	return kvReqs, nil
+}
+
+func (e *TableReaderExecutor) buildKVForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	if err != nil {
+		return nil, err
+	}
+	kvRangesForPartition := make([][]kv.KeyRange, 0, len(pids))
+	for _, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
+		kvRangesForPartition = append(kvRangesForPartition, kvRange)
+	}
+	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, e.table.Meta().ID, true, pids); err != nil {
+		return nil, err
+	}
+	var builder distsql.RequestBuilder
+	reqBuilder := builder.SetKeyRanges(e.kvRanges).SetPIDs(pids).SetKeyRangeForPartition(kvRangesForPartition)
+	kvReq, err := reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetStreaming(e.streaming).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).Build()
+	if err != nil {
+		return nil, err
+	}
+	return kvReq, nil
 }
 
 func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
