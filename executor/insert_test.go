@@ -1496,9 +1496,6 @@ func (s *testSuite10) TestInsertRuntimeStat(c *C) {
 }
 
 func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {

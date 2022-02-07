@@ -23,9 +23,6 @@ import (
 )
 
 func TestEnum(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	t.Run("ParseEnum", func(t *testing.T) {
 		tests := []struct {
 			Elems    []string

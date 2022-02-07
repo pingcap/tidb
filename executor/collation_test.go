@@ -27,9 +27,6 @@ import (
 )
 
 func TestVecGroupChecker(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tp := &types.FieldType{Tp: mysql.TypeVarchar}
 	col0 := &expression.Column{
 		RetType: tp,

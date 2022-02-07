@@ -46,8 +46,6 @@ func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 }
 
 func TestHashGroupKeyCollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
@@ -85,8 +83,6 @@ func TestHashGroupKeyCollation(t *testing.T) {
 }
 
 func TestHashChunkRowCollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	tps := []*types.FieldType{tp}
@@ -129,8 +125,6 @@ func TestHashChunkRowCollation(t *testing.T) {
 }
 
 func TestHashChunkColumnsCollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()

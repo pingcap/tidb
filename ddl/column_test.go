@@ -1171,9 +1171,6 @@ func (s *testColumnSuiteToVerify) TestDropColumns() {
 }
 
 func TestModifyColumn(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	d, err := testNewDDLAndStart(

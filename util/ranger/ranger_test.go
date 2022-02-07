@@ -1741,8 +1741,6 @@ create table t(
 		},
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
-	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {

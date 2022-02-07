@@ -637,9 +637,6 @@ func TestDeriveCollation(t *testing.T) {
 }
 
 func TestCompareString(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	require.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
 	require.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
 	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))

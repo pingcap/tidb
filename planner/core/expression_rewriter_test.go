@@ -448,9 +448,6 @@ func (s *testExpressionRewriterSuite) TestIssue24705(c *C) {
 }
 
 func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

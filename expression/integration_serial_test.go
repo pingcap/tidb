@@ -82,9 +82,6 @@ func TestIssue17727(t *testing.T) {
 }
 
 func TestIssue17891(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -97,9 +94,6 @@ func TestIssue17891(t *testing.T) {
 }
 
 func TestIssue31174(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -120,9 +114,6 @@ func TestIssue31174(t *testing.T) {
 }
 
 func TestIssue20268(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -139,8 +130,6 @@ func TestCollationBasic(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_ci(a varchar(10) collate utf8mb4_general_ci, unique key(a))")
 	tk.MustExec("insert into t_ci values ('a')")
@@ -216,8 +205,6 @@ func TestWeightString(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	type testCase struct {
 		input                    []string
@@ -291,8 +278,6 @@ func TestCollationCreateIndex(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci);")
@@ -326,8 +311,6 @@ func TestCollateConstantPropagation(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -398,8 +381,6 @@ func TestMixCollation(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin = 'a' collate utf8mb4_general_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='")
 
@@ -491,8 +472,6 @@ func prepare4Join(tk *testkit.TestKit) {
 }
 
 func TestCollateHashJoin(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -517,8 +496,6 @@ func TestCollateHashJoin(t *testing.T) {
 }
 
 func TestCollateHashJoin2(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -539,8 +516,6 @@ func prepare4Join2(tk *testkit.TestKit) {
 }
 
 func TestCollateMergeJoin(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -565,8 +540,6 @@ func TestCollateMergeJoin(t *testing.T) {
 }
 
 func TestCollateMergeJoin2(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -577,8 +550,6 @@ func TestCollateMergeJoin2(t *testing.T) {
 }
 
 func TestCollateIndexMergeJoin(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -594,8 +565,6 @@ func TestCollateIndexMergeJoin(t *testing.T) {
 }
 
 func TestNewCollationCheckClusterIndexTable(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -623,8 +592,6 @@ func prepare4Collation(tk *testkit.TestKit, hasIndex bool) {
 }
 
 func TestCollateSelection(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -637,8 +604,6 @@ func TestCollateSelection(t *testing.T) {
 }
 
 func TestCollateSort(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -658,8 +623,6 @@ func TestCollateSort(t *testing.T) {
 }
 
 func TestCollateHashAgg(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -686,8 +649,6 @@ func TestCollateHashAgg(t *testing.T) {
 }
 
 func TestCollateStreamAgg(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -704,8 +665,6 @@ func TestCollateStreamAgg(t *testing.T) {
 }
 
 func TestCollateIndexReader(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -722,8 +681,6 @@ func TestCollateIndexReader(t *testing.T) {
 }
 
 func TestCollateIndexLookup(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -741,8 +698,6 @@ func TestCollateIndexLookup(t *testing.T) {
 }
 
 func TestIssue16668(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -755,8 +710,6 @@ func TestIssue16668(t *testing.T) {
 }
 
 func TestIssue27091(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -774,8 +727,6 @@ func TestIssue27091(t *testing.T) {
 }
 
 func TestCollateStringFunction(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -901,9 +852,6 @@ func TestCollateStringFunction(t *testing.T) {
 }
 
 func TestCollateLike(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -937,8 +885,6 @@ func TestCollateLike(t *testing.T) {
 }
 
 func TestCollateSubQuery(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -955,8 +901,6 @@ func TestCollateSubQuery(t *testing.T) {
 }
 
 func TestCollateDDL(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -967,8 +911,6 @@ func TestCollateDDL(t *testing.T) {
 }
 
 func TestNewCollationWithClusterIndex(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -982,8 +924,6 @@ func TestNewCollationWithClusterIndex(t *testing.T) {
 }
 
 func TestNewCollationBinaryFlag(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1027,8 +967,6 @@ func TestNewCollationBinaryFlag(t *testing.T) {
 }
 
 func TestIssue17176(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1044,9 +982,6 @@ func TestIssue17176(t *testing.T) {
 }
 
 func TestIssue18638(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1060,9 +995,6 @@ func TestIssue18638(t *testing.T) {
 }
 
 func TestCollationText(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1077,9 +1009,6 @@ func TestCollationText(t *testing.T) {
 }
 
 func TestIssue18662(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1095,9 +1024,6 @@ func TestIssue18662(t *testing.T) {
 }
 
 func TestIssue19116(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1122,9 +1048,6 @@ func TestIssue19116(t *testing.T) {
 }
 
 func TestIssue17063(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1142,9 +1065,6 @@ func TestIssue17063(t *testing.T) {
 }
 
 func TestIssue11177(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1160,9 +1080,6 @@ func TestIssue11177(t *testing.T) {
 }
 
 func TestIssue19804(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1182,9 +1099,6 @@ func TestIssue19804(t *testing.T) {
 }
 
 func TestIssue20209(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1196,9 +1110,6 @@ func TestIssue20209(t *testing.T) {
 }
 
 func TestIssue18949(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1214,9 +1125,6 @@ func TestIssue18949(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1287,9 +1195,6 @@ func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
 }
 
 func TestClusteredIndexAndNewCollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1321,8 +1226,6 @@ func TestClusteredIndexAndNewCollation(t *testing.T) {
 }
 
 func TestIssue20608(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1331,9 +1234,6 @@ func TestIssue20608(t *testing.T) {
 }
 
 func TestIssue20161(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1347,8 +1247,6 @@ func TestIssue20161(t *testing.T) {
 }
 
 func TestCollationIndexJoin(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1384,8 +1282,6 @@ func TestCollationIndexJoin(t *testing.T) {
 }
 
 func TestCollationMergeJoin(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1413,8 +1309,6 @@ func TestCollationMergeJoin(t *testing.T) {
 }
 
 func TestIssue20876(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1439,9 +1333,6 @@ func TestLikeWithCollation(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
 	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_unicode_ci,EXPLICIT) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
@@ -1456,9 +1347,6 @@ func TestCollationPrefixClusteredIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) collate utf8mb4_general_ci;")
 	tk.MustExec("insert into t values('01233', 1);")
@@ -1474,9 +1362,6 @@ func TestIssue23805(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk.MustExec("CREATE TABLE `tbl_5` (" +
 		"  `col_25` time NOT NULL DEFAULT '05:35:58'," +
 		"  `col_26` blob NOT NULL," +
@@ -1492,8 +1377,6 @@ func TestIssue23805(t *testing.T) {
 }
 
 func TestIssue26662(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1507,8 +1390,6 @@ func TestIssue26662(t *testing.T) {
 }
 
 func TestIssue30245(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1523,8 +1404,6 @@ func TestCollationForBinaryLiteral(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (`COL1` tinyblob NOT NULL,  `COL2` binary(1) NOT NULL,  `COL3` bigint(11) NOT NULL,  PRIMARY KEY (`COL1`(5),`COL2`,`COL3`) /*T![clustered_index] CLUSTERED */)")

@@ -177,7 +177,6 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			remained:   "[]",
 		},
 	}
-	collate.SetNewCollationEnabledForTest(true)
 	for _, tt := range testCases {
 		comment := Commentf("failed at case:\nexpr: %v\ncorColIDs: %v\nidxColIDs: %v\nidxColLens: %v\naccess: %v\nremained: %v\n", tt.expr, tt.corColIDs, tt.idxColIDs, tt.idxColLens, tt.access, tt.remained)
 		filters, err := expression.ParseSimpleExprsWithNames(s.ctx, tt.expr, totalSchema, names)
@@ -206,5 +205,4 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
-	collate.SetNewCollationEnabledForTest(false)
 }

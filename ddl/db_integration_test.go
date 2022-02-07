@@ -2836,7 +2836,7 @@ func (s *testIntegrationSuite3) TestStrictDoubleTypeCheck(c *C) {
 }
 
 func (s *testSerialDBSuite) TestDuplicateErrorMessage(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

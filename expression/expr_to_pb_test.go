@@ -1226,9 +1226,6 @@ func TestSortByItem2Pb(t *testing.T) {
 }
 
 func TestPushCollationDown(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
 	client := new(mock.Client)
@@ -1253,8 +1250,6 @@ func columnCollation(c *Column, chs, coll string) *Column {
 }
 
 func TestNewCollationsEnabled(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	var colExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)

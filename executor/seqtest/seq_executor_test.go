@@ -1194,8 +1194,6 @@ func TestCoprocessorPriority(t *testing.T) {
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1220,9 +1218,6 @@ func TestShowForNewCollations(t *testing.T) {
 func TestForbidUnsupportedCollations(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {

@@ -2867,8 +2867,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk = testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"

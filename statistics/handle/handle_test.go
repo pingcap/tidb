@@ -2881,8 +2881,6 @@ func (s *testStatsSuite) TestExtStatsOnModifiedColumn(c *C) {
 func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b varchar(8) character set utf8mb4 collate utf8mb4_general_ci, c varchar(8) character set utf8mb4 collate utf8mb4_bin)")
@@ -2914,8 +2912,6 @@ func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a varchar(10) collate utf8mb4_unicode_ci);")

@@ -2663,8 +2663,6 @@ func TestTranslate(t *testing.T) {
 
 func TestCIWeightString(t *testing.T) {
 	ctx := createContext(t)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	type weightStringTest struct {
 		str     string

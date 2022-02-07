@@ -828,9 +828,6 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		require.Equal(t, cs.expName, cons.Value.Collation())
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	for _, cs := range cases {
 		ft := types.NewFieldType(mysql.TypeString)
 		ft.Collate = cs.name

@@ -1139,8 +1139,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4256,9 +4254,6 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4272,9 +4267,6 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4289,9 +4281,6 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
