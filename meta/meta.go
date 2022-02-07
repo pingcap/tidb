@@ -15,6 +15,7 @@
 package meta
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -33,14 +34,16 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 var (
-	globalIDMutex sync.Mutex
-	policyIDMutex sync.Mutex
+	globalIDMutex    sync.Mutex
+	globalJobIDMutex sync.Mutex
+	policyIDMutex    sync.Mutex
 )
 
 // Meta structure:
@@ -59,23 +62,25 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mSequencePrefix   = "SID"
-	mSeqCyclePrefix   = "SequenceCycle"
-	mTableIDPrefix    = "TID"
-	mIncIDPrefix      = "IID"
-	mRandomIDPrefix   = "TARID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mSchemaDiffPrefix = "Diff"
-	mPolicies         = []byte("Policies")
-	mPolicyPrefix     = "Policy"
-	mPolicyGlobalID   = []byte("PolicyGlobalID")
-	mPolicyMagicByte  = CurrentMagicByteVer
+	mMetaPrefix         = []byte("m")
+	mNextGlobalIDKey    = []byte("NextGlobalID")
+	mNextGlobalJobIDKey = []byte("NextGlobalJobID")
+	mSchemaVersionKey   = []byte("SchemaVersionKey")
+	mDBs                = []byte("DBs")
+	mDBPrefix           = "DB"
+	mTablePrefix        = "Table"
+	mSequencePrefix     = "SID"
+	mSeqCyclePrefix     = "SequenceCycle"
+	mTableIDPrefix      = "TID"
+	mIncIDPrefix        = "IID"
+	mRandomIDPrefix     = "TARID"
+	mBootstrapKey       = []byte("BootstrapKey")
+	mSchemaDiffPrefix   = "Diff"
+	mPolicies           = []byte("Policies")
+	mPolicyPrefix       = "Policy"
+	mPolicyGlobalID     = []byte("PolicyGlobalID")
+	mPolicyMagicByte    = CurrentMagicByteVer
+	mInitDDLTable       = []byte("initDDLTable")
 )
 
 const (
@@ -115,6 +120,7 @@ type Meta struct {
 	txn        *structure.TxStructure
 	StartTS    uint64 // StartTS is the txn's start TS.
 	jobListKey JobListKeyType
+	Diff       *model.SchemaDiff
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -146,6 +152,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	defer globalIDMutex.Unlock()
 
 	return m.txn.Inc(mNextGlobalIDKey, 1)
+}
+
+// GenGlobalJobID generates next job id globally.
+func (m *Meta) GenGlobalJobID(n int) ([]int64, error) {
+	globalJobIDMutex.Lock()
+	defer globalJobIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalJobIDKey, int64(n))
+	if err != nil {
+		return nil, err
+	}
+	origID := newID - int64(n)
+	ids := make([]int64, 0, n)
+	for i := origID + 1; i <= newID; i++ {
+		ids = append(ids, i)
+	}
+	return ids, nil
 }
 
 // GenGlobalIDs generates the next n global IDs.
@@ -375,6 +398,214 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	return m.txn.HSet(dbKey, tableKey, data)
+}
+
+// CreateMySQLSchema create mysql schema
+func (m *Meta) CreateMySQLSchema() (bool, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return false, err
+	}
+	if len(dbs) != 0 {
+		return false, nil
+	}
+
+	id, _ := m.GenGlobalID()
+	db := model.DBInfo{
+		ID:      id,
+		Name:    model.NewCIStr("mysql"),
+		Charset: mysql.UTF8MB4Charset,
+		Collate: mysql.UTF8MB4DefaultCollation,
+		State:   model.StatePublic,
+	}
+	data, err := json.Marshal(db)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	return true, m.txn.HSet(mDBs, m.dbKey(db.ID), data)
+}
+
+// CreateDDLJobTable creates a table with tableInfo in database.
+func (m *Meta) CreateDDLJobTable(dbid int64) error {
+	v, err := m.txn.Get(mInitDDLTable)
+	if err == nil && v != nil {
+		return nil
+	}
+	id, _ := m.GenGlobalID()
+	col := &model.ColumnInfo{
+		ID:      1,
+		Name:    model.NewCIStr("job_id"),
+		Offset:  0,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col2 := &model.ColumnInfo{
+		ID:      2,
+		Name:    model.NewCIStr("reorg"),
+		Offset:  1,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col3 := &model.ColumnInfo{
+		ID:      3,
+		Name:    model.NewCIStr("schema_id"),
+		Offset:  2,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col4 := &model.ColumnInfo{
+		ID:      4,
+		Name:    model.NewCIStr("table_id"),
+		Offset:  3,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col5 := &model.ColumnInfo{
+		ID:      5,
+		Name:    model.NewCIStr("job_meta"),
+		Offset:  4,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col6 := &model.ColumnInfo{
+		ID:      6,
+		Name:    model.NewCIStr("processing"),
+		Offset:  5,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	col7 := &model.ColumnInfo{
+		ID:      7,
+		Name:    model.NewCIStr("is_drop_schema"),
+		Offset:  6,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	idx := &model.IndexInfo{
+		ID:      1,
+		Name:    model.NewCIStr("PRIMARY"),
+		Table:   model.NewCIStr("tidb_ddl_job"),
+		State:   model.StatePublic,
+		Tp:      model.IndexTypeBtree,
+		Unique:  true,
+		Primary: true,
+	}
+	idx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("PRIMARY"), Length: -1})
+	col.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	col.Flag |= mysql.NotNullFlag
+	col.Flag |= mysql.PriKeyFlag
+	col2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	col3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	col4.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	col5.FieldType = *types.NewFieldType(mysql.TypeBlob)
+	col6.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	col7.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	tableInfo := model.TableInfo{
+		ID:         id,
+		Name:       model.NewCIStr("tidb_ddl_job"),
+		Charset:    mysql.UTF8MB4Charset,
+		Collate:    mysql.UTF8MB4DefaultCollation,
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+	//tableInfo.Indices = append(tableInfo.Indices, idx)
+	tableInfo.Columns = append(tableInfo.Columns, col, col2, col3, col4, col5, col6, col7)
+
+	data, err := json.Marshal(tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(tableInfo.ID), data)
+	if err != nil {
+		return err
+	}
+
+	reorgCol := &model.ColumnInfo{
+		ID:      1,
+		Name:    model.NewCIStr("job_id"),
+		Offset:  0,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol2 := &model.ColumnInfo{
+		ID:      2,
+		Name:    model.NewCIStr("ele_id"),
+		Offset:  1,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol3 := &model.ColumnInfo{
+		ID:      3,
+		Name:    model.NewCIStr("curr_ele_id"),
+		Offset:  2,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol4 := &model.ColumnInfo{
+		ID:      4,
+		Name:    model.NewCIStr("curr_ele_type"),
+		Offset:  3,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol5 := &model.ColumnInfo{
+		ID:      5,
+		Name:    model.NewCIStr("start_key"),
+		Offset:  4,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol6 := &model.ColumnInfo{
+		ID:      6,
+		Name:    model.NewCIStr("end_key"),
+		Offset:  5,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol7 := &model.ColumnInfo{
+		ID:      7,
+		Name:    model.NewCIStr("physical_id"),
+		Offset:  6,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	reorgCol.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	reorgCol.Flag |= mysql.NotNullFlag
+	reorgCol2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	reorgCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	reorgCol4.FieldType = *types.NewFieldType(mysql.TypeBlob)
+	reorgCol5.FieldType = *types.NewFieldType(mysql.TypeBlob)
+	reorgCol6.FieldType = *types.NewFieldType(mysql.TypeBlob)
+	reorgCol7.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	reorgIdx := &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("idx_job_id"),
+		Table: model.NewCIStr("tidb_ddl_reorg"),
+		State: model.StatePublic,
+		Tp:    model.IndexTypeBtree,
+	}
+	id, _ = m.GenGlobalID()
+	reorgTableInfo := model.TableInfo{
+		ID:      id,
+		Name:    model.NewCIStr("tidb_ddl_reorg"),
+		Charset: mysql.UTF8MB4Charset,
+		Collate: mysql.UTF8MB4DefaultCollation,
+		State:   model.StatePublic,
+	}
+	reorgTableInfo.Indices = append(reorgTableInfo.Indices, reorgIdx)
+	reorgTableInfo.Columns = append(reorgTableInfo.Columns, reorgCol, reorgCol2, reorgCol3, reorgCol4, reorgCol5, reorgCol6, reorgCol7)
+
+	data, err = json.Marshal(reorgTableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(reorgTableInfo.ID), data)
+	if err != nil {
+		return err
+	}
+
+	return m.txn.Set(mInitDDLTable, []byte("asd"))
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
@@ -1219,13 +1450,34 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	return diff, errors.Trace(err)
 }
 
+// PreSetSchemaDiff sets the modification information on a given schema version.
+func (m *Meta) PreSetSchemaDiff(diff *model.SchemaDiff) {
+	m.Diff = diff
+}
+
 // SetSchemaDiff sets the modification information on a given schema version.
-func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
-	data, err := json.Marshal(diff)
+func (m *Meta) SetSchemaDiff(d kv.Storage) error {
+	var ver int64
+	var err error
+	err = kv.RunInNewTxn(context.TODO(), d, true, func(ctx context.Context, txn kv.Transaction) error {
+		nm := NewMeta(txn)
+		ver, err = nm.GenSchemaVersion()
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	m.Diff.Version = ver
+	data, err := json.Marshal(m.Diff)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	diffKey := m.schemaDiffKey(diff.Version)
+	diffKey := m.schemaDiffKey(ver)
 	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())

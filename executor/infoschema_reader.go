@@ -1186,7 +1186,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	}
 	e.DDLJobRetriever.is = e.is
 	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	err = e.DDLJobRetriever.initial(txn, e.ctx)
 	if err != nil {
 		return err
 	}

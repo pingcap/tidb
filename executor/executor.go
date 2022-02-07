@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -475,12 +476,24 @@ type DDLJobRetriever struct {
 	TZLoc          *time.Location
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
-	jobs, err := admin.GetDDLJobs(txn)
-	if err != nil {
-		return err
-	}
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
+	var (
+		jobs []*model.Job
+		err  error
+	)
 	m := meta.NewMeta(txn)
+	if ddl.AllowConcurrentDDL.Load() {
+		sess.GetSessionVars().SetInTxn(true)
+		jobs, err = admin.GetConcurrencyDDLJobs(sess)
+		if err != nil {
+			return err
+		}
+	} else {
+		jobs, err = admin.GetDDLJobs(txn)
+		if err != nil {
+			return err
+		}
+	}
 	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return err
@@ -572,6 +585,8 @@ type ShowDDLJobQueriesExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -579,10 +594,15 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
+	if ddl.AllowConcurrentDDL.Load() {
+		jobs, err = admin.GetConcurrencyDDLJobs(e.ctx)
+	} else {
+		jobs, err = admin.GetDDLJobs(txn)
+	}
 	if err != nil {
 		return err
 	}
+	// TODO(hawkingrei): Can it be used in concurrency DDL. it need to be checked.
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return err
@@ -628,7 +648,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	err = e.DDLJobRetriever.initial(txn)
+	err = e.DDLJobRetriever.initial(txn, e.ctx)
 	if err != nil {
 		return err
 	}

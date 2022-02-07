@@ -17,6 +17,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
@@ -205,6 +207,37 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
+// GetDDLJobID is a sql that can get job id
+const GetDDLJobID = "select job_meta from mysql.tidb_ddl_job order by job_id"
+
+// GetConcurrencyDDLJobs get all DDL jobs and sort by job.ID
+func GetConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), GetDDLJobID)
+	if err != nil {
+		return nil, err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	jobs := make([]*model.Job, 0, 10)
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := &model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 // GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
@@ -276,6 +309,21 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
 	jobs, err := GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+
+	finish, err := finishFn(jobs)
+	if err != nil || finish {
+		return err
+	}
+	return IterHistoryDDLJobs(txn, finishFn)
+}
+
+// IterAllConcurrentDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
+// then iterates history DDL jobs until the `finishFn` return true or error.
+func IterAllConcurrentDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error), sess sessionctx.Context) error {
+	jobs, err := GetConcurrencyDDLJobs(sess)
 	if err != nil {
 		return err
 	}
@@ -515,3 +563,54 @@ var (
 	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
 	ErrAdminCheckTable = dbterror.ClassAdmin.NewStd(errno.ErrAdminCheckTable)
 )
+
+// GetDDLReorgHandle get ddl reorg handle.
+func GetDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	rs.Close()
+	if err != nil || len(rows) == 0 {
+		return nil, nil, nil, 0, err
+	}
+	id := rows[0].GetInt64(0)
+	tp := rows[0].GetBytes(1)
+	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
+	rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	var rows2 []chunk.Row
+	rows2, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	rs.Close()
+	if err != nil || len(rows2) == 0 {
+		return nil, nil, nil, 0, err
+	}
+	element = &meta.Element{
+		ID:      id,
+		TypeKey: tp,
+	}
+	startKey = rows2[0].GetBytes(0)
+	endKey = rows2[0].GetBytes(1)
+	physicalTableID = rows2[0].GetInt64(2)
+
+	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// update them to table's in this case.
+	if physicalTableID == 0 {
+		if job.ReorgMeta != nil {
+			endKey = kv.IntHandle(job.ReorgMeta.EndHandle).Encoded()
+		} else {
+			endKey = kv.IntHandle(math.MaxInt64).Encoded()
+		}
+		physicalTableID = job.TableID
+		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
+			zap.Int64("partition ID", physicalTableID),
+			zap.Stringer("startHandle", startKey),
+			zap.Stringer("endHandle", endKey))
+	}
+	return
+}
