@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
