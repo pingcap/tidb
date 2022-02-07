@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
-	atomicutil "go.uber.org/atomic"
+	"go.uber.org/atomic"
 )
 
-var gogcValue atomicutil.Int64 = *atomicutil.NewInt64(100)
+var gogcValue atomic.Int64 = *atomic.NewInt64(100)
 
 func init() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
@@ -51,9 +51,9 @@ func GetGOGC() int {
 // GOGCStatSampler is a sampler for GOGC.
 type GOGCStatSampler struct {
 	last struct {
-		now         int64
-		lastGC      time.Time
-		gcPauseTime uint64
+		now          int64
+		lastGC       time.Time
+		gcPauseTotal uint64
 	}
 	GCRunCount uint64
 	exitChan   chan struct{}
@@ -70,14 +70,14 @@ func (gss *GOGCStatSampler) sample() {
 	debug.ReadGCStats(&gc)
 	now := time.Now().UnixNano()
 	dur := float64(now - gss.last.now)
-	gcPauseRatio := float64(uint64(gc.PauseTotal)-gss.last.gcPauseTime) / dur
+	gcPauseRatio := float64(uint64(gc.PauseTotal)-gss.last.gcPauseTotal) / dur
 	if gss.last.lastGC.Before(gc.LastGC) {
 		gcIntervals := gc.LastGC.Sub(gss.last.lastGC)
 		gss.last.lastGC = gc.LastGC
 		metrics.GCIntervals.Set(float64(gcIntervals.Nanoseconds()))
 	}
 	gss.last.now = now
-	gss.last.gcPauseTime = uint64(gc.PauseTotal)
+	gss.last.gcPauseTotal = uint64(gc.PauseTotal)
 	metrics.GCPausePercent.Set(gcPauseRatio)
 }
 
