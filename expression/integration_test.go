@@ -9905,7 +9905,6 @@ func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9918,7 +9917,8 @@ func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk.MustExec("create table t(a enum(\"a\", \"b\"), b enum(\"a\", \"b\"), c bool, d int, index idx(d))")
 	tk.MustExec("insert into t values(\"a\", \"a\", 1, 1);")
 	tk.MustQuery("select /*+ inl_hash_join(t1) */  * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c and t1.d=t2.d;").Check(testkit.Rows("a a 1 1 a a 1 1"))
-=======
+}
+
 func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9930,5 +9930,4 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
->>>>>>> a95927f50... expression: Fix wrong result of microsecond function in vectorized (#29310)
 }
