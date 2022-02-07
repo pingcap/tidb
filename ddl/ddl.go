@@ -60,8 +60,10 @@ const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
-	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt          = "ddl"
+	addingDDLJobPrefix  = "/tidb/ddl/add_ddl_job_"
+	ddlPrompt           = "ddl"
+	addingDDLJobGeneral = "/tidb/ddl/add_ddl_job_general"
+	addingDDLJobReorg   = "/tidb/ddl/add_ddl_job_reorg"
 
 	shardRowIDBitsMax = 15
 
@@ -92,6 +94,10 @@ var (
 	// region.
 	EnableSplitTableRegion = uint32(0)
 )
+
+// TODO(hawingrei): remove it after implementing the feature switch.
+// AllowConcurrentDDL works with Concurrent DDL feature.
+var AllowConcurrentDDL atomicutil.Bool = *atomicutil.NewBool(true)
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
@@ -197,9 +203,16 @@ type ddl struct {
 
 	*ddlCtx
 	workers           map[workerType]*worker
+	wp                *workerPool
+	gwp               *workerPool
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
+	sessForAddDDL     sessionctx.Context
 	enableTiFlashPoll *atomicutil.Bool
+
+	ddlJobCh             chan struct{}
+	runningReorgJobMap   map[int]struct{}
+	runningReorgJobMapMu sync.RWMutex
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -340,9 +353,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll: atomicutil.NewBool(true),
+		ddlCtx:             ddlCtx,
+		limitJobCh:         make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll:  atomicutil.NewBool(true),
+		ctx:                ctx,
+		ddlJobCh:           make(chan struct{}, 100),
+		runningReorgJobMap: make(map[int]struct{}),
 	}
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
@@ -376,8 +392,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
+	d.wg.Run(d.limitDDLJobs)
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -387,21 +402,49 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 
-		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		for _, worker := range d.workers {
-			worker.wg.Add(1)
-			w := worker
-			go w.start(d.ddlCtx)
 
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+		if AllowConcurrentDDL.Load() {
+			sysFac := func() (pools.Resource, error) {
+				wk := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 
-			// When the start function is called, we will send a fake job to let worker
-			// checks owner firstly and try to find whether a job exists and run.
-			asyncNotify(worker.ddlJobCh)
+				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+
+				// When the start function is called, we will send a fake job to let worker
+				// checks owner firstly and try to find whether a job exists and run.
+				asyncNotify(wk.ddlJobCh)
+				return wk, nil
+			}
+			sysFac2 := func() (pools.Resource, error) {
+				wk := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+
+				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+
+				// When the start function is called, we will send a fake job to let worker
+				// checks owner firstly and try to find whether a job exists and run.
+				asyncNotify(wk.ddlJobCh)
+				return wk, nil
+			}
+			d.wp = newDDLWorkerPool(pools.NewResourcePool(sysFac, 10, 10, 3*time.Minute))
+			d.gwp = newDDLWorkerPool(pools.NewResourcePool(sysFac2, 300, 300, 0))
+			d.sessForAddDDL, _ = d.sessPool.get()
+			d.wg.Run(d.startDispatchLoop)
+		} else {
+			d.workers = make(map[workerType]*worker, 2)
+			d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+			d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+			for _, worker := range d.workers {
+				worker.wg.Add(1)
+				w := worker
+				go w.start(d.ddlCtx)
+
+				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+
+				// When the start function is called, we will send a fake job to let worker
+				// checks owner firstly and try to find whether a job exists and run.
+				asyncNotify(worker.ddlJobCh)
+			}
 		}
 
 		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -441,10 +484,19 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
-
-	for _, worker := range d.workers {
-		worker.close()
+	if AllowConcurrentDDL.Load() {
+		if d.wp != nil {
+			d.wp.close()
+		}
+		if d.gwp != nil {
+			d.gwp.close()
+		}
+	} else {
+		for _, worker := range d.workers {
+			worker.Close()
+		}
 	}
+
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
 	if d.delRangeMgr != nil {
@@ -579,17 +631,32 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	if !RunWorker {
 		return
 	}
-	var worker *worker
-	if mayNeedReorg(job) {
-		worker = d.workers[addIdxWorker]
+	if AllowConcurrentDDL.Load() {
+		key := ""
+		if mayNeedReorg(job) {
+			key = addingDDLJobReorg
+		} else {
+			key = addingDDLJobGeneral
+		}
+		if d.ownerManager.IsOwner() {
+			asyncNotify(d.ddlJobCh)
+		} else {
+			d.asyncNotifyByEtcd(key, job)
+		}
 	} else {
-		worker = d.workers[generalWorker]
+		var worker *worker
+		if mayNeedReorg(job) {
+			worker = d.workers[addIdxWorker]
+		} else {
+			worker = d.workers[generalWorker]
+		}
+		if d.ownerManager.IsOwner() {
+			asyncNotify(worker.ddlJobCh)
+		} else {
+			d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
+		}
 	}
-	if d.ownerManager.IsOwner() {
-		asyncNotify(worker.ddlJobCh)
-	} else {
-		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
-	}
+
 }
 
 func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {

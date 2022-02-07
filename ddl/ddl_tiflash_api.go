@@ -499,8 +499,11 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		}
 		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
 	}
-
-	err = admin.IterAllDDLJobs(txn, fn)
+	if AllowConcurrentDDL.Load() {
+		err = admin.IterAllConcurrentDDLJobs(txn, fn, ctx)
+	} else {
+		err = admin.IterAllDDLJobs(txn, fn)
+	}
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,

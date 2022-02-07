@@ -1039,7 +1039,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		reorgInfo, err := getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs))
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs), w)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -1071,7 +1071,13 @@ func (w *worker) doModifyColumnTypeWithData(
 				w.reorgCtx.cleanNotifyReorgCancel()
 				return ver, errors.Trace(err)
 			}
-			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			var err1 error
+			if AllowConcurrentDDL.Load() {
+				err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
+			} else {
+				err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
+			}
+			if err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 					zap.String("job", job.String()), zap.Error(err1))
 			}

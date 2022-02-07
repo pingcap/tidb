@@ -558,7 +558,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements, w)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -580,7 +580,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
-				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				var err1 error
+				if AllowConcurrentDDL.Load() {
+					err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
+				} else {
+					err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
+				}
+				if err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 				}
 			}
