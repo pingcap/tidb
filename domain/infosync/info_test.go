@@ -223,7 +223,7 @@ func TestTiFlashManager(t *testing.T) {
 	rule := MakeNewRule(1, 2, []string{"a"})
 	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
 	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(rules))
 	require.Equal(t, "table-1-r", rules[0].ID)
 	require.Equal(t, 2, rules[0].Count)
@@ -239,19 +239,19 @@ func TestTiFlashManager(t *testing.T) {
 
 	// GetTiFlashStoresStat
 	stats, err := GetTiFlashStoresStat(ctx)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
 	// DeleteTiFlashPlacementRule
 	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 0, len(rules))
 
 	// ConfigureTiFlashPDForTable
 	require.Nil(t, ConfigureTiFlashPDForTable(1, 2, &[]string{"a"}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(rules))
 
 	// ConfigureTiFlashPDForPartitions
@@ -263,7 +263,7 @@ func TestTiFlashManager(t *testing.T) {
 		},
 	}, 3, &[]string{})
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	// Have table 1 and 2
 	require.Equal(t, 2, len(rules))
 	z, ok = tiflash.SyncStatus[2]
