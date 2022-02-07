@@ -2553,7 +2553,7 @@ func TestWeightString(t *testing.T) {
 		{7, "NONE", 0, nil},
 		{7.0, "NONE", 0, nil},
 		{"a", "NONE", 0, "a"},
-		{"a ", "NONE", 0, "a "},
+		{"a ", "NONE", 0, "a"},
 		{"中", "NONE", 0, "中"},
 		{"中 ", "NONE", 0, "中 "},
 		{nil, "CHAR", 5, nil},
