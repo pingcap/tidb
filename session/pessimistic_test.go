@@ -403,7 +403,7 @@ func TestPointGetKeyLock(t *testing.T) {
 	tk.MustExec("insert point values (1, 1, 1)")
 	tk.MustExec("insert point values (2, 2, 2)")
 	tk.MustExec("commit")
-	wg.Done()
+	wg.Wait()
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from point where id = 3 for update")
