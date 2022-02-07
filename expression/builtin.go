@@ -114,7 +114,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
-// Every built-in function needs determined argTps and retType when we create it.
+// Every built-in function needs to be determined argTps and retType when we create it.
 func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
@@ -187,21 +187,21 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: int(types.MaxFsp),
+			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETTimestamp:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: int(types.MaxFsp),
+			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
 			Flen:    mysql.MaxDurationWidthWithFsp,
-			Decimal: int(types.MaxFsp),
+			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETJson:

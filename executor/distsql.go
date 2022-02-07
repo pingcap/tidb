@@ -361,6 +361,7 @@ type IndexLookUpExecutor struct {
 
 	indexStreaming bool
 	tableStreaming bool
+	indexPaging    bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -560,6 +561,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetPaging(e.indexPaging).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -1252,7 +1254,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
+		!w.idxLookup.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {

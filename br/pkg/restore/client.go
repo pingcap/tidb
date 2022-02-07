@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -52,6 +54,7 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
+const minBatchDdlSize = 1
 
 // Client sends requests to restore files.
 type Client struct {
@@ -62,8 +65,10 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-	databases  map[string]*utils.Database
-	ddlJobs    []*model.Job
+	databases map[string]*utils.Database
+	ddlJobs   []*model.Job
+	// ddlJobsMap record the tables' auto id need to restore after create table
+	ddlJobsMap map[UniqueTableName]bool
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -93,6 +98,8 @@ type Client struct {
 	// and restore stats with #dump.LoadStatsFromJSON
 	statsHandler *handle.Handle
 	dom          *domain.Domain
+
+	batchDdlSize uint
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -163,6 +170,14 @@ func (rc *Client) IsOnline() bool {
 // SetSwitchModeInterval set switch mode interval for client.
 func (rc *Client) SetSwitchModeInterval(interval time.Duration) {
 	rc.switchModeInterval = interval
+}
+
+func (rc *Client) SetBatchDdlSize(batchDdlsize uint) {
+	rc.batchDdlSize = batchDdlsize
+}
+
+func (rc *Client) GetBatchDdlSize() uint {
+	return rc.batchDdlSize
 }
 
 // Close a client.
@@ -400,6 +415,46 @@ func (rc *Client) CreateTables(
 	}
 	return rewriteRules, newTables, nil
 }
+func (rc *Client) createTables(
+	ctx context.Context,
+	db *DB,
+	dom *domain.Domain,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]CreatedTable, error) {
+	log.Info("client to create tables")
+	if rc.IsSkipCreateSQL() {
+		log.Info("skip create table and alter autoIncID")
+	} else {
+		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	cts := make([]CreatedTable, 0, len(tables))
+	for _, table := range tables {
+		newTableInfo, err := rc.GetTableSchema(dom, table.DB.Name, table.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+			return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
+				"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
+				transferBoolToValue(table.Info.IsCommonHandle),
+				table.Info.IsCommonHandle,
+				newTableInfo.IsCommonHandle)
+		}
+		rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+		ct := CreatedTable{
+			RewriteRule: rules,
+			Table:       newTableInfo,
+			OldTable:    table,
+		}
+		log.Debug("new created tables", zap.Any("table", ct))
+		cts = append(cts, ct)
+	}
+	return cts, nil
+}
 
 func (rc *Client) createTable(
 	ctx context.Context,
@@ -407,12 +462,11 @@ func (rc *Client) createTable(
 	dom *domain.Domain,
 	table *metautil.Table,
 	newTS uint64,
-	ddlTables map[UniqueTableName]bool,
 ) (CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, ddlTables)
+		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -451,7 +505,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	ddlTables := rc.DDLJobsMap()
+	rc.GenerateDDLJobsMap()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -459,13 +513,35 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+
+	var err error
+
+	if rc.batchDdlSize > minBatchDdlSize && len(dbPool) > 0 {
+
+		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+
+		if err == nil {
+			defer log.Debug("all tables are created")
+			close(outCh)
+			return outCh
+			// fall back to old create table (sequential create table)
+		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
+			log.Info("fall back to the sequential create table")
+		} else {
+			errCh <- err
+			close(outCh)
+			return outCh
+		}
+	}
+
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
 		select {
 		case <-c.Done():
 			return c.Err()
 		default:
+
 		}
-		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
+		rt, err := rc.createTable(c, db, dom, t, newTS)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Error(err),
@@ -497,6 +573,7 @@ func (rc *Client) GoCreateTables(
 			errCh <- err
 		}
 	}()
+
 	return outCh
 }
 
@@ -521,6 +598,41 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := dbPool[id%uint64(len(dbPool))]
 			return createOneTable(ectx, db, table)
+		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+	eg, ectx := errgroup.WithContext(ctx)
+	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	numOfTables := len(tables)
+
+	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
+		end := utils.MinInt(lastSent+int(rc.batchDdlSize), len(tables))
+		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
+
+		tableSlice := tables[lastSent:end]
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			db := dbPool[id%uint64(len(dbPool))]
+			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
+			if err != nil {
+				log.Error("create tables fail")
+				return err
+			}
+			for _, ct := range cts {
+				log.Debug("table created and send to next",
+					zap.Int("output chan size", len(outCh)),
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+				outCh <- ct
+				rater.Inc()
+				rater.L().Info("table created",
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+			}
+			return err
 		})
 	}
 	return eg.Wait()
@@ -1119,22 +1231,25 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
+// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
 // if we execute some DDLs before create table.
 // we may get two situation that need to rebase auto increment/random id.
 // 1. truncate table: truncate will generate new id cache.
 // 2. create table/create and rename table: the first create table will lock down the id cache.
 // because we cannot create onExistReplace table.
 // so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
-	m := make(map[UniqueTableName]bool)
+func (rc *Client) GenerateDDLJobsMap() {
+	rc.ddlJobsMap = make(map[UniqueTableName]bool)
 	for _, job := range rc.ddlJobs {
 		switch job.Type {
 		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
+			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
 		}
 	}
-	return m
+}
+
+func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
+	return rc.ddlJobsMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.

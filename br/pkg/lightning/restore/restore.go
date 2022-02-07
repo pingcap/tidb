@@ -379,14 +379,17 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case isSSTImport:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -432,6 +435,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.preCheckRequirements,
+		rc.initCheckpoint,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.cleanCheckpoints,
@@ -453,7 +457,6 @@ outside:
 		case err == nil:
 		case log.IsContextCanceledError(err):
 			logger.Info("task canceled")
-			err = nil
 			break outside
 		default:
 			logger.Error("run failed")
@@ -468,6 +471,7 @@ outside:
 	}
 
 	task.End(zap.ErrorLevel, err)
+	rc.errorMgr.LogErrorDetails()
 	rc.errorSummaries.emitLog()
 
 	return errors.Trace(err)
@@ -497,11 +501,7 @@ type schemaJob struct {
 	dbName   string
 	tblName  string // empty for create db jobs
 	stmtType schemaStmtType
-	stmts    []*schemaStmt
-}
-
-type schemaStmt struct {
-	sql string
+	stmts    []string
 }
 
 type restoreSchemaWorker struct {
@@ -512,6 +512,15 @@ type restoreSchemaWorker struct {
 	wg    sync.WaitGroup
 	glue  glue.Glue
 	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		return err
+	}
+	job.stmts = stmts
+	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
@@ -525,15 +534,15 @@ func (worker *restoreSchemaWorker) makeJobs(
 	var err error
 	// 1. restore databases, execute statements concurrency
 	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName:   dbMeta.Name,
-			stmtType: schemaCreateDatabase,
-			stmts:    make([]*schemaStmt, 0, 1),
+		sql, err := dbMeta.GetSchema(worker.ctx, worker.store)
+		if err != nil {
+			return err
 		}
-		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		err = worker.addJob(sql, &schemaJob{
+			dbName:   dbMeta.Name,
+			tblName:  "",
+			stmtType: schemaCreateDatabase,
 		})
-		err = worker.appendJob(restoreSchemaJob)
 		if err != nil {
 			return err
 		}
@@ -559,29 +568,18 @@ func (worker *restoreSchemaWorker) makeJobs(
 				return errors.Errorf("table `%s`.`%s` schema not found", dbMeta.Name, tblMeta.Name)
 			}
 			sql, err := tblMeta.GetSchema(worker.ctx, worker.store)
+			if err != nil {
+				return err
+			}
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  tblMeta.Name,
 					stmtType: schemaCreateTable,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
-			}
-			if err != nil {
-				return err
 			}
 		}
 	}
@@ -594,22 +592,11 @@ func (worker *restoreSchemaWorker) makeJobs(
 		for _, viewMeta := range dbMeta.Views {
 			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  viewMeta.Name,
 					stmtType: schemaCreateView,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
@@ -670,8 +657,8 @@ loop:
 				DB:     session,
 			}
 			for _, stmt := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt.sql)
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
+				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
@@ -731,7 +718,7 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 	case <-worker.ctx.Done():
 		// cancel the job
 		worker.wg.Done()
-		return worker.ctx.Err()
+		return errors.Trace(worker.ctx.Err())
 	case worker.jobCh <- job:
 		return nil
 	}
@@ -771,14 +758,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		if err = rc.DataCheck(ctx); err != nil {
-			return errors.Trace(err)
-		}
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
 	}
+	rc.sysVars = sysVars
 
+	return nil
+}
+
+// initCheckpoint initializes all tables' checkpoint data
+func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	// Load new checkpoints
-	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
+	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -790,20 +783,8 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
-	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
-	rc.sysVars = sysVars
-
 	// Estimate the number of chunks for progress reporting
-	err = rc.estimateChunkCountIntoMetrics(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return rc.estimateChunkCountIntoMetrics(ctx)
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -1339,7 +1320,10 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
-func (rc *Controller) restoreTables(ctx context.Context) error {
+func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
+	// output error summary
+	defer rc.outpuErrorSummary()
+
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
@@ -1368,16 +1352,21 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	finishSchedulers := func() {}
 	// if one lightning failed abnormally, and can't determine whether it needs to switch back,
 	// we do not do switch back automatically
-	cleanupFunc := func() {}
 	switchBack := false
-	taskFinished := false
+	cleanup := false
+	postProgress := func() error { return nil }
 	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
 
 		logTask.Info("removing PD leader&region schedulers")
 
 		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		finishSchedulers = func() {
 			if restoreFn != nil {
+				taskFinished := finalErr == nil
 				// use context.Background to make sure this restore function can still be executed even if ctx is canceled
 				restoreCtx := context.Background()
 				needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
@@ -1387,39 +1376,17 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 				}
 				switchBack = needSwitchBack
 				if needSwitchBack {
+					logTask.Info("add back PD leader&region schedulers")
 					if restoreE := restoreFn(restoreCtx); restoreE != nil {
 						logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 					}
-
-					logTask.Info("add back PD leader&region schedulers")
-					// clean up task metas
-					if needCleanup {
-						logTask.Info("cleanup task metas")
-						if cleanupErr := rc.taskMgr.Cleanup(restoreCtx); cleanupErr != nil {
-							logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
-						}
-						// cleanup table meta and schema db if needed.
-						cleanupFunc = func() {
-							if e := rc.taskMgr.CleanupAllMetas(restoreCtx); err != nil {
-								logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(e))
-							}
-						}
-					}
 				}
+				cleanup = needCleanup
 			}
 
 			rc.taskMgr.Close()
 		}
-
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
-	defer func() {
-		if switchBack {
-			cleanupFunc()
-		}
-	}()
 
 	type task struct {
 		tr *TableRestore
@@ -1439,16 +1406,30 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 
 	periodicActions, cancelFunc := rc.buildRunPeriodicActionAndCancelFunc(ctx, stopPeriodicActions)
 	go periodicActions()
-	finishFuncCalled := false
-	defer func() {
-		if !finishFuncCalled {
-			finishSchedulers()
-			cancelFunc(switchBack)
-			finishFuncCalled = true
-		}
-	}()
 
 	defer close(stopPeriodicActions)
+
+	defer func() {
+		finishSchedulers()
+		cancelFunc(switchBack)
+
+		if err := postProgress(); err != nil {
+			logTask.End(zap.ErrorLevel, err)
+			finalErr = err
+			return
+		}
+		// clean up task metas
+		if cleanup {
+			logTask.Info("cleanup task metas")
+			if cleanupErr := rc.taskMgr.Cleanup(context.Background()); cleanupErr != nil {
+				logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
+			}
+			// cleanup table meta and schema db if needed.
+			if err := rc.taskMgr.CleanupAllMetas(context.Background()); err != nil {
+				logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(err))
+			}
+		}
+	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
@@ -1517,32 +1498,26 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	default:
 	}
 
-	// stop periodic tasks for restore table such as pd schedulers and switch-mode tasks.
-	// this can help make cluster switching back to normal state more quickly.
-	// finishSchedulers()
-	// cancelFunc(switchBack)
-	// finishFuncCalled = true
-	taskFinished = true
-
-	close(postProcessTaskChan)
-	// otherwise, we should run all tasks in the post-process task chan
-	for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for task := range postProcessTaskChan {
-				metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
-				// force all the remain post-process tasks to be executed
-				_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
-				restoreErr.Set(err)
-			}
-		}()
+	postProgress = func() error {
+		close(postProcessTaskChan)
+		// otherwise, we should run all tasks in the post-process task chan
+		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for task := range postProcessTaskChan {
+					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
+					// force all the remain post-process tasks to be executed
+					_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					restoreErr.Set(err)
+				}
+			}()
+		}
+		wg.Wait()
+		return restoreErr.Get()
 	}
-	wg.Wait()
 
-	err = restoreErr.Get()
-	logTask.End(zap.ErrorLevel, err)
-	return err
+	return nil
 }
 
 func (tr *TableRestore) restoreTable(
@@ -1650,6 +1625,12 @@ func (tr *TableRestore) restoreTable(
 
 	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
+}
+
+func (rc *Controller) outpuErrorSummary() {
+	if rc.errorMgr.HasError() {
+		fmt.Println(rc.errorMgr.Output())
+	}
 }
 
 // do full compaction for the whole data.
@@ -1812,10 +1793,14 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 		return nil
 	}
 	// set new collation flag base on tidb config
-	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	enabled, err := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	if err != nil {
+		return err
+	}
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
+	log.L().Info("new_collation_enabled", zap.Bool("enabled", enabled))
 
 	return nil
 }
@@ -1865,6 +1850,10 @@ func (rc *Controller) isTiDBBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	if err := rc.DataCheck(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if rc.cfg.App.CheckRequirements {
 		if err := rc.ClusterIsAvailable(ctx); err != nil {
 			return errors.Trace(err)
@@ -1909,8 +1898,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return errors.Trace(err)
 				}
 				if err := rc.clusterResource(ctx, source); err != nil {
-					rc.taskMgr.CleanupTask(ctx)
-					return errors.Trace(err)
+					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
+						log.L().Warn("cleanup task failed", zap.Error(err1))
+						return err
+					}
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return errors.Trace(err)
@@ -1920,14 +1911,16 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
-		fmt.Print(rc.checkTemplate.Output())
+		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {
 		if !taskExist && rc.taskMgr != nil {
-			rc.taskMgr.CleanupTask(ctx)
+			err := rc.taskMgr.CleanupTask(ctx)
+			if err != nil {
+				log.L().Warn("cleanup task failed", zap.Error(err))
+			}
 		}
-		return errors.Errorf("tidb-lightning check failed."+
-			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
+		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }
@@ -1968,11 +1961,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
-	err = rc.checkCSVHeader(ctx, rc.dbMetas)
-	if err != nil {
-		return err
-	}
-
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -1983,6 +1971,14 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+		return err
+	}
+
 	return nil
 }
 

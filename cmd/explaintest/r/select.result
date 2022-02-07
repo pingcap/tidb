@@ -385,7 +385,7 @@ id	estRows	task	access object	operator info
 Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(test.t.a), <nil>, 1)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
-  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
   │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -395,7 +395,7 @@ id	estRows	task	access object	operator info
 Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(test.t.a), <nil>, 0)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:firstrow(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
-  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
   │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan

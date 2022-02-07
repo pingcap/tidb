@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strings"
 	"sync"
@@ -48,29 +49,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plannercore.CachedPrepareStmt, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, plannercore.ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj, nil
-	}
-	return nil, plannercore.ErrStmtNotFound
-}
-
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		prepareStmt, err := GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
 			return false
@@ -97,15 +79,6 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 	}
 	return nil
-}
-
-// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string) {
-	bindRecord, _, match := matchSQLBinding(sctx, stmtNode)
-	if match {
-		bindSQL = bindRecord.Bindings[0].BindSQL
-	}
-	return bindSQL
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
@@ -344,6 +317,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
+	failpoint.Inject("mockRandomPlanID", func() {
+		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+	})
+
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 
@@ -374,7 +351,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() {
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
 		allowed, err := allowInReadOnlyMode(sctx, node)
 		if err != nil {
 			return nil, nil, 0, err
@@ -410,7 +387,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
+// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
+func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -465,12 +443,12 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
+	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession, nil
@@ -719,6 +697,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error 
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
-	plannercore.GetBindSQL4PlanCache = GetBindSQL4PlanCache
 	plannercore.IsReadOnly = IsReadOnly
 }

@@ -78,7 +78,7 @@ func TestIssue17727(t *testing.T) {
 
 	tk.MustExec("set @a = '2020-06-12 13:47:58';")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestIssue17891(t *testing.T) {
@@ -94,6 +94,29 @@ func TestIssue17891(t *testing.T) {
 	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
 	tk.MustExec("drop table t")
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
+}
+
+func TestIssue31174(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);")
+	tk.MustExec("insert into t values('`?');")
+	// The 'like' condition can not be used to construct the range.
+	tk.HasPlan("select * from t where a like '`%';", "TableFullScan")
+	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(4) collate binary primary key /*T![clustered_index] clustered */);")
+	tk.MustExec("insert into t values('`?');")
+	tk.HasPlan("select * from t where a like '`%';", "TableRangeScan")
+	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?\x00\x00"))
 }
 
 func TestIssue20268(t *testing.T) {
@@ -175,6 +198,17 @@ func TestCollationBasic(t *testing.T) {
 	tk.MustQuery("select * from t1 where col1 >= 0xc484 and col1 <= 0xc3b3;").Check(testkit.Rows("Ȇ"))
 
 	tk.MustQuery("select collation(IF('a' < 'B' collate utf8mb4_general_ci, 'smaller', 'greater' collate utf8mb4_unicode_ci));").Check(testkit.Rows("utf8mb4_unicode_ci"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10))")
+	tk.MustExec("insert into t values ('a')")
+	tk.MustQuery("select * from t where a in ('b' collate utf8mb4_general_ci, 'A', 3)").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`COL2` tinyint(16) DEFAULT NULL);")
+	tk.MustExec("insert into t values(0);")
+	tk.MustQuery("select * from t WHERE COL2 IN (0xfc);").Check(testkit.Rows())
+	tk.MustQuery("select * from t WHERE COL2 = 0xfc;").Check(testkit.Rows())
 }
 
 func TestWeightString(t *testing.T) {
@@ -1416,22 +1450,6 @@ func TestLikeWithCollation(t *testing.T) {
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
 }
 
-func TestCollationUnion(t *testing.T) {
-	// For issue 19694.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ' order by a;").Check(testkit.Rows("2010-09-09", "2010-09-09  "))
-	res := tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 2)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	res = tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
-	require.Len(t, res.Rows(), 1)
-}
-
 func TestCollationPrefixClusteredIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1486,6 +1504,18 @@ func TestIssue26662(t *testing.T) {
 	tk.MustExec("set names utf8;")
 	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
 		Check(testkit.Rows())
+}
+
+func TestIssue30245(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end", mysql.ErrCantAggregate3collations)
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
@@ -2019,7 +2049,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
 	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
+	require.Equal(t, types.ErrWrongValue.Code(), errors.Cause(err).(*terror.Error).Code(), "err %v", err)
 
 	// for weekday
 	result = tk.MustQuery(`select weekday("2012-12-20"), weekday("2012-12-21"), weekday("2012-12-22"), weekday("2012-12-23"), weekday("2012-12-24"), weekday("2012-12-25"), weekday("2012-12-26"), weekday("2012-12-27");`)
@@ -2033,10 +2063,8 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
-	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
-		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	result.Check(testkit.Rows("0 0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
 	result.Check(testkit.Rows("0 0 0 0"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -3830,8 +3858,8 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("set global tidb_enable_noop_functions=1")
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
-	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.NoError(t, err)
+	//require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())

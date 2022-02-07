@@ -199,7 +199,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      time.Local,
 		}
 	}
 	if w.reorgCtx.doneCh == nil {
@@ -341,11 +340,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParams(w.ddlJobCtx, sql, tblInfo.ID)
-	if err != nil {
-		return statistics.PseudoRowCount
-	}
-	rows, _, err := executor.ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := executor.ExecRestrictedSQL(w.ddlJobCtx, nil, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}

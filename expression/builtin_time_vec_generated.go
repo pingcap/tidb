@@ -316,7 +316,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -498,8 +498,8 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -576,7 +576,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			return err
 		}
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 
@@ -940,7 +940,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -1122,8 +1122,8 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
@@ -1200,7 +1200,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			return err
 		}
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
 
@@ -1301,7 +1301,7 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			continue
 		}
 		lhsTime := arg0[i]
-		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1356,7 +1356,7 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			continue
 		}
 		lhs.Duration = arg0[i]
-		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1460,7 +1460,7 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1515,7 +1515,7 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1571,11 +1571,11 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
-		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1658,14 +1658,15 @@ func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateStringStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -1678,24 +1679,38 @@ func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -1705,14 +1720,15 @@ func (b *builtinAddDateStringStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -1725,24 +1741,38 @@ func (b *builtinAddDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -1752,14 +1782,15 @@ func (b *builtinAddDateStringIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateStringRealSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -1772,24 +1803,38 @@ func (b *builtinAddDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -1799,14 +1844,15 @@ func (b *builtinAddDateStringRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateStringDecimalSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -1819,24 +1865,38 @@ func (b *builtinAddDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result 
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -2422,14 +2482,15 @@ func (b *builtinAddDateDurationDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateStringStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -2442,24 +2503,38 @@ func (b *builtinSubDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -2469,14 +2544,15 @@ func (b *builtinSubDateStringStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateStringIntSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -2489,24 +2565,38 @@ func (b *builtinSubDateStringIntSig) vecEvalTime(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -2516,14 +2606,15 @@ func (b *builtinSubDateStringIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateStringRealSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -2536,24 +2627,38 @@ func (b *builtinSubDateStringRealSig) vecEvalTime(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil
@@ -2563,14 +2668,15 @@ func (b *builtinSubDateStringRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateStringDecimalSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	unit, isNull, err := b.args[2].EvalString(b.ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
 	if isNull {
-		result.ResizeTime(n, true)
+		result.ReserveString(n)
+		result.SetNulls(0, n, true)
 		return nil
 	}
 
@@ -2583,24 +2689,38 @@ func (b *builtinSubDateStringDecimalSig) vecEvalTime(input *chunk.Chunk, result 
 		return err
 	}
 
-	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	dateBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.vecGetDateFromString(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
 		return err
 	}
 
-	result.MergeNulls(intervalBuf)
-	resDates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+
+	result.ReserveString(n)
+
+	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
+			result.AppendNull()
 		} else {
-			resDates[i] = resDate
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
+			result.AppendString(resDate.String())
 		}
 	}
 	return nil

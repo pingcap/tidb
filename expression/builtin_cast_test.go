@@ -323,7 +323,7 @@ func TestCastFuncSig(t *testing.T) {
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn.RetType.Decimal = types.DefaultFsp
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
@@ -817,7 +817,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToTimeCases {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		timeFunc.tp = tp
@@ -846,7 +846,7 @@ func TestCastFuncSig(t *testing.T) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		fsp    int8
+		fsp    int
 		tp     byte
 		row    chunk.MutRow
 	}{
@@ -902,7 +902,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToTimeCases2 {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(c.tp)
-		tp.Decimal = int(c.fsp)
+		tp.Decimal = c.fsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		timeFunc.tp = tp
@@ -926,7 +926,7 @@ func TestCastFuncSig(t *testing.T) {
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < int(c.fsp); i++ {
+			for i := 0; i < c.fsp; i++ {
 				resAfter += "0"
 			}
 		}
@@ -984,7 +984,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToDurationCases {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		durationFunc.tp = tp
@@ -1166,7 +1166,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 	ctx := createContext(t)
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn0.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn0.RetType.Decimal = types.DefaultFsp
 	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
@@ -1420,6 +1420,9 @@ func TestWrapWithCastAsString(t *testing.T) {
 			require.Equal(t, c.ret, res)
 		}
 	}
+
+	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
+	require.NotContains(t, expr.String(), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {

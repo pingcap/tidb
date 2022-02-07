@@ -14,7 +14,15 @@
 
 package reporter
 
-import "time"
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tipb/go-tipb"
+)
 
 // DataSink collects and sends data to a target.
 type DataSink interface {
@@ -25,4 +33,75 @@ type DataSink interface {
 
 	// OnReporterClosing notifies DataSink that the reporter is closing.
 	OnReporterClosing()
+}
+
+// DataSinkRegisterer is for registering DataSink
+type DataSinkRegisterer interface {
+	Register(dataSink DataSink) error
+	Deregister(dataSink DataSink)
+}
+
+// ReportData contains data that reporter sends to the agent.
+type ReportData struct {
+	// DataRecords contains the topN records of each second and the `others`
+	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
+	DataRecords []tipb.TopSQLRecord
+	SQLMetas    []tipb.SQLMeta
+	PlanMetas   []tipb.PlanMeta
+}
+
+func (d *ReportData) hasData() bool {
+	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
+}
+
+var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
+
+// DefaultDataSinkRegisterer implements DataSinkRegisterer.
+type DefaultDataSinkRegisterer struct {
+	sync.Mutex
+	ctx       context.Context
+	dataSinks map[DataSink]struct{}
+}
+
+// NewDefaultDataSinkRegisterer creates a new DefaultDataSinkRegisterer which implements DataSinkRegisterer.
+func NewDefaultDataSinkRegisterer(ctx context.Context) DefaultDataSinkRegisterer {
+	return DefaultDataSinkRegisterer{
+		ctx:       ctx,
+		dataSinks: make(map[DataSink]struct{}, 10),
+	}
+}
+
+// Register implements DataSinkRegisterer.
+func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
+	r.Lock()
+	defer r.Unlock()
+
+	select {
+	case <-r.ctx.Done():
+		return errors.New("DefaultDataSinkRegisterer closed")
+	default:
+		if len(r.dataSinks) >= 10 {
+			return errors.New("too many datasinks")
+		}
+		r.dataSinks[dataSink] = struct{}{}
+		if len(r.dataSinks) > 0 {
+			topsqlstate.EnableTopSQL()
+		}
+		return nil
+	}
+}
+
+// Deregister implements DataSinkRegisterer.
+func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
+	r.Lock()
+	defer r.Unlock()
+
+	select {
+	case <-r.ctx.Done():
+	default:
+		delete(r.dataSinks, dataSink)
+		if len(r.dataSinks) == 0 {
+			topsqlstate.DisableTopSQL()
+		}
+	}
 }

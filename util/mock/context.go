@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -284,6 +285,9 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
+// UpdateColStatsUsage updates the column stats usage.
+func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
+
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
 
@@ -337,6 +341,11 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context) {
+}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (c *Context) GetStmtStats() *stmtstats.StatementStats {
+	return nil
 }
 
 // Close implements the sessionctx.Context interface.
