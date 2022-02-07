@@ -154,6 +154,24 @@
           "                                  └─TableFullScan_36 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over (order by md5(deptid)) a from employee) tmp; -- 8. some scalar function not supported.",
+        "Plan": [
+          "Projection_10 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, Column#9",
+          "└─Shuffle_29 10000.00 root  execution info: concurrency:5, data sources:[Window_27]",
+          "  └─Window_13 10000.00 root  sum(cast(Column#7, decimal(20,0) BINARY))->Column#9 over(partition by test.employee.deptid)",
+          "    └─Sort_28 10000.00 root  test.employee.deptid",
+          "      └─Window_27 10000.00 root  row_number()->Column#7 over(order by Column#6 rows between current row and current row)",
+          "        └─Sort_25 10000.00 root  Column#6",
+          "          └─Projection_20 10000.00 root  test.employee.empid, test.employee.deptid, test.employee.salary, md5(cast(test.employee.deptid, var_string(20)))->Column#6",
+          "            └─TableReader_24 10000.00 root  data:TableFullScan_23",
+          "              └─TableFullScan_23 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."
+        ]
       }
     ]
   }

@@ -2316,6 +2316,21 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	{
+		allSupported := true
+		for _, windowFunc := range lw.WindowFuncDescs {
+			if !windowFunc.CanPushDownToTiFlash() {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function `" + windowFunc.Name + "` is not supported now.")
+				allSupported = false
+			}
+		}
+		if !allSupported {
+			return nil
+		}
+	}
+
+
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
