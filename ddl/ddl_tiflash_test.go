@@ -302,14 +302,14 @@ func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 	require.NotNil(t, pi)
 	require.NotNil(t, tb2.Meta().TiFlashReplica)
 	for _, p := range pi.Definitions {
-		require.Equal(t, true, tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
+		require.True(t, tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			require.True(t, ok)
-			require.Equal(t, true, table.Accel)
+			require.True(t, table.Accel)
 		}
 	}
-	require.Equal(t, 0, len(pi.AddingDefinitions))
+	require.Zero(t, len(pi.AddingDefinitions))
 	CheckFlashback(s, tk, t)
 }
 
@@ -343,11 +343,11 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 
 	// Partition `lessThan` shall be ready
 	for _, p := range pi.Definitions {
-		require.Equal(t, true, tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
+		require.True(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			require.True(t, ok)
-			require.Equal(t, true, table.Accel)
+			require.True(t, table.Accel)
 		}
 	}
 	require.Equal(t, 0, len(pi.AddingDefinitions))
@@ -448,7 +448,7 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.NotNil(t, replica)
-	require.Equal(t, true, replica.Available)
+	require.True(t, replica.Available)
 	require.Equal(t, count, replica.Count)
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
