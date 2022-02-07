@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

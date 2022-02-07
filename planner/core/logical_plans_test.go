@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
