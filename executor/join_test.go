@@ -1156,7 +1156,7 @@ func TestJoinLeak(t *testing.T) {
 	err = result.Next(context.Background(), req)
 	require.NoError(t, err)
 	time.Sleep(time.Millisecond)
-	require.Nil(t, result.Close())
+	require.NoError(t, result.Close())
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
@@ -2410,7 +2410,7 @@ func TestIssue18572_1(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"))
-	require.Nil(t, rs.Close())
+	require.NoError(t, rs.Close())
 }
 
 func TestIssue18572_2(t *testing.T) {
@@ -2432,7 +2432,7 @@ func TestIssue18572_2(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"))
-	require.Nil(t, rs.Close())
+	require.NoError(t, rs.Close())
 }
 
 func TestIssue18572_3(t *testing.T) {
@@ -2454,7 +2454,7 @@ func TestIssue18572_3(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"))
-	require.Nil(t, rs.Close())
+	require.NoError(t, rs.Close())
 }
 
 func TestApplyOuterAggEmptyInput(t *testing.T) {
@@ -2711,7 +2711,7 @@ func TestIssue20779(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.EqualError(t, err, "testIssue20779")
-	require.Nil(t, rs.Close())
+	require.NoError(t, rs.Close())
 }
 
 func TestIssue20219(t *testing.T) {
