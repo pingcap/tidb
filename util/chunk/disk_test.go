@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/cznic/mathutil"
+	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -170,6 +171,33 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	row = format.toMutRow(l.fieldTypes).ToRow()
 	return row, err
+}
+
+func (l *listInDiskWriteDisk) flush() (err error) {
+	// buffered is not zero only after Add and before GetRow, after the first flush, buffered will always be zero,
+	// hence we use a RWLock to allow quicker quit.
+	l.bufFlushMutex.RLock()
+	checksumWriter := l.w
+	l.bufFlushMutex.RUnlock()
+	if checksumWriter == nil {
+		return nil
+	}
+	l.bufFlushMutex.Lock()
+	defer l.bufFlushMutex.Unlock()
+	if l.w != nil {
+		err = l.w.Close()
+		if err != nil {
+			return
+		}
+		l.w = nil
+		// the l.disk is the underlying object of the l.w, it will be closed
+		// after calling l.w.Close, we need to reopen it before reading rows.
+		l.disk, err = os.Open(l.disk.Name())
+		if err != nil {
+			return errors2.Trace(err)
+		}
+	}
+	return
 }
 
 func checkRow(t *testing.T, row1, row2 Row) {
