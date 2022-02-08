@@ -344,7 +344,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				bf.Write(opt.separator)
 			}
 		}
-		bf.WriteByte('\n')
+		bf.WriteByte('\r' + '\n')
 	}
 	wp.currentFileSize += uint64(bf.Len())
 
@@ -359,7 +359,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
 
-		bf.WriteByte('\n')
+		bf.WriteByte('\r' + '\n')
 		if bf.Len() >= lengthLimit {
 			select {
 			case <-pCtx.Done():
