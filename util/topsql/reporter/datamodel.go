@@ -111,6 +111,15 @@ func (ts tsItems) Swap(i, j int) {
 	ts[i], ts[j] = ts[j], ts[i]
 }
 
+func (ts tsItems) sorted() bool {
+	for n := 0; n < len(ts)-1; n++ {
+		if ts[n].timestamp > ts[n+1].timestamp {
+			return false
+		}
+	}
+	return true
+}
+
 // toProto converts the tsItems to the corresponding protobuf representation.
 func (ts tsItems) toProto() []*tipb.TopSQLRecordItem {
 	capacity := len(ts)
@@ -301,6 +310,74 @@ func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementS
 	}
 }
 
+// merge other record into r.
+// Attention, this function depend on r is sorted, and will sort `other` by timestamp.
+func (r *record) merge(other *record) {
+	if other == nil || len(other.tsItems) == 0 {
+		return
+	}
+
+	if !other.tsItems.sorted() {
+		sort.Sort(other) // this may never happen
+	}
+	if len(r.tsItems) == 0 {
+		r.totalCPUTimeMs = other.totalCPUTimeMs
+		r.tsItems = other.tsItems
+		r.tsIndex = other.tsIndex
+		return
+	}
+	length := len(r.tsItems) + len(other.tsItems)
+	newTsItems := make(tsItems, 0, length)
+	i, j := 0, 0
+	for i < len(r.tsItems) && j < len(other.tsItems) {
+		if r.tsItems[i].timestamp == other.tsItems[j].timestamp {
+			newItem := zeroTsItem()
+			newItem.timestamp = r.tsItems[i].timestamp
+			newItem.cpuTimeMs = r.tsItems[i].cpuTimeMs + other.tsItems[j].cpuTimeMs
+			r.tsItems[i].stmtStats.Merge(&other.tsItems[j].stmtStats)
+			newItem.stmtStats = r.tsItems[i].stmtStats
+			newTsItems = append(newTsItems, newItem)
+			i++
+			j++
+		} else if r.tsItems[i].timestamp < other.tsItems[j].timestamp {
+			newItem := zeroTsItem()
+			newItem.timestamp = r.tsItems[i].timestamp
+			newItem.cpuTimeMs = r.tsItems[i].cpuTimeMs
+			newItem.stmtStats = r.tsItems[i].stmtStats
+			newTsItems = append(newTsItems, newItem)
+			i++
+		} else {
+			newItem := zeroTsItem()
+			newItem.timestamp = other.tsItems[j].timestamp
+			newItem.cpuTimeMs = other.tsItems[j].cpuTimeMs
+			newItem.stmtStats = other.tsItems[j].stmtStats
+			newTsItems = append(newTsItems, newItem)
+			j++
+		}
+	}
+	if i < len(r.tsItems) {
+		newTsItems = append(newTsItems, r.tsItems[i:]...)
+	}
+	if j < len(other.tsItems) {
+		newTsItems = append(newTsItems, other.tsItems[j:]...)
+	}
+	r.tsItems = newTsItems
+	r.totalCPUTimeMs += other.totalCPUTimeMs
+	r.rebuildTsIndex()
+}
+
+// rebuildTsIndex rebuilds the entire tsIndex based on tsItems.
+func (r *record) rebuildTsIndex() {
+	if len(r.tsItems) == 0 {
+		r.tsIndex = map[uint64]int{}
+		return
+	}
+	r.tsIndex = make(map[uint64]int, len(r.tsItems))
+	for index, item := range r.tsItems {
+		r.tsIndex[item.timestamp] = index
+	}
+}
+
 // toProto converts the record to the corresponding protobuf representation.
 func (r *record) toProto() tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
@@ -326,6 +403,18 @@ func (rs records) Less(i, j int) bool {
 
 func (rs records) Swap(i, j int) {
 	rs[i], rs[j] = rs[j], rs[i]
+}
+
+// topN returns the largest n records (by record.totalCPUTimeMs), other
+// records are returned as evicted.
+func (rs records) topN(n int) (top, evicted records) {
+	if len(rs) <= n {
+		return rs, nil
+	}
+	if err := quickselect.QuickSelect(rs, n); err != nil {
+		return rs, nil
+	}
+	return rs[:n], rs[n:]
 }
 
 // toProto converts the records to the corresponding protobuf representation.
@@ -408,10 +497,47 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
+// removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
+func (c *collecting) removeInvalidPlanRecord() {
+	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
+	for _, v := range c.records {
+		k := string(v.sqlDigest)
+		sql2PlansMap[k] = append(sql2PlansMap[k], v.planDigest)
+	}
+	for k, plans := range sql2PlansMap {
+		if len(plans) != 2 {
+			continue
+		}
+		if len(plans[0]) > 0 && len(plans[1]) > 0 {
+			continue
+		}
+
+		sqlDigest := []byte(k)
+		key0 := encodeKey(c.keyBuf, sqlDigest, plans[0])
+		key1 := encodeKey(c.keyBuf, sqlDigest, plans[1])
+		record0, ok0 := c.records[key0]
+		record1, ok1 := c.records[key1]
+		if !ok0 || !ok1 {
+			continue
+		}
+		if len(plans[0]) != 0 {
+			record0.merge(record1)
+			delete(c.records, key1)
+		} else {
+			record1.merge(record0)
+			delete(c.records, key0)
+		}
+	}
+}
+
 // getReportRecords returns all records, others record will be packed and appended to the end.
 func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
+
+	c.removeInvalidPlanRecord()
+
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)

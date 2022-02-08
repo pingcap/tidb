@@ -46,6 +46,7 @@ type plugins struct {
 }
 
 // clone deep copies plugins info.
+// nolint: unused
 func (p *plugins) clone() *plugins {
 	np := &plugins{
 		plugins:      make(map[Kind][]Plugin, len(p.plugins)),

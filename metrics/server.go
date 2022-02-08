@@ -27,13 +27,12 @@ var (
 
 // Metrics
 var (
-	PacketIOHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
+	PacketIOCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "packet_io_bytes",
-			Help:      "Bucketed histogram of packet IO bytes.",
-			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
+			Help:      "Counters of packet IO bytes.",
 		}, []string{LblType})
 
 	QueryDurationHistogram = prometheus.NewHistogramVec(
