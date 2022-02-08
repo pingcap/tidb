@@ -20,10 +20,10 @@ import (
 	"path/filepath"
 	"sort"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -38,13 +38,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&restoreSuite{})
-
-type restoreSuite struct{}
-
-func (s *restoreSuite) TestNewTableRestore(c *C) {
+func TestNewTableRestore(t *testing.T) {
 	testCases := []struct {
 		name       string
 		createStmt string
@@ -60,9 +57,9 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{}}
 	for i, tc := range testCases {
 		node, err := p.ParseOneStmt(tc.createStmt, "utf8mb4", "utf8mb4_bin")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo.State = model.StatePublic
 
 		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
@@ -75,12 +72,12 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
 		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
-		c.Assert(tr, NotNil)
-		c.Assert(err, IsNil)
+		require.NotNil(t, tr)
+		require.NoError(t, err)
 	}
 }
 
-func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
+func TestNewTableRestoreFailure(t *testing.T) {
 	tableInfo := &checkpoints.TidbTableInfo{
 		Name: "failure",
 		Core: &model.TableInfo{},
@@ -91,10 +88,10 @@ func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 	tableName := common.UniqueTable("mockdb", "failure")
 
 	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
-	c.Assert(err, ErrorMatches, `failed to tables\.TableFromMeta.*`)
+	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
-func (s *restoreSuite) TestErrorSummaries(c *C) {
+func TestErrorSummaries(t *testing.T) {
 	logger, buffer := log.MakeTestLogger()
 
 	es := makeErrorSummaries(logger)
@@ -104,15 +101,16 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 
 	lines := buffer.Lines()
 	sort.Strings(lines[1:])
-	c.Assert(lines, DeepEquals, []string{
+	require.Equal(t, []string{
 		`{"$lvl":"ERROR","$msg":"tables failed to be imported","count":2}`,
 		`{"$lvl":"ERROR","$msg":"-","table":"first","status":"analyzed","error":"a1 error"}`,
 		`{"$lvl":"ERROR","$msg":"-","table":"second","status":"written","error":"b2 error"}`,
-	})
+	}, lines)
 }
 
-func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
-	dir := c.MkDir()
+func TestVerifyCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+
 	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
 	defer cpdb.Close()
 	ctx := context.Background()
@@ -123,8 +121,8 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 	}()
 
 	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(taskCp, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, taskCp)
 
 	newCfg := func() *config.Config {
 		cfg := config.NewConfig()
@@ -140,7 +138,7 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 	}
 
 	err = cpdb.Initialize(ctx, newCfg(), map[string]*checkpoints.TidbDBInfo{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	adjustFuncs := map[string]func(cfg *config.Config){
 		"tikv-importer.backend": func(cfg *config.Config) {
@@ -168,16 +166,16 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 
 	// default mode, will return error
 	taskCp, err = cpdb.TaskCheckpoint(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for conf, fn := range adjustFuncs {
 		cfg := newCfg()
 		fn(cfg)
 		err := verifyCheckpoint(cfg, taskCp)
 		if conf == "version" {
 			build.ReleaseVersion = actualReleaseVersion
-			c.Assert(err, ErrorMatches, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*")
+			require.Regexp(t, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*", err.Error())
 		} else {
-			c.Assert(err, ErrorMatches, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf))
+			require.Regexp(t, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf), err.Error())
 		}
 	}
 
@@ -189,18 +187,18 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 		cfg.App.CheckRequirements = false
 		fn(cfg)
 		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func (s *restoreSuite) TestDiskQuotaLock(c *C) {
+func TestDiskQuotaLock(t *testing.T) {
 	lock := newDiskQuotaLock()
 
 	lock.Lock()
-	c.Assert(lock.TryRLock(), IsFalse)
+	require.False(t, lock.TryRLock())
 	lock.Unlock()
-	c.Assert(lock.TryRLock(), IsTrue)
-	c.Assert(lock.TryRLock(), IsTrue)
+	require.True(t, lock.TryRLock())
+	require.True(t, lock.TryRLock())
 
 	rLocked := 2
 	lockHeld := make(chan struct{})
@@ -214,7 +212,7 @@ func (s *restoreSuite) TestDiskQuotaLock(c *C) {
 	}
 	select {
 	case <-lockHeld:
-		c.Fatal("write lock is held before all read locks are released")
+		t.Fatal("write lock is held before all read locks are released")
 	case <-time.NewTimer(10 * time.Millisecond).C:
 	}
 	for ; rLocked > 0; rLocked-- {
@@ -289,13 +287,13 @@ func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[stri
 	panic("should not reach here")
 }
 
-func (s *restoreSuite) TestPreCheckFailed(c *C) {
+func TestPreCheckFailed(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendTiDB
 	cfg.App.CheckRequirements = false
 
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
 	ctl := &Controller{
@@ -315,8 +313,8 @@ func (s *restoreSuite) TestPreCheckFailed(c *C) {
 	mock.ExpectCommit()
 	// precheck failed, will not do init checkpoint.
 	err = ctl.Run(context.Background())
-	c.Assert(err, ErrorMatches, ".*mock init meta failure")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Regexp(t, ".*mock init meta failure", err.Error())
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
@@ -326,6 +324,6 @@ func (s *restoreSuite) TestPreCheckFailed(c *C) {
 	ctl.saveCpCh = make(chan saveCp)
 	// precheck failed, will not do init checkpoint.
 	err1 := ctl.Run(context.Background())
-	c.Assert(err1.Error(), Equals, err.Error())
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, err.Error(), err1.Error())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
