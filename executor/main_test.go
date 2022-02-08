@@ -32,14 +32,16 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
 var aggMergeSuiteData testdata.TestData
+var executorSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-
-	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
-	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
+	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	aggMergeSuiteData = testDataMap["agg_suite"]
+	executorSuiteData = testDataMap["executor_suite"]
+	prepareMergeSuiteData = testDataMap["prepare_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {

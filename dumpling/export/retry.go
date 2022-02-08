@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	"go.uber.org/zap"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -23,9 +24,14 @@ const (
 	ErrNoSuchTable uint16 = 1146
 )
 
-func newDumpChunkBackoffer(shouldRetry bool) *dumpChunkBackoffer { // revive:disable-line:flag-parameter
+type backOfferResettable interface {
+	utils.Backoffer
+	Reset()
+}
+
+func newRebuildConnBackOffer(shouldRetry bool) backOfferResettable { // revive:disable-line:flag-parameter
 	if !shouldRetry {
-		return &dumpChunkBackoffer{
+		return &noopBackoffer{
 			attempt: 1,
 		}
 	}
@@ -47,10 +53,6 @@ func (b *dumpChunkBackoffer) NextBackoff(err error) time.Duration {
 	if _, ok := err.(*mysql.MySQLError); ok && !dbutil.IsRetryableError(err) {
 		b.attempt = 0
 		return 0
-	} else if _, ok := err.(*writerError); ok {
-		// the uploader writer's retry logic is already done in aws client. needn't retry here
-		b.attempt = 0
-		return 0
 	}
 	b.delayTime = 2 * b.delayTime
 	b.attempt--
@@ -62,6 +64,28 @@ func (b *dumpChunkBackoffer) NextBackoff(err error) time.Duration {
 
 func (b *dumpChunkBackoffer) Attempt() int {
 	return b.attempt
+}
+
+func (b *dumpChunkBackoffer) Reset() {
+	b.attempt = dumpChunkRetryTime
+	b.delayTime = dumpChunkWaitInterval
+}
+
+type noopBackoffer struct {
+	attempt int
+}
+
+func (b *noopBackoffer) NextBackoff(err error) time.Duration {
+	b.attempt--
+	return time.Duration(0)
+}
+
+func (b *noopBackoffer) Attempt() int {
+	return b.attempt
+}
+
+func (b *noopBackoffer) Reset() {
+	b.attempt = 1
 }
 
 func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}, conf *Config) *lockTablesBackoffer {

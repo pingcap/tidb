@@ -19,10 +19,11 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -36,64 +37,72 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-var _ = Suite(&testColumnChangeSuite{})
-
-type testColumnChangeSuite struct {
+type testColumnChangeSuiteToVerify struct {
+	suite.Suite
 	store  kv.Storage
 	dbInfo *model.DBInfo
 }
 
-func (s *testColumnChangeSuite) SetUpSuite(c *C) {
+func TestColumnChangeSuite(t *testing.T) {
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
+	require.NoError(t, err)
+
+	suite.Run(t, new(testColumnChangeSuiteToVerify))
+}
+
+func (s *testColumnChangeSuiteToVerify) SetupSuite() {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store = testCreateStore(c, "test_column_change")
+	s.store = testCreateStore(s.T(), "test_column_change")
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
+	require.NoError(s.T(), err)
+	testCreateSchema(s.T(), testNewContext(d), d, s.dbInfo)
 }
 
-func (s *testColumnChangeSuite) TearDownSuite(c *C) {
+func (s *testColumnChangeSuiteToVerify) TearDownSuite() {
 	s.store.Close()
 }
 
-func (s *testColumnChangeSuite) TestColumnChange(c *C) {
+func (s *testColumnChangeSuiteToVerify) TestColumnChange() {
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 	// create table t (c1 int, c2 int);
 	tblInfo, err := testTableInfo(d, "t", 2)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	ctx := testNewContext(d)
 	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	require.NoError(s.T(), err)
+	testCreateTable(s.T(), ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	originTable := testGetTable(s.T(), d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 
 	var mu sync.Mutex
 	tc := &TestDDLCallback{}
@@ -154,31 +163,31 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateColumn(s.T(), ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	require.NoError(s.T(), checkErr)
+	testCheckJobDone(s.T(), d, job, true)
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testColumnDrop(c, ctx, d, tb)
-	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+	s.testColumnDrop(ctx, d, tb)
+	s.testAddColumnNoDefault(ctx, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
+func (s *testColumnChangeSuiteToVerify) TestModifyAutoRandColumnWithMetaKeyChanged() {
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(s.T(), err)
 	}()
 
 	ids, err := d.genGlobalIDs(1)
 	tableID := ids[0]
-	c.Assert(err, IsNil)
+	require.NoError(s.T(), err)
 	colInfo := &model.ColumnInfo{
 		Name:      model.NewCIStr("a"),
 		Offset:    0,
@@ -193,7 +202,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	}
 	colInfo.ID = allocateColumnID(tblInfo)
 	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(s.T(), ctx, d, s.dbInfo, tblInfo)
 
 	tc := &TestDDLCallback{}
 	var errCount int32 = 3
@@ -219,10 +228,10 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, newAutoRandomBits},
 	}
 	err = d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	c.Assert(errCount == 0, IsTrue)
-	c.Assert(genAutoRandErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	require.NoError(s.T(), err)
+	require.True(s.T(), errCount == 0)
+	require.Nil(s.T(), genAutoRandErr)
+	testCheckJobDone(s.T(), d, job, true)
 	var newTbInfo *model.TableInfo
 	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -233,11 +242,11 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 		}
 		return nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(newTbInfo.AutoRandomBits, Equals, newAutoRandomBits)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), newTbInfo.AutoRandomBits, newAutoRandomBits)
 }
 
-func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
+func (s *testColumnChangeSuiteToVerify) testAddColumnNoDefault(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
 	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
@@ -280,12 +289,12 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		}
 	}
 	d.SetHook(tc)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateColumn(s.T(), ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	require.NoError(s.T(), checkErr)
+	testCheckJobDone(s.T(), d, job, true)
 }
 
-func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
+func (s *testColumnChangeSuiteToVerify) testColumnDrop(ctx sessionctx.Context, d *ddl, tbl table.Table) {
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -307,8 +316,8 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		}
 	}
 	d.SetHook(tc)
-	c.Assert(checkErr, IsNil)
-	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
+	require.NoError(s.T(), checkErr)
+	testDropColumn(s.T(), ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
 func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
@@ -333,7 +342,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 	return handle, true, nil
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
+func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -407,7 +416,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuiteToVerify) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
 	err := sctx.NewTxn(ctx)
