@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -1741,8 +1740,6 @@ create table t(
 		},
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
-	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
