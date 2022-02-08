@@ -447,6 +447,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 	} else if rc.cfg.CheckOnlyCfg.Mode == config.CheckModeNormal {
 		opts = []processFunc{
 			rc.setGlobalVariables,
+			rc.loadSchemaForCheckOnly,
 			rc.preCheckRequirements,
 		}
 	} else {
@@ -772,6 +773,77 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	rc.dbInfos = dbInfos
+
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
+	}
+	rc.sysVars = sysVars
+
+	return nil
+}
+
+func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
+	getTableFunc := rc.backend.FetchRemoteTableModels
+	if !rc.tidbGlue.OwnsSQLExecutor() {
+		getTableFunc = rc.tidbGlue.GetTables
+	}
+
+	sqlParser := rc.tidbGlue.GetParser()
+
+	result := make(map[string]*checkpoints.TidbDBInfo, len(rc.dbMetas))
+	for _, schema := range rc.dbMetas {
+		tables, err := getTableFunc(ctx, schema.Name)
+		if err != nil {
+			return err
+		}
+
+		tableMap := make(map[string]*model.TableInfo, len(tables))
+		for _, tbl := range tables {
+			tableMap[tbl.Name.L] = tbl
+		}
+
+		dbInfo := &checkpoints.TidbDBInfo{
+			Name:   schema.Name,
+			Tables: make(map[string]*checkpoints.TidbTableInfo),
+		}
+
+		for _, tbl := range schema.Tables {
+			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
+			if !ok {
+				// read from file if it's not in TiDB
+				if tbl.SchemaFile.FileMeta.Path == "" {
+					return errors.Errorf("table `%s`.`%s` schema not found", schema.Name, tbl.Name)
+				}
+				tblInfo, err = getTableInfoFromMeta(ctx, tbl, rc.store, sqlParser)
+				if err != nil {
+					return err
+				}
+			}
+			tableName := tblInfo.Name.String()
+			if tblInfo.State != model.StatePublic {
+				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
+				metric.RecordTableCount(metric.TableStatePending, err)
+				return err
+			}
+			metric.RecordTableCount(metric.TableStatePending, err)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tableInfo := &checkpoints.TidbTableInfo{
+				ID:   tblInfo.ID,
+				DB:   schema.Name,
+				Name: tableName,
+				Core: tblInfo,
+			}
+			dbInfo.Tables[tableName] = tableInfo
+		}
+
+		result[schema.Name] = dbInfo
+	}
+
+	rc.dbInfos = result
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 	// override by manually set vars
@@ -1925,7 +1997,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
+	if rc.cfg.CheckOnlyCfg != nil || (rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements) {
 		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {

@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
@@ -115,6 +117,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			if fileMeta.Type != mydump.SourceTypeCSV ||
 				mydumperCfg.DataCharacterSet != config.DefaultCSVDataCharacterSet {
 				for _, col := range row.Row {
+					// for non-string column, it returns empty string
 					colStr := col.GetString()
 					if strings.Contains(colStr, config.DefaultCSVDataInvalidCharReplace) {
 						invalidCharRows++
@@ -202,6 +205,26 @@ type sampledDataFileInfo struct {
 	TableInfo *model.TableInfo
 }
 
+func getTableInfoFromMeta(ctx context.Context, tableMeta *mydump.MDTableMeta, store storage.ExternalStorage, sqlParser *parser.Parser) (*model.TableInfo, error) {
+	schema, err := tableMeta.GetSchema(ctx, store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	stmtNodes, _, err := sqlParser.ParseSQL(schema)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(stmtNodes) != 1 {
+		return nil, errors.Errorf("unexpected create table statement: %s", schema)
+	}
+	createTableStmt, ok := stmtNodes[0].(*ast.CreateTableStmt)
+	if !ok || createTableStmt.Table == nil || createTableStmt.Table.TableInfo == nil {
+		return nil, errors.Errorf("invalid create table statement")
+	}
+
+	return createTableStmt.Table.TableInfo, nil
+}
+
 func (d *dataSampleCheck) getSampledDataFiles(ctx context.Context) ([]*sampledDataFileInfo, error) {
 	rc := d.controller
 	sqlParser := rc.tidbGlue.GetParser()
@@ -215,24 +238,13 @@ func (d *dataSampleCheck) getSampledDataFiles(ctx context.Context) ([]*sampledDa
 			fileInfo.TableInfo = t
 			continue
 		}
-		schema, err := tableMeta.GetSchema(ctx, rc.store)
+		tableInfo, err := getTableInfoFromMeta(ctx, tableMeta, rc.store, sqlParser)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		stmtNodes, _, err := sqlParser.ParseSQL(schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(stmtNodes) != 1 {
-			return nil, errors.Errorf("unexpected create table statement: %s", schema)
-		}
-		createTableStmt, ok := stmtNodes[0].(*ast.CreateTableStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid create table statement")
 		}
 
-		fileInfo.TableInfo = createTableStmt.Table.TableInfo
-		stmtMap[fullName] = fileInfo.TableInfo
+		fileInfo.TableInfo = tableInfo
+		stmtMap[fullName] = tableInfo
 	}
 	return dataFiles, nil
 }
