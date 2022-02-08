@@ -35,6 +35,9 @@ import (
 	"modernc.org/mathutil"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/tikv/pd/server/api"
+	pdconfig "github.com/tikv/pd/server/config"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -51,8 +54,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/tikv/pd/server/api"
-	pdconfig "github.com/tikv/pd/server/config"
 )
 
 const (
@@ -598,15 +599,16 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
 }
 
-func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
+func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta mydump.SourceFileMeta, replaceStr string) (mydump.Parser, error){
 	var reader storage.ReadSeekCloser
+	var err error
 	if dataFileMeta.Type == mydump.SourceTypeParquet {
 		reader, err = mydump.OpenParquetReader(ctx, rc.store, dataFileMeta.Path, dataFileMeta.FileSize)
 	} else {
 		reader, err = rc.store.Open(ctx, dataFileMeta.Path)
 	}
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var parser mydump.Parser
@@ -615,23 +617,31 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, replaceStr)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, dataFileMeta.Path)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
+	}
+	return parser, nil
+}
+
+func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
+	parser, err := rc.createDataFileParser(ctx, dataFileMeta, rc.cfg.Mydumper.DataInvalidCharReplace)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	defer parser.Close()
 

@@ -31,6 +31,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"modernc.org/mathutil"
+
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -57,11 +63,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -431,14 +432,28 @@ func (rc *Controller) Close() {
 }
 
 func (rc *Controller) Run(ctx context.Context) error {
-	opts := []func(context.Context) error{
-		rc.setGlobalVariables,
-		rc.restoreSchema,
-		rc.preCheckRequirements,
-		rc.initCheckpoint,
-		rc.restoreTables,
-		rc.fullCompact,
-		rc.cleanCheckpoints,
+	type processFunc func(context.Context) error
+	var opts []processFunc
+	if rc.cfg.CheckOnlyCfg == nil {
+		opts = []processFunc{
+			rc.setGlobalVariables,
+			rc.restoreSchema,
+			rc.preCheckRequirements,
+			rc.initCheckpoint,
+			rc.restoreTables,
+			rc.fullCompact,
+			rc.cleanCheckpoints,
+		}
+	} else if rc.cfg.CheckOnlyCfg.Mode == config.CheckModeNormal {
+		opts = []processFunc{
+			rc.setGlobalVariables,
+			rc.preCheckRequirements,
+		}
+	} else {
+		// rc.cfg.CheckOnlyCfg.Mode == config.CheckModeSample
+		opts = []processFunc{
+			rc.checkDataBySample,
+		}
 	}
 
 	task := log.L().Begin(zap.InfoLevel, "the whole procedure")
@@ -1980,6 +1995,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (rc *Controller) checkDataBySample(ctx context.Context) error {
+	sampleCheck := newDataSampleCheck(rc)
+	return sampleCheck.doCheck(ctx)
 }
 
 type chunkRestore struct {

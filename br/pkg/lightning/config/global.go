@@ -19,13 +19,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/carlmjohnson/flagext"
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+)
+
+const (
+	CheckModeNormal = "normal"
+	CheckModeSample = "sampling"
+
+	DefaultSampleRate = 0.01
+	DefaultCheckRows  = 1000
 )
 
 type GlobalLightning struct {
@@ -71,6 +82,7 @@ type GlobalConfig struct {
 	TikvImporter GlobalImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
 	Security     Security          `toml:"security" json:"security"`
+	CheckOnlyCfg *CheckOnlyConfig  `toml:"-" json:"-"`
 
 	ConfigFileContent []byte
 }
@@ -82,6 +94,14 @@ type GlobalCheckpoint struct {
 type GlobalPostRestore struct {
 	Checksum PostOpLevel `toml:"checksum" json:"checksum"`
 	Analyze  PostOpLevel `toml:"analyze" json:"analyze"`
+}
+
+type CheckOnlyConfig struct {
+	Mode string `toml:"-" json:"-"`
+
+	// take effects when Mode=CheckModeSample
+	Rate float64 `toml:"-" json:"-"`
+	Rows int     `toml:"-" json:"-"`
 }
 
 func NewGlobalConfig() *GlobalConfig {
@@ -167,6 +187,8 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
+
+	checkOnlyCfg := fs.String("check-only", "", "do check only, supported value: normal, sample=rate,rows")
 
 	var filter []string
 	flagext.StringsVar(fs, &filter, "f", "select tables to import")
@@ -272,6 +294,16 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if len(filter) > 0 {
 		cfg.Mydumper.Filter = filter
 	}
+	if *checkOnlyCfg != "" {
+		if cfg.App.ServerMode {
+			return nil, errors.New(`cannot set "check-only" if server-mode is enabled`)
+		}
+		checkOnlyConfig, err := extractCheckOnlyCfg(*checkOnlyCfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.CheckOnlyCfg = checkOnlyConfig
+	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
 		return nil, errors.New("If server-mode is enabled, the status-addr must be a valid listen address")
@@ -279,4 +311,42 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	cfg.App.Config.Adjust()
 	return cfg, nil
+}
+
+func extractCheckOnlyCfg(str string) (*CheckOnlyConfig, error) {
+	splits := strings.Split(str, "=")
+	invalidCfg := errors.New("invalid check-only config: " + str)
+	if len(splits) > 2 || (splits[0] != CheckModeNormal && splits[0] != CheckModeSample) {
+		return nil, invalidCfg
+	}
+
+	switch splits[0] {
+	case CheckModeNormal:
+		if len(splits) != 1 {
+			return nil, invalidCfg
+		}
+		return &CheckOnlyConfig{Mode: CheckModeNormal}, nil
+	case CheckModeSample:
+		if len(splits) == 1 {
+			return &CheckOnlyConfig{Mode: CheckModeSample, Rate: DefaultSampleRate, Rows: DefaultCheckRows}, nil
+		}
+		if len(splits) != 2 {
+			return nil, invalidCfg
+		}
+		params := strings.Split(splits[1], ",")
+		if len(params) != 2 {
+			return nil, invalidCfg
+		}
+		rate, err := strconv.ParseFloat(params[0], 64)
+		if err != nil || rate > 1 || rate <= 0 {
+			return nil, errors.Wrap(invalidCfg, "rate should be in range (0, 1]")
+		}
+		rows, err := strconv.ParseInt(params[1], 10, 32)
+		if err != nil || rows <= 0 {
+			return nil, errors.Wrap(invalidCfg, "rows should be greater than 0")
+		}
+		return &CheckOnlyConfig{Mode: CheckModeSample, Rate: rate, Rows: int(rows)}, nil
+	default:
+		return nil, invalidCfg
+	}
 }

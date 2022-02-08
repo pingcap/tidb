@@ -35,12 +35,13 @@ import (
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 const (
@@ -91,8 +92,8 @@ const (
 	defaultEngineMemCacheSize      = 512 * units.MiB
 	defaultLocalWriterMemCacheSize = 128 * units.MiB
 
-	defaultCSVDataCharacterSet       = "binary"
-	defaultCSVDataInvalidCharReplace = utf8.RuneError
+	DefaultCSVDataCharacterSet       = "binary"
+	DefaultCSVDataInvalidCharReplace = string(utf8.RuneError)
 )
 
 var (
@@ -143,6 +144,8 @@ type Config struct {
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
 	Security     Security            `toml:"security" json:"security"`
+	CheckOnlyCfg *CheckOnlyConfig    `toml:"-" json:"-"`
+	LogCfg       log.Config          `toml:"-" json:"-"`
 
 	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
 }
@@ -694,8 +697,8 @@ func NewConfig() *Config {
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
 			Filter:                 DefaultFilter,
-			DataCharacterSet:       defaultCSVDataCharacterSet,
-			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
+			DataCharacterSet:       DefaultCSVDataCharacterSet,
+			DataInvalidCharReplace: DefaultCSVDataInvalidCharReplace,
 		},
 		TikvImporter: TikvImporter{
 			Backend:             "",
@@ -738,6 +741,8 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.App.CheckRequirements = global.App.CheckRequirements
 	cfg.Security = global.Security
 	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
+	cfg.CheckOnlyCfg = global.CheckOnlyCfg
+	cfg.LogCfg = global.App.Config
 	return nil
 }
 
@@ -846,7 +851,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 
 	if len(cfg.Mydumper.DataCharacterSet) == 0 {
-		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
+		cfg.Mydumper.DataCharacterSet = DefaultCSVDataCharacterSet
 	}
 	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
 	if err1 != nil {
