@@ -240,6 +240,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
 		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
+		isAlterTable := true
 		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
 	} else {
 		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
