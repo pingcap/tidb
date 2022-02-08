@@ -291,3 +291,27 @@ func MockGC(tk *TestKit) (string, string, string, func()) {
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
+
+func containGlobal(rs *Result) bool {
+	partitionNameCol := 2
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
+			return true
+		}
+	}
+	return false
+}
+
+// MustNoGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustNoGlobalStats(table string) bool {
+	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
