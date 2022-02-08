@@ -343,11 +343,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, true, `SELECT * FROM information_schema.engines`)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -430,13 +426,31 @@ func (e *ShowExec) fetchShowTables() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	schemaTables := e.is.SchemaTables(e.DBName)
+	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	var tableTypes = make(map[string]string)
-	for _, v := range e.is.SchemaTables(e.DBName) {
+	var (
+		tableTypes          = make(map[string]string)
+		fieldPatternsRegexp *regexp.Regexp
+		FieldFilterEnable   bool
+		fieldFilter         string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
+	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+			continue
+		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(v.Meta().Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -474,17 +488,6 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, true, `SELECT
-		table_name, engine, version, row_format, table_rows,
-		avg_row_length, data_length, max_data_length, index_length,
-		data_free, auto_increment, create_time, update_time, check_time,
-		table_collation, IFNULL(checksum,''), create_options, table_comment
-		FROM information_schema.tables
-		WHERE lower(table_schema)=%? ORDER BY table_name`, e.DBName.L)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	var snapshot uint64
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
@@ -497,7 +500,13 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		snapshot = e.ctx.GetSessionVars().SnapshotTS
 	}
 
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)},
+		`SELECT table_name, engine, version, row_format, table_rows,
+		avg_row_length, data_length, max_data_length, index_length,
+		data_free, auto_increment, create_time, update_time, check_time,
+		table_collation, IFNULL(checksum,''), create_options, table_comment
+		FROM information_schema.tables
+		WHERE lower(table_schema)=%? ORDER BY table_name`, e.DBName.L)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1423,11 +1432,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, true, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1443,11 +1448,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authplugin = rows[0].GetString(0)
 	}
 
-	stmt, err = exec.ParseWithParams(ctx, true, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}

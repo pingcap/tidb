@@ -138,12 +138,6 @@ func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *Req
 	return builder
 }
 
-// SetIsolationLevel sets "IsolationLevel" for "kv.Request".
-func (builder *RequestBuilder) SetIsolationLevel(level kv.IsoLevel) *RequestBuilder {
-	builder.Request.IsolationLevel = level
-	return builder
-}
-
 const estimatedRegionRowCount = 100000
 
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
@@ -250,7 +244,11 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		// Concurrency may be set to 1 by SetDAGRequest
 		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	}
-	builder.Request.IsolationLevel = builder.getIsolationLevel()
+	if sv.StmtCtx.WeakConsistency {
+		builder.Request.IsolationLevel = kv.RC
+	} else {
+		builder.Request.IsolationLevel = builder.getIsolationLevel()
+	}
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)

@@ -32,6 +32,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// This test file have many problem.
+// 1. Please use testkit to create dom, session and store.
+// 2. Don't use createStoreAndBootstrap and BootstrapSession together. It will cause data race.
+// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
+// We will overwrite this file by update_test.go.
 func TestBootstrap(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -213,7 +218,7 @@ func TestUpgrade(t *testing.T) {
 
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := createSessionAndSetID(t, store)
 
@@ -259,11 +264,10 @@ func TestUpgrade(t *testing.T) {
 	ver, err = getBootstrapVersion(se1)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), ver)
-
+	dom.Close()
 	// Create a new session then upgrade() will run automatically.
-	dom, err := BootstrapSession(store)
+	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	defer dom.Close()
 
 	se2 := createSessionAndSetID(t, store)
 	r = mustExec(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
@@ -288,6 +292,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "False", req.GetRow(0).GetString(0))
 	require.NoError(t, r.Close())
+	dom.Close()
 }
 
 func TestIssue17979_1(t *testing.T) {
@@ -299,9 +304,8 @@ func TestIssue17979_1(t *testing.T) {
 	}()
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-
 	// test issue 20900, upgrade from v3.0 to v4.0.11+
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -318,10 +322,9 @@ func TestIssue17979_1(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(58), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV4.Close()
 	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
@@ -331,6 +334,7 @@ func TestIssue17979_1(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "log", req.GetRow(0).GetString(0))
 	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
@@ -342,7 +346,7 @@ func TestIssue17979_2(t *testing.T) {
 	}()
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.11 to v4.0.11
@@ -361,7 +365,7 @@ func TestIssue17979_2(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(59), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV4.Close()
@@ -386,9 +390,8 @@ func TestIssue20900_1(t *testing.T) {
 
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-
 	// test issue 20900, upgrade from v3.0 to v4.0.9+
 	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -405,7 +408,7 @@ func TestIssue20900_1(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(38), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV4.Close()
@@ -434,7 +437,7 @@ func TestIssue20900_2(t *testing.T) {
 
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.8 to v4.0.9+
@@ -453,10 +456,9 @@ func TestIssue20900_2(t *testing.T) {
 	ver, err := getBootstrapVersion(seV3)
 	require.NoError(t, err)
 	require.Equal(t, int64(52), ver)
-
+	dom.Close()
 	domV4, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV4.Close()
 	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
@@ -470,6 +472,7 @@ func TestIssue20900_2(t *testing.T) {
 	req = r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
+	domV4.Close()
 }
 
 func TestANSISQLMode(t *testing.T) {
@@ -655,7 +658,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 }
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV67 := createSessionAndSetID(t, store)
@@ -674,10 +677,10 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	ver, err := getBootstrapVersion(seV67)
 	require.NoError(t, err)
 	require.Equal(t, int64(67), ver)
+	dom.Close()
 
 	domV68, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV68.Close()
 	seV68 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV68)
 	require.NoError(t, err)
@@ -690,13 +693,13 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, "INT_ONLY", row.GetString(0))
 	require.Equal(t, "INT_ONLY", row.GetString(1))
+	domV68.Close()
 }
 
 func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-
 	seV65 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -712,10 +715,10 @@ func TestUpgradeVersion66(t *testing.T) {
 	ver, err := getBootstrapVersion(seV65)
 	require.NoError(t, err)
 	require.Equal(t, int64(65), ver)
-
+	dom.Close()
 	domV66, err := BootstrapSession(store)
 	require.NoError(t, err)
-	defer domV66.Close()
+
 	seV66 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV66)
 	require.NoError(t, err)
@@ -727,6 +730,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, int64(1), row.GetInt64(0))
 	require.Equal(t, int64(1), row.GetInt64(1))
+	domV66.Close()
 }
 
 func TestUpgradeVersion74(t *testing.T) {
@@ -743,7 +747,7 @@ func TestUpgradeVersion74(t *testing.T) {
 
 	for _, ca := range cases {
 		func() {
-			store, _ := createStoreAndBootstrap(t)
+			store, dom := createStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
 			seV73 := createSessionAndSetID(t, store)
@@ -761,7 +765,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err := getBootstrapVersion(seV73)
 			require.NoError(t, err)
 			require.Equal(t, int64(72), ver)
-
+			dom.Close()
 			domV74, err := BootstrapSession(store)
 			require.NoError(t, err)
 			defer domV74.Close()
@@ -782,7 +786,7 @@ func TestUpgradeVersion74(t *testing.T) {
 func TestUpgradeVersion75(t *testing.T) {
 	ctx := context.Background()
 
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	seV74 := createSessionAndSetID(t, store)
@@ -808,7 +812,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(64)", strings.ToLower(row.GetString(1)))
-
+	dom.Close()
 	domV75, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domV75.Close()
@@ -824,40 +828,6 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
-func TestUpgradeVersion83(t *testing.T) {
-	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	domV83, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domV83.Close()
-	seV83 := createSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seV83)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	statsHistoryTblFields := []struct {
-		field string
-		tp    string
-	}{
-		{"table_id", "bigint(64)"},
-		{"stats_data", "longblob"},
-		{"seq_no", "bigint(64)"},
-		{"version", "bigint(64)"},
-		{"create_time", "datetime(6)"},
-	}
-	rStatsHistoryTbl := mustExec(t, seV83, `desc mysql.stats_history`)
-	req := rStatsHistoryTbl.NewChunk(nil)
-	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
-	require.Equal(t, 5, req.NumRows())
-	for i := 0; i < 5; i++ {
-		row := req.GetRow(i)
-		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
-		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
-	}
-}
-
 func TestForIssue23387(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion
@@ -867,19 +837,16 @@ func TestForIssue23387(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
-	_, err = BootstrapSession(store)
-	// domain leaked here, Close() is not called. For testing, it's OK.
-	// If we close it and BootstrapSession again, we'll get an error "session pool is closed".
-	// The problem is caused by some the global level variable, domain map is not intended for multiple instances.
+	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
 	se := createSessionAndSetID(t, store)
 	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
 	mustExec(t, se, "create user quatest")
-
+	dom.Close()
 	// Upgrade to a newer version, check the user's privilege.
 	currentBootstrapVersion = saveCurrentBootstrapVersion
-	dom, err := BootstrapSession(store)
+	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
 
@@ -913,7 +880,7 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 5.1+ or above.
@@ -940,7 +907,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
-
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -988,7 +955,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	ctx := context.Background()
-	store, _ := createStoreAndBootstrap(t)
+	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// Upgrade from 3.0.0 to 5.4+.
@@ -1015,7 +982,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
-
+	dom.Close()
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1037,66 +1004,68 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 
 func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 	for i := 0; i < 2; i++ {
-		ctx := context.Background()
-		store, _ := createStoreAndBootstrap(t)
-		defer func() { require.NoError(t, store.Close()) }()
+		func() {
+			ctx := context.Background()
+			store, dom := createStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
 
-		// upgrade from 4.0.0 to 5.4+.
-		ver400 := 46
-		seV4 := createSessionAndSetID(t, store)
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		m := meta.NewMeta(txn)
-		err = m.FinishBootstrap(int64(ver400))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		mustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
-		mustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
-		mustExec(t, seV4, "commit")
-		unsetStoreBootstrapped(store.UUID())
-		ver, err := getBootstrapVersion(seV4)
-		require.NoError(t, err)
-		require.Equal(t, int64(ver400), ver)
+			// upgrade from 4.0.0 to 5.4+.
+			ver400 := 46
+			seV4 := createSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			err = m.FinishBootstrap(int64(ver400))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			mustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+			mustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+			mustExec(t, seV4, "commit")
+			unsetStoreBootstrapped(store.UUID())
+			ver, err := getBootstrapVersion(seV4)
+			require.NoError(t, err)
+			require.Equal(t, int64(ver400), ver)
 
-		// We are now in 4.0.0, tidb_enable_index_merge is off.
-		res := mustExec(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
-		chk := res.NewChunk(nil)
-		err = res.Next(ctx, chk)
-		require.NoError(t, err)
-		require.Equal(t, 1, chk.NumRows())
-		row := chk.GetRow(0)
-		require.Equal(t, 2, row.Len())
-		require.Equal(t, variable.Off, row.GetString(1))
+			// We are now in 4.0.0, tidb_enable_index_merge is off.
+			res := mustExec(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+			chk := res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row := chk.GetRow(0)
+			require.Equal(t, 2, row.Len())
+			require.Equal(t, variable.Off, row.GetString(1))
 
-		if i == 0 {
-			// For the first time, We set tidb_enable_index_merge as on.
-			// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
-			// For the second it should be off.
-			mustExec(t, seV4, "set global tidb_enable_index_merge = on")
-		}
+			if i == 0 {
+				// For the first time, We set tidb_enable_index_merge as on.
+				// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+				// For the second it should be off.
+				mustExec(t, seV4, "set global tidb_enable_index_merge = on")
+			}
+			dom.Close()
+			// Upgrade to 5.x.
+			domCurVer, err := BootstrapSession(store)
+			require.NoError(t, err)
+			defer domCurVer.Close()
+			seCurVer := createSessionAndSetID(t, store)
+			ver, err = getBootstrapVersion(seCurVer)
+			require.NoError(t, err)
+			require.Equal(t, currentBootstrapVersion, ver)
 
-		// Upgrade to 5.x.
-		domCurVer, err := BootstrapSession(store)
-		require.NoError(t, err)
-		defer domCurVer.Close()
-		seCurVer := createSessionAndSetID(t, store)
-		ver, err = getBootstrapVersion(seCurVer)
-		require.NoError(t, err)
-		require.Equal(t, currentBootstrapVersion, ver)
-
-		// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
-		res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
-		chk = res.NewChunk(nil)
-		err = res.Next(ctx, chk)
-		require.NoError(t, err)
-		require.Equal(t, 1, chk.NumRows())
-		row = chk.GetRow(0)
-		require.Equal(t, 1, row.Len())
-		if i == 0 {
-			require.Equal(t, int64(1), row.GetInt64(0))
-		} else {
-			require.Equal(t, int64(0), row.GetInt64(0))
-		}
+			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
+			res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+			chk = res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row = chk.GetRow(0)
+			require.Equal(t, 1, row.Len())
+			if i == 0 {
+				require.Equal(t, int64(1), row.GetInt64(0))
+			} else {
+				require.Equal(t, int64(0), row.GetInt64(0))
+			}
+		}()
 	}
 }
