@@ -983,7 +983,6 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	saveCpCh := make(chan saveCp)
 
 	rc := &Controller{
-		cfg:           s.cfg,
 		saveCpCh:      saveCpCh,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
