@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2775,6 +2776,9 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
