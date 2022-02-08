@@ -167,7 +167,6 @@ type Lightning struct {
 	IOConcurrency     int    `toml:"io-concurrency" json:"io-concurrency"`
 	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
-	BroadcastStatus   bool   `json:"broadcast-status"`
 
 	MaxError           MaxError `toml:"max-error" json:"max-error"`
 	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
@@ -737,7 +736,6 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
 	cfg.App.CheckRequirements = global.App.CheckRequirements
-	cfg.App.BroadcastStatus = len(global.App.StatusAddr) != 0
 	cfg.Security = global.Security
 	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
 	return nil

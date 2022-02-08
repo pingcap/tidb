@@ -78,7 +78,7 @@ type tableRestoreSuiteBase struct {
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.InitCurrentProgress()
+	web.EnableCurrentProgress()
 	// Produce a mock table info
 
 	p := parser.New()
@@ -166,7 +166,6 @@ func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
-	s.cfg.App.BroadcastStatus = true
 	s.cfg.Mydumper.BatchSize = 111
 	s.cfg.App.TableConcurrency = 2
 }

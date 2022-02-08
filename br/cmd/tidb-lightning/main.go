@@ -80,7 +80,7 @@ func main() {
 		return
 	}
 	if len(globalCfg.App.StatusAddr) > 0 {
-		web.InitCurrentProgress()
+		web.EnableCurrentProgress()
 	}
 
 	err = func() error {

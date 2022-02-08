@@ -64,7 +64,7 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 		s.lightning.Stop()
 	}
 
-	web.InitCurrentProgress()
+	web.EnableCurrentProgress()
 
 	return
 }

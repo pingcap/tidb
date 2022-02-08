@@ -239,18 +239,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	if taskCfg.App.BroadcastStatus {
-		web.BroadcastStartTask()
-	}
+	web.BroadcastStartTask()
 
 	defer func() {
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
 		l.cancelLock.Unlock()
-		if taskCfg.App.BroadcastStatus {
-			web.BroadcastEndTask(err)
-		}
+		web.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -333,9 +329,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	}
 
 	dbMetas := mdl.GetDatabases()
-	if taskCfg.App.BroadcastStatus {
-		web.BroadcastInitProgress(dbMetas)
-	}
+	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.Controller
 

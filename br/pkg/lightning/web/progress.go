@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"go.uber.org/atomic"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -108,17 +109,25 @@ type taskProgress struct {
 	checkpoints checkpointsMap
 }
 
-var currentProgress *taskProgress
+var (
+	currentProgress *taskProgress
+	// whether progress is enabled
+	progressEnabled = atomic.NewBool(false)
+)
 
-// InitCurrentProgress init current progress struct on demand.
+// EnableCurrentProgress init current progress struct on demand.
 // NOTE: this call is not thread safe, so it should only be inited once at the very beginning of progress start.
-func InitCurrentProgress() {
+func EnableCurrentProgress() {
 	currentProgress = &taskProgress{
 		checkpoints: makeCheckpointsMap(),
 	}
+	progressEnabled.Store(true)
 }
 
 func BroadcastStartTask() {
+	if !progressEnabled.Load() {
+		return
+	}
 	currentProgress.mu.Lock()
 	currentProgress.Status = taskStatusRunning
 	currentProgress.mu.Unlock()
@@ -127,6 +136,9 @@ func BroadcastStartTask() {
 }
 
 func BroadcastEndTask(err error) {
+	if !progressEnabled.Load() {
+		return
+	}
 	errString := errors.ErrorStack(err)
 
 	currentProgress.mu.Lock()
@@ -136,6 +148,9 @@ func BroadcastEndTask(err error) {
 }
 
 func BroadcastInitProgress(databases []*mydump.MDDatabaseMeta) {
+	if !progressEnabled.Load() {
+		return
+	}
 	tables := make(map[string]*tableInfo, len(databases))
 
 	for _, db := range databases {
@@ -151,6 +166,9 @@ func BroadcastInitProgress(databases []*mydump.MDDatabaseMeta) {
 }
 
 func BroadcastTableCheckpoint(tableName string, cp *checkpoints.TableCheckpoint) {
+	if !progressEnabled.Load() {
+		return
+	}
 	currentProgress.mu.Lock()
 	currentProgress.Tables[tableName].Status = taskStatusRunning
 	currentProgress.mu.Unlock()
@@ -160,6 +178,9 @@ func BroadcastTableCheckpoint(tableName string, cp *checkpoints.TableCheckpoint)
 }
 
 func BroadcastCheckpointDiff(diffs map[string]*checkpoints.TableCheckpointDiff) {
+	if !progressEnabled.Load() {
+		return
+	}
 	totalWrittens := currentProgress.checkpoints.update(diffs)
 
 	currentProgress.mu.Lock()
@@ -170,6 +191,9 @@ func BroadcastCheckpointDiff(diffs map[string]*checkpoints.TableCheckpointDiff) 
 }
 
 func BroadcastError(tableName string, err error) {
+	if !progressEnabled.Load() {
+		return
+	}
 	errString := errors.ErrorStack(err)
 
 	currentProgress.mu.Lock()
@@ -181,11 +205,17 @@ func BroadcastError(tableName string, err error) {
 }
 
 func MarshalTaskProgress() ([]byte, error) {
+	if !progressEnabled.Load() {
+		return nil, errors.New("progress is not enabled")
+	}
 	currentProgress.mu.RLock()
 	defer currentProgress.mu.RUnlock()
 	return json.Marshal(&currentProgress)
 }
 
 func MarshalTableCheckpoints(tableName string) ([]byte, error) {
+	if !progressEnabled.Load() {
+		return nil, errors.New("progress is not enabled")
+	}
 	return currentProgress.checkpoints.marshal(tableName)
 }
