@@ -147,7 +147,7 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	concurrency := runtime.NumCPU()
+	concurrency := utils.MinInt(runtime.NumCPU(), 8)
 	fileChan := make(chan *sampledDataFileInfo, concurrency)
 	errChan := make(chan error, concurrency)
 	newCtx, cancelFunc := context.WithCancel(ctx)
