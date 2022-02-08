@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
@@ -62,7 +60,7 @@ import (
 
 func TestEarlyClose(t *testing.T) {
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
@@ -81,7 +79,6 @@ func TestEarlyClose(t *testing.T) {
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
 	require.NoError(t, err)
@@ -1196,8 +1193,6 @@ func TestCoprocessorPriority(t *testing.T) {
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1222,9 +1217,6 @@ func TestShowForNewCollations(t *testing.T) {
 func TestForbidUnsupportedCollations(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {

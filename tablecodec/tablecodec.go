@@ -582,7 +582,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, ft.Decimal)
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -598,7 +598,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: // duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
 		datum.SetMysqlDuration(dur)
 		return datum, nil
 	case mysql.TypeEnum:
