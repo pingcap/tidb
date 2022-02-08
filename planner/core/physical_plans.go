@@ -1327,7 +1327,9 @@ func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 	for _, it := range p.WindowFuncDescs {
 		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
 	}
-	cloned.Frame = p.Frame.Clone()
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
 
 	return cloned, nil
 }
