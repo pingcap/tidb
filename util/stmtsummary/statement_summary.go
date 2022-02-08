@@ -480,6 +480,7 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 }
 
 // Used by tests
+// nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 	return int(ssMap.optMaxStmtCount.Load())
 }

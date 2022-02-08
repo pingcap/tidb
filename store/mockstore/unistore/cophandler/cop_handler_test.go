@@ -432,10 +432,8 @@ func (ts *testStore) commit(keys [][]byte, startTS, commitTS uint64) error {
 }
 
 func newTestStore(t *testing.T, dbPrefix string, logPrefix string) (*testStore, func()) {
-	dbPath, err := os.MkdirTemp("", dbPrefix)
-	require.NoError(t, err)
-	LogPath, err := os.MkdirTemp("", logPrefix)
-	require.NoError(t, err)
+	dbPath := t.TempDir()
+	LogPath := t.TempDir()
 	db, err := createTestDB(dbPath, LogPath)
 	require.NoError(t, err)
 	// Some raft store path problems could not be found using simple store in tests

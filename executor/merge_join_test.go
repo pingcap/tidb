@@ -726,6 +726,10 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 	))
 }
 
+type testSuiteJoin3 struct {
+	*baseTestSuite
+}
+
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
