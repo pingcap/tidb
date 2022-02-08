@@ -218,6 +218,71 @@ func (p *PointGetPlan) createMutablePoints4handle(handleValue []types.Datum, tbl
 	return Points(handleValue)
 }
 
+type mutablePoints4HandleInBatchPointGet struct {
+	handlesValue []types.Datum
+
+	handleCol *model.ColumnInfo
+}
+
+// Points returns the datum array.
+func (mp mutablePoints4HandleInBatchPointGet) Points() []types.Datum {
+	return mp.handlesValue
+}
+
+// Rebuild rebuilds the value of the points.
+func (mp mutablePoints4HandleInBatchPointGet) Rebuild(stmtCtx *stmtctx.StatementContext, stmt ast.StmtNode) error {
+	var patternInExpr *ast.PatternInExpr
+	mp.handlesValue = nil
+	switch x := stmt.(type) {
+	case *ast.SelectStmt:
+		patternInExpr = x.Where.(*ast.PatternInExpr)
+	case *ast.DeleteStmt:
+		patternInExpr = x.Where.(*ast.PatternInExpr)
+	case *ast.UpdateStmt:
+		patternInExpr = x.Where.(*ast.PatternInExpr)
+	default:
+		return nil
+	}
+	mp.handlesValue = make([]types.Datum, len(patternInExpr.List))
+	for i, item := range patternInExpr.List {
+		// SELECT * FROM t WHERE (key) in ((1), (2))
+		if p, ok := item.(*ast.ParenthesesExpr); ok {
+			item = p.Expr
+		}
+		var d types.Datum
+		switch x := item.(type) {
+		case *driver.ValueExpr:
+			d = x.Datum
+		case *driver.ParamMarkerExpr:
+			d = x.Datum
+		default:
+			mp.handlesValue = nil
+			return nil
+		}
+		if d.IsNull() {
+			mp.handlesValue = nil
+			return nil
+		}
+		intDatum := getPointGetValue(stmtCtx, mp.handleCol, &d)
+		if intDatum == nil {
+			mp.handlesValue = nil
+			return nil
+		}
+		mp.handlesValue[i] = *intDatum
+	}
+	return nil
+}
+
+func (p *BatchPointGetPlan) createMutablePoints4HandleInBatchPointGet(handlesValue []types.Datum, handleCol *model.ColumnInfo, rebuildMode bool) MutablePoints {
+	if rebuildMode {
+		return &mutablePoints4HandleInBatchPointGet{
+			handlesValue: handlesValue,
+			handleCol:    handleCol,
+		}
+	}
+	return Points(handlesValue)
+}
+
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
@@ -715,6 +780,8 @@ func newBatchPointGetPlan(
 		}
 	}
 	if handleCol != nil {
+		rebuildMode := false
+		var handlesValue = make([]types.Datum, len(patternInExpr.List))
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*driver.ParamMarkerExpr, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
@@ -730,6 +797,7 @@ func newBatchPointGetPlan(
 			case *driver.ParamMarkerExpr:
 				d = x.Datum
 				param = x
+				rebuildMode = true
 			default:
 				return nil
 			}
@@ -740,15 +808,17 @@ func newBatchPointGetPlan(
 			if intDatum == nil {
 				return nil
 			}
+			handlesValue[i] = *intDatum
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = param
 		}
-		return BatchPointGetPlan{
+		p := BatchPointGetPlan{
 			TblInfo:       tbl,
 			Handles:       handles,
 			HandleParams:  handleParams,
 			PartitionExpr: partitionExpr,
 		}.Init(ctx, statsInfo, schema, names, 0)
+		p.createMutablePoints4HandleInBatchPointGet(handlesValue, handleCol, rebuildMode)
 	}
 
 	// The columns in where clause should be covered by unique index
