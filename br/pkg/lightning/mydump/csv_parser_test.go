@@ -955,11 +955,10 @@ type benchCSVParserSuite struct {
 	ioWorkers *worker.Pool
 }
 
-func newBenchCSVParserSuite(b *testing.B) (*benchCSVParserSuite, func()) {
+func newBenchCSVParserSuite(b *testing.B) *benchCSVParserSuite {
 	var s benchCSVParserSuite
 	s.ioWorkers = worker.NewPool(context.Background(), 5, "bench_csv")
-	dir, err := os.MkdirTemp("", "bench_csv")
-	require.NoError(b, err)
+	dir := b.TempDir()
 	s.csvPath = filepath.Join(dir, "input.csv")
 	file, err := os.Create(s.csvPath)
 	require.NoError(b, err)
@@ -970,14 +969,11 @@ func newBenchCSVParserSuite(b *testing.B) (*benchCSVParserSuite, func()) {
 		_, err = file.WriteString("18,1,1,0.3650,GC,BARBARBAR,rw9AOV1AjoI1,50000.00,-10.00,10.00,1,1,djj3Q2XaIPoYVy1FuF,gc80Q2o82Au3C9xv,PYOolSxG3w,DI,265111111,7586538936787184,2020-02-26 20:06:00.193,OE,YCkSPBVqoJ2V5F8zWs87V5XzbaIY70aWCD4dgcB6bjUzCr5wOJCJ2TYH49J7yWyysbudJIxlTAEWSJahY7hswLtTsqyjEkrlsN8iDMAa9Poj29miJ08tnn2G8mL64IlyywvnRGbLbyGvWDdrOSF42RyUFTWVyqlDWc6Gr5wyMPYgvweKemzFDVD3kro5JsmBmJY08EK54nQoyfo2sScyb34zcM9GFo9ZQTwloINfPYQKXQm32m0XvU7jiNmYpFTFJQjdqA825SEvQqMMefG2WG4jVu9UPdhdUjRsFRd0Gw7YPKByOlcuY0eKxT7sAzMKXx2000RR6dqHNXe47oVYd\n")
 		require.NoError(b, err)
 	}
-	return &s, func() {
-		require.NoError(b, os.RemoveAll(dir))
-	}
+	return &s
 }
 
 func BenchmarkReadRowUsingMydumpCSVParser(b *testing.B) {
-	s, clean := newBenchCSVParserSuite(b)
-	defer clean()
+	s := newBenchCSVParserSuite(b)
 
 	file, err := os.Open(s.csvPath)
 	require.NoError(b, err)
@@ -1007,8 +1003,7 @@ func BenchmarkReadRowUsingMydumpCSVParser(b *testing.B) {
 }
 
 func BenchmarkReadRowUsingEncodingCSV(b *testing.B) {
-	s, clean := newBenchCSVParserSuite(b)
-	defer clean()
+	s := newBenchCSVParserSuite(b)
 
 	file, err := os.Open(s.csvPath)
 	require.NoError(b, err)
