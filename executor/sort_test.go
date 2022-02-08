@@ -19,45 +19,48 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSerialSuite1) TestSortInDisk(c *C) {
-	s.testSortInDisk(c, false)
-	s.testSortInDisk(c, true)
+func TestSortInDisk(t *testing.T) {
+	testSortInDisk(t, false)
+	testSortInDisk(t, true)
 }
 
-func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
-	defer config.RestoreFunc()()
+func testSortInDisk(t *testing.T, removeDir bool) {
+	restore := config.RestoreFunc()
+	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
 	}()
-
-	tk := testkit.NewTestKit(c, s.store)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	sm := &mockSessionManager1{
 		PS: make([]*util.ProcessInfo, 0),
 	}
-	tk.Se.SetSessionManager(sm)
-	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	tk.Session().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	if removeDir {
-		c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), IsNil)
+		require.Nil(t, os.RemoveAll(config.GetGlobalConfig().TempStoragePath))
 		defer func() {
 			_, err := os.Stat(config.GetGlobalConfig().TempStoragePath)
 			if err != nil {
-				c.Assert(os.IsExist(err), IsTrue)
+				require.True(t, os.IsExist(err))
 			}
 		}()
 	}
@@ -79,17 +82,17 @@ func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
 	tk.MustExec(buf.String())
 	result := tk.MustQuery("select * from t order by c1")
 	for i := 0; i < 1024; i++ {
-		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
-		c.Assert(result.Rows()[i][1].(string), Equals, fmt.Sprint(i))
-		c.Assert(result.Rows()[i][2].(string), Equals, fmt.Sprint(i))
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][0].(string))
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][1].(string))
+		require.Equal(t, fmt.Sprint(i), result.Rows()[i][2].(string))
 	}
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
 }
 
-func (s *testSerialSuite1) TestIssue16696(c *C) {
+func TestIssue16696(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
@@ -98,13 +101,13 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 	variable.MemoryUsageAlarmRatio.Store(0.0)
 	defer variable.MemoryUsageAlarmRatio.Store(alarmRatio)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
-	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
-	tk := testkit.NewTestKit(c, s.store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
@@ -119,10 +122,10 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 		line := fmt.Sprintf("%v", row)
 		disk := fmt.Sprintf("%v", row[length-1])
 		if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
-			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
-			c.Assert(strings.Contains(disk, "MB") ||
+			require.False(t, strings.Contains(disk, "0 Bytes"))
+			require.True(t, strings.Contains(disk, "MB") ||
 				strings.Contains(disk, "KB") ||
-				strings.Contains(disk, "Bytes"), IsTrue)
+				strings.Contains(disk, "Bytes"))
 		}
 	}
 }
