@@ -17,58 +17,34 @@ package globalconfigsync
 import (
 	"context"
 
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
-const (
-	globalConfigPath     = "/global/config/"
-	keyOpDefaultRetryCnt = 5
-)
-
-// GlobalConfigSyncer stores global config into etcd.
-type GlobalConfigSyncer struct {
-	etcdCli  *clientv3.Client
-	NotifyCh chan ConfigEntry
+// PDGlobalConfigSyncer is used to sync pd global config.
+type PDGlobalConfigSyncer struct {
+	pd       pd.Client
+	NotifyCh chan pd.GlobalConfigItem
 }
 
-// NewGlobalConfigSyncer returns a new GlobalConfigSyncer.
-func NewGlobalConfigSyncer(etcdCli *clientv3.Client) *GlobalConfigSyncer {
-	return &GlobalConfigSyncer{
-		etcdCli:  etcdCli,
-		NotifyCh: make(chan ConfigEntry, 8),
-	}
-}
-
-// ConfigEntry contain the global config Name and Value.
-type ConfigEntry struct {
-	Name  string
-	Value string
-}
-
-// Notify sends the config entry into notify channel.
-func (c *GlobalConfigSyncer) Notify(name, value string) {
-	c.NotifyCh <- ConfigEntry{Name: name, Value: value}
-}
-
-// StoreGlobalConfig stores the global config into etcd.
-func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry ConfigEntry) error {
-	if c.etcdCli == nil {
-		return nil
-	}
-
-	key := globalConfigPath + entry.Name
-	err := util.PutKVToEtcd(ctx, c.etcdCli, keyOpDefaultRetryCnt, key, entry.Value)
+func (s *PDGlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
+	err := s.pd.StoreGlobalConfig(ctx, []pd.GlobalConfigItem{item})
 	if err != nil {
+		logutil.BgLogger().Error("store global config failed", zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("store global config", zap.String("Name", entry.Name), zap.String("Value", entry.Value))
-	return nil
+	logutil.BgLogger().Info("store global config", zap.Any("Configs", item))
+	return err
 }
 
-// SetEtcdClient exports for testing.
-func (c *GlobalConfigSyncer) SetEtcdClient(etcdCli *clientv3.Client) {
-	c.etcdCli = etcdCli
+func (s *PDGlobalConfigSyncer) PushGlobalConfigItem(globalConfigItem pd.GlobalConfigItem) {
+	s.NotifyCh <- globalConfigItem
+}
+
+func NewGlobalConfigSyncer(p pd.Client) *PDGlobalConfigSyncer {
+	return &PDGlobalConfigSyncer{
+		pd:       p,
+		NotifyCh: make(chan pd.GlobalConfigItem, 100),
+	}
 }

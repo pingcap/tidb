@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/goleak"
 )
 
@@ -39,13 +39,26 @@ func TestMain(m *testing.M) {
 }
 
 func TestGlobalConfigSyncer(t *testing.T) {
-	syncer := globalconfigsync.NewGlobalConfigSyncer(nil)
-	syncer.Notify("a", "b")
-	require.Len(t, syncer.NotifyCh, 1)
-	entry := <-syncer.NotifyCh
-	require.Equal(t, entry.Name, "a")
-	err := syncer.StoreGlobalConfig(context.Background(), entry)
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+	client := store.(interface {
+		GetPDClient() pd.Client
+	}).GetPDClient()
+	syncer := globalconfigsync.NewGlobalConfigSyncer(client)
+	syncer.PushGlobalConfigItem(pd.GlobalConfigItem{Name: "a", Value: "b"})
+	err = syncer.StoreGlobalConfig(context.Background(), <-syncer.NotifyCh)
+	require.NoError(t, err)
+	items, err := client.LoadGlobalConfig(context.Background(), []string{"a"})
+	require.Equal(t, len(items), 1)
+	require.Equal(t, items[0].Name, "/global/config/a")
+	require.Equal(t, items[0].Value, "b")
 }
 
 func TestStoreGlobalConfig(t *testing.T) {
@@ -63,32 +76,19 @@ func TestStoreGlobalConfig(t *testing.T) {
 	require.NoError(t, err)
 	defer domain.Close()
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-	domain.GetGlobalConfigSyncer().SetEtcdClient(cluster.RandClient())
-
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
 	require.NoError(t, err)
-
-	for i := 0; i < 20; i++ {
-		resp, err := cluster.RandClient().Get(context.Background(), "/global/config/enable_resource_metering")
-		require.NoError(t, err)
-		require.NotNil(t, resp, nil)
-
-		if len(resp.Kvs) == 0 {
-			// writing to ectd is async, so we should retry if not synced yet
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-
-		require.Len(t, resp.Kvs, 1)
-		require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
-		require.Equal(t, resp.Kvs[0].Value, []byte("true"))
-		return
-	}
-
-	require.Fail(t, "timeout for waiting etcd synced")
+	_ = <-time.After(50 * time.Millisecond)
+	client :=
+		store.(interface {
+			GetPDClient() pd.Client
+		}).GetPDClient()
+	// enable top sql will be translated to enable_resource_metering
+	items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
+	require.Equal(t, len(items), 1)
+	require.Equal(t, items[0].Name, "/global/config/enable_resource_metering")
+	require.Equal(t, items[0].Value, "true")
 }

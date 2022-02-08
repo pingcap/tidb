@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -76,7 +77,7 @@ type Domain struct {
 	statsLease           time.Duration
 	ddl                  ddl.DDL
 	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
+	globalCfgSyncer      *globalconfigsync.PDGlobalConfigSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -363,16 +364,15 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
-// NotifyGlobalConfigChange notify global config syncer to store the global config into PD(etcd).
+// NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
-	if do.globalCfgSyncer == nil {
-		return
+	if do.globalCfgSyncer != nil {
+		do.globalCfgSyncer.PushGlobalConfigItem(pd.GlobalConfigItem{Name: name, Value: value})
 	}
-	do.globalCfgSyncer.Notify(name, value)
 }
 
 // GetGlobalConfigSyncer exports for testing.
-func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.GlobalConfigSyncer {
+func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.PDGlobalConfigSyncer {
 	return do.globalCfgSyncer
 }
 
@@ -817,7 +817,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	if err != nil {
 		return err
 	}
-	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(do.etcdClient)
+	// try cast do.store to kv.Storage
+	if store, ok := do.store.(interface {
+		GetPDClient() pd.Client
+	}); ok {
+		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(store.GetPDClient())
+	}
+
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
