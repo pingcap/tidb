@@ -39,6 +39,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
@@ -96,6 +97,7 @@ func TestIssue16696(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
 	})
 	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
 	variable.MemoryUsageAlarmRatio.Store(0.0)
@@ -123,6 +125,7 @@ func TestIssue16696(t *testing.T) {
 		disk := fmt.Sprintf("%v", row[length-1])
 		if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
 			require.False(t, strings.Contains(disk, "0 Bytes"))
+			require.NotContains(t, disk, "0 Bytes")
 			require.True(t, strings.Contains(disk, "MB") ||
 				strings.Contains(disk, "KB") ||
 				strings.Contains(disk, "Bytes"))
