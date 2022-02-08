@@ -94,7 +94,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, rowErr)
 	require.Equal(t, uint64(3), n)
 
-	expected := "/*!40101 SET NAMES binary*/;\r\n" +
+	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 		"INSERT INTO `employee` VALUES\n" +
 		"(1,'male','bob@mail.com','020-1234',NULL),\n" +
@@ -127,10 +127,10 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\x17" +
-		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\x17" +
-		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\x17" +
-		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\x17"
+	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\r\n" +
+		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\r\n" +
+		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\r\n" +
+		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
 	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
@@ -146,10 +146,10 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "1,'male','bob@mail.com','020-1234',\\N\x17" +
-		"2,'female','sarah@mail.com','020-1253','healthy'\x17" +
-		"3,'male','john@mail.com','020-1256','healthy'\x17" +
-		"4,'female','sarah@mail.com','020-1235','healthy'\x17"
+	expected = "1,'male','bob@mail.com','020-1234',\\N\r\n" +
+		"2,'female','sarah@mail.com','020-1253','healthy'\r\n" +
+		"3,'male','john@mail.com','020-1256','healthy'\r\n" +
+		"4,'female','sarah@mail.com','020-1235','healthy'\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
 	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
@@ -165,10 +165,10 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "1;'male';'bob@mail.com';'020-1234';\\N\x17" +
-		"2;'female';'sarah@mail.com';'020-1253';'healthy'\x17" +
-		"3;'male';'john@mail.com';'020-1256';'healthy'\x17" +
-		"4;'female';'sarah@mail.com';'020-1235';'healthy'\x17"
+	expected = "1;'male';'bob@mail.com';'020-1234';\\N\r\n" +
+		"2;'female';'sarah@mail.com';'020-1253';'healthy'\r\n" +
+		"3;'male';'john@mail.com';'020-1256';'healthy'\r\n" +
+		"4;'female';'sarah@mail.com';'020-1235';'healthy'\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
 	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
@@ -186,11 +186,11 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\x17" +
-		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\x17" +
-		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\x17" +
-		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\x17" +
-		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\x17"
+	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\r\n" +
+		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\r\n" +
+		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\r\n" +
+		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\r\n" +
+		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
 	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
@@ -223,9 +223,9 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	require.Equal(t, uint64(3), n)
 	require.ErrorIs(t, err, rowErr)
 
-	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\x17" +
-		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\x17" +
-		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\x17"
+	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\r\n" +
+		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\r\n" +
+		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\r\n"
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(0), ReadGauge(finishedRowsGauge, conf.Labels))
 	require.Equal(t, float64(0), ReadGauge(finishedSizeGauge, conf.Labels))
