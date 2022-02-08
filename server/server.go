@@ -319,10 +319,8 @@ func cleanupStaleSocket(socket string) error {
 		return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
 	}
 
-	logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
-		zap.String("socket", socket), zap.Error(err))
-	if err = os.Remove(socket); err != nil {
-		return fmt.Errorf("failed to remove socket file %s", socket)
+	if err2 := os.Remove(socket); err2 != nil {
+		return fmt.Errorf("failed to cleanup stale Unix socket file %s: %w", socket, err)
 	}
 
 	return nil

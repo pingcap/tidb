@@ -45,9 +45,11 @@ type RestrictedSQLExecutor interface {
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, forceUTF8SQL bool, sql string, args ...interface{}) (ast.StmtNode, error)
-	// ExecRestrictedStmt run sql statement in ctx with some restriction.
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
+	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
+	// ExecRestrictedSQL run sql string in ctx with internal session.
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt option.

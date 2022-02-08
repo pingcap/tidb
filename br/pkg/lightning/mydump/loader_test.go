@@ -20,27 +20,19 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/pingcap/check"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testMydumpLoaderSuite{})
-
-func TestMydumps(t *testing.T) {
-	TestingT(t)
-}
 
 type testMydumpLoaderSuite struct {
 	cfg       *config.Config
 	sourceDir string
 }
-
-func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
-func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func newConfigWithSourceDir(sourceDir string) *config.Config {
 	path, _ := filepath.Abs(sourceDir)
@@ -53,42 +45,46 @@ func newConfigWithSourceDir(sourceDir string) *config.Config {
 	}
 }
 
-func (s *testMydumpLoaderSuite) SetUpTest(c *C) {
-	s.sourceDir = c.MkDir()
+func newTestMydumpLoaderSuite(t *testing.T) *testMydumpLoaderSuite {
+	var s testMydumpLoaderSuite
+	var err error
+	s.sourceDir = t.TempDir()
+	require.Nil(t, err)
 	s.cfg = newConfigWithSourceDir(s.sourceDir)
+	return &s
 }
 
-func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) {
+func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
 	components := make([]string, len(filename)+1)
 	components = append(components, s.sourceDir)
 	components = append(components, filename...)
 	path := filepath.Join(components...)
 	err := os.WriteFile(path, nil, 0o644)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 }
 
-func (s *testMydumpLoaderSuite) mkdir(c *C, dirname string) {
+func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 	path := filepath.Join(s.sourceDir, dirname)
 	err := os.Mkdir(path, 0o755)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 }
 
-func (s *testMydumpLoaderSuite) TestLoader(c *C) {
+func TestLoader(t *testing.T) {
 	ctx := context.Background()
 	cfg := newConfigWithSourceDir("./not-exists")
 	_, err := md.NewMyDumpLoader(ctx, cfg)
 	// will check schema in tidb and data file later in DataCheck.
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	cfg = newConfigWithSourceDir("./examples")
 	mdl, err := md.NewMyDumpLoader(ctx, cfg)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dbMetas := mdl.GetDatabases()
-	c.Assert(len(dbMetas), Equals, 1)
+	require.Len(t, dbMetas, 1)
 	dbMeta := dbMetas[0]
-	c.Assert(dbMeta.Name, Equals, "mocker_test")
-	c.Assert(len(dbMeta.Tables), Equals, 4)
+	require.Equal(t, "mocker_test", dbMeta.Name)
+	require.Len(t, dbMeta.Tables, 4)
 
 	expected := []struct {
 		name      string
@@ -101,18 +97,19 @@ func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	}
 
 	for i, table := range expected {
-		c.Assert(dbMeta.Tables[i].Name, Equals, table.name)
-		c.Assert(len(dbMeta.Tables[i].DataFiles), Equals, table.dataFiles)
+		assert.Equal(t, table.name, dbMeta.Tables[i].Name)
+		assert.Equal(t, table.dataFiles, len(dbMeta.Tables[i].DataFiles))
 	}
 }
 
-func (s *testMydumpLoaderSuite) TestEmptyDB(c *C) {
+func TestEmptyDB(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	// will check schema in tidb and data file later in DataCheck.
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testMydumpLoaderSuite) TestDuplicatedDB(c *C) {
+func TestDuplicatedDB(t *testing.T) {
 	/*
 		Path/
 			a/
@@ -120,33 +117,35 @@ func (s *testMydumpLoaderSuite) TestDuplicatedDB(c *C) {
 			b/
 				db-schema-create.sql
 	*/
-	s.mkdir(c, "a")
-	s.touch(c, "a", "db-schema-create.sql")
-	s.mkdir(c, "b")
-	s.touch(c, "b", "db-schema-create.sql")
+	s := newTestMydumpLoaderSuite(t)
+	s.mkdir(t, "a")
+	s.touch(t, "a", "db-schema-create.sql")
+	s.mkdir(t, "b")
+	s.touch(t, "b", "db-schema-create.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid database schema file, duplicated item - .*[/\\]db-schema-create\.sql`)
+	require.Regexp(t, `invalid database schema file, duplicated item - .*[/\\]db-schema-create\.sql`, err)
 }
 
-func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
+func TestTableNoHostDB(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
 			db.tbl-schema.sql
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
 	dir := s.sourceDir
 	err := os.WriteFile(filepath.Join(dir, "notdb-schema-create.sql"), nil, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.WriteFile(filepath.Join(dir, "db.tbl-schema.sql"), nil, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
+func TestDuplicatedTable(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
@@ -155,125 +154,145 @@ func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
 			b/
 				db.tbl-schema.sql
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
-	s.touch(c, "db-schema-create.sql")
-	s.mkdir(c, "a")
-	s.touch(c, "a", "db.tbl-schema.sql")
-	s.mkdir(c, "b")
-	s.touch(c, "b", "db.tbl-schema.sql")
+	s.touch(t, "db-schema-create.sql")
+	s.mkdir(t, "a")
+	s.touch(t, "a", "db.tbl-schema.sql")
+	s.mkdir(t, "b")
+	s.touch(t, "b", "db.tbl-schema.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*db\.tbl-schema\.sql`)
+	require.Regexp(t, `invalid table schema file, duplicated item - .*db\.tbl-schema\.sql`, err)
 }
 
-func (s *testMydumpLoaderSuite) TestTableInfoNotFound(c *C) {
+func TestTableInfoNotFound(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
 	s.cfg.Mydumper.CharacterSet = "auto"
 
-	s.touch(c, "db-schema-create.sql")
-	s.touch(c, "db.tbl-schema.sql")
+	s.touch(t, "db-schema-create.sql")
+	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
 	store, err := storage.NewLocalStorage(s.sourceDir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
+		dbSQL, err := dbMeta.GetSchema(ctx, store)
+		require.NoError(t, err)
+		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
 			sql, err := tblMeta.GetSchema(ctx, store)
-			c.Assert(sql, Equals, "")
-			c.Assert(err, IsNil)
+			require.Equal(t, "", sql)
+			require.NoError(t, err)
 		}
 	}
 }
 
-func (s *testMydumpLoaderSuite) TestTableUnexpectedError(c *C) {
-	s.touch(c, "db-schema-create.sql")
-	s.touch(c, "db.tbl-schema.sql")
+func TestTableUnexpectedError(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	s.touch(t, "db-schema-create.sql")
+	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
 	store, err := storage.NewLocalStorage(s.sourceDir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		for _, tblMeta := range dbMeta.Tables {
 			sql, err := tblMeta.GetSchema(ctx, store)
-			c.Assert(sql, Equals, "")
-			c.Assert(err, ErrorMatches, "failed to decode db.tbl-schema.sql as : Unsupported encoding ")
+			require.Equal(t, "", sql)
+			require.Contains(t, err.Error(), "failed to decode db.tbl-schema.sql as : Unsupported encoding ")
 		}
 	}
 }
 
-func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
+func TestDataNoHostDB(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
 			db.tbl.sql
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
-	s.touch(c, "notdb-schema-create.sql")
-	s.touch(c, "db.tbl.sql")
+	s.touch(t, "notdb-schema-create.sql")
+	s.touch(t, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	// will check schema in tidb and data file later in DataCheck.
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
+func TestDataNoHostTable(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
 			db.tbl.sql
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
-	s.touch(c, "db-schema-create.sql")
-	s.touch(c, "db.tbl.sql")
+	s.touch(t, "db-schema-create.sql")
+	s.touch(t, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	// will check schema in tidb and data file later in DataCheck.
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testMydumpLoaderSuite) TestViewNoHostDB(c *C) {
+func TestViewNoHostDB(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
 			db.tbl-schema-view.sql
 	*/
-	s.touch(c, "notdb-schema-create.sql")
-	s.touch(c, "db.tbl-schema-view.sql")
+	s := newTestMydumpLoaderSuite(t)
+
+	s.touch(t, "notdb-schema-create.sql")
+	s.touch(t, "db.tbl-schema-view.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid view schema file, miss host table schema for view 'tbl'`)
+	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
-func (s *testMydumpLoaderSuite) TestViewNoHostTable(c *C) {
+func TestViewNoHostTable(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
 			db.tbl-schema-view.sql
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
-	s.touch(c, "db-schema-create.sql")
-	s.touch(c, "db.tbl-schema-view.sql")
+	s.touch(t, "db-schema-create.sql")
+	s.touch(t, "db.tbl-schema-view.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid view schema file, miss host table schema for view 'tbl'`)
+	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
-func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
+func TestDataWithoutSchema(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
 	dir := s.sourceDir
 	p := filepath.Join(dir, "db.tbl.sql")
 	err := os.WriteFile(p, nil, 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
-	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{{
-		Name:       "db",
-		SchemaFile: "",
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{{
+		Name: "db",
+		SchemaFile: md.FileInfo{
+			TableName: filter.Table{
+				Schema: "db",
+				Name:   "",
+			},
+			FileMeta: md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
+		},
 		Tables: []*md.MDTableMeta{{
 			DB:           "db",
 			Name:         "tbl",
@@ -282,27 +301,29 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 			IsRowOrdered: true,
 			IndexRatio:   0.0,
 		}},
-	}})
+	}}, mdl.GetDatabases())
 }
 
-func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
-	s.touch(c, "db-schema-create.sql")
-	s.touch(c, "db.tbl.with.dots-schema.sql")
-	s.touch(c, "db.tbl.with.dots.0001.sql")
-	s.touch(c, "db.0002-schema.sql")
-	s.touch(c, "db.0002.sql")
+func TestTablesWithDots(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.touch(t, "db-schema-create.sql")
+	s.touch(t, "db.tbl.with.dots-schema.sql")
+	s.touch(t, "db.tbl.with.dots.0001.sql")
+	s.touch(t, "db.0002-schema.sql")
+	s.touch(t, "db.0002.sql")
 
 	// insert some tables with file name structures which we're going to ignore.
-	s.touch(c, "db.v-schema-trigger.sql")
-	s.touch(c, "db.v-schema-post.sql")
-	s.touch(c, "db.sql")
-	s.touch(c, "db-schema.sql")
+	s.touch(t, "db.v-schema-trigger.sql")
+	s.touch(t, "db.v-schema-post.sql")
+	s.touch(t, "db.sql")
+	s.touch(t, "db-schema.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
-	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{{
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{{
 		Name:       "db",
-		SchemaFile: "db-schema-create.sql",
+		SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "db-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 		Tables: []*md.MDTableMeta{
 			{
 				DB:           "db",
@@ -321,10 +342,11 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 				IndexRatio:   0.0,
 			},
 		},
-	}})
+	}}, mdl.GetDatabases())
 }
 
-func (s *testMydumpLoaderSuite) TestRouter(c *C) {
+func TestRouter(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
 	s.cfg.Routes = []*router.TableRule{
 		{
 			SchemaPattern: "a*",
@@ -367,36 +389,36 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 			e0.f0-schema-view.sql
 	*/
 
-	s.touch(c, "a0-schema-create.sql")
-	s.touch(c, "a0.t0-schema.sql")
-	s.touch(c, "a0.t0.1.sql")
-	s.touch(c, "a0.t1-schema.sql")
-	s.touch(c, "a0.t1.1.sql")
+	s.touch(t, "a0-schema-create.sql")
+	s.touch(t, "a0.t0-schema.sql")
+	s.touch(t, "a0.t0.1.sql")
+	s.touch(t, "a0.t1-schema.sql")
+	s.touch(t, "a0.t1.1.sql")
 
-	s.touch(c, "a1-schema-create.sql")
-	s.touch(c, "a1.s1-schema.sql")
-	s.touch(c, "a1.s1.1.sql")
-	s.touch(c, "a1.t2-schema.sql")
-	s.touch(c, "a1.t2.1.sql")
-	s.touch(c, "a1.v1-schema.sql")
-	s.touch(c, "a1.v1-schema-view.sql")
+	s.touch(t, "a1-schema-create.sql")
+	s.touch(t, "a1.s1-schema.sql")
+	s.touch(t, "a1.s1.1.sql")
+	s.touch(t, "a1.t2-schema.sql")
+	s.touch(t, "a1.t2.1.sql")
+	s.touch(t, "a1.v1-schema.sql")
+	s.touch(t, "a1.v1-schema-view.sql")
 
-	s.touch(c, "c0-schema-create.sql")
-	s.touch(c, "c0.t3-schema.sql")
-	s.touch(c, "c0.t3.1.sql")
+	s.touch(t, "c0-schema-create.sql")
+	s.touch(t, "c0.t3-schema.sql")
+	s.touch(t, "c0.t3.1.sql")
 
-	s.touch(c, "d0-schema-create.sql")
+	s.touch(t, "d0-schema-create.sql")
 
-	s.touch(c, "e0-schema-create.sql")
-	s.touch(c, "e0.f0-schema.sql")
-	s.touch(c, "e0.f0-schema-view.sql")
+	s.touch(t, "e0-schema-create.sql")
+	s.touch(t, "e0.f0-schema.sql")
+	s.touch(t, "e0.f0-schema-view.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
-	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       "a1",
-			SchemaFile: "a1-schema-create.sql",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:           "a1",
@@ -427,11 +449,11 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 		},
 		{
 			Name:       "d0",
-			SchemaFile: "d0-schema-create.sql",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 		},
 		{
 			Name:       "b",
-			SchemaFile: "a0-schema-create.sql",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:         "b",
@@ -449,7 +471,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 		},
 		{
 			Name:       "c",
-			SchemaFile: "c0-schema-create.sql",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "c", Name: ""}, FileMeta: md.SourceFileMeta{Path: "c0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:           "c",
@@ -463,7 +485,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 		},
 		{
 			Name:       "v",
-			SchemaFile: "e0-schema-create.sql",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:           "v",
@@ -484,22 +506,26 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 				},
 			},
 		},
-	})
+	}, mdl.GetDatabases())
 }
 
-func (s *testMydumpLoaderSuite) TestBadRouterRule(c *C) {
+func TestBadRouterRule(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
 	s.cfg.Routes = []*router.TableRule{{
 		SchemaPattern: "a*b",
 		TargetSchema:  "ab",
 	}}
 
-	s.touch(c, "a1b-schema-create.sql")
+	s.touch(t, "a1b-schema-create.sql")
 
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `.*pattern a\*b not valid`)
+	require.Regexp(t, `.*pattern a\*b not valid`, err.Error())
 }
 
-func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
+func TestFileRouting(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
 	s.cfg.Mydumper.DefaultFileRules = false
 	s.cfg.Mydumper.FileRouters = []*config.FileRouteRule{
 		{
@@ -533,26 +559,26 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 		},
 	}
 
-	s.mkdir(c, "d1")
-	s.mkdir(c, "d2")
-	s.touch(c, "d1/schema.sql")
-	s.touch(c, "d1/test-table.sql")
-	s.touch(c, "d1/test0.sql")
-	s.touch(c, "d1/test1.sql")
-	s.touch(c, "d1/test2.001.sql")
-	s.touch(c, "d1/v1-table.sql")
-	s.touch(c, "d1/v1-view.sql")
-	s.touch(c, "d1/t1-schema-create.sql")
-	s.touch(c, "d2/schema.sql")
-	s.touch(c, "d2/abc-table.sql")
-	s.touch(c, "abc.1.sql")
+	s.mkdir(t, "d1")
+	s.mkdir(t, "d2")
+	s.touch(t, "d1/schema.sql")
+	s.touch(t, "d1/test-table.sql")
+	s.touch(t, "d1/test0.sql")
+	s.touch(t, "d1/test1.sql")
+	s.touch(t, "d1/test2.001.sql")
+	s.touch(t, "d1/v1-table.sql")
+	s.touch(t, "d1/v1-view.sql")
+	s.touch(t, "d1/t1-schema-create.sql")
+	s.touch(t, "d2/schema.sql")
+	s.touch(t, "d2/abc-table.sql")
+	s.touch(t, "abc.1.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
-	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       "d1",
-			SchemaFile: filepath.FromSlash("d1/schema.sql"),
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("d1/schema.sql"), Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:   "d1",
@@ -605,7 +631,7 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 		},
 		{
 			Name:       "d2",
-			SchemaFile: filepath.FromSlash("d2/schema.sql"),
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d2", Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("d2/schema.sql"), Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:   "d2",
@@ -620,10 +646,10 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 				},
 			},
 		},
-	})
+	}, mdl.GetDatabases())
 }
 
-func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
+func TestInputWithSpecialChars(t *testing.T) {
 	/*
 		Path/
 			test-schema-create.sql
@@ -639,27 +665,28 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 			db%22.t%2522-schema.sql
 			db%22.t%2522.0.csv
 	*/
+	s := newTestMydumpLoaderSuite(t)
 
-	s.touch(c, "test-schema-create.sql")
-	s.touch(c, "test.t%22-schema.sql")
-	s.touch(c, "test.t%22.sql")
-	s.touch(c, "test.t%2522-schema.sql")
-	s.touch(c, "test.t%2522.csv")
-	s.touch(c, "test.t%gg-schema.sql")
-	s.touch(c, "test.t%gg.csv")
-	s.touch(c, "test.t+gg-schema.sql")
-	s.touch(c, "test.t+gg.csv")
+	s.touch(t, "test-schema-create.sql")
+	s.touch(t, "test.t%22-schema.sql")
+	s.touch(t, "test.t%22.sql")
+	s.touch(t, "test.t%2522-schema.sql")
+	s.touch(t, "test.t%2522.csv")
+	s.touch(t, "test.t%gg-schema.sql")
+	s.touch(t, "test.t%gg.csv")
+	s.touch(t, "test.t+gg-schema.sql")
+	s.touch(t, "test.t+gg.csv")
 
-	s.touch(c, "db%22-schema-create.sql")
-	s.touch(c, "db%22.t%2522-schema.sql")
-	s.touch(c, "db%22.t%2522.0.csv")
+	s.touch(t, "db%22-schema-create.sql")
+	s.touch(t, "db%22.t%2522-schema.sql")
+	s.touch(t, "db%22.t%2522.0.csv")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, IsNil)
-	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       `db"`,
-			SchemaFile: filepath.FromSlash("db%22-schema-create.sql"),
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: `db"`, Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("db%22-schema-create.sql"), Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:   `db"`,
@@ -681,7 +708,7 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 		},
 		{
 			Name:       "test",
-			SchemaFile: filepath.FromSlash("test-schema-create.sql"),
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: `test`, Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("test-schema-create.sql"), Type: md.SourceTypeSchemaSchema}},
 			Tables: []*md.MDTableMeta{
 				{
 					DB:   "test",
@@ -729,5 +756,5 @@ func (s *testMydumpLoaderSuite) TestInputWithSpecialChars(c *C) {
 				},
 			},
 		},
-	})
+	}, mdl.GetDatabases())
 }

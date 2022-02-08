@@ -704,7 +704,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	do.cancel()
+	if do.cancel != nil {
+		do.cancel()
+	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
