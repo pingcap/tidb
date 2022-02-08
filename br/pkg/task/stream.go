@@ -295,7 +295,7 @@ func RunStreamCommand(
 	cfg.adjust()
 	commandFn, exist := StreamCommandMap[cmdName]
 	if !exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s\n", cmdName)
+		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s", cmdName)
 	}
 
 	if err := commandFn(ctx, g, cmdName, cfg); err != nil {
