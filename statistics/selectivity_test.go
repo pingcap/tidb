@@ -49,8 +49,6 @@ func TestCollationColumnEstimate(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
