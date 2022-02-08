@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/types"
 )
 
 type dataSampleCheck struct {
@@ -54,6 +55,20 @@ func newDataSampleCheck(controller *Controller) *dataSampleCheck {
 	}
 }
 
+func (d *dataSampleCheck) logCheckFailedRow(row []types.Datum, fileMeta mydump.SourceFileMeta, offset int64, errMsg string) {
+	var sb strings.Builder
+	for i, d := range row {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(d.String())
+	}
+	log.L().Error("data check failed", zap.String("raw-data", sb.String()),
+		zap.String("file", fileMeta.Path),
+		zap.Int64("offset", offset),
+		zap.String("error", errMsg))
+}
+
 func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampledDataFileInfo, errChan chan error) {
 	defer d.wg.Done()
 
@@ -65,7 +80,8 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 	rc := d.controller
 	mydumperCfg := &rc.cfg.Mydumper
 	for fileInfo := range fileChan {
-		fileParser, err := rc.createDataFileParser(ctx, fileInfo.DataFile.FileMeta, config.DefaultCSVDataInvalidCharReplace)
+		fileMeta := fileInfo.DataFile.FileMeta
+		fileParser, err := rc.createDataFileParser(ctx, fileMeta, config.DefaultCSVDataInvalidCharReplace)
 		if err != nil {
 			if errors.Cause(err) != context.Canceled {
 				resultErr = err
@@ -73,7 +89,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			return
 		}
 
-		var columnCountMismatchRows, invalidCharRows int64
+		var columnCountMismatchRows, invalidCharRows, lastOffset int64
 		columnCount := len(fileInfo.TableInfo.Columns)
 		for i := 0; i < d.checkCfg.Rows; i++ {
 			err = fileParser.ReadRow()
@@ -88,31 +104,30 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 				fileParser.Close()
 				return
 			}
+
 			row := fileParser.LastRow()
 			if len(row.Row) != columnCount {
 				columnCountMismatchRows++
+				d.logCheckFailedRow(row.Row, fileMeta, lastOffset,
+					fmt.Sprintf("column count mismatch, expect %d, got %d", columnCount, len(row.Row)))
 			}
 
-			if fileInfo.DataFile.FileMeta.Type != mydump.SourceTypeCSV ||
+			if fileMeta.Type != mydump.SourceTypeCSV ||
 				mydumperCfg.DataCharacterSet != config.DefaultCSVDataCharacterSet {
 				for _, col := range row.Row {
 					colStr := col.GetString()
 					if strings.Contains(colStr, config.DefaultCSVDataInvalidCharReplace) {
 						invalidCharRows++
+						d.logCheckFailedRow(row.Row, fileMeta, lastOffset, "contains invalid char")
 					}
 				}
 			}
 			fileParser.RecycleRow(row)
+			// lastOffset is the start offset of current row
+			lastOffset, _ = fileParser.Pos()
 		}
 
 		fileParser.Close()
-
-		if columnCountMismatchRows > 0 || invalidCharRows > 0 {
-			log.L().Error("data error found in data file",
-				zap.Reflect("file", fileInfo.DataFile.FileMeta),
-				zap.Int64("column_count_mismatch_rows", columnCountMismatchRows),
-				zap.Int64("invalid_char_rows", invalidCharRows))
-		}
 
 		d.totalRows.Add(int64(d.checkCfg.Rows))
 		d.totalColumnCountMismatchRows.Add(columnCountMismatchRows)
