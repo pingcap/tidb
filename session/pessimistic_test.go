@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 
@@ -200,14 +201,15 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	c.Assert(err, IsNil)
 
 	syncCh := make(chan error)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		tk2.MustExec("update deadlock set v = v + 1 where k = 2")
 		syncCh <- nil
 		_, err := tk2.Exec("update deadlock set v = v + 1 where k = 1")
 		syncCh <- err
 
 		tk2.MustExec("rollback")
-	}()
+	})
 	<-syncCh
 	_, err1 := tk1.Exec("update deadlock set v = v + 1 where k = 2")
 	err2 := <-syncCh
@@ -221,7 +223,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
 	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
-
+	wg.Wait()
 	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
 
 	expectedDeadlockInfo := []string{
