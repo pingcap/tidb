@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1521,9 +1520,6 @@ func (s *testSerialSuite) TestAutoRandomWithPreSplitRegion(c *C) {
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1557,8 +1553,6 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 }
 
 func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
