@@ -212,17 +212,42 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	// Do the DDL job.
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionSetTiFlashReplicaTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{*tiflashReplica},
+	//// Do the DDL job.
+	//job := &model.Job{
+	//	SchemaID:   dbInfo.ID,
+	//	SchemaName: dbInfo.Name.L,
+	//	Type:       model.ActionSetTiFlashReplicaTable,
+	//	BinlogInfo: &model.HistoryInfo{},
+	//	Args:       []interface{}{*tiflashReplica},
+	//}
+	//err := d.doDDLJob(ctx, job)
+	//err = d.callHookOnChanged(err)
+	//return errors.Trace(err)
+	fail := make([]int64, 0)
+	succ := 0
+	for _, tbl := range dbInfo.Tables {
+		job := &model.Job{
+			SchemaID:   dbInfo.ID,
+			SchemaName: dbInfo.Name.L,
+			TableID:    tbl.ID,
+			Type:       model.ActionSetTiFlashReplica,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{*tiflashReplica},
+		}
+		err := d.doDDLJob(ctx, job)
+		err = d.callHookOnChanged(err)
+		if err != nil {
+			fail = append(fail, tbl.ID)
+		} else {
+			succ += 1
+		}
+		logutil.BgLogger().Info("processing schema table", zap.Int64("t", tbl.ID), zap.Int64("s", dbInfo.ID), zap.Error(err))
 	}
-	err := d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if l := len(fail); l > 0 {
+		return fmt.Errorf("meet %v failures, including table %v", l, fail[0])
+	} else {
+		return nil
+	}
 }
 
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {

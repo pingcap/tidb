@@ -1059,7 +1059,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 }
 
 func commonSetTableFlashReplica() (bool, error) {
-
+	return false, nil
 }
 
 func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
