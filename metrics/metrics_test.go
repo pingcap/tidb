@@ -41,3 +41,17 @@ func TestExecuteErrorToLabel(t *testing.T) {
 	require.Equal(t, `unknown`, ExecuteErrorToLabel(errors.New("test")))
 	require.Equal(t, `global:2`, ExecuteErrorToLabel(terror.ErrResultUndetermined))
 }
+
+func BenchmarkPromHistogram(b *testing.B) {
+	r := PacketIOHistogram.WithLabelValues("read")
+	for i := 0; i < b.N; i++ {
+		r.Observe(10)
+	}
+}
+
+func BenchmarkPromCounter(b *testing.B) {
+	r := QueryTotalCounter.WithLabelValues("read", "write")
+	for i := 0; i < b.N; i++ {
+		r.Add(10)
+	}
+}

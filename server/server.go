@@ -48,6 +48,7 @@ import (
 	"unsafe"
 
 	"github.com/blacktear23/go-proxyprotocol"
+	"github.com/cloudwego/netpoll"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -171,16 +172,16 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
-func (s *Server) newConn(conn net.Conn) *clientConn {
+func (s *Server) newConn(conn netpoll.Connection) *clientConn {
 	cc := newClientConn(s)
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
-			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
-		}
-		if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
-			logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
-		}
-	}
+	// if tcpConn, ok := conn.(*net.TCPConn); ok {
+	// 	if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
+	// 		logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
+	// 	}
+	// 	if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
+	// 		logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
+	// 	}
+	// }
 	cc.setConn(conn)
 	cc.salt = fastrand.Buf(20)
 	return cc
@@ -351,8 +352,80 @@ func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
+var eventLoop netpoll.EventLoop
+
+func (s *Server) createEventLoop() {
+	eventLoop, _ = netpoll.NewEventLoop(
+		nil, // s.onRequest,
+		// netpoll.WithOnPrepare(s.onPrepare),
+		netpoll.WithOnConnect(s.onConnect),
+	)
+}
+
+// type clientConnKey string
+
+// func (s *Server) onPrepare(conn netpoll.Connection) context.Context {
+// 	clientConn := s.newConn(conn)
+// 	ctx := context.WithValue(context.Background(), clientConnKey("client-conn"), clientConn)
+// 	// println("prepare conn", clientConn.connectionID)
+
+// 	return ctx
+// }
+
+func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context.Context {
+	clientConn := s.newConn(conn)
+
+	go s.onConn(clientConn)
+
+	return ctx
+}
+
+// func (s *Server) onConnect(ctx context.Context, conn netpoll.Connection) context.Context {
+// 	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
+// 	// println("on connect", clientConn.connectionID)
+
+// 	if err := clientConn.handshake(ctx); err != nil {
+// 		clientConn.Close()
+// 		return ctx
+// 	}
+//
+// 	connectionID := clientConn.connectionID
+// 	s.rwlock.Lock()
+// 	s.clients[connectionID] = clientConn
+// 	connections := len(s.clients)
+// 	s.rwlock.Unlock()
+// 	metrics.ConnGauge.Set(float64(connections))
+
+// 	callback := func(conn netpoll.Connection) error {
+// 		s.rwlock.Lock()
+// 		defer s.rwlock.Unlock()
+
+// 		if cc, ok := s.clients[connectionID]; ok {
+// 			return cc.closeWithoutLock()
+// 		}
+
+// 		return nil
+// 	}
+// 	conn.AddCloseCallback(callback)
+
+// 	return ctx
+// }
+
+// func (s *Server) onRequest(ctx context.Context, conn netpoll.Connection) error {
+// 	clientConn := ctx.Value(clientConnKey("client-conn")).(*clientConn)
+// 	// println("on request", clientConn.connectionID)
+// 	err := clientConn.Run(ctx)
+// 	if err != nil {
+// 		println("close connection", clientConn.connectionID, err.Error())
+// 		clientConn.Close()
+// 	}
+// 	return err
+// }
+
 // Run runs the server.
 func (s *Server) Run() error {
+	s.createEventLoop()
+
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
 	s.reportConfig()
 
@@ -360,97 +433,100 @@ func (s *Server) Run() error {
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
+
+	return eventLoop.Serve(s.listener)
+
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
-	errChan := make(chan error)
-	go s.startNetworkListener(s.listener, false, errChan)
-	go s.startNetworkListener(s.socket, true, errChan)
-	err := <-errChan
-	if err != nil {
-		return err
-	}
-	return <-errChan
+	// errChan := make(chan error)
+	// go s.startNetworkListener(s.listener, false, errChan)
+	// go s.startNetworkListener(s.socket, true, errChan)
+	// err := <-errChan
+	// if err != nil {
+	// 	return err
+	// }
+	// return <-errChan
 }
 
-func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {
-	if listener == nil {
-		errChan <- nil
-		return
-	}
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok {
-				if opErr.Err.Error() == "use of closed network connection" {
-					if s.inShutdownMode {
-						errChan <- nil
-					} else {
-						errChan <- err
-					}
-					return
-				}
-			}
+// func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {
+// 	if listener == nil {
+// 		errChan <- nil
+// 		return
+// 	}
+// 	for {
+// 		conn, err := listener.Accept()
+// 		if err != nil {
+// 			if opErr, ok := err.(*net.OpError); ok {
+// 				if opErr.Err.Error() == "use of closed network connection" {
+// 					if s.inShutdownMode {
+// 						errChan <- nil
+// 					} else {
+// 						errChan <- err
+// 					}
+// 					return
+// 				}
+// 			}
 
-			// If we got PROXY protocol error, we should continue to accept.
-			if proxyprotocol.IsProxyProtocolError(err) {
-				logutil.BgLogger().Error("PROXY protocol failed", zap.Error(err))
-				continue
-			}
+// 			// If we got PROXY protocol error, we should continue to accept.
+// 			if proxyprotocol.IsProxyProtocolError(err) {
+// 				logutil.BgLogger().Error("PROXY protocol failed", zap.Error(err))
+// 				continue
+// 			}
 
-			logutil.BgLogger().Error("accept failed", zap.Error(err))
-			errChan <- err
-			return
-		}
+// 			logutil.BgLogger().Error("accept failed", zap.Error(err))
+// 			errChan <- err
+// 			return
+// 		}
 
-		clientConn := s.newConn(conn)
-		if isUnixSocket {
-			uc, ok := conn.(*net.UnixConn)
-			if !ok {
-				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
-				return
-			}
+// 		clientConn := s.newConn(conn)
+// 		if isUnixSocket {
+// 			uc, ok := conn.(*net.UnixConn)
+// 			if !ok {
+// 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+// 				return
+// 			}
 
-			clientConn.isUnixSocket = true
-			clientConn.peerHost = "localhost"
-			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
-			if err != nil {
-				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
-				return
-			}
-		}
+// 			clientConn.isUnixSocket = true
+// 			clientConn.peerHost = "localhost"
+// 			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
+// 			if err != nil {
+// 				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
+// 				return
+// 			}
+// 		}
 
-		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent == nil {
-				return nil
-			}
-			host, _, err := clientConn.PeerHost("")
-			if err != nil {
-				logutil.BgLogger().Error("get peer host failed", zap.Error(err))
-				terror.Log(clientConn.Close())
-				return errors.Trace(err)
-			}
-			if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
-				&variable.ConnectionInfo{Host: host}); err != nil {
-				logutil.BgLogger().Info("do connection event failed", zap.Error(err))
-				terror.Log(clientConn.Close())
-				return errors.Trace(err)
-			}
-			return nil
-		})
-		if err != nil {
-			continue
-		}
+// 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+// 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+// 			if authPlugin.OnConnectionEvent == nil {
+// 				return nil
+// 			}
+// 			host, _, err := clientConn.PeerHost("")
+// 			if err != nil {
+// 				logutil.BgLogger().Error("get peer host failed", zap.Error(err))
+// 				terror.Log(clientConn.Close())
+// 				return errors.Trace(err)
+// 			}
+// 			if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
+// 				&variable.ConnectionInfo{Host: host}); err != nil {
+// 				logutil.BgLogger().Info("do connection event failed", zap.Error(err))
+// 				terror.Log(clientConn.Close())
+// 				return errors.Trace(err)
+// 			}
+// 			return nil
+// 		})
+// 		if err != nil {
+// 			continue
+// 		}
 
-		if s.dom != nil && s.dom.IsLostConnectionToPD() {
-			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
-			terror.Log(clientConn.Close())
-			continue
-		}
+// 		if s.dom != nil && s.dom.IsLostConnectionToPD() {
+// 			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
+// 			terror.Log(clientConn.Close())
+// 			continue
+// 		}
 
-		go s.onConn(clientConn)
-	}
-}
+// 		go s.onConn(clientConn)
+// 	}
+// }
 
 func (s *Server) startShutdown() {
 	s.rwlock.RLock()
@@ -474,6 +550,7 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
+		go eventLoop.Shutdown(context.Background())
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
@@ -513,18 +590,18 @@ func (s *Server) onConn(conn *clientConn) {
 		if errors.Cause(err) == io.EOF {
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+				Debug("EOF", zap.String("remote addr", conn.pkt.RemoteAddr().String()))
 		} else {
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
-					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+					zap.String("remote addr", conn.pkt.RemoteAddr().String()))
 		}
 		terror.Log(conn.Close())
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.pkt.RemoteAddr().String()))
 
 	defer func() {
 		logutil.Logger(ctx).Debug("connection closed")

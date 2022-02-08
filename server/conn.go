@@ -55,6 +55,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -170,16 +171,16 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt           *packetIO         // a helper to read and write data in packet format.
-	bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn       *tls.Conn         // TLS connection, nil if not TLS.
-	server        *Server           // a reference of server instance.
-	capability    uint32            // client capability affects the way server handles client request.
-	connectionID  uint64            // atomically allocated by a global variable, unique in process scope.
-	user          string            // user of the client.
-	dbname        string            // default database name.
-	salt          []byte            // random bytes used for authentication.
-	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
+	pkt *packetIO // a helper to read and write data in packet format.
+	// bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn       *tls.Conn       // TLS connection, nil if not TLS.
+	server        *Server         // a reference of server instance.
+	capability    uint32          // client capability affects the way server handles client request.
+	connectionID  uint64          // atomically allocated by a global variable, unique in process scope.
+	user          string          // user of the client.
+	dbname        string          // default database name.
+	salt          []byte          // random bytes used for authentication.
+	alloc         arena.Allocator // an memory allocator for reducing memory allocation.
 	chunkAlloc    chunk.Allocator
 	lastPacket    []byte            // latest sql query string, currently used for logging error.
 	ctx           *TiDBContext      // an interface to execute sql statements.
@@ -205,7 +206,7 @@ type clientConn struct {
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
-		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.pkt.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -316,10 +317,11 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		terror.Log(err)
-	}
+	// if cc.bufReadConn != nil {
+	// 	err := cc.bufReadConn.Close()
+	// 	terror.Log(err)
+	// }
+	cc.pkt.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -935,7 +937,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 		cc.peerHost = host
 		return
 	}
-	addr := cc.bufReadConn.RemoteAddr().String()
+	addr := cc.pkt.RemoteAddr().String()
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
 		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
@@ -1063,6 +1065,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
+			println("read pacakge error", err.Error())
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
 					idleTime := time.Since(start)
@@ -1091,6 +1094,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
 		if err != nil {
+			println("dispatch error", data[0], errors.ErrorStack(err))
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
@@ -1308,6 +1312,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	dataStr := string(hack.String(data))
+
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
@@ -2286,24 +2291,25 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	return cc.writeEOF(serverStatus)
 }
 
-func (cc *clientConn) setConn(conn net.Conn) {
-	cc.bufReadConn = newBufferedReadConn(conn)
+func (cc *clientConn) setConn(conn netpoll.Connection) {
+	// cc.bufReadConn = newBufferedReadConn(conn)
 	if cc.pkt == nil {
-		cc.pkt = newPacketIO(cc.bufReadConn)
+		cc.pkt = &packetIO{conn, 0, 0}
 	} else {
 		// Preserve current sequence number.
-		cc.pkt.setBufferedReadConn(cc.bufReadConn)
+		cc.pkt.Connection = conn
+		// cc.pkt.setBufferedReadConn(cc.bufReadConn)
 	}
 }
 
 func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
-	tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
-		return err
-	}
-	cc.setConn(tlsConn)
-	cc.tlsConn = tlsConn
+	// tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
+	// if err := tlsConn.Handshake(); err != nil {
+	// 	return err
+	// }
+	// cc.setConn(tlsConn)
+	// cc.tlsConn = tlsConn
 	return nil
 }
 

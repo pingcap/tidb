@@ -15,8 +15,6 @@
 package server
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"flag"
 	"testing"
@@ -100,8 +98,8 @@ func CreateMockConn(t *testing.T, store kv.Storage, server *Server) MockConn {
 		collation:  mysql.DefaultCollationID,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		pkt:        &packetIO{
+			// bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
 	return &mockConn{
