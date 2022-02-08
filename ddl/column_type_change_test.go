@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -440,8 +439,6 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarchar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("drop database if exists col_type_change_char;")
 	tk.MustExec("create database col_type_change_char;")
 	tk.MustExec("use col_type_change_char;")
@@ -2351,4 +2348,26 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 
 	_, err = tk.Exec("insert into t values(null)")
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+	// issue #31372
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func(createTableStmt string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableStmt)
+		tk.MustExec("insert into t values (36.4), (24.1);")
+	}
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 }

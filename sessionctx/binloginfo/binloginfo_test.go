@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -112,6 +112,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.ddl.SetBinlogClient(s.client)
 
 	clean = func() {
+		clientCon.Close()
 		err = s.ddl.Stop()
 		require.NoError(t, err)
 		s.serv.Stop()

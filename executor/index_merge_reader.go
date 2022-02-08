@@ -296,9 +296,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 
 				var builder distsql.RequestBuilder
-				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-					builder.SetIsolationLevel(kv.RC)
-				}
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
@@ -616,7 +613,9 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
+	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Also it's good for performance.
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err

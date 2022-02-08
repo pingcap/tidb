@@ -11,14 +11,75 @@ CREATE TABLE `t` (
 CREATE TABLE `t1` (
   `a` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL
 );
-insert into t values ("a");
-insert into t1 values ("A");
+insert into t values ("A");
+# Ignore error for the disabled new-collation case.
+--error 1265
+insert into t1 values ("a");
 select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
 
+## Check rewrite in expression
+
+# enum part
+drop table if exists t;
+create table t(a enum('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+drop table if exists t;
+create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+# Ignore error for the disabled new-collation case.
+--error 1265
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+select * from t where 'B' collate utf8mb4_bin in (a);
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+select * from t where 1 in (a);
+select * from t where 2 in (a);
+select * from t where 1 in (a, 0);
+select * from t where a between 1 and 2;
+select * from t where a between 1 and "a";
+select * from t where a between "a" and "b";
+select * from t where 2 between a and "c";
+select * from t where 2 between a and 3;
+select * from t where "b" between a and a;
+select * from t where "b" collate utf8mb4_bin between a and a;
+select * from t where "b" between a and 3;
+
+# set part
+drop table if exists t;
+create table t(a set('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+drop table if exists t;
+create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+# Ignore error for the disabled new-collation case.
+--error 1265
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+select * from t where 'B' collate utf8mb4_bin in (a);
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+select * from t where 1 in (a);
+select * from t where 2 in (a);
+select * from t where 1 in (a, 0);
+select * from t where a between 1 and 2;
+select * from t where a between 1 and "a";
+select * from t where a between "a" and "b";
+select * from t where 2 between a and "c";
+select * from t where 2 between a and 3;
+select * from t where "b" between a and a;
+select * from t where "b" collate utf8mb4_bin between a and a;
+select * from t where "b" between a and 3;
+
+# check build range
 drop table if exists tbl_2;
 create table tbl_2 ( col_20 bigint not null , col_21 smallint not null , col_22 decimal(24,10) default null , col_23 tinyint default 71 not null , col_24 bigint not null , col_25 tinyint default 18 , col_26 varchar(330) collate utf8_bin not null , col_27 char(77) collate                    utf8mb4_unicode_ci , col_28 char(46) collate utf8_general_ci not null , col_29 smallint unsigned not null , primary key idx_13 ( col_27(5) ) , key idx_14 ( col_24 ) , unique key idx_15 ( col_23,col_21,col_28,col_29,col_24 ) ) collate utf8_bin ;
 insert ignore into tbl_2 values ( 5888267793391993829,5371,94.63,-109,5728076076919247337,89,'WUicqUTgdGJcjbC','SapBPqczTWWSN','xUSwH',49462 );

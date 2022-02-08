@@ -219,7 +219,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.StoreID] = store
+		stores[store.Store.GetId()] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -315,11 +315,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }
@@ -806,8 +806,6 @@ outer:
 
 			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = tableCSVCount
-				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
@@ -959,13 +957,18 @@ func (rc *Controller) sampleDataFromTable(
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -998,7 +1001,7 @@ func (rc *Controller) sampleDataFromTable(
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -1009,7 +1012,7 @@ func (rc *Controller) sampleDataFromTable(
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
@@ -1026,7 +1029,6 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)

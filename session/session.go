@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -127,9 +128,9 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	// ExecuteStmt executes a parsed statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
-	// Parse is deprecated, use ParseWithParams() or ParseWithParamsInternal() instead.
+	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ExecuteInternal is a helper around ParseWithParamsInternal() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
@@ -231,6 +232,13 @@ type session struct {
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
+
+	// StmtStats is used to count various indicators of each SQL in this session
+	// at each point in time. These data will be periodically taken away by the
+	// background goroutine. The background goroutine will continue to aggregate
+	// all the local data in each session, and finally report them to the remote
+	// regularly.
+	stmtStats *stmtstats.StatementStats
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -854,6 +862,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		}
 		return err
 	}
+	s.updateStatsDeltaToCollector()
+	return nil
+}
+
+func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for _, item := range mapper {
@@ -862,7 +875,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
@@ -1130,6 +1142,9 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1150,6 +1165,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1174,11 +1192,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
-	stmt, err := s.ParseWithParamsInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
-	if err != nil {
-		return "", err
-	}
-	rows, fields, err := s.ExecRestrictedStmt(ctx, stmt)
+	rows, fields, err := s.ExecRestrictedSQL(ctx, nil, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
 	}
@@ -1196,11 +1210,10 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
-	stmt, err := s.ParseWithParamsInternal(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
+	_, _, err := s.ExecRestrictedSQL(ctx, nil, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
-	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
 	domain.GetDomain(s).NotifyUpdateSysVarCache()
 	return err
 }
@@ -1271,11 +1284,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	stmt, err := s.ParseWithParamsInternal(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
-	if err != nil {
-		return err
-	}
-	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
+	_, _, err := s.ExecRestrictedSQL(context.TODO(), nil, `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	return err
 }
 
@@ -1494,15 +1503,13 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 
 	var stmts []ast.StmtNode
 	var warns []error
-	var parseStartTime time.Time
+	parseStartTime := time.Now()
 	if internal {
 		// Do no respect the settings from clients, if it is for internal usage.
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
@@ -1522,7 +1529,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
-	if s.isInternal() {
+	if internal {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
@@ -1541,84 +1548,20 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
-// ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
-func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	origin := s.sessionVars.InRestrictedSQL
-	s.sessionVars.InRestrictedSQL = true
-	defer func() {
-		s.sessionVars.InRestrictedSQL = origin
-	}()
-	return s.ParseWithParams(ctx, sql, args...)
-}
-
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
-	var execOption sqlexec.ExecOption
-	for _, opt := range opts {
-		opt(&execOption)
-	}
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
+	se, clean, err := s.getInternalSession(opts)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.sysSessionPool().Put(tmp)
-	se := tmp.(*session)
+	defer clean()
 
 	startTime := time.Now()
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
-	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
-	defer func() {
-		if !execOption.IgnoreWarning {
-			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
-			}
-		}
-		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-	}()
-
-	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-
-	if execOption.AnalyzeVer != 0 {
-		prevStatsVer := se.sessionVars.AnalyzeVersion
-		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
-		defer func() {
-			se.sessionVars.AnalyzeVersion = prevStatsVer
-		}()
-	}
-
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
-
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
@@ -1640,6 +1583,108 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
+}
+
+func (s *session) getInternalSession(opts []sqlexec.OptionFuncAlias) (*session, func(), error) {
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	se := tmp.(*session)
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
+
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	prevStatsVer := se.sessionVars.AnalyzeVersion
+	if execOption.AnalyzeVer != 0 {
+		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
+	}
+
+	// for analyze stmt we need let worker session follow user session that executing stmt.
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+
+	return se, func() {
+		se.sessionVars.AnalyzeVersion = prevStatsVer
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+		}
+		se.sessionVars.SnapshotInfoschema = nil
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
+		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
+		se.sessionVars.OptimizerUseInvisibleIndexes = false
+		se.sessionVars.InspectionTableCache = nil
+		s.sysSessionPool().Put(tmp)
+	}, nil
+}
+
+func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, clean, err := s.getInternalSession(opts)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer clean()
+	return fn(ctx, se)
+}
+
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := se.ParseWithParams(ctx, sql, params...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if topsqlstate.TopSQLEnabled() {
+			defer pprof.SetGoroutineLabels(ctx)
+		}
+		startTime := time.Now()
+		metrics.SessionRestrictedSQLCounter.Inc()
+		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+		rs, err := se.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			se.sessionVars.StmtCtx.AppendError(err)
+		}
+		if rs == nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if closeErr := rs.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		var rows []chunk.Row
+		rows, err = drainRecordSet(ctx, se, rs, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+		return rows, rs.Fields(), err
+	})
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2374,9 +2419,9 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
-		if s.sessionVars.StmtStats != nil {
-			s.sessionVars.StmtStats.SetFinished()
-		}
+	}
+	if s.stmtStats != nil {
+		s.stmtStats.SetFinished()
 	}
 	s.ClearDiskFullOpt()
 }
@@ -2609,12 +2654,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if newCollationEnabled {
-		collate.EnableNewCollations()
-	}
-	if cfg.Experimental.EnableNewCharset {
-		collate.EnableNewCharset()
-	}
+	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
 	if err != nil {
@@ -2773,6 +2813,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2806,6 +2847,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -2973,6 +3015,8 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	s.updateStatsDeltaToCollector()
 
 	return s.NewTxn(ctx)
 }
@@ -3259,4 +3303,8 @@ func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 	return temptable.SessionSnapshotInterceptor(s)
+}
+
+func (s *session) GetStmtStats() *stmtstats.StatementStats {
+	return s.stmtStats
 }
