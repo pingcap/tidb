@@ -22,13 +22,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// PDGlobalConfigSyncer is used to sync pd global config.
-type PDGlobalConfigSyncer struct {
+// GlobalConfigSyncer is used to sync pd global config.
+type GlobalConfigSyncer struct {
 	pd       pd.Client
 	NotifyCh chan pd.GlobalConfigItem
 }
 
-func (s *PDGlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
+func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
 	err := s.pd.StoreGlobalConfig(ctx, []pd.GlobalConfigItem{item})
 	if err != nil {
 		logutil.BgLogger().Error("store global config failed", zap.Error(err))
@@ -38,12 +38,12 @@ func (s *PDGlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Gl
 	return err
 }
 
-func (s *PDGlobalConfigSyncer) PushGlobalConfigItem(globalConfigItem pd.GlobalConfigItem) {
+func (s *GlobalConfigSyncer) PushGlobalConfigItem(globalConfigItem pd.GlobalConfigItem) {
 	s.NotifyCh <- globalConfigItem
 }
 
-func NewGlobalConfigSyncer(p pd.Client) *PDGlobalConfigSyncer {
-	return &PDGlobalConfigSyncer{
+func NewGlobalConfigSyncer(p pd.Client) *GlobalConfigSyncer {
+	return &GlobalConfigSyncer{
 		pd:       p,
 		NotifyCh: make(chan pd.GlobalConfigItem, 100),
 	}

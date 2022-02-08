@@ -77,7 +77,7 @@ type Domain struct {
 	statsLease           time.Duration
 	ddl                  ddl.DDL
 	info                 *infosync.InfoSyncer
-	globalCfgSyncer      *globalconfigsync.PDGlobalConfigSyncer
+	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -372,7 +372,7 @@ func (do *Domain) NotifyGlobalConfigChange(name, value string) {
 }
 
 // GetGlobalConfigSyncer exports for testing.
-func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.PDGlobalConfigSyncer {
+func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.GlobalConfigSyncer {
 	return do.globalCfgSyncer
 }
 
