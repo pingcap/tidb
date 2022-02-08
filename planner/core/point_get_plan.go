@@ -56,12 +56,14 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
-	dbName             string
-	schema             *expression.Schema
-	TblInfo            *model.TableInfo
-	IndexInfo          *model.IndexInfo
-	PartitionInfo      *model.PartitionDefinition
-	Handle             kv.Handle
+	dbName        string
+	schema        *expression.Schema
+	TblInfo       *model.TableInfo
+	IndexInfo     *model.IndexInfo
+	PartitionInfo *model.PartitionDefinition
+	Handle        kv.Handle
+	// handleValue only used for fast path.
+	handleValue        MutablePoints
 	HandleParam        *driver.ParamMarkerExpr
 	IndexValues        MutablePoints
 	IndexValueParams   []*driver.ParamMarkerExpr
@@ -162,6 +164,58 @@ func (p *PointGetPlan) createMutablePoints(indexValues []types.Datum, tblName mo
 		}
 	}
 	return Points(indexValues)
+}
+
+type mutablePoints4Handle struct {
+	handleValue []types.Datum
+
+	// The following variables are used to generate the pairs.
+	// And then we can use the pairs to generate the handleValue.
+	tbl     *model.TableInfo
+	tblName model.CIStr
+}
+
+// Points returns the datum array.
+func (mp mutablePoints4Handle) Points() []types.Datum {
+	return mp.handleValue
+}
+
+// Rebuild rebuilds the value of the points.
+func (mp mutablePoints4Handle) Rebuild(stmtCtx *stmtctx.StatementContext, stmt ast.StmtNode) error {
+	var expr ast.ExprNode
+	mp.handleValue = nil
+	switch x := stmt.(type) {
+	case *ast.SelectStmt:
+		expr = x.Where
+	case *ast.DeleteStmt:
+		expr = x.Where
+	case *ast.UpdateStmt:
+		expr = x.Where
+	default:
+		return nil
+	}
+	pairs := make([]nameValuePair, 0, 4)
+	pairs, isTableDual, _ := getNameValuePairs(stmtCtx, mp.tbl, mp.tblName, pairs, expr)
+	if pairs == nil || isTableDual {
+		return nil
+	}
+
+	handlePair, _ := findPKHandle(mp.tbl, pairs)
+	if handlePair.value.Kind() != types.KindNull {
+		mp.handleValue = append(mp.handleValue, handlePair.value)
+	}
+	return nil
+}
+
+func (p *PointGetPlan) createMutablePoints4handle(handleValue []types.Datum, tblName model.CIStr, rebuildMode bool) MutablePoints {
+	if rebuildMode {
+		return &mutablePoints4Handle{
+			handleValue: handleValue,
+			tbl:         p.TblInfo,
+			tblName:     tblName,
+		}
+	}
+	return Points(handleValue)
 }
 
 // Schema implements the Plan interface.
@@ -993,6 +1047,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		}
 
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
+		p.handleValue = p.createMutablePoints4handle([]types.Datum{handlePair.value}, tblAlias, rebuildMode)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param

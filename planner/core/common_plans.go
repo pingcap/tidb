@@ -722,8 +722,13 @@ func (e *Execute) rebuildRange(p Plan, prepareStmt ast.StmtNode) error {
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleParam != nil {
+			x.handleValue.Rebuild(sc, prepareStmt)
+			handleValue := x.handleValue.Points()
+			if len(handleValue) != 1 {
+				return errors.New("failed to rebuild range: the length of the handleValue is not one")
+			}
 			var iv int64
-			iv, err = x.HandleParam.Datum.ToInt64(sc)
+			iv, err = handleValue[0].ToInt64(sc)
 			if err != nil {
 				return err
 			}
