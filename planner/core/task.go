@@ -210,6 +210,7 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
 	p.cost = tasks[0].cost()
 	if sel, ok := tasks[0].plan().(*PhysicalSelection); ok {
+		// Convert unionScan->selection to unionScan, since the selection is included in unionScan.
 		rt, _ := tasks[0].(*rootTask)
 		rt.p = sel.children[0]
 		return p.attach2Task(tasks...)
