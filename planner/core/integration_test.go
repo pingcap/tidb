@@ -4072,7 +4072,6 @@ func (s *testIntegrationSuite) TestIssues27130(c *C) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 
-<<<<<<< HEAD
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));")
 	tk.MustQuery(`explain format='brief' select * from t2 where a like "A%"`).Check(testkit.Rows(
@@ -4085,7 +4084,16 @@ func (s *testIntegrationSuite) TestIssues27130(c *C) {
 		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92), like(test.t2.b, \"A%\", 92)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 	))
-=======
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));")
+	tk.MustQuery(`explain format='brief' select * from t3 where a = 1 and b like "A%"`).Check(testkit.Rows(
+		"IndexReader 8.00 root  index:Selection",
+		"└─Selection 8.00 cop[tikv]  like(test.t3.b, \"A%\", 92)",
+		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
+	))
+}
+
 func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
@@ -4100,27 +4108,6 @@ func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	tk.MustExec("insert into t values(1);")
 	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
 	result.Check(testkit.Rows("1"))
-}
-
-func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
-	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
->>>>>>> 4785dc4a6... planner: fix inconsistent schema between UnionAll and child operator (#30231)
-
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));")
-	tk.MustQuery(`explain format='brief' select * from t3 where a = 1 and b like "A%"`).Check(testkit.Rows(
-		"IndexReader 8.00 root  index:Selection",
-		"└─Selection 8.00 cop[tikv]  like(test.t3.b, \"A%\", 92)",
-		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
-	))
 }
 
 func (s *testIntegrationSuite) TestIssues29711(c *C) {
