@@ -941,6 +941,7 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
+// supported functions tracked by https://github.com/tikv/tikv/issues/5751
 func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	switch sf.FuncName.L {
 	case
@@ -958,7 +959,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
-		// ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 
 		// control flow functions.
@@ -977,10 +978,13 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
-		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
-		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
+		ast.DateFormat,                                               /* Date */
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month, /* ast.MonthName */
+		ast.DayName, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
+		ast.Weekday, ast.WeekOfYear, ast.Year, /* ast.YearWeek */
+		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.LastDay,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -1163,6 +1167,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 				failpoint.Return(true)
 			}
 		}
+		failpoint.Return(false)
 	})
 
 	ret := false

@@ -21,11 +21,37 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
 )
+
+// Iter abstract iterator method for Ingester.
+type Iter interface {
+	// Seek seek to specify position.
+	// if key not found, seeks next key position in iter.
+	Seek(key []byte) bool
+	// Error return current error on this iter.
+	Error() error
+	// First moves this iter to the first key.
+	First() bool
+	// Last moves this iter to the last key.
+	Last() bool
+	// Valid check this iter reach the end.
+	Valid() bool
+	// Next moves this iter forward.
+	Next() bool
+	// Key represents current position pair's key.
+	Key() []byte
+	// Value represents current position pair's Value.
+	Value() []byte
+	// Close close this iter.
+	Close() error
+	// OpType represents operations of pair. currently we have two types.
+	// 1. Put
+	// 2. Delete
+	OpType() sst.Pair_OP
+}
 
 type pebbleIter struct {
 	*pebble.Iterator
@@ -39,7 +65,7 @@ func (p pebbleIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
-var _ kv.Iter = pebbleIter{}
+var _ Iter = pebbleIter{}
 
 const maxDuplicateBatchSize = 4 << 20
 
@@ -163,7 +189,7 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
-var _ kv.Iter = &dupDetectIter{}
+var _ Iter = &dupDetectIter{}
 
 func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
 	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger) *dupDetectIter {
@@ -250,7 +276,7 @@ func (d *dupDBIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
-var _ kv.Iter = &dupDBIter{}
+var _ Iter = &dupDBIter{}
 
 func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}

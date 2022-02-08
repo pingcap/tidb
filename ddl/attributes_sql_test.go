@@ -22,63 +22,36 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAlterTableAttributes(t *testing.T) {
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table alter_t (c int);`)
 
 	// normal cases
-	_, err = tk.Exec(`alter table alter_t attributes="merge_option=allow";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_t attributes="merge_option=allow,key=value";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_t attributes="merge_option=allow";`)
+	tk.MustExec(`alter table alter_t attributes="merge_option=allow,key=value";`)
 
 	// space cases
-	_, err = tk.Exec(`alter table alter_t attributes=" merge_option=allow ";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_t attributes=" merge_option = allow , key = value ";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_t attributes=" merge_option=allow ";`)
+	tk.MustExec(`alter table alter_t attributes=" merge_option = allow , key = value ";`)
 
 	// without equal
-	_, err = tk.Exec(`alter table alter_t attributes " merge_option=allow ";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_t attributes " merge_option=allow ";`)
+	tk.MustExec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
+
 }
 
 func TestAlterTablePartitionAttributes(t *testing.T) {
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table alter_p (c int)
@@ -90,37 +63,21 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// normal cases
-	_, err = tk.Exec(`alter table alter_p partition p0 attributes="merge_option=allow";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_p partition p1 attributes="merge_option=allow,key=value";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_p partition p0 attributes="merge_option=allow";`)
+	tk.MustExec(`alter table alter_p partition p1 attributes="merge_option=allow,key=value";`)
 
 	// space cases
-	_, err = tk.Exec(`alter table alter_p partition p2 attributes=" merge_option=allow ";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_p partition p3 attributes=" merge_option = allow , key = value ";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_p partition p2 attributes=" merge_option=allow ";`)
+	tk.MustExec(`alter table alter_p partition p3 attributes=" merge_option = allow , key = value ";`)
 
 	// without equal
-	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
+	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
 }
 
 func TestTruncateTable(t *testing.T) {
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table truncate_t (c int)
@@ -130,15 +87,12 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add attributes
-	_, err = tk.Exec(`alter table truncate_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table truncate_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table truncate_t attributes="key=value";`)
+	tk.MustExec(`alter table truncate_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// truncate table
-	_, err = tk.Exec(`truncate table truncate_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`truncate table truncate_t;`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	// check table truncate_t's attribute
@@ -154,13 +108,11 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`create table truncate_ot (c int);`)
 
 	// add attribute
-	_, err = tk.Exec(`alter table truncate_ot attributes="key=value";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table truncate_ot attributes="key=value";`)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows2, 3)
 	// truncate table
-	_, err = tk.Exec(`truncate table truncate_ot;`)
-	require.NoError(t, err)
+	tk.MustExec(`truncate table truncate_ot;`)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows3, 3)
 	// check table truncate_ot's attribute
@@ -170,18 +122,8 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRenameTable(t *testing.T) {
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table rename_t (c int)
@@ -191,15 +133,12 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add attributes
-	_, err = tk.Exec(`alter table rename_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table rename_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table rename_t attributes="key=value";`)
+	tk.MustExec(`alter table rename_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// rename table
-	_, err = tk.Exec(`rename table rename_t to rename_t1;`)
-	require.NoError(t, err)
+	tk.MustExec(`rename table rename_t to rename_t1;`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	// check table rename_t1's attribute
@@ -215,13 +154,11 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`create table rename_ot (c int);`)
 
 	// add attribute
-	_, err = tk.Exec(`alter table rename_ot attributes="key=value";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table rename_ot attributes="key=value";`)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows2, 3)
 	// rename table
-	_, err = tk.Exec(`rename table rename_ot to rename_ot1;`)
-	require.NoError(t, err)
+	tk.MustExec(`rename table rename_ot to rename_ot1;`)
 
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows3, 3)
@@ -232,18 +169,8 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRecoverTable(t *testing.T) {
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table recover_t (c int)
@@ -258,22 +185,17 @@ PARTITION BY RANGE (c) (
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// Set GC enable.
-	err = gcutil.EnableGC(tk.Session())
-	require.NoError(t, err)
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	// add attributes
-	_, err = tk.Exec(`alter table recover_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table recover_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table recover_t attributes="key=value";`)
+	tk.MustExec(`alter table recover_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// drop table
-	_, err = tk.Exec(`drop table recover_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`drop table recover_t;`)
 	// recover table
-	_, err = tk.Exec(`recover table recover_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`recover table recover_t;`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	// check table recover_t's attribute
@@ -287,18 +209,11 @@ PARTITION BY RANGE (c) (
 }
 
 func TestFlashbackTable(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-	store, err := mockstore.NewMockStore()
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table flash_t (c int)
@@ -317,18 +232,14 @@ PARTITION BY RANGE (c) (
 	require.NoError(t, err)
 
 	// add attributes
-	_, err = tk.Exec(`alter table flash_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table flash_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table flash_t attributes="key=value";`)
+	tk.MustExec(`alter table flash_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// drop table
-	_, err = tk.Exec(`drop table flash_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`drop table flash_t;`)
 	// flashback table
-	_, err = tk.Exec(`flashback table flash_t to flash_t1;`)
-	require.NoError(t, err)
+	tk.MustExec(`flashback table flash_t to flash_t1;`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	// check table flash_t1's attribute
@@ -341,11 +252,9 @@ PARTITION BY RANGE (c) (
 	require.Equal(t, rows[1][3], rows1[1][3])
 
 	// truncate table
-	_, err = tk.Exec(`truncate table flash_t1;`)
-	require.NoError(t, err)
+	tk.MustExec(`truncate table flash_t1;`)
 	// flashback table
-	_, err = tk.Exec(`flashback table flash_t1 to flash_t2;`)
-	require.NoError(t, err)
+	tk.MustExec(`flashback table flash_t1 to flash_t2;`)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	// check table flash_t2's attribute
@@ -359,17 +268,11 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDropTable(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table drop_t (c int)
@@ -395,15 +298,12 @@ PARTITION BY RANGE (c) (
 	require.NoError(t, err)
 
 	// add attributes
-	_, err = tk.Exec(`alter table drop_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table drop_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table drop_t attributes="key=value";`)
+	tk.MustExec(`alter table drop_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// drop table
-	_, err = tk.Exec(`drop table drop_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`drop table drop_t;`)
 
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
@@ -412,17 +312,11 @@ PARTITION BY RANGE (c) (
 }
 
 func TestCreateWithSameName(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table recreate_t (c int)
@@ -448,15 +342,12 @@ PARTITION BY RANGE (c) (
 	require.NoError(t, err)
 
 	// add attributes
-	_, err = tk.Exec(`alter table recreate_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table recreate_t partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table recreate_t attributes="key=value";`)
+	tk.MustExec(`alter table recreate_t partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
 	// drop table
-	_, err = tk.Exec(`drop table recreate_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`drop table recreate_t;`)
 
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 2)
@@ -467,10 +358,8 @@ PARTITION BY RANGE (c) (
 		PARTITION p1 VALUES LESS THAN (11)
 	);`)
 	// add attributes
-	_, err = tk.Exec(`alter table recreate_t attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table recreate_t partition p1 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table recreate_t attributes="key=value";`)
+	tk.MustExec(`alter table recreate_t partition p1 attributes="key1=value1";`)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 3)
 
@@ -480,8 +369,7 @@ PARTITION BY RANGE (c) (
 	require.Len(t, rows, 2)
 
 	// drop table
-	_, err = tk.Exec(`drop table recreate_t;`)
-	require.NoError(t, err)
+	tk.MustExec(`drop table recreate_t;`)
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
@@ -489,17 +377,11 @@ PARTITION BY RANGE (c) (
 }
 
 func TestPartition(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table part (c int)
@@ -511,18 +393,14 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`create table part1 (c int);`)
 
 	// add attributes
-	_, err = tk.Exec(`alter table part attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table part partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table part partition p1 attributes="key2=value2";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table part attributes="key=value";`)
+	tk.MustExec(`alter table part partition p0 attributes="key1=value1";`)
+	tk.MustExec(`alter table part partition p1 attributes="key2=value2";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 3)
 	// drop partition
 	// partition p0's attribute will be deleted
-	_, err = tk.Exec(`alter table part drop partition p0;`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table part drop partition p0;`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows1, 2)
 	require.Equal(t, "schema/test/part", rows1[0][0])
@@ -534,8 +412,7 @@ PARTITION BY RANGE (c) (
 
 	// truncate partition
 	// partition p1's key range will be updated
-	_, err = tk.Exec(`alter table part truncate partition p1;`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table part truncate partition p1;`)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows2, 2)
 	require.Equal(t, "schema/test/part", rows2[0][0])
@@ -547,10 +424,8 @@ PARTITION BY RANGE (c) (
 
 	// exchange partition
 	// partition p1's attribute will be exchanged to table part1
-	_, err = tk.Exec(`set @@tidb_enable_exchange_partition=1;`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table part exchange partition p1 with table part1;`)
-	require.NoError(t, err)
+	tk.MustExec(`set @@tidb_enable_exchange_partition=1;`)
+	tk.MustExec(`alter table part exchange partition p1 with table part1;`)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows3, 2)
 	require.Equal(t, "schema/test/part", rows3[0][0])
@@ -562,17 +437,11 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDropSchema(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table drop_s1 (c int)
@@ -583,33 +452,23 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`create table drop_s2 (c int);`)
 
 	// add attributes
-	_, err = tk.Exec(`alter table drop_s1 attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table drop_s1 partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table drop_s2 attributes="key=value";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table drop_s1 attributes="key=value";`)
+	tk.MustExec(`alter table drop_s1 partition p0 attributes="key1=value1";`)
+	tk.MustExec(`alter table drop_s2 attributes="key=value";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	require.Len(t, rows, 3)
 	// drop database
-	_, err = tk.Exec(`drop database test`)
-	require.NoError(t, err)
+	tk.MustExec(`drop database test`)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	require.Len(t, rows, 0)
 }
 
 func TestDefaultKeyword(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table def (c int)
@@ -619,20 +478,16 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add attributes
-	_, err = tk.Exec(`alter table def attributes="key=value";`)
-	require.NoError(t, err)
-	_, err = tk.Exec(`alter table def partition p0 attributes="key1=value1";`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table def attributes="key=value";`)
+	tk.MustExec(`alter table def partition p0 attributes="key1=value1";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	require.Len(t, rows, 2)
 	// reset the partition p0's attribute
-	_, err = tk.Exec(`alter table def partition p0 attributes=default;`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table def partition p0 attributes=default;`)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	require.Len(t, rows, 1)
 	// reset the table def's attribute
-	_, err = tk.Exec(`alter table def attributes=default;`)
-	require.NoError(t, err)
+	tk.MustExec(`alter table def attributes=default;`)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	require.Len(t, rows, 0)
 }

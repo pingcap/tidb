@@ -33,13 +33,13 @@ func TestPartialNext(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// We only use first column value to seek.
 	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	nextKey := Key(seekKey).Next()
 	cmp := bytes.Compare(nextKey, keyA)
