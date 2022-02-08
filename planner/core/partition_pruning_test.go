@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -318,8 +317,6 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 }
 
 func (s *testPartitionPruningSuite) TestPartitionRangePrunner2CharWithCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tc := prepareTestCtx(c,
 		"create table t (a char(32) collate utf8mb4_unicode_ci)",
 		"a",
