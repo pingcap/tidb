@@ -121,6 +121,7 @@ func EnableSkipBinlogFlag() {
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 0)
+	statusListener(BinlogStatusOn)
 	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
 }
 
