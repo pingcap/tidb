@@ -255,7 +255,7 @@ func LoadSchemaInfo(
 			if !ok {
 				return nil, errors.Errorf("table '%s' schema not found", tbl.Name)
 			}
-			tableName := tblInfo.Name.String()
+			tableName := tblInfo.Name.L
 			if tblInfo.State != model.StatePublic {
 				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
 				metric.RecordTableCount(metric.TableStatePending, err)

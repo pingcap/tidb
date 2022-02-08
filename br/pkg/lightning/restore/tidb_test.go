@@ -282,7 +282,7 @@ func TestLoadSchemaInfo(t *testing.T) {
 	// Prepare the mock reply.
 	nodes, _, err := s.timgr.parser.Parse(
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
-			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
+			"CREATE TABLE `T2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
 			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
 		"", "")
