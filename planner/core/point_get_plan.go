@@ -63,7 +63,7 @@ type PointGetPlan struct {
 	PartitionInfo      *model.PartitionDefinition
 	Handle             kv.Handle
 	HandleParam        *driver.ParamMarkerExpr
-	IndexValues        []types.Datum
+	IndexValues        MutablePoints
 	IndexValueParams   []*driver.ParamMarkerExpr
 	IdxCols            []*expression.Column
 	IdxColLens         []int
@@ -83,6 +83,85 @@ type nameValuePair struct {
 	colName string
 	value   types.Datum
 	param   *driver.ParamMarkerExpr
+}
+
+// MutablePoints represents the value of the points may change after it is created.
+// It's mainly designed for plan-cache, since some points for PointGet plan in a cached plan have to be rebuild when reusing.
+type MutablePoints interface {
+	// Points returns the underlying points values.
+	Points() []types.Datum
+	// Rebuild rebuilds the underlying points again.
+	Rebuild(stmtCtx *stmtctx.StatementContext, stmt ast.StmtNode) error
+}
+
+// Points implements the MutablePoints interface for datum array.
+type Points []types.Datum
+
+// Points returns the datum array.
+func (p Points) Points() []types.Datum {
+	return p
+}
+
+// Rebuild rebuilds the value of the points.
+func (p Points) Rebuild(stmtCtx *stmtctx.StatementContext, stmt ast.StmtNode) error {
+	return nil
+}
+
+type mutablePoints4FastPlan struct {
+	IndexValues []types.Datum
+	idxInfo     *model.IndexInfo
+
+	// The following variables are used to generate the pairs.
+	// And then we can use the pairs to generate the indexValues.
+	tbl     *model.TableInfo
+	tblName model.CIStr
+}
+
+// Points returns the datum array.
+func (mp mutablePoints4FastPlan) Points() []types.Datum {
+	return mp.IndexValues
+}
+
+// Rebuild rebuilds the value of the points.
+func (mp mutablePoints4FastPlan) Rebuild(stmtCtx *stmtctx.StatementContext, stmt ast.StmtNode) error {
+	var expr ast.ExprNode
+	switch x := stmt.(type) {
+	case *ast.SelectStmt:
+		expr = x.Where
+	case *ast.DeleteStmt:
+		expr = x.Where
+	case *ast.UpdateStmt:
+		expr = x.Where
+	default:
+		mp.IndexValues = nil
+		return nil
+	}
+	pairs := make([]nameValuePair, 0, 4)
+	pairs, isTableDual, _ := getNameValuePairs(stmtCtx, mp.tbl, mp.tblName, pairs, expr)
+	if pairs == nil || isTableDual {
+		mp.IndexValues = nil
+		return nil
+	}
+
+	idxValues, _ := getIndexValues(mp.idxInfo, pairs)
+	if idxValues == nil {
+		mp.IndexValues = nil
+		return nil
+	}
+	mp.IndexValues = idxValues
+	return nil
+}
+
+func (p *PointGetPlan) createMutablePoints(indexValues []types.Datum, tblName model.CIStr, rebuildMode bool) MutablePoints {
+	if rebuildMode {
+		return &mutablePoints4FastPlan{
+			IndexValues: indexValues,
+			idxInfo:     p.IndexInfo,
+			tbl:         p.TblInfo,
+			tblName:     tblName,
+		}
+	}
+	return Points(indexValues)
 }
 
 // Schema implements the Plan interface.
@@ -878,7 +957,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	}
 
 	pairs := make([]nameValuePair, 0, 4)
-	pairs, isTableDual := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
+	pairs, isTableDual, rebuildMode := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
 	if pairs == nil && !isTableDual {
 		return nil
 	}
@@ -967,7 +1046,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
-		p.IndexValues = idxValues
+		p.IndexValues = p.createMutablePoints(idxValues, tblAlias, rebuildMode)
 		p.IndexValueParams = idxValueParams
 		p.PartitionInfo = partitionInfo
 		if p.PartitionInfo != nil {
@@ -1154,21 +1233,21 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
 func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
-	pairs []nameValuePair, isTableDual bool) {
+	pairs []nameValuePair, isTableDual bool, rebuildMode bool) {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
-		return nil, false
+		return nil, false, rebuildMode
 	}
 	if binOp.Op == opcode.LogicAnd {
-		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.L)
+		nvPairs, isTableDual, rebuildMode = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.L)
 		if nvPairs == nil || isTableDual {
-			return nil, isTableDual
+			return nil, isTableDual, rebuildMode
 		}
-		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.R)
+		nvPairs, isTableDual, rebuildMode = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.R)
 		if nvPairs == nil || isTableDual {
-			return nil, isTableDual
+			return nil, isTableDual, rebuildMode
 		}
-		return nvPairs, isTableDual
+		return nvPairs, isTableDual, rebuildMode
 	} else if binOp.Op == opcode.EQ {
 		var d types.Datum
 		var colName *ast.ColumnNameExpr
@@ -1181,6 +1260,7 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			case *driver.ParamMarkerExpr:
 				d = x.Datum
 				param = x
+				rebuildMode = true
 			}
 		} else if colName, ok = binOp.R.(*ast.ColumnNameExpr); ok {
 			switch x := binOp.L.(type) {
@@ -1189,46 +1269,47 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			case *driver.ParamMarkerExpr:
 				d = x.Datum
 				param = x
+				rebuildMode = true
 			}
 		} else {
-			return nil, false
+			return nil, false, rebuildMode
 		}
 		if d.IsNull() {
-			return nil, false
+			return nil, false, rebuildMode
 		}
 		// Views' columns have no FieldType.
 		if tbl.IsView() {
-			return nil, false
+			return nil, false, rebuildMode
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
-			return nil, false
+			return nil, false, rebuildMode
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
 		if col == nil || // Handling the case when the column is _tidb_rowid.
 			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false, rebuildMode
 		}
 		if !checkCanConvertInPointGet(col, d) {
-			return nil, false
+			return nil, false, rebuildMode
 		}
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
-				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), true
+				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), true, rebuildMode
 			}
 			// Some scenarios cast to int with error, but we may use this value in point get.
 			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
-				return nil, false
+				return nil, false, rebuildMode
 			}
 		}
 		// The converted result must be same as original datum.
 		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
 		if err != nil || cmp != 0 {
-			return nil, false
+			return nil, false, rebuildMode
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false, rebuildMode
 	}
-	return nil, false
+	return nil, false, rebuildMode
 }
 
 func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, d *types.Datum) *types.Datum {

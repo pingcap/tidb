@@ -110,7 +110,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
-	e.idxVals = p.IndexValues
+	e.idxVals = p.IndexValues.Points()
 	e.startTS = startTs
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {

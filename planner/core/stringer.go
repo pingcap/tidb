@@ -296,7 +296,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *PointGetPlan:
 		str = "PointGet("
 		if x.IndexInfo != nil {
-			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
+			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues.Points())
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
 		}

@@ -1950,7 +1950,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexInfo = candidate.path.Index
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
-		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
+		pointGetPlan.IndexValues = Points(candidate.path.Ranges[0].LowVal)
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
 			cost = pointGetPlan.GetCost(candidate.path.IdxCols)

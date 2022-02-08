@@ -464,7 +464,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		err := e.rebuildRange(plan)
+		err := e.rebuildRange(plan, prepared.Stmt)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 			goto REBUILD
@@ -511,7 +511,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 				}
 				if planValid {
-					err := e.rebuildRange(cachedVal.Plan)
+					err := e.rebuildRange(cachedVal.Plan, prepared.Stmt)
 					if err != nil {
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 						goto REBUILD
@@ -637,21 +637,21 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) rebuildRange(p Plan) error {
+func (e *Execute) rebuildRange(p Plan, prepareStmt ast.StmtNode) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
 	case *PhysicalIndexHashJoin:
-		return e.rebuildRange(&x.PhysicalIndexJoin)
+		return e.rebuildRange(&x.PhysicalIndexJoin, prepareStmt)
 	case *PhysicalIndexMergeJoin:
-		return e.rebuildRange(&x.PhysicalIndexJoin)
+		return e.rebuildRange(&x.PhysicalIndexJoin, prepareStmt)
 	case *PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(); err != nil {
 			return err
 		}
 		for _, child := range x.Children() {
-			err = e.rebuildRange(child)
+			err = e.rebuildRange(child, prepareStmt)
 			if err != nil {
 				return err
 			}
@@ -667,17 +667,17 @@ func (e *Execute) rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalTableReader:
-		err = e.rebuildRange(x.TablePlans[0])
+		err = e.rebuildRange(x.TablePlans[0], prepareStmt)
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexReader:
-		err = e.rebuildRange(x.IndexPlans[0])
+		err = e.rebuildRange(x.IndexPlans[0], prepareStmt)
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
-		err = e.rebuildRange(x.IndexPlans[0])
+		err = e.rebuildRange(x.IndexPlans[0], prepareStmt)
 		if err != nil {
 			return err
 		}
@@ -689,11 +689,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
+				indexValues := x.IndexValues.Points()
+				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) || len(indexValues) != len(ranges.Ranges[0].LowVal) {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
-				for i := range x.IndexValues {
-					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
+				for i := range indexValues {
+					indexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
 			} else {
 				var pkCol *expression.Column
@@ -729,10 +730,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
-		for i, param := range x.IndexValueParams {
-			if param != nil {
-				x.IndexValues[i] = param.Datum
-			}
+		x.IndexValues.Rebuild(e.ctx.GetSessionVars().StmtCtx, prepareStmt)
+		if x.IndexValues.Points() == nil {
+			return errors.New("point get for partition table can not use plan cache")
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -795,7 +795,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexMergeReader:
 		indexMerge := p.(*PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
-			err = e.rebuildRange(partialPlans[0])
+			err = e.rebuildRange(partialPlans[0], prepareStmt)
 			if err != nil {
 				return err
 			}
@@ -804,22 +804,22 @@ func (e *Execute) rebuildRange(p Plan) error {
 		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
 	case PhysicalPlan:
 		for _, child := range x.Children() {
-			err = e.rebuildRange(child)
+			err = e.rebuildRange(child, prepareStmt)
 			if err != nil {
 				return err
 			}
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			return e.rebuildRange(x.SelectPlan)
+			return e.rebuildRange(x.SelectPlan, prepareStmt)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			return e.rebuildRange(x.SelectPlan)
+			return e.rebuildRange(x.SelectPlan, prepareStmt)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			return e.rebuildRange(x.SelectPlan)
+			return e.rebuildRange(x.SelectPlan, prepareStmt)
 		}
 	}
 	return nil
