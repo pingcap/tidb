@@ -124,7 +124,6 @@ func TestIssue16696(t *testing.T) {
 		line := fmt.Sprintf("%v", row)
 		disk := fmt.Sprintf("%v", row[length-1])
 		if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
-			require.False(t, strings.Contains(disk, "0 Bytes"))
 			require.NotContains(t, disk, "0 Bytes")
 			require.True(t, strings.Contains(disk, "MB") ||
 				strings.Contains(disk, "KB") ||
