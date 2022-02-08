@@ -48,7 +48,6 @@ import (
 	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -367,8 +366,6 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -3388,8 +3385,6 @@ func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
