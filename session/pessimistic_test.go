@@ -50,8 +50,14 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
+type lockTTL uint64
+
+func setLockTTL(v uint64) lockTTL { return lockTTL(atomic.SwapUint64(&transaction.ManagedLockTTL, v)) }
+
+func (v lockTTL) restore() { atomic.StoreUint64(&transaction.ManagedLockTTL, uint64(v)) }
+
 func TestPessimisticTxn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -106,7 +112,7 @@ func TestPessimisticTxn(t *testing.T) {
 }
 
 func TestTxnMode(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -169,7 +175,7 @@ func TestTxnMode(t *testing.T) {
 }
 
 func TestDeadlock(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -231,7 +237,7 @@ func TestSingleStatementRollback(t *testing.T) {
 	if *withTiKV {
 		t.Skip("skip with tikv because cluster manipulate is not available")
 	}
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -285,7 +291,7 @@ func TestSingleStatementRollback(t *testing.T) {
 }
 
 func TestFirstStatementFail(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -305,7 +311,7 @@ func TestFirstStatementFail(t *testing.T) {
 }
 
 func TestKeyExistsCheck(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -335,7 +341,7 @@ func TestKeyExistsCheck(t *testing.T) {
 }
 
 func TestInsertOnDup(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -357,7 +363,7 @@ func TestInsertOnDup(t *testing.T) {
 }
 
 func TestPointGetOverflow(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -373,7 +379,7 @@ func TestPointGetOverflow(t *testing.T) {
 }
 
 func TestPointGetKeyLock(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -425,7 +431,7 @@ func TestPointGetKeyLock(t *testing.T) {
 }
 
 func TestBankTransfer(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -463,7 +469,7 @@ func TestBankTransfer(t *testing.T) {
 }
 
 func TestLockUnchangedRowKey(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -505,7 +511,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 1000)
 	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	}()
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
@@ -560,7 +566,7 @@ func TestOptimisticConflicts(t *testing.T) {
 }
 
 func TestSelectForUpdateNoWait(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -656,7 +662,7 @@ func TestSelectForUpdateNoWait(t *testing.T) {
 }
 
 func TestAsyncRollBackNoWait(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -722,7 +728,7 @@ func TestAsyncRollBackNoWait(t *testing.T) {
 }
 
 func TestWaitLockKill(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -758,7 +764,7 @@ func TestWaitLockKill(t *testing.T) {
 }
 
 func TestKillStopTTLManager(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -766,7 +772,7 @@ func TestKillStopTTLManager(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	// Test killing an idle pessimistic session stop its ttlManager.
-
+	defer setLockTTL(300).restore()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -790,7 +796,7 @@ func TestKillStopTTLManager(t *testing.T) {
 }
 
 func TestConcurrentInsert(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -842,7 +848,7 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	}()
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
@@ -893,7 +899,6 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk3.MustExec("commit")
 	})
 	wg.Run(func() {
-		defer wg.Done()
 		// tk5 try lock c1 = 1 timeout 2sec
 		tk5 := testkit.NewTestKit(t, store)
 		tk5.MustExec("set innodb_lock_wait_timeout = 2")
@@ -951,7 +956,7 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 }
 
 func TestPushConditionCheckForPessimisticTxn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -979,7 +984,7 @@ func TestInnodbLockWaitTimeoutWaitStart(t *testing.T) {
 	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	}()
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
@@ -1030,7 +1035,7 @@ func TestInnodbLockWaitTimeoutWaitStart(t *testing.T) {
 }
 
 func TestBatchPointGetWriteConflict(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1054,7 +1059,7 @@ func TestBatchPointGetWriteConflict(t *testing.T) {
 }
 
 func TestPessimisticSerializable(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1201,7 +1206,7 @@ func TestPessimisticSerializable(t *testing.T) {
 }
 
 func TestPessimisticReadCommitted(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1319,7 +1324,7 @@ func TestPessimisticReadCommitted(t *testing.T) {
 }
 
 func TestPessimisticLockNonExistsKey(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1371,7 +1376,7 @@ func TestPessimisticLockNonExistsKey(t *testing.T) {
 func TestPessimisticCommitReadLock(t *testing.T) {
 	// set lock ttl to 3s, tk1 lock wait timeout is 2s
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1413,7 +1418,7 @@ func TestPessimisticCommitReadLock(t *testing.T) {
 }
 
 func TestPessimisticLockReadValue(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1446,7 +1451,7 @@ func TestPessimisticLockReadValue(t *testing.T) {
 }
 
 func TestRCWaitTSOTwice(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1466,7 +1471,7 @@ func TestRCWaitTSOTwice(t *testing.T) {
 }
 
 func TestNonAutoCommitWithPessimisticMode(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1497,7 +1502,7 @@ func TestNonAutoCommitWithPessimisticMode(t *testing.T) {
 
 func TestBatchPointGetLockIndex(t *testing.T) {
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1532,7 +1537,7 @@ func TestBatchPointGetLockIndex(t *testing.T) {
 }
 
 func TestLockGotKeysInRC(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1566,7 +1571,7 @@ func TestLockGotKeysInRC(t *testing.T) {
 }
 
 func TestBatchPointGetAlreadyLocked(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1585,7 +1590,7 @@ func TestBatchPointGetAlreadyLocked(t *testing.T) {
 }
 
 func TestRollbackWakeupBlockedTxn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1626,7 +1631,7 @@ func TestRollbackWakeupBlockedTxn(t *testing.T) {
 }
 
 func TestRCSubQuery(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1653,7 +1658,7 @@ func TestRCSubQuery(t *testing.T) {
 }
 
 func TestRCIndexMerge(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1693,7 +1698,7 @@ func TestRCIndexMerge(t *testing.T) {
 
 func TestGenerateColPointGet(t *testing.T) {
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1747,7 +1752,7 @@ func TestGenerateColPointGet(t *testing.T) {
 }
 
 func TestTxnWithExpiredPessimisticLocks(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1781,7 +1786,7 @@ func TestTxnWithExpiredPessimisticLocks(t *testing.T) {
 }
 
 func TestKillWaitLockTxn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1789,6 +1794,7 @@ func TestKillWaitLockTxn(t *testing.T) {
 	// Test kill command works on waiting pessimistic lock.
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	defer setLockTTL(300).restore()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -1823,7 +1829,7 @@ func TestKillWaitLockTxn(t *testing.T) {
 }
 
 func TestDupLockInconsistency(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1842,7 +1848,7 @@ func TestDupLockInconsistency(t *testing.T) {
 }
 
 func TestUseLockCacheInRCMode(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1919,7 +1925,7 @@ func TestUseLockCacheInRCMode(t *testing.T) {
 }
 
 func TestPointGetWithDeleteInMem(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1954,7 +1960,7 @@ func TestPointGetWithDeleteInMem(t *testing.T) {
 }
 
 func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -1990,7 +1996,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 }
 
 func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2068,7 +2074,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 }
 
 func TestPessimisticUnionForUpdate(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2088,7 +2094,7 @@ func TestPessimisticUnionForUpdate(t *testing.T) {
 }
 
 func TestInsertDupKeyAfterLock(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2188,7 +2194,7 @@ func TestInsertDupKeyAfterLock(t *testing.T) {
 }
 
 func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2288,7 +2294,7 @@ func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
 }
 
 func TestAmendTxnVariable(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2345,7 +2351,7 @@ func TestAmendTxnVariable(t *testing.T) {
 }
 
 func TestSelectForUpdateWaitSeconds(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2401,7 +2407,7 @@ func TestSelectForUpdateWaitSeconds(t *testing.T) {
 }
 
 func TestSelectForUpdateConflictRetry(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2457,7 +2463,7 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	if !*withTiKV {
 		return
 	}
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2542,7 +2548,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 	if !*withTiKV {
 		return
 	}
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2609,7 +2615,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 
 func TestAmendForUniqueIndex(t *testing.T) {
 	//c.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2740,7 +2746,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 }
 
 func TestAmendWithColumnTypeChange(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2766,7 +2772,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 }
 
 func TestIssue21498(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -2928,7 +2934,7 @@ func TestIssue21498(t *testing.T) {
 }
 
 func TestPlanCacheSchemaChange(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -3003,7 +3009,7 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 func TestAsyncCommitCalTSFail(t *testing.T) {
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	}()
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
@@ -3041,7 +3047,7 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 }
 
 func TestChangeLockToPut(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -3127,7 +3133,7 @@ func createTable(part bool, columnNames []string, columnTypes []string) string {
 }
 
 func TestAmendForIndexChange(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
@@ -3215,7 +3221,7 @@ func TestAmendForIndexChange(t *testing.T) {
 }
 
 func TestAmendForColumnChange(t *testing.T) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	defer func() {
 		transaction.PrewriteMaxBackoff = 20000
