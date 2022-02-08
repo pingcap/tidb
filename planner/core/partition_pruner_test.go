@@ -488,13 +488,21 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 	}
 }
 
-func (s *testPartitionPruneSuit) TestIssue26551(c *C) {
+func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
-	tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT value is out of range in '(test.t.col1 * test.t.col3)'"))
+	tk.MustQuery("SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`COL1` int NOT NULL DEFAULT '25' COMMENT 'NUMERIC PK'," +
+		"`COL3` bigint NOT NULL," +
+		"PRIMARY KEY (`COL1`,`COL3`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH ((`COL1` * `COL3`))" +
+		"PARTITIONS 13;")
+	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
+	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
