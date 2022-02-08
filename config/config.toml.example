@@ -109,7 +109,7 @@ repair-table-list = []
 max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
-new_collations_enabled_on_first_bootstrap = false
+new_collations_enabled_on_first_bootstrap = true
 
 # Don't register information of this TiDB to etcd, so this instance of TiDB won't appear in the services like dashboard.
 # This option is useful when you want to embed TiDB into your service(i.e. use TiDB as a library).
