@@ -850,6 +850,8 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 
+	formatMask = strings.Replace(formatMask, "\n", " ", -1)
+	formatMask = strings.Replace(formatMask, "\r", " ", -1)
 	res, err := t.DateFormat(formatMask)
 	return res, isNull, err
 }
