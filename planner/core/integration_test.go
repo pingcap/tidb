@@ -2570,6 +2570,79 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	rows[1][2] = "last_day(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
 		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "gt(4, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where pi() > id;").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "truncate(test.t.id, 0)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "bin(test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where bin(id)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "unhex(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where unhex(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "locate(test.t.c, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where locate(c,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "ord(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ord(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "lpad(test.t.c, 1, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where lpad(c,1,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "rpad(test.t.c, 1, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where rpad(c,1,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "trim(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where trim(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "from_base64(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_base64(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "to_base64(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_base64(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "make_set(1, test.t.c, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where make_set(1,c,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "substring_index(test.t.c, test.t.c, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where substring_index(c,c,1)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "instr(test.t.c, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where instr(c,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "quote(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where quote(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "oct(test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where oct(id)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "find_in_set(test.t.c, test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where find_in_set(c,c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "repeat(test.t.c, 2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where repeat(c,2)").
+		CheckAt([]int{0, 3, 6}, rows)
+
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {

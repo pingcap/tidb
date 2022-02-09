@@ -952,6 +952,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
 
 		// arithmetical functions.
+		ast.PI, ast.Round, ast.Truncate,
 		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
 
 		// math functions.
@@ -966,7 +967,11 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
+		ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
+		ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, /* ast.Lower, ast.InsertFunc */
+		ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
+		ast.FindInSet, ast.Repeat,
+		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
 		ast.Right, ast.Left,
@@ -997,13 +1002,6 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
-
-	// A special case: Only push down Round by signature
-	case ast.Round:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
-			return true
-		}
 	case ast.Rand:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
