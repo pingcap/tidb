@@ -19,15 +19,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
@@ -35,25 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newDomainStoreWithBootstrap(t *testing.T) (*domain.Domain, kv.Storage, error) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	dom, err := session.BootstrapSession(store)
-	return dom, store, errors.Trace(err)
-}
-
 func TestTableRange(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -306,12 +287,9 @@ func TestTableRange(t *testing.T) {
 
 // for issue #6661
 func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -497,12 +475,9 @@ create table t(
 }
 
 func TestColumnRange(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -862,12 +837,9 @@ func TestColumnRange(t *testing.T) {
 }
 
 func TestIndexRangeEliminatedProjection(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -889,12 +861,9 @@ func TestIndexRangeEliminatedProjection(t *testing.T) {
 }
 
 func TestCompIndexInExprCorrCol(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -918,12 +887,9 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 }
 
 func TestIndexStringIsTrueRange(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t0")
@@ -948,12 +914,9 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 }
 
 func TestCompIndexDNFMatch(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@session.tidb_regard_null_as_point=false`)
@@ -980,12 +943,9 @@ func TestCompIndexDNFMatch(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF1(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1013,12 +973,9 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF2(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -1046,12 +1003,9 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 }
 
 func TestPrefixIndexMultiColDNF(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t2;")
@@ -1081,12 +1035,9 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 }
 
 func TestIndexRangeForBit(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
@@ -1119,12 +1070,9 @@ func TestIndexRangeForBit(t *testing.T) {
 }
 
 func TestIndexRangeForYear(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 
 	// for issue #20101: overflow when converting integer to year
@@ -1281,12 +1229,9 @@ func TestIndexRangeForYear(t *testing.T) {
 
 // For https://github.com/pingcap/tidb/issues/22032
 func TestPrefixIndexRangeScan(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
@@ -1352,12 +1297,9 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 }
 
 func TestIndexRangeForDecimal(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t1, t2;")
@@ -1385,12 +1327,9 @@ func TestIndexRangeForDecimal(t *testing.T) {
 }
 
 func TestPrefixIndexAppendPointRanges(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("USE test")
 	testKit.MustExec("DROP TABLE IF EXISTS IDT_20755")
@@ -1422,12 +1361,9 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 }
 
 func TestIndexRange(t *testing.T) {
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
