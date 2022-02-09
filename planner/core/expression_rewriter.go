@@ -49,7 +49,7 @@ import (
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
-var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
+var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, sctx sessionctx.Context) (row []types.Datum, err error)
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
@@ -822,7 +822,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
-		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
+		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.ctx)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1008,7 +1008,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.err = err
 		return v, true
 	}
-	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
+	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.ctx)
 	if err != nil {
 		er.err = err
 		return v, true
