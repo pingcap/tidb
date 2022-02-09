@@ -1082,6 +1082,19 @@ func (cc *clientConn) Run(ctx context.Context) {
 			disconnectByClientWithError.Inc()
 			return
 		}
+		// get max allowed packet length and compare
+		if valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket); len(valStr) > 0 {
+			maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+			if err != nil {
+				logutil.Logger(ctx).Error("parse max allowed packet error", zap.Error(err))
+				return
+			}
+			if uint64(len(data)) > maxAllowedPacket {
+				terror.Log(cc.writeError(ctx, errNetPacketTooLarge))
+				disconnectByClientWithError.Inc()
+				return
+			}
+		}
 
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
