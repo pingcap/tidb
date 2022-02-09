@@ -25,12 +25,14 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
+	"golang.org/x/tools/cover"
 )
 
 func usage() bool {
@@ -342,7 +344,8 @@ func main() {
 			fmt.Println("create temp dir fail", coverFileTempDir)
 			os.Exit(1)
 		}
-		defer os.Remove(coverFileTempDir)
+		// defer os.Remove(coverFileTempDir)
+		fmt.Println("temp cov dir", coverFileTempDir)
 	}
 
 	// Get the correct count of CPU if it's in docker.
@@ -394,6 +397,7 @@ func collectCoverProfileFile() {
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
+	result := make(map[string]*cover.Profile)
 	for _, file := range files {
 		if file.IsDir() {
 			continue
@@ -406,14 +410,122 @@ func collectCoverProfileFile() {
 		}
 		defer f.Close()
 
-		r := bufio.NewReader(f)
-		line, _, err := r.ReadLine()
-		if err != nil || string(line) != "mode: set" {
+		profs, err := cover.ParseProfilesFromReader(f)
+		if err != nil {
+			fmt.Println("parse cover profile file error:", err)
+			os.Exit(-1)
+		}
+
+		mergeProfile(result, profs)
+	}
+
+	w1 := bufio.NewWriter(w)
+	for _, prof := range result {
+		for _, block := range prof.Blocks {
+			fmt.Fprintf(w1, "%s:%d.%d,%d.%d %d %d\n",
+				prof.FileName,
+				block.StartLine,
+				block.StartCol,
+				block.EndLine,
+				block.EndCol,
+				block.NumStmt,
+				block.Count,
+			)
+		}
+		if err := w1.Flush(); err != nil {
+			fmt.Println("flush data to cover profile file error:", err)
+			os.Exit(-1)
+		}
+	}
+}
+
+func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
+	for _, prof := range profs {
+		sort.Sort(blocksByStart(prof.Blocks))
+		old, ok := m[prof.FileName]
+		if !ok {
+			m[prof.FileName] = prof
 			continue
 		}
 
-		io.Copy(w, r)
+		// Merge samples from the same location.
+		// The data has already been sorted.
+		tmp := old.Blocks[:0]
+		var i, j int
+		for i < len(old.Blocks) && j < len(prof.Blocks) {
+			v1 := old.Blocks[i]
+			v2 := prof.Blocks[j]
+
+			switch compareProfileBlock(v1, v2) {
+			case -1:
+				tmp = appendWithReduce(tmp, v1)
+				i++
+			case 1:
+				tmp = appendWithReduce(tmp, v2)
+				j++
+			default:
+				tmp = appendWithReduce(tmp, v1)
+				tmp = appendWithReduce(tmp, v2)
+				i++
+				j++
+			}
+		}
+		for ; i < len(old.Blocks); i++ {
+			tmp = appendWithReduce(tmp, old.Blocks[i])
+		}
+		for ; j < len(prof.Blocks); j++ {
+			tmp = appendWithReduce(tmp, prof.Blocks[j])
+		}
+
+		m[prof.FileName] = old
 	}
+}
+
+// appendWithReduce works like append(), but it merge the duplicated values.
+func appendWithReduce(input []cover.ProfileBlock, b cover.ProfileBlock) []cover.ProfileBlock {
+	if len(input) >= 1 {
+		last := &input[len(input)-1]
+		if b.StartLine == last.StartLine &&
+			b.StartCol == last.StartCol &&
+			b.EndLine == last.EndLine &&
+			b.EndCol == last.EndCol {
+			if b.NumStmt != last.NumStmt {
+				panic(fmt.Errorf("inconsistent NumStmt: changed from %d to %d", last.NumStmt, b.NumStmt))
+			}
+			// Merge the data with the last one of the slice.
+			last.Count |= b.Count
+			return input
+		}
+	}
+	return append(input, b)
+}
+
+type blocksByStart []cover.ProfileBlock
+
+func compareProfileBlock(x, y cover.ProfileBlock) int {
+	if x.StartLine < y.StartLine {
+		return -1
+	}
+	if x.StartLine > y.StartLine {
+		return 1
+	}
+
+	// Now x.StartLine == y.StartLine
+	if x.StartCol < y.StartCol {
+		return -1
+	}
+	if x.StartCol > y.StartCol {
+		return 1
+	}
+
+	return 0
+}
+
+func (b blocksByStart) Len() int      { return len(b) }
+func (b blocksByStart) Swap(i, j int) { b[i], b[j] = b[j], b[i] }
+func (b blocksByStart) Less(i, j int) bool {
+	bi, bj := b[i], b[j]
+	return bi.StartLine < bj.StartLine || bi.StartLine == bj.StartLine && bi.StartCol < bj.StartCol
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
