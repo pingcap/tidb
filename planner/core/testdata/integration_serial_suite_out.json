@@ -761,6 +761,212 @@
     ]
   },
   {
+    "Name": "TestMPPLeftSemiJoin",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.a in (select a from test.t); -- left semi",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.a in (select a from test.t where b<t1.b); ",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)], other cond:lt(test.t.b, test.t.b)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.a not in (select a from test.t); -- left anti",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.a not in (select a from test.t where b<t1.b);",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)], other cond:lt(test.t.b, test.t.b)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.b in (select a from test.t); -- cartesian left semi",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.a)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.a in (select b from test.t where b<t1.b);",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.b), lt(test.t.b, test.t.b)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.b not in (select a from test.t); -- cartesian left anti",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from test.t t1 where t1.a>1 or t1.b not in (select a from test.t where b<t1.b);",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 cop[tiflash]  test.t.a, test.t.b",
+          "    └─Selection 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#7)",
+          "      └─HashJoin 10000.00 cop[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.b, test.t.a), lt(test.t.b, test.t.b)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a in (select a from test.t) from test.t; -- semi join as scalar",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 cop[tiflash]  Column#10",
+          "    └─HashJoin 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a in (select b from test.t) from test.t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 cop[tiflash]  Column#10",
+          "    └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.b)",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select b in (select a from test.t) from test.t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 cop[tiflash]  Column#10",
+          "    └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.a)",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select b in (select b from test.t) from test.t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 cop[tiflash]  Column#10",
+          "    └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.b)",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a, b, a in (select a from test.t), a in (select b from test.t), b in (select a from test.t), b in (select b from test.t) from test.t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.b)",
+          "    ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.b, test.t.a)",
+          "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 10000.00 cop[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.b)",
+          "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─HashJoin(Probe) 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "          ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "          │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "          │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
     "Cases": [
       {
