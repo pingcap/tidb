@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2775,6 +2776,9 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
@@ -7016,7 +7020,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},

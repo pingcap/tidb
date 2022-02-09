@@ -3180,14 +3180,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_server_packet_io_bytes{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{type}}-rate",
               "refId": "A"
             },
             {
-              "expr": "sum(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "expr": "sum(tidb_server_packet_io_bytes{tidb_cluster=\"$tidb_cluster\"}) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{type}}-total",
@@ -9177,6 +9177,14 @@
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
               "refId": "A",
+              "step": 10
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "add index worker",
+              "refId": "B",
               "step": 10
             }
           ],

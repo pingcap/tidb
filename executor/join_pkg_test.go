@@ -25,6 +25,13 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+var _ = Suite(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
+
+type pkgTestSuite struct{}
+
+type pkgTestSerialSuite struct{}
+
 func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
