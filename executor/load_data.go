@@ -129,6 +129,7 @@ type LoadDataInfo struct {
 	CurrentLoadDataInfoSub *LoadDataInfoSub
 }
 
+// LoadDataInfoSub saves the information of sub loading data operation.
 type LoadDataInfoSub struct {
 	*InsertValues
 
@@ -137,6 +138,7 @@ type LoadDataInfoSub struct {
 	loadDataInfo *LoadDataInfo
 }
 
+// SetTxnCtx save the ctx from context
 func (e *LoadDataInfoSub) SetTxnCtx(ctx sessionctx.Context) {
 	e.ctx = ctx
 }
@@ -273,11 +275,12 @@ func (e *LoadDataInfo) ForceQuit(ctx context.Context) {
 	logutil.Logger(ctx).Info("ForceQuit() invoked end")
 }
 
-// MakeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
+// MakeCommitTask produce commit task to invoke loadDataInfoSub MakeCommitTaskBySub
 func (e *LoadDataInfo) MakeCommitTask(loadDataInfoSub *LoadDataInfoSub) CommitTask {
 	return loadDataInfoSub.MakeCommitTaskBySub()
 }
 
+// MakeCommitTaskBySub produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
 func (e *LoadDataInfoSub) MakeCommitTaskBySub() CommitTask {
 	return CommitTask{e, e.curBatchCnt, e.rows}
 }
@@ -429,6 +432,7 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	}
 }
 
+// SetMaxRowsInBatchBySub sets the max number of rows to insert in a batch.
 func (e *LoadDataInfoSub) SetMaxRowsInBatchBySub(limit uint64) {
 	e.maxRowsInBatch = limit
 	e.rows = make([][]types.Datum, 0, limit)
