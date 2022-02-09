@@ -141,12 +141,4 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk.MustExec("update t set id = 6 where id = 3")
 	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
 	c.Assert(originConsume, Equals, afterConsume)
-
-	// assert stmt trackers haven't been detaced before Next
-	rs, err := tk.Exec("select * from t t1 join t t2 join t t3")
-	c.Assert(err, Equals, nil)
-	defer rs.Close()
-	req := rs.NewChunk(nil)
-	rs.Next(context.Background(), req)
-	c.Assert(executor.GlobalMemoryUsageTracker.BytesConsumed(), Greater, originConsume)
 }
