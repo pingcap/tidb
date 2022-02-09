@@ -223,7 +223,13 @@ func (s *tiflashDDLTestSuite) SetPdLoop(tick int) func() {
 
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
 func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
-	_, _, cluster, _ := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
@@ -535,7 +541,13 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
-	_, _, cluster, err := unistore.New("")
+	rpcClient, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	defer func() {
+		rpcClient.Close()
+		pdClient.Close()
+		cluster.Close()
+	}()
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
@@ -545,7 +557,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	}()
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
-	c.Assert(err, IsNil)
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
 	// Make SetPdLoop take effects.
