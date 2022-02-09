@@ -40,80 +40,19 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-type testIntegrationSuite struct {
-	lease   time.Duration
-	cluster testutils.Cluster
-	store   kv.Storage
-	dom     *domain.Domain
-	ctx     sessionctx.Context
-}
-
-func setupIntegrationSuite(s *testIntegrationSuite, t *testing.T) {
-	var err error
-	s.lease = 50 * time.Millisecond
-	ddl.SetWaitTimeWhenErrorOccurred(0)
-
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	require.NoError(t, err)
-	session.SetSchemaLease(s.lease)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	require.NoError(t, err)
-
-	se, err := session.CreateSession4Test(s.store)
-	require.NoError(t, err)
-	s.ctx = se.(sessionctx.Context)
-	_, err = se.Execute(context.Background(), "create database test_db")
-	require.NoError(t, err)
-}
-
-func tearDownIntegrationSuiteTest(s *testIntegrationSuite, t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
-func tearDownIntegrationSuite(s *testIntegrationSuite, t *testing.T) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-type testIntegrationSuite1 struct{ *testIntegrationSuite }
-type testIntegrationSuite2 struct{ *testIntegrationSuite }
-
-type testIntegrationSuite3 struct{ *testIntegrationSuite }
-type testIntegrationSuite4 struct{ *testIntegrationSuite }
-type testIntegrationSuite5 struct{ *testIntegrationSuite }
-type testIntegrationSuite6 struct{ *testIntegrationSuite }
-type testIntegrationSuite7 struct{ *testIntegrationSuite }
 
 func TestNoZeroDateMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -1293,7 +1232,11 @@ func TestBitDefaultValue(t *testing.T) {
 }
 
 func TestBackwardCompatibility(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	var cluster testutils.Cluster
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_backward_compatibility")
@@ -1315,7 +1258,7 @@ func TestBackwardCompatibility(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1336,10 +1279,10 @@ func TestBackwardCompatibility(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
-	txn, err := s.store.Begin()
+	txn, err := store.Begin()
 	require.NoError(t, err)
-	t := meta.NewMeta(txn)
-	job.ID, err = t.GenGlobalID()
+	tt := meta.NewMeta(txn)
+	job.ID, err = tt.GenGlobalID()
 	require.NoError(t, err)
 	job.Version = 1
 	job.StartTS = txn.StartTS()
@@ -1347,14 +1290,14 @@ func TestBackwardCompatibility(t *testing.T) {
 	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
 	// if we set job.SnapshotVer here, can simulate the behavior.
 	job.SnapshotVer = txn.StartTS()
-	err = t.EnQueueDDLJob(job)
+	err = tt.EnQueueDDLJob(job)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	ticker := time.NewTicker(s.lease)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
-		historyJob, err := getHistoryDDLJob(s.store, job.ID)
+		historyJob, err := getHistoryDDLJob(store, job.ID)
 		require.NoError(t, err)
 		if historyJob == nil {
 			continue
@@ -1368,38 +1311,6 @@ func TestBackwardCompatibility(t *testing.T) {
 
 	// finished add index
 	tk.MustExec("admin check index t idx_b")
-}
-
-type testMaxTableRowIDContext struct {
-	c   *C
-	d   ddl.DDL
-	tbl table.Table
-}
-
-func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
-	return &testMaxTableRowIDContext{
-		c:   c,
-		d:   d,
-		tbl: tbl,
-	}
-}
-
-func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
-	c := ctx.c
-	d := ctx.d
-	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
-	require.NoError(t, err)
-	return maxHandle, emptyTable
-}
-
-func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
-	c := ctx.c
-	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
-	require.Equal(t, expectEmpty, emptyTable)
-	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
@@ -1416,9 +1327,6 @@ func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 }
 
 func TestCreateTableTooLarge(t *testing.T) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1438,7 +1346,7 @@ func TestCreateTableTooLarge(t *testing.T) {
 	originLimit := config.GetGlobalConfig().TableColumnCountLimit
 	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, uint32(cnt*4))
 	_, err := tk.Exec(sql)
-	require.True(t)
+	require.Truef(t, kv.ErrEntryTooLarge.Equal(err), "err:%v", err)
 	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, originLimit)
 }
 
@@ -1822,9 +1730,9 @@ func TestAlterColumn(t *testing.T) {
 	rows := tk.MustQuery("select * from t1").Rows()
 	require.Equal(t, "1", rows[0][0])
 	updateTime3 := rows[0][1].(string)
-	c.Assert(updateTime3[len(updateTime3)-3:], Not(Equals), "000")
+	require.NotEqual(t, "000", updateTime3[len(updateTime3)-3:])
 	updateTime6 := rows[0][2].(string)
-	c.Assert(updateTime6[len(updateTime6)-6:], Not(Equals), "000000")
+	require.NotEqual(t, "000000", updateTime6[len(updateTime6)-6:])
 }
 
 func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWarn *terror.Error) {
@@ -1837,10 +1745,6 @@ func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWa
 
 func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 	assertWarningExec(tk, t, sql, ddl.ErrAlterOperationNotSupported)
-}
-
-func (s *testIntegrationSuite) assertAlterErrorExec(tk *testkit.TestKit, c *C, sql string) {
-	tk.MustGetErrCode(sql, errno.ErrAlterOperationNotSupportedReason)
 }
 
 func TestAlterAlgorithm(t *testing.T) {
@@ -1866,7 +1770,7 @@ func TestAlterAlgorithm(t *testing.T) {
 	tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
 
 	// Test add/drop index
-	s.assertAlterErrorExec(tk, c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
+	tk.MustGetErrCode("alter table t add index idx_b(b), ALGORITHM=INSTANT", errno.ErrAlterOperationNotSupportedReason)
 	assertAlterWarnExec(tk, t, "alter table t add index idx_b1(b), ALGORITHM=COPY")
 	tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
 	tk.MustExec("alter table t add index idx_b3(b), ALGORITHM=DEFAULT")
@@ -1960,9 +1864,6 @@ func TestFulltextIndexIgnore(t *testing.T) {
 }
 
 func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1978,14 +1879,14 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with column charset is utf8.
-	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
+	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(model.NewCIStr("test"))
 	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
-		mockCtx.Store = s.store
+		mockCtx.Store = store
 		err := mockCtx.NewTxn(context.Background())
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
@@ -2147,7 +2048,7 @@ func TestChangingDBCharset(t *testing.T) {
 		},
 	}
 	for _, fc := range noDBFailedCases {
-		require.Equal(t, fc.errMsg, Commentf("%v", fc.stmt), tk.ExecToErr(fc.stmt).Error())
+		require.EqualError(t, tk.ExecToErr(fc.stmt), fc.errMsg)
 	}
 
 	verifyDBCharsetAndCollate := func(dbName, chs string, coll string) {
@@ -2163,7 +2064,7 @@ func TestChangingDBCharset(t *testing.T) {
 		sql := fmt.Sprintf(template, dbName)
 		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%s %s", chs, coll)))
 
-		dom := domain.GetDomain(s.ctx)
+		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
 		err := dom.Reload()
 		require.NoError(t, err)
@@ -2219,7 +2120,7 @@ func TestChangingDBCharset(t *testing.T) {
 	}
 
 	for _, fc := range failedCases {
-		require.Equal(t, fc.errMsg, Commentf("%v", fc.stmt), tk.ExecToErr(fc.stmt).Error())
+		require.EqualError(t, tk.ExecToErr(fc.stmt), fc.errMsg)
 	}
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_unicode_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
@@ -2374,7 +2275,7 @@ func TestParserIssue284(t *testing.T) {
 }
 
 func TestAddExpressionIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2496,7 +2397,7 @@ func TestCreateExpressionIndexError(t *testing.T) {
 }
 
 func TestAddExpressionIndexOnPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3364,7 +3265,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table if not exists b_table_local_and_normal (id int)")
 	tk.MustQuery("select * from b_table_local_and_normal").Check(testkit.Rows())
 	tk.MustExec("drop table b_table_local_and_normal")
-	sequenceTable := testGetTableByName(c, tk.Se, "test", "b_table_local_and_normal")
+	sequenceTable := testGetTableByNameT(t, tk.Session(), "test", "b_table_local_and_normal")
 	require.Equal(t, model.TempTableNone, sequenceTable.Meta().TempTableType)
 	tk.MustExec("drop table if exists b_table_local_and_normal")
 	_, err = tk.Exec("select * from b_table_local_and_normal")
@@ -3425,7 +3326,7 @@ func TestDropTemporaryTable(t *testing.T) {
 
 	// Check filter out data from removed local temp tables
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
-	ctx := s.ctx
+	ctx := tk.Session()
 	require.Nil(t, ctx.NewTxn(context.Background()))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -3809,7 +3710,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustExec("create view v1 as select 1,1")
 	rs, err := tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "Name_exp_1", rs.Fields()[1].Column.Name.O)
 
@@ -3817,7 +3718,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustExec("create view v1 as select 1, 2, 1, 2, 1, 2, 1, 2")
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 2 1 2 1 2 1 2"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 2 1 2 1 2 1 2"))
 	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "2", rs.Fields()[1].Column.Name.O)
 	require.Equal(t, "Name_exp_1", rs.Fields()[2].Column.Name.O)
@@ -3831,7 +3732,7 @@ func TestIssue29326(t *testing.T) {
 	tk.MustExec("create view v1 as select 't', 't', 1 as t")
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("t t 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("t t 1"))
 	require.Equal(t, "Name_exp_t", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "Name_exp_1_t", rs.Fields()[1].Column.Name.O)
 	require.Equal(t, "t", rs.Fields()[2].Column.Name.O)
@@ -3844,7 +3745,7 @@ func TestIssue29326(t *testing.T) {
 		"utf8mb4 utf8mb4_bin"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
 	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "Name_exp_1", rs.Fields()[1].Column.Name.O)
 
@@ -3856,7 +3757,7 @@ func TestIssue29326(t *testing.T) {
 		"utf8mb4 utf8mb4_bin"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("id 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("id 1"))
 	require.Equal(t, "Name_exp_id", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "id", rs.Fields()[1].Column.Name.O)
 
@@ -3868,7 +3769,7 @@ func TestIssue29326(t *testing.T) {
 		"utf8mb4 utf8mb4_bin"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.Equal(t, "Name_exp_1", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "1", rs.Fields()[1].Column.Name.O)
 
@@ -3880,7 +3781,7 @@ func TestIssue29326(t *testing.T) {
 		"utf8mb4 utf8mb4_bin"))
 	rs, err = tk.Exec("select * from v1")
 	require.NoError(t, err)
-	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.Equal(t, "abs(t1.id)", rs.Fields()[0].Column.Name.O)
 	require.Equal(t, "Name_exp_abs(t1.id)", rs.Fields()[1].Column.Name.O)
 
