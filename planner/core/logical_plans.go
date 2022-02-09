@@ -87,7 +87,6 @@ func (tp JoinType) IsSemiJoin() bool {
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
-
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
