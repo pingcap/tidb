@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 
-	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 )
 
@@ -62,24 +60,6 @@ var defaultImportVariablesTiDB = map[string]string{
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
-}
-
-// getSQLErrCode returns error code if err is a mysql error
-func getSQLErrCode(err error) (terror.ErrCode, bool) {
-	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
-	if !ok {
-		return -1, false
-	}
-
-	return terror.ErrCode(mysqlErr.Number), true
-}
-
-func isUnknownSystemVariableErr(err error) bool {
-	code, ok := getSQLErrCode(err)
-	if !ok {
-		return strings.Contains(err.Error(), "Unknown system variable")
-	}
-	return code == mysql.ErrUnknownSystemVariable
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
@@ -179,7 +159,7 @@ loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -202,14 +182,7 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, err
@@ -221,6 +194,9 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
+		case *ast.CreateDatabaseStmt:
+			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)

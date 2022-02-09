@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -888,8 +887,6 @@ func (s *testIntegrationSerialSuite) TestJoinNotSupportedByTiFlash(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
@@ -938,7 +935,6 @@ func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c 
 }
 
 func (s *testIntegrationSerialSuite) TestMPPWithBroadcastExchangeUnderNewCollation(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
@@ -960,7 +956,6 @@ func (s *testIntegrationSerialSuite) TestMPPWithBroadcastExchangeUnderNewCollati
 		}
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
 	var input []string
@@ -980,8 +975,6 @@ func (s *testIntegrationSerialSuite) TestMPPWithBroadcastExchangeUnderNewCollati
 }
 
 func (s *testIntegrationSerialSuite) TestPartitionTableDynamicModeUnderNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_new_collation")
 	tk.MustExec("use test_new_collation")
@@ -1020,7 +1013,6 @@ func (s *testIntegrationSerialSuite) TestPartitionTableDynamicModeUnderNewCollat
 }
 
 func (s *testIntegrationSerialSuite) TestMPPAvgRewrite(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
@@ -1042,7 +1034,6 @@ func (s *testIntegrationSerialSuite) TestMPPAvgRewrite(c *C) {
 		}
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
 	var input []string
@@ -1764,6 +1755,25 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue31261(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_MULTI_COL_5177`)
+	tk.MustExec(`	CREATE TABLE PK_MULTI_COL_5177 (
+		COL1 binary(10) NOT NULL,
+		COL2 varbinary(10) NOT NULL,
+		COL3 smallint(45) NOT NULL,
+		PRIMARY KEY (COL1(5),COL2,COL3),
+		UNIQUE KEY UIDXM (COL1(5),COL2),
+		UNIQUE KEY UIDX (COL2),
+		KEY IDX3 (COL3),
+		KEY IDXM (COL3,COL2))`)
+	tk.MustExec(`insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1)`)
+	c.Assert(len(tk.MustQuery(`select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82)`).Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery(`select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82`).Rows()), Equals, 1)
+}
+
 func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2460,6 +2470,99 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 		"3 3 3 2 4 3 5"))
 }
 
+func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int,c varchar(11),d datetime)")
+	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
+	rows := [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "left(test.t.c, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "sin(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where sin(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "asin(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where asin(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "cos(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where cos(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "acos(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where acos(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "tan(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where tan(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "atan(cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "atan2(cast(test.t.id, double BINARY), cast(test.t.id, double BINARY))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan2(id,id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "hour(cast(test.t.d, time))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "hour(cast(test.t.d, time))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "minute(cast(test.t.d, time))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where minute(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "second(cast(test.t.d, time))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where second(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "month(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where month(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "dayname(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayname(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "dayofmonth(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "weekday(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "weekday(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "from_days(test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "to_days(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_days(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "last_day(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
+		CheckAt([]int{0, 3, 6}, rows)
+}
+
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2685,9 +2788,6 @@ func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) Test19942(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -2928,8 +3028,11 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
 	tk.MustExec("insert into tt(x) values (1)")
 	tk.MustExec("update tt set x=2, z = default")
+	tk.MustExec("update tt set x=2, z = default(z)")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
 
+	tk.MustGetErrMsg("update tt set x=2, z = default(x)",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt set z = 123",
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 	tk.MustGetErrMsg("update tt as ss set z = 123",
@@ -4088,8 +4191,6 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set names utf8mb4")
 	tk.MustExec("use test")
@@ -4125,8 +4226,6 @@ func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
@@ -5057,8 +5156,6 @@ func (s *testIntegrationSuite) TestIssue29705(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5175,4 +5272,80 @@ func (s *testIntegrationSuite) TestIssue20510(c *C) {
 		"3 1 <nil> <nil>",
 		"4 2 <nil> <nil>",
 	))
+}
+
+func (s *testIntegrationSuite) TestIssue31035(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 longtext, c2 decimal(37, 4), unique key(c1(10)), unique key(c2));")
+	tk.MustExec("insert into t1 values('眐', -962541614831459.7458);")
+	tk.MustQuery("select * from t1 order by c2 + 10;").Check(testkit.Rows("眐 -962541614831459.7458"))
+}
+
+// TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
+// Close https://github.com/pingcap/tidb/issues/31096
+func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1(a int, b int, c int);")
+	testKit.MustExec("insert into t1 value(10,10,10)")
+	for i := 0; i < 7; i++ {
+		testKit.MustExec("insert into t1 select * from t1")
+	}
+	testKit.MustExec("insert into t1 value(1,1,1)")
+	testKit.MustExec("analyze table t1")
+
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where null or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or false or b=1;").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows(
+		"TableReader 1.99 root  data:Selection",
+		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows(
+		"TableReader 129.00 root  data:Selection",
+		"└─Selection 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))",
+		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustExec("drop table if exists t1")
+}
+
+func (s *testIntegrationSuite) TestIssue31202(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31202(a int primary key, b int);")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+	tk.MustExec("drop table if exists t31202")
 }

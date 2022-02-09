@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -609,7 +608,7 @@ func TestDBClose(t *testing.T) {
 
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	require.Equal(t, 1, kv.MaxVersion.Cmp(ver), Equals)
+	require.Equal(t, 1, kv.MaxVersion.Cmp(ver))
 
 	snap := store.GetSnapshot(kv.MaxVersion)
 

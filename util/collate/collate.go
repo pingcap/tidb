@@ -78,14 +78,10 @@ type WildcardPattern interface {
 	DoMatch(str string) bool
 }
 
-// EnableNewCollations enables the new collation.
-func EnableNewCollations() {
-	SetNewCollationEnabledForTest(true)
-}
-
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
+	switchDefaultCollation(flag)
 	if flag {
 		atomic.StoreInt32(&newCollationEnabled, 1)
 		return
@@ -330,10 +326,13 @@ func IsCICollation(collate string) bool {
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
-// IsBinCollation returns if the collation is 'xx_bin'.
+// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
+// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
+// and both xx_bin and collationBin are satisfied.
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
-		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4
+		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
+		collate == charset.CollationBin
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).
@@ -367,6 +366,9 @@ func ProtoToCollation(c int32) string {
 }
 
 func init() {
+	// Set it to 1 in init() to make sure the tests enable the new collation, it would be covered in bootstrap().
+	newCollationEnabled = 1
+
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
@@ -390,4 +392,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCSCollator{}
+	newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
 }

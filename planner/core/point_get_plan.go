@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
@@ -475,9 +476,16 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
-			if ctx.GetSessionVars().SelectLimit != math2.MaxUint64 && p != nil {
+			vars := ctx.GetSessionVars()
+			if vars.SelectLimit != math2.MaxUint64 && p != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
+			}
+			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
+				if vars.StmtCtx.OptimizeTracer == nil {
+					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+				}
+				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.buildPlanTrace())
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
@@ -1033,7 +1041,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	var visitInfos []visitInfo
+	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
 		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
@@ -1215,12 +1223,9 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		}
 		// The converted result must be same as original datum.
 		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
-		if err != nil {
+		if err != nil || cmp != 0 {
 			return nil, false
-		} else if cmp != 0 {
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
-
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
@@ -1417,6 +1422,10 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 		newAssign := &expression.Assignment{
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
+		}
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
 		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
 		if err != nil {

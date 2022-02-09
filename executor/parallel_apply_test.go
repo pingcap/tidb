@@ -392,7 +392,6 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// collation 1
-	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int)")
 	tk.MustExec("create table t1(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int)")
@@ -405,6 +404,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	sql = "select (select min(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b), (select sum(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b) from t"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 10", "2 9", "3 7", "4 4"))
 	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 
 	// plan cache
 	orgEnable := core.PreparedPlanCacheEnabled()

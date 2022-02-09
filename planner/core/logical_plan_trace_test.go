@@ -23,61 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testPlanSuite) TestLogicalOptimizeWithTraceEnabled(c *C) {
-	sql := "select * from t where a in (1,2)"
-	defer testleak.AfterTest(c)()
-	tt := []struct {
-		flags []uint64
-		steps int
-	}{
-		{
-			flags: []uint64{
-				flagEliminateAgg,
-				flagPushDownAgg},
-			steps: 2,
-		},
-		{
-			flags: []uint64{
-				flagEliminateAgg,
-				flagPushDownAgg,
-				flagPrunColumns,
-				flagBuildKeyInfo,
-			},
-			steps: 4,
-		},
-		{
-			flags: []uint64{},
-			steps: 0,
-		},
-	}
-
-	for i, tc := range tt {
-		comment := Commentf("case:%v sql:%s", i, sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
-		sctx := MockContext()
-		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
-		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
-		ctx := context.TODO()
-		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
-		flag := uint64(0)
-		for _, f := range tc.flags {
-			flag = flag | f
-		}
-		p, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		_, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
-		c.Assert(otrace, NotNil)
-		c.Assert(len(otrace.Steps), Equals, tc.steps)
-	}
-}
-
 func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 	defer testleak.AfterTest(c)()
 	tt := []struct {
@@ -86,6 +31,48 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleName  string
 		assertRuleSteps []assertTraceStep
 	}{
+		{
+			sql:            "select count(1) from t join (select count(1) from t where false) as tmp;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Aggregation_8's columns[Column#25,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_8's aggregation functions[firstrow(Column#25),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a)] have been pruned",
+				},
+				{
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Projection_6's columns[Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a,Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's aggregation functions[firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a),count(1)] have been pruned",
+				},
+				{
+					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Join_7's columns[Column#28,test.t.a] have been pruned",
+				},
+			},
+		},
+		{
+			sql:            "select a from t where b > 5;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
+				},
+			},
+		},
 		{
 			sql:            "select * from t as t1 where t1.a < (select sum(t2.a) from t as t2 where t2.b = t1.b);",
 			flags:          []uint64{flagDecorrelate, flagBuildKeyInfo, flagPrunColumns},
@@ -427,7 +414,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		}
 		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
 		c.Assert(otrace, NotNil)
 		assert := false
 		for _, step := range otrace.Steps {

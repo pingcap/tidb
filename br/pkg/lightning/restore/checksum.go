@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -331,6 +331,7 @@ func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer e.manager.removeOneJob(tbl)
 
 	return e.checksumDB(ctx, tableInfo)
 }
@@ -372,7 +373,7 @@ type gcTTLManager struct {
 	currentTS     uint64
 	serviceID     string
 	// 0 for not start, otherwise started
-	started uint32
+	started atomic.Bool
 }
 
 func newGCTTLManager(pdClient pd.Client) gcTTLManager {
@@ -384,7 +385,7 @@ func newGCTTLManager(pdClient pd.Client) gcTTLManager {
 
 func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) error {
 	// start gc ttl loop if not started yet.
-	if atomic.CompareAndSwapUint32(&m.started, 0, 1) {
+	if m.started.CAS(false, true) {
 		m.start(ctx)
 	}
 	m.lock.Lock()

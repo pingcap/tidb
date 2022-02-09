@@ -153,18 +153,20 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 	schedule := options.Schedule
 
-	primaryIndex := 0
-	// regions must include the primary
-	// but we don't see empty primaryRegion and regions as an error
-	if primaryRegion != "" || len(regions) > 0 {
-		sort.Strings(regions)
-		primaryIndex = sort.SearchStrings(regions, primaryRegion)
-		if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
-			return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
-		}
+	var Rules []*Rule
+
+	// in case empty primaryRegion and regions, just return an empty bundle
+	if primaryRegion == "" && len(regions) == 0 {
+		Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		return &Bundle{Rules: Rules}, nil
 	}
 
-	var Rules []*Rule
+	// regions must include the primary
+	sort.Strings(regions)
+	primaryIndex := sort.SearchStrings(regions, primaryRegion)
+	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
+		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
+	}
 
 	// primaryCount only makes sense when len(regions) > 0
 	// but we will compute it here anyway for reusing code
@@ -179,15 +181,15 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
-	if len(regions) == 0 {
-		Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
-	} else {
-		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	if followers+1 > primaryCount {
+		// delete primary from regions
+		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
 
-		if followers+1 > primaryCount {
-			// delete primary from regions
-			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+		if len(regions) > 0 {
 			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+		} else {
+			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
 		}
 	}
 
@@ -417,7 +419,7 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 // If table is a partitioned table, it also contains the rules that inherited from table for every partition.
 // The bundle does not contain the rules specified independently by each partition
 func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
-	bundle, err := newBundleFromPolicyOrDirectOptions(t, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
+	bundle, err := newBundleFromPolicy(t, tbInfo.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +442,7 @@ func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
 // It only contains the rules specified independently by the partition.
 // That is to say the inherited rules from table is not included.
 func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
-	bundle, err := newBundleFromPolicyOrDirectOptions(t, def.PlacementPolicyRef, def.DirectPlacementOpts)
+	bundle, err := newBundleFromPolicy(t, def.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -492,11 +494,7 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	return bundles, nil
 }
 
-func newBundleFromPolicyOrDirectOptions(t *meta.Meta, ref *model.PolicyRefInfo, directOpts *model.PlacementSettings) (*Bundle, error) {
-	if directOpts != nil {
-		return NewBundleFromOptions(directOpts)
-	}
-
+func newBundleFromPolicy(t *meta.Meta, ref *model.PolicyRefInfo) (*Bundle, error) {
 	if ref != nil {
 		policy, err := t.GetPolicy(ref.ID)
 		if err != nil {

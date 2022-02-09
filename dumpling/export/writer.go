@@ -29,7 +29,7 @@ type Writer struct {
 
 	receivedTaskCount int
 
-	rebuildConnFn       func(*sql.Conn) (*sql.Conn, error)
+	rebuildConnFn       func(*sql.Conn, bool) (*sql.Conn, error)
 	finishTaskCallBack  func(Task)
 	finishTableCallBack func(Task)
 }
@@ -181,7 +181,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			zap.String("table", meta.TableName()), zap.Int("chunkIndex", currentChunk), zap.NamedError("lastError", lastErr))
 		// don't rebuild connection when dump for the first time
 		if retryTime > 1 {
-			conn, err = w.rebuildConnFn(conn)
+			conn, err = w.rebuildConnFn(conn, true)
 			w.conn = conn
 			if err != nil {
 				return
@@ -199,7 +199,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		}
 		defer ir.Close()
 		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
-	}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
+	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
@@ -259,7 +259,6 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 		metaSQL: metaSQL,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
-			"/*T![placement] SET PLACEMENT_CHECKS = 0*/;",
 		},
 	}, fileWriter)
 }
