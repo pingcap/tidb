@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,9 +130,7 @@ func TestTLSBasic(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSBasic")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -198,9 +195,7 @@ func TestTLSVerify(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSVerify")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -358,8 +353,6 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 	defer cleanup()
 
 	// issue #21194
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	// 255 is the collation id of mysql client 8 default collation_connection
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
 	require.NoError(t, err)

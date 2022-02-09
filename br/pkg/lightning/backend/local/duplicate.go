@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -248,7 +247,7 @@ type DupKVStream interface {
 // It collects duplicate key-value pairs from a pebble.DB.
 //goland:noinspection GoNameStartsWithPackageName
 type LocalDupKVStream struct {
-	iter pkgkv.Iter
+	iter Iter
 }
 
 // NewLocalDupKVStream creates a new LocalDupKVStream with the given duplicate db and key range.
