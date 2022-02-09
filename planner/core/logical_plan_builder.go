@@ -961,6 +961,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
+
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
