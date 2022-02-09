@@ -866,13 +866,20 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	if req.AssertionLevel != kvrpcpb.AssertionLevel_Off {
 		if item == nil || item.IsEmpty() {
 			if m.Assertion == kvrpcpb.Assertion_Exist {
+				var existingStartTS uint64 = 0
+				var existingCommitTS uint64 = 0
+				if item != nil {
+					userMeta := mvcc.DBUserMeta(item.UserMeta())
+					existingStartTS = userMeta.StartTS()
+					existingCommitTS = userMeta.CommitTS()
+				}
 				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
 				return nil, &ErrAssertionFailed{
 					StartTS:          req.StartVersion,
 					Key:              m.Key,
 					Assertion:        m.Assertion,
-					ExistingStartTS:  0,
-					ExistingCommitTS: 0,
+					ExistingStartTS:  existingStartTS,
+					ExistingCommitTS: existingCommitTS,
 				}
 			}
 		} else {
