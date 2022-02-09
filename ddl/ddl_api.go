@@ -4837,6 +4837,19 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+func IsTiFlashReplicaChanged(tbReplicaInfo *model.TiFlashReplicaInfo, replicaInfo *ast.TiFlashReplicaSpec) bool {
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4859,18 +4872,8 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
-		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
-		changed := false
-		for i, label := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != label {
-				changed = true
-				break
-			}
-		}
-		if !changed {
-			return nil
-		}
+	if !IsTiFlashReplicaChanged(tbReplicaInfo, replicaInfo) {
+		return nil
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)

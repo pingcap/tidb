@@ -1011,7 +1011,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
-	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id))
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
 	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
 		return errors.Trace(err)

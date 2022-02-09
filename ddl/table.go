@@ -1079,6 +1079,9 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
+	tbReplicaInfo := tblInfo.TiFlashReplica
+	changed := IsTiFlashReplicaChanged(tbReplicaInfo, &replicaInfo)
+
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
@@ -1102,7 +1105,7 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 			return ver, errors.Trace(err)
 		}
 	} else {
-		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
+		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID), zap.Uint64("count", replicaInfo.Count))
 		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1110,9 +1113,11 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	}
 
 	if replicaInfo.Count > 0 {
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:          replicaInfo.Count,
-			LocationLabels: replicaInfo.Labels,
+		if changed {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:          replicaInfo.Count,
+				LocationLabels: replicaInfo.Labels,
+			}
 		}
 	} else {
 		tblInfo.TiFlashReplica = nil
