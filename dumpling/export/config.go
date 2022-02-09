@@ -80,6 +80,7 @@ const (
 type Config struct {
 	storage.BackendOptions
 
+	specifiedTables          bool
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
@@ -135,7 +136,6 @@ type Config struct {
 	Labels              prometheus.Labels `json:"-"`
 	Tables              DatabaseTables
 	CollationCompatible string
-	specifiedTables     bool
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling

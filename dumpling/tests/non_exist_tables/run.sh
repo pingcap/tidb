@@ -7,7 +7,6 @@ cur=$(cd `dirname $0`; pwd)
 
 DB_NAME="non_exist_tables"
 TABLE_NAME="tb1"
-DB_NAME1="testdb"
 TABLE_NAME1="tb2"
 
 # Test for simple case.
