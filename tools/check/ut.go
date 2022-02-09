@@ -344,8 +344,7 @@ func main() {
 			fmt.Println("create temp dir fail", coverFileTempDir)
 			os.Exit(1)
 		}
-		// defer os.Remove(coverFileTempDir)
-		fmt.Println("temp cov dir", coverFileTempDir)
+		defer os.Remove(coverFileTempDir)
 	}
 
 	// Get the correct count of CPU if it's in docker.
@@ -415,7 +414,6 @@ func collectCoverProfileFile() {
 			fmt.Println("parse cover profile file error:", err)
 			os.Exit(-1)
 		}
-
 		mergeProfile(result, profs)
 	}
 
