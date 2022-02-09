@@ -468,7 +468,7 @@ func TestErrnoErrorCode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 
 	// create database
 	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1600,14 +1600,14 @@ func TestAlterColumn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 
 	tk.MustExec("create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
 	tk.MustExec("insert into test_alter_column set b = 'a', c = 'aa'")
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	ctx := tk.Session().(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colA := tblInfo.Columns[0]
@@ -1617,7 +1617,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colA = tblInfo.Columns[0]
@@ -1627,7 +1627,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set c = 'cc'")
 	tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -1637,7 +1637,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set a = 123")
 	tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -2275,6 +2275,14 @@ func TestParserIssue284(t *testing.T) {
 }
 
 func TestAddExpressionIndex(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2350,6 +2358,14 @@ func TestAddExpressionIndex(t *testing.T) {
 }
 
 func TestCreateExpressionIndexError(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2600,12 +2616,12 @@ func TestDropColumnWithIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
 	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
 	tk.MustExec("create index idx on t_drop_column_with_idx(b)")
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
-	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	query := queryIndexOnTable("test", "t_drop_column_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
@@ -2613,13 +2629,13 @@ func TestDropColumnWithMultiIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
 	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
 	tk.MustExec("create index idx_1 on t_drop_column_with_idx(b)")
 	tk.MustExec("create index idx_2 on t_drop_column_with_idx(b)")
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
-	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	query := queryIndexOnTable("test", "t_drop_column_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
@@ -2627,14 +2643,14 @@ func TestDropColumnsWithMultiIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int)")
 	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
 	tk.MustExec("create index idx_1 on t_drop_columns_with_idx(b)")
 	tk.MustExec("create index idx_2 on t_drop_columns_with_idx(b)")
 	tk.MustExec("create index idx_3 on t_drop_columns_with_idx(c)")
 	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
-	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	query := queryIndexOnTable("test", "t_drop_columns_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
@@ -2642,7 +2658,7 @@ func TestDropLastVisibleColumnOrColumns(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_last_column(x int, key((1+1)))")
 	_, err := tk.Exec("alter table t_drop_last_column drop column x")
 	require.Error(t, err)
@@ -3245,6 +3261,14 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 }
 
 func TestDropTemporaryTable(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3328,12 +3352,8 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
 	ctx := tk.Session()
 	require.Nil(t, ctx.NewTxn(context.Background()))
-	txn, err := ctx.Txn(true)
+	_, err = ctx.Txn(true)
 	require.NoError(t, err)
-	defer func() {
-		err := txn.Rollback()
-		require.NoError(t, err)
-	}()
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
 	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
