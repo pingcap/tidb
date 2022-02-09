@@ -2394,6 +2394,10 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		windows = append(windows, mppWindows...)
 	}
 
+	// if there needs a mpp task, we don't generate tidb window function.
+	if prop.TaskTp == property.MppTaskType {
+		return windows, true, nil
+	}
 	var byItems []property.SortItem
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
