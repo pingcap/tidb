@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"github.com/pingcap/tidb/util/hack"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (s *testChunkSuite) TestMutRow(c *check.C) {
