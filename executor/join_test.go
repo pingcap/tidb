@@ -2678,3 +2678,52 @@ func (s *testSuiteJoinSerial) TestIssue30211(c *C) {
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
 	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
 }
+
+func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_init_chunk_size=2")
+	tk.MustExec("set @@tidb_index_join_batch_size=10")
+	tk.MustExec("DROP TABLE IF EXISTS t, s")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec("create table t(pk int primary key, a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
+	}
+	tk.MustExec("create table s(a int primary key)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into s values(%d)", i))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table s")
+
+	// Test IndexNestedLoopHashJoin keepOrder.
+	fpName := "github.com/pingcap/tidb/executor/TestIssue31129"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	err := tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
+	c.Assert(strings.Contains(err.Error(), "TestIssue31129"), IsTrue)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	// Test IndexNestedLoopHashJoin build hash table panic.
+	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic"
+	c.Assert(failpoint.Enable(fpName, `panic("IndexHashJoinBuildHashTablePanic")`), IsNil)
+	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
+	c.Assert(strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"), IsTrue)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	// Test IndexNestedLoopHashJoin fetch inner fail.
+	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
+	c.Assert(strings.Contains(err.Error(), "IndexHashJoinFetchInnerResultsErr"), IsTrue)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	// Test IndexNestedLoopHashJoin build hash table panic and IndexNestedLoopHashJoin fetch inner fail at the same time.
+	fpName1, fpName2 := "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic", "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
+	c.Assert(failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`), IsNil)
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
+	c.Assert(strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"), IsTrue)
+	c.Assert(failpoint.Disable(fpName1), IsNil)
+	c.Assert(failpoint.Disable(fpName2), IsNil)
+}

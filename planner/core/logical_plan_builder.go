@@ -863,6 +863,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
 	if joinTp == ast.RightJoin {
+		leftPlan, rightPlan = rightPlan, leftPlan
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -2542,6 +2543,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
+				g.err = ErrAmbiguous.GenWithStackByArgs(v.Name.Name.L, clauseMsg[groupByClause])
 				return inNode, false
 			}
 			if idx >= 0 {
