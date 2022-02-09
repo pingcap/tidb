@@ -70,6 +70,9 @@ func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
 // SetPlacementRule is a helper function to set placement rule.
 func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	if rule.Count == 0 {
+		return m.DeletePlacementRule(ctx, rule.GroupID, rule.ID)
+	}
 	j, _ := json.Marshal(rule)
 	buf := bytes.NewBuffer(j)
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule"), "POST", buf)
