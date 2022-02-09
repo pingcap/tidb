@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -177,7 +179,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+			err = staleread.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
 		} else {
 			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
 			// Also check gc safe point for snapshot read.

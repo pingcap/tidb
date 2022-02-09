@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
@@ -367,7 +368,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ret.IsStaleness {
+	if staleread.IsTxnStaleness(e.ctx) {
 		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 

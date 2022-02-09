@@ -32,6 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -1837,9 +1839,7 @@ func (s *session) hasQuerySpecial() bool {
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
 		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
-		if stmt, ok := s.(*executor.ExecStmt); ok {
-			sessiontxn.AssertTxnManagerInfoSchema(se, stmt.InfoSchema)
-		}
+		sessiontxn.AssertTxnManagerInfoSchema(se, nil)
 	})
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1998,16 +1998,13 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context,
-	is infoschema.InfoSchema, snapshotTS uint64,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-
+func (s *session) preparedStmtExec(ctx context.Context, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
-		sessiontxn.AssertTxnManagerInfoSchema(s, is)
+		sessiontxn.AssertTxnManagerInfoSchema(s, nil)
 	})
 
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -2026,10 +2023,8 @@ func (s *session) preparedStmtExec(ctx context.Context,
 }
 
 // cachedPlanExec short path currently ONLY for cached "point select plan" execution
-func (s *session) cachedPlanExec(ctx context.Context,
-	is infoschema.InfoSchema, snapshotTS uint64,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-
+func (s *session) cachedPlanExec(ctx context.Context, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
 		sessiontxn.AssertTxnManagerInfoSchema(s, is)
@@ -2050,14 +2045,12 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
 		GoCtx:       ctx,
-		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execAst,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 		Ti:          &executor.TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -2167,30 +2160,20 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	var is infoschema.InfoSchema
-	var snapshotTS uint64
-	if preparedStmt.ForUpdateRead {
-		is = domain.GetDomain(s).InfoSchema()
-	} else if preparedStmt.SnapshotTSEvaluator != nil {
-		snapshotTS, err = preparedStmt.SnapshotTSEvaluator(s)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		is, err = getSnapshotInfoSchema(s, snapshotTS)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		is = s.GetInfoSchema().(infoschema.InfoSchema)
-	}
-
-	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: is,
-	}
-
-	txnManager := sessiontxn.GetTxnManager(s)
-	if err = txnManager.SetContextProvider(txnCtxProvider); err != nil {
+	staleReadProcessor := staleread.NewStmtPreprocessor(s, true)
+	if err = staleReadProcessor.OnTSEvaluatorInExecute(preparedStmt.SnapshotTSEvaluator); err != nil {
 		return nil, err
+	}
+
+	if provider, ok := sessiontxn.GetTxnManager(s).GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+		var is infoschema.InfoSchema
+		if preparedStmt.ForUpdateRead {
+			is = domain.GetDomain(s).InfoSchema()
+		} else {
+			is = s.GetInfoSchema().(infoschema.InfoSchema)
+		}
+
+		provider.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	}
 
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
@@ -2202,9 +2185,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 
 	if ok {
-		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
+	return s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2975,10 +2958,9 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		}
 	}
 
-	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
+	return sessiontxn.GetTxnManager(s).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: is.(infoschema.InfoSchema),
-	}
-	return sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider)
+	})
 }
 
 // PrepareTSFuture uses to try to get ts future.
@@ -2989,7 +2971,7 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		return
 	}
 	if !s.txn.validOrPending() {
-		if s.GetSessionVars().StmtCtx.IsStaleness {
+		if staleread.IsTxnStaleness(s) {
 			// Do nothing when StmtCtx.IsStaleness is true
 			// we don't need to request tso for stale read
 			return

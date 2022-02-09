@@ -25,6 +25,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
@@ -4184,7 +4186,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !staleread.IsTxnStaleness(b.ctx) {
 		cachedTable := tbl.(table.CachedTable)
 		txn, err := b.ctx.Txn(true)
 		if err != nil {

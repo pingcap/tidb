@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -81,7 +83,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
 		expected := val.(bool)
-		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
+		got := staleread.IsTxnStaleness(c.Ctx)
 		if got != expected {
 			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
 		}
@@ -93,18 +95,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:            ctx,
-		SnapshotTS:       ret.LastSnapshotTS,
-		IsStaleness:      ret.IsStaleness,
-		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       is,
-		Plan:             finalPlan,
-		LowerPriority:    lowerPriority,
-		Text:             stmtNode.Text(),
-		StmtNode:         stmtNode,
-		Ctx:              c.Ctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
+		GoCtx:         ctx,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 

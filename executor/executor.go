@@ -1702,7 +1702,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.TimeZone = vars.Location()
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
-	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil

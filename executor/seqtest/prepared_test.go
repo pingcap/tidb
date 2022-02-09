@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -157,8 +156,7 @@ func TestPrepared(t *testing.T) {
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 

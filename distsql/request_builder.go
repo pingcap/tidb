@@ -672,6 +672,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 		return false
 	}
 	return true
+
 }
 
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {

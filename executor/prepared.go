@@ -248,7 +248,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		SnapshotTSEvaluator: ret.TSEvaluatorForPreparedStmt,
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
 	}
@@ -340,7 +340,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	ID uint32, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -350,25 +350,23 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
-	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema())
 	if err != nil {
 		return nil, false, false, err
 	}
 
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
-		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+		sessiontxn.AssertTxnManagerInfoSchema(sctx, nil)
 	})
 
 	stmt := &ExecStmt{
 		GoCtx:       ctx,
-		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

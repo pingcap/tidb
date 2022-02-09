@@ -38,7 +38,8 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 type txnManager struct {
 	sctx sessionctx.Context
 
-	ctxProvider sessiontxn.TxnContextProvider
+	ctxProvider      sessiontxn.TxnContextProvider
+	preparedProvider sessiontxn.TxnContextProvider
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
@@ -50,6 +51,22 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 		return nil
 	}
 	return m.ctxProvider.GetTxnInfoSchema()
+}
+
+// GetReadReplicaScope returns the read replica scope for the txn
+func (m *txnManager) GetReadReplicaScope() string {
+	if m.ctxProvider == nil {
+		return ""
+	}
+	return m.ctxProvider.GetReadReplicaScope()
+}
+
+func (m *txnManager) InExplicitTxn() bool {
+	return m.sctx.GetSessionVars().TxnCtx.IsExplicit
+}
+
+func (m *txnManager) GetStmtReadTS() (uint64, error) {
+	return m.ctxProvider.GetStmtReadTS()
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {

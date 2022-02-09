@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -76,9 +78,6 @@ type SimpleExec struct {
 	IsFromRemote bool
 	done         bool
 	is           infoschema.InfoSchema
-
-	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
-	staleTxnStartTS uint64
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -582,26 +581,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			}
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		if s.AsOf != nil {
-			// start transaction read only as of failed due to we set tx_read_ts before
-			if e.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
-				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
-			}
-		}
 	}
-	if e.staleTxnStartTS > 0 {
-		if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
-			return err
-		}
-		// With START TRANSACTION, autocommit remains disabled until you end
-		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-		// reverts to its previous state.
-		vars := e.ctx.GetSessionVars()
-		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			return errors.Trace(err)
-		}
-		vars.SetInTxn(true)
-		return nil
+	if staleread.ShouldStartStaleReadTxn(e.ctx) {
+		return staleread.ExplicitStartStaleReadTxn(ctx, e.ctx)
 	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.

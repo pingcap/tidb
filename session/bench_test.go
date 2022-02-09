@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -1808,11 +1807,10 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	}
 
 	args := []types.Datum{types.NewDatum(3401544)}
-	is := se.GetInfoSchema()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, args)
 		if err != nil {
 			b.Fatal(err)
 		}

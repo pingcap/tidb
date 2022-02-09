@@ -21,22 +21,21 @@ import (
 
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
-	// Initialize the provider with session context
-	Initialize(sctx sessionctx.Context) error
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// GetStmtReadTS returns statement's read timestamp that is used by select statement without for update
+	GetStmtReadTS() (uint64, error)
+	// GetReadReplicaScope returns the read replica scope for the txn
+	GetReadReplicaScope() string
 }
 
 // SimpleTxnContextProvider implements TxnContextProvider
 // It is only used in refactor stage
 // TODO: remove it after refactor finished
 type SimpleTxnContextProvider struct {
-	InfoSchema infoschema.InfoSchema
-}
-
-// Initialize the provider with session context
-func (p *SimpleTxnContextProvider) Initialize(_ sessionctx.Context) error {
-	return nil
+	InfoSchema        infoschema.InfoSchema
+	GetStmtReadTSFunc func() (uint64, error)
+	ReadReplicaScope  string
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -44,10 +43,27 @@ func (p *SimpleTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.InfoSchema
 }
 
+// GetReadReplicaScope returns the read replica scope for the txn
+func (p *SimpleTxnContextProvider) GetReadReplicaScope() string {
+	return p.ReadReplicaScope
+}
+
+// GetStmtReadTS returns error, and we should not call it when provider is `SimpleTxnContextProvider`
+func (p *SimpleTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	return p.GetStmtReadTSFunc()
+}
+
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	// InExplicitTxn returns whether in an explicit txn or not
+	InExplicitTxn() bool
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// GetReadReplicaScope returns the read replica scope for the txn
+	GetReadReplicaScope() string
+	// GetStmtReadTS returns statement's read timestamp in current isolation level.
+	// It is used by select statement without for update
+	GetStmtReadTS() (uint64, error)
 
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider

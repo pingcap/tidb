@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -184,16 +182,13 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name             string
-	UsingVars        []expression.Expression
-	PrepareParams    []types.Datum
-	ExecID           uint32
-	SnapshotTS       uint64
-	IsStaleness      bool
-	ReadReplicaScope string
-	Stmt             ast.StmtNode
-	StmtType         string
-	Plan             Plan
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	Stmt          ast.StmtNode
+	StmtType      string
+	Plan          Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -264,17 +259,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
-	if err != nil {
-		return err
-	}
-	if isStaleness {
-		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		sctx.GetSessionVars().StmtCtx.IsStaleness = true
-	}
+
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -305,72 +290,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
-	e.SnapshotTS = snapshotTS
-	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
-	snapshotTS = 0
-	readReplicaScope = oracle.GlobalTxnScope
-	isStaleness = false
-	err = nil
-	vars := sctx.GetSessionVars()
-	readTS := vars.TxnReadTS.PeakTxnReadTS()
-	if readTS > 0 {
-		// It means we meet following case:
-		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
-		// 1. set transaction read only as of timestamp ts2
-		// 2. execute prepare p
-		// The execute statement would be refused due to timestamp conflict
-		if preparedObj.SnapshotTSEvaluator != nil {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
-			return
-		}
-		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t as of timestamp ts1'
-	// 1. begin
-	// 2. execute prepare p
-	// The execute statement would be refused due to timestamp conflict
-	if preparedObj.SnapshotTSEvaluator != nil {
-		if vars.InTxn() {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
-		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
-		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t'
-	// 1. start transaction read only as of timestamp ts1
-	// 2. execute prepare p
-	if vars.InTxn() && vars.TxnCtx.IsStaleness {
-		isStaleness = true
-		snapshotTS = vars.TxnCtx.StartTS
-		readReplicaScope = vars.TxnCtx.TxnScope
-		return
-	}
-	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
@@ -958,9 +883,6 @@ type Simple struct {
 	//   and executing in co-processor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
-
-	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
-	StaleTxnStartTS uint64
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.

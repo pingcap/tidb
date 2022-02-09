@@ -46,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -116,15 +118,21 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
-	return &executorBuilder{
+func newExecutorBuilder(ctx sessionctx.Context, ti *TelemetryInfo) *executorBuilder {
+	txnManager := sessiontxn.GetTxnManager(ctx)
+	b := &executorBuilder{
 		ctx:              ctx,
-		is:               is,
+		is:               txnManager.GetTxnInfoSchema(),
 		Ti:               ti,
-		snapshotTS:       snapshotTS,
-		isStaleness:      isStaleness,
-		readReplicaScope: replicaReadScope,
+		isStaleness:      staleread.IsTxnStaleness(ctx),
+		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
+
+	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+		provider.GetStmtReadTSFunc = b.getReadTS
+	}
+
+	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -141,9 +149,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(ctx, ti)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -732,12 +740,6 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
-	b.snapshotTS = v.SnapshotTS
-	b.isStaleness = v.IsStaleness
-	b.readReplicaScope = v.ReadReplicaScope
-	if b.snapshotTS != 0 {
-		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
-	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -800,11 +802,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor:    base,
-		Statement:       v.Statement,
-		IsFromRemote:    v.IsFromRemote,
-		is:              b.is,
-		staleTxnStartTS: v.StaleTxnStartTS,
+		baseExecutor: base,
+		Statement:    v.Statement,
+		IsFromRemote: v.IsFromRemote,
+		is:           b.is,
 	}
 	return e
 }
@@ -1500,7 +1501,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.forUpdateTS, nil
 	}
 
-	return b.getReadTS()
+	return sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
