@@ -7772,3 +7772,57 @@ func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
 	c.Assert(checkErr, IsNil)
 }
+
+func (s *testSerialDBSuite) TestIssue32079(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database Issue32079")
+	defer tk.MustExec("drop database Issue32079")
+	tk.MustExec("use Issue32079")
+	tk.MustExec("create table t (id bigint unsigned not null primary key, c1 int, key(c1))")
+	tk.MustExec("insert into t values (20, 20), (40, 40), (80, 80), (160, 160);")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	_, checkErr = tk1.Exec("use Issue32079")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var currJob *model.Job
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	times := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("update t set id = 4 where id=40;")
+			if checkErr != nil {
+				return
+			}
+			///*
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("update t set id = 8 where id=80;")
+			if checkErr != nil {
+				return
+			}
+		case model.StateWriteReorganization:
+			if job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("update t set id = 16 where id=160;")
+				if checkErr != nil {
+					return
+				}
+				currJob = job
+				times++
+			}
+			//*/
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t drop column c1")
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("160", "20", "4", "8"))
+	c.Assert(currJob, IsNil)
+}
