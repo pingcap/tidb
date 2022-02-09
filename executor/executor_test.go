@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	error2 "github.com/pingcap/tidb/store/driver/error"
@@ -9681,6 +9682,10 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
+	err = sessiontxn.GetTxnManager(se).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		InfoSchema: is,
+	})
+	c.Assert(err, IsNil)
 	executorBuilder := executor.NewMockExecutorBuilderForTest(se, nil)
 
 	var opsNeedsCoveredMask uint64 = 1<<len(opsNeedsCovered) - 1

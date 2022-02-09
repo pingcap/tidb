@@ -45,6 +45,15 @@ func (p *baseProcessor) init(sctx sessionctx.Context, isUpdateTxnContext bool) {
 	p.sctx = sctx
 	p.txnManager = sessiontxn.GetTxnManager(sctx)
 	p.isUpdateTxnContext = isUpdateTxnContext
+
+	if p.txnManager.InExplicitTxn() {
+		if provider, ok := p.txnManager.GetContextProvider().(*staleReadTxnContextProvider); ok {
+			p.evaluated = true
+			p.ts = provider.ts
+			p.is = provider.is
+			p.readReplicaScope = provider.readReplicaScope
+		}
+	}
 }
 
 func (p *baseProcessor) IsStaleness() bool {

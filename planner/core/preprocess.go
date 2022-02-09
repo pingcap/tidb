@@ -132,6 +132,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v.ensureInfoSchema()
 
 	v.TSEvaluatorForPreparedStmt = v.staleReadProcessor.GetTSEvaluatorForPreparedStmt()
+	v.IsStaleness = v.staleReadProcessor.IsStaleness()
 	v.initTxnContextProviderIfNecessary()
 
 	return errors.Trace(v.err)
@@ -160,6 +161,7 @@ const (
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	InfoSchema                 infoschema.InfoSchema
+	IsStaleness                bool
 	TSEvaluatorForPreparedStmt func(sctx sessionctx.Context) (uint64, error)
 }
 
