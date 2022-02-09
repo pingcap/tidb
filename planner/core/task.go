@@ -1788,10 +1788,10 @@ func BuildFinalModeAggregation(
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
 				}
 			} else {
-				partialFuncDesc := *aggFunc
-				partial.AggFuncs = append(partial.AggFuncs, &partialFuncDesc)
+				partialFuncDesc := aggFunc.Clone()
+				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
 				if aggFunc.Name == ast.AggFuncFirstRow {
-					firstRowFuncMap[&partialFuncDesc] = finalAggFunc
+					firstRowFuncMap[partialFuncDesc] = finalAggFunc
 				}
 			}
 
