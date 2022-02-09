@@ -236,7 +236,7 @@ func (p *StmtPreprocessor) OnSelectTable(tn *ast.TableName) error {
 
 func (p *StmtPreprocessor) OnStartTransaction(begin *ast.BeginStmt) error {
 	if !p.isUpdateTxnContext {
-		return errors.New("Must update txn context when start tarnsaction")
+		return errors.New("Must update txn context when start transaction")
 	}
 
 	ts, err := p.getAsOfTS(begin.AsOf)
