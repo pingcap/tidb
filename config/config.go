@@ -131,7 +131,7 @@ type Config struct {
 	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin                     Plugin             `toml:"plugin" json:"plugin"`
 	PessimisticTxn             PessimisticTxn     `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        bool               `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	CheckMb4ValueInUTF8        AtomicBool         `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int                `toml:"max-index-length" json:"max-index-length"`
 	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
@@ -629,7 +629,7 @@ var defaultConf = Config{
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
-	CheckMb4ValueInUTF8:          true,
+	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
 	TableColumnCountLimit:        1017,
@@ -744,10 +744,11 @@ var defaultConf = Config{
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 	},
-	DeprecateIntegerDisplayWidth: false,
-	EnableEnumLengthLimit:        true,
-	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	DeprecateIntegerDisplayWidth:         false,
+	EnableEnumLengthLimit:                true,
+	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:                     defTiKVCfg.EnableForwarding,
+	NewCollationsEnabledOnFirstBootstrap: true,
 }
 
 var (
