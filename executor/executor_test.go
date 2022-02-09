@@ -665,7 +665,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
 		require.NoError(t, err1)
 		require.False(t, reachLimit)
-		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+		err1 = ld.LoadDataInfoSubList[0].CheckAndInsertOneBatch(context.Background(), ld.LoadDataInfoSubList[0].GetRows(), ld.LoadDataInfoSubList[0].GetCurBatchCnt())
 		require.NoError(t, err1)
 		ld.SetMaxRowsInBatch(20000)
 		if tt.restData == nil {

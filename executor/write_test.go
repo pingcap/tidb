@@ -1961,7 +1961,7 @@ func TestLoadData(t *testing.T) {
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	require.NoError(t, err)
 	require.False(t, reachLimit)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+	err = ld.LoadDataInfoSubList[0].CheckAndInsertOneBatch(context.Background(), ld.LoadDataInfoSubList[0].GetRows(), ld.LoadDataInfoSubList[0].GetCurBatchCnt())
 	require.NoError(t, err)
 	ld.SetMaxRowsInBatch(20000)
 	r := tk.MustQuery(selectSQL)
@@ -2274,7 +2274,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+	err = ld.LoadDataInfoSubList[0].CheckAndInsertOneBatch(context.Background(), ld.LoadDataInfoSubList[0].GetRows(), ld.LoadDataInfoSubList[0].GetCurBatchCnt())
 	require.NoError(t, err)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
