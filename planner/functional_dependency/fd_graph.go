@@ -28,6 +28,10 @@ type FDSet struct {
 	// but we should record {2,3} as not-null down for the convenience of transferring
 	// Lax FD: {1} ~~> {2,3} to strict FD: {1} --> {2,3} with {1} as not-null next time.
 	NotNullCols FastIntSet
+	// HashCodeToUniqueID map the expression's hashcode to a statement allocated unique
+	// ID quite like the unique ID bounded with column. It's mainly used to add the expr
+	// to the fdSet as an extended column. <NOT CONCURRENT SAFE FOR NOW>
+	HashCodeToUniqueID map[string]int
 }
 
 // closureOfStrict is to find strict fd closure of X with respect to F.
@@ -221,7 +225,7 @@ func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv bool)
 				// We can use the new FD to extend the current one.
 				// eg:  A -> BC, A -> CE, they couldn't be the subset of each other, union them.
 				// res: A -> BCE
-				fd.to.Union(to)
+				fd.to.UnionWith(to)
 				added = true
 			}
 		}
@@ -527,6 +531,17 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 			s.AddLaxFunctionalDependency(fd.from, fd.to)
 		}
 	}
+	s.NotNullCols.UnionWith(fds.NotNullCols)
+	if s.HashCodeToUniqueID == nil {
+		s.HashCodeToUniqueID = fds.HashCodeToUniqueID
+	} else {
+		for k, v := range fds.HashCodeToUniqueID {
+			if _, ok := s.HashCodeToUniqueID[k]; ok {
+				panic("shouldn't be here, children has same expr while registered not only once")
+			}
+			s.HashCodeToUniqueID[k] = v
+		}
+	}
 }
 
 // MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
@@ -567,7 +582,7 @@ func (s *FDSet) MaxOneRow(cols FastIntSet) {
 // ProjectCols projects FDSet to the target columns
 // Formula:
 // Strict decomposition FD4A: If X −→ Y Z then X −→ Y and X −→ Z.
-// Lax decomposition FD4B: If X ~→ Y Z and I(R) is Y -definite then X ~→ Z.
+// Lax decomposition FD4B: If X ~→ Y Z and I(R) is Y-definite then X ~→ Z.
 func (s *FDSet) ProjectCols(cols FastIntSet) {
 	// **************************************** START LOOP 1 ********************************************
 	// Ensure the transitive relationship between remaining columns won't be lost.
@@ -766,4 +781,24 @@ func (e *fdEdge) String() string {
 		}
 	}
 	return b.String()
+}
+
+// RegisterUniqueID is used to record the map relationship between expr and allocated uniqueID.
+func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
+	if len(hashCode) == 0 {
+		// shouldn't be here.
+		panic("map empty expr hashcode to uniqueID")
+	}
+	if _, ok := s.HashCodeToUniqueID[hashCode]; ok {
+		// shouldn't be here.
+		panic("hashcode has been registered")
+	}
+	s.HashCodeToUniqueID[hashCode] = uniqueID
+}
+
+func (s *FDSet) IsHashCodeRegistered(hashCode string) (int, bool) {
+	if uniqueID, ok := s.HashCodeToUniqueID[hashCode]; ok {
+		return uniqueID, true
+	}
+	return -1, false
 }

@@ -314,8 +314,8 @@ type LogicalPlan interface {
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
 	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
 
-	// extractFD derive the FDSet from the tree bottom up.
-	extractFD() *fd.FDSet
+	// ExtractFD derive the FDSet from the tree bottom up.
+	ExtractFD() *fd.FDSet
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -384,11 +384,11 @@ type baseLogicalPlan struct {
 	fdSet *fd.FDSet
 }
 
-// extractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
-func (p *baseLogicalPlan) extractFD() *fd.FDSet {
+// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
+func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
 	fds := &fd.FDSet{}
 	for _, ch := range p.children {
-		fds.AddFrom(ch.extractFD())
+		fds.AddFrom(ch.ExtractFD())
 	}
 	return fds
 }

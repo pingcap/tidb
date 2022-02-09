@@ -1158,10 +1158,15 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if expr == nil {
 		return nil, name, nil
 	}
+	// for expr projection, we should record the map relationship <hashcode, uniqueID> down.
 	newCol := &expression.Column{
 		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
+		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
+	}
+	b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
 }
@@ -2732,6 +2737,7 @@ func checkColFuncDepend(
 			continue
 		}
 		funcDepend := true
+		// if all columns of some unique/pri indexes are determined, all columns left are check-passed.
 		for _, indexCol := range index.Columns {
 			iColInfo := tblInfo.Columns[indexCol.Offset]
 			if !mysql.HasNotNullFlag(iColInfo.Flag) {
@@ -4245,16 +4251,29 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	return result, nil
 }
 
-func (ds *DataSource) extractFD() *fd.FDSet {
+func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// FD in datasource (leaf node) can be cached and reused.
-	if ds.fdSet == nil {
-		fds := &fd.FDSet{}
+	// Once the all conditions are not equal to nil, built it again.
+	if ds.fdSet == nil || ds.allConds != nil {
+		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 		allCols := fd.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
 		for _, col := range ds.TblCols {
 			// todo: change it to int64
 			allCols.Insert(int(col.UniqueID))
 		}
+		// int pk doesn't store its index column in indexInfo.
+		if ds.tableInfo.PKIsHandle {
+			keyCols := fd.NewFastIntSet()
+			for _, col := range ds.TblCols {
+				if mysql.HasPriKeyFlag(col.RetType.Flag) {
+					keyCols.Insert(int(col.UniqueID))
+				}
+			}
+			fds.AddStrictFunctionalDependency(keyCols, allCols)
+			fds.MakeNotNull(keyCols)
+		}
+		// other indices including common handle.
 		for _, idx := range ds.tableInfo.Indices {
 			keyCols := fd.NewFastIntSet()
 			allColIsNotNull := true
@@ -4280,6 +4299,24 @@ func (ds *DataSource) extractFD() *fd.FDSet {
 				}
 			} else {
 				fds.AddLaxFunctionalDependency(keyCols, allCols)
+			}
+		}
+		// handle the datasource conditions (maybe pushed down from upper layer OP)
+		if ds.allConds != nil {
+			// extract the not null attributes from selection conditions.
+			notnullColsUniqueIDs := extractNotNullFromConds(ds.allConds, ds)
+
+			// extract the constant cols from selection conditions.
+			constUniqueIDs := extractConstantCols(ds.allConds, ds, fds)
+
+			// extract equivalence cols.
+			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds, fds)
+
+			// apply conditions to FD.
+			fds.MakeNotNull(notnullColsUniqueIDs)
+			fds.AddConstants(constUniqueIDs)
+			for _, equiv := range equivUniqueIDs {
+				fds.AddEquivalence(equiv[0], equiv[1])
 			}
 		}
 		ds.fdSet = fds

@@ -86,7 +86,7 @@ func TestFuncDeps_ColsAreKey(t *testing.T) {
 		// we could put 2 and 3 together and use (2,3)~~>(1,4,5) and (1)==(10) to
 		// prove that (2,3) is a lax key. But this is only true when that constant
 		// value for 3 is not NULL. We would have to pass non-null information to
-		// the check. See #42731.
+		// the check.
 		{cols: NewFastIntSet(2, 11), strict: false, lax: false},
 	}
 

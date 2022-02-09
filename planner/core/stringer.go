@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/util/plancodec"
@@ -26,6 +27,15 @@ import (
 func ToString(p Plan) string {
 	strs, _ := toString(p, []string{}, []int{})
 	return strings.Join(strs, "->")
+}
+
+// FDToString explains fd transfer over a Plan, returns description string.
+func FDToString(p LogicalPlan) string {
+	strs, _ := fdToString(p, []string{}, []int{})
+	sort.SliceStable(strs, func(i, j int) bool {
+		return true
+	})
+	return strings.Join(strs, " >>> ")
 }
 
 func needIncludeChildrenString(plan Plan) bool {
@@ -41,6 +51,25 @@ func needIncludeChildrenString(plan Plan) bool {
 	default:
 		return false
 	}
+}
+
+func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
+	switch x := in.(type) {
+	case *LogicalProjection:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
+		for i := 0; i < x.ChildrenCount(); i++ {
+			strs, idxs = fdToString(x.GetChild(i), strs, idxs)
+		}
+	case *LogicalAggregation:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
+		for i := 0; i < x.ChildrenCount(); i++ {
+			strs, idxs = fdToString(x.GetChild(i), strs, idxs)
+		}
+	case *DataSource:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
+	default:
+	}
+	return strs, idxs
 }
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
