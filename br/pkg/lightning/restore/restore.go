@@ -271,6 +271,9 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+
+	// used for check-only mode
+	existedTblMap map[string]map[string]*model.TableInfo
 }
 
 type LightningStatus struct {
@@ -793,6 +796,7 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 	sqlParser := rc.tidbGlue.GetParser()
 
 	result := make(map[string]*checkpoints.TidbDBInfo, len(rc.dbMetas))
+	existedTblMap := make(map[string]map[string]*model.TableInfo, len(rc.dbMetas))
 	for _, schema := range rc.dbMetas {
 		tables, err := getTableFunc(ctx, schema.Name)
 		if err != nil {
@@ -808,6 +812,7 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 		for _, tbl := range tables {
 			tableMap[tbl.Name.L] = tbl
 		}
+		existedTblMap[schema.Name] = tableMap
 
 		dbInfo := &checkpoints.TidbDBInfo{
 			Name:   schema.Name,
@@ -849,6 +854,7 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 	}
 
 	rc.dbInfos = result
+	rc.existedTblMap = existedTblMap
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 	// override by manually set vars
@@ -2064,10 +2070,8 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
 
-	if rc.cfg.CheckOnlyCfg == nil {
-		if err := rc.checkTableEmpty(ctx); err != nil {
-			return errors.Trace(err)
-		}
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
 	}
 	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
 		return err

@@ -599,7 +599,7 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
 }
 
-func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta mydump.SourceFileMeta, replaceStr string) (mydump.Parser, error){
+func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta mydump.SourceFileMeta, replaceStr string) (mydump.Parser, error) {
 	var reader storage.ReadSeekCloser
 	var err error
 	if dataFileMeta.Type == mydump.SourceTypeParquet {
@@ -1139,7 +1139,14 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	}
 	for _, db := range rc.dbMetas {
 		for _, tbl := range db.Tables {
-			ch <- common.UniqueTable(tbl.DB, tbl.Name)
+			if rc.cfg.CheckOnlyCfg != nil {
+				// we don't create missing tables in check-only mode
+				if _, ok := rc.existedTblMap[tbl.DB][tbl.Name]; ok {
+					ch <- common.UniqueTable(tbl.DB, tbl.Name)
+				}
+			} else {
+				ch <- common.UniqueTable(tbl.DB, tbl.Name)
+			}
 		}
 	}
 	close(ch)
