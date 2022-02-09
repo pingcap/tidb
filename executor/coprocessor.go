@@ -270,5 +270,6 @@ func (h *CoprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowC
 	}
 	cur := &chunks[len(chunks)-1]
 	cur.RowsData = append(cur.RowsData, data...)
+
 	return chunks
 }
