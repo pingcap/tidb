@@ -1302,7 +1302,6 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 	// 2. engine status is earlier than CheckpointStatusImported, and
 	// 3. chunk has been read
 
-	// nolint:gosec
 	query := fmt.Sprintf(`
 		SELECT DISTINCT t.table_name, c.engine_id
 		FROM %s.%s t, %s.%s c, %s.%s e
@@ -1316,7 +1315,7 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 
 	err := common.Retry("get local storing tables", log.L(), func() error {
 		targetTables = make(map[string][]int32)
-		rows, err := cpdb.db.QueryContext(ctx, query)
+		rows, err := cpdb.db.QueryContext(ctx, query) // #nosec G201
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1388,7 +1387,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		colName = columnTableName
 		aliasedColName = "t.table_name"
 	}
-	// nolint:gosec
+
 	selectQuery := fmt.Sprintf(`
 		SELECT
 			t.table_name,
@@ -1418,7 +1417,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	err := s.Transact(ctx, "destroy error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
 		targetTables = nil
-		rows, e := tx.QueryContext(c, selectQuery, tableName)
+		rows, e := tx.QueryContext(c, selectQuery, tableName) // #nosec G201
 		if e != nil {
 			return errors.Trace(e)
 		}
