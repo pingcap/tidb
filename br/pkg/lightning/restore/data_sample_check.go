@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -218,11 +219,16 @@ func getTableInfoFromMeta(ctx context.Context, tableMeta *mydump.MDTableMeta, st
 		return nil, errors.Errorf("unexpected create table statement: %s", schema)
 	}
 	createTableStmt, ok := stmtNodes[0].(*ast.CreateTableStmt)
-	if !ok || createTableStmt.Table == nil || createTableStmt.Table.TableInfo == nil {
+	if !ok {
 		return nil, errors.Errorf("invalid create table statement")
 	}
 
-	return createTableStmt.Table.TableInfo, nil
+	tableInfo, err := ddl.BuildTableInfoFromAST(createTableStmt)
+	// BuildTableInfoFromAST doesn't set State, we set it to public
+	if err == nil {
+		tableInfo.State = model.StatePublic
+	}
+	return tableInfo, err
 }
 
 func (d *dataSampleCheck) getSampledDataFiles(ctx context.Context) ([]*sampledDataFileInfo, error) {

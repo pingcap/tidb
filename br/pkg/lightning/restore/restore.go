@@ -796,7 +796,12 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 	for _, schema := range rc.dbMetas {
 		tables, err := getTableFunc(ctx, schema.Name)
 		if err != nil {
-			return err
+			cause := errors.Cause(err).Error()
+			// tikv-importer and local backend get tables from tidb status port, and reports "Unknown database" if not exists.
+			// should be ignored for check-only mode.
+			if !strings.Contains(cause, "Unknown database") {
+				return err
+			}
 		}
 
 		tableMap := make(map[string]*model.TableInfo, len(tables))
@@ -2059,8 +2064,10 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
 
-	if err := rc.checkTableEmpty(ctx); err != nil {
-		return errors.Trace(err)
+	if rc.cfg.CheckOnlyCfg == nil {
+		if err := rc.checkTableEmpty(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
 		return err
