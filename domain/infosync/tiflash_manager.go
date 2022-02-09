@@ -316,7 +316,8 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	if !tiflash.PdEnabled {
-		return errors.New("pd server is manually disabled, just quit")
+		logutil.BgLogger().Info("pd server is manually disabled, just quit")
+		return nil
 	}
 
 	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
