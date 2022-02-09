@@ -17,13 +17,14 @@ package staleread
 import (
 	"context"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
 )
@@ -62,9 +63,13 @@ func (p *StmtPreprocessor) GetTSEvaluatorForPreparedStmt() func(sctx sessionctx.
 	return p.tsEvaluatorForPreparedStmt
 }
 
-func (p *baseProcessor) setEvaluatedTS(ts uint64) error {
+func (p *baseProcessor) setEvaluatedTS(ts uint64, readReplicaScope string) error {
 	if p.evaluated {
 		return errors.New("already evaluated")
+	}
+
+	if readReplicaScope == "" {
+		readReplicaScope = kv.GlobalReplicaScope
 	}
 
 	if ts != 0 {
@@ -73,7 +78,7 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) error {
 			return err
 		}
 		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
-		p.readReplicaScope = getStaleReadReplicaScope(p.sctx)
+		p.readReplicaScope = readReplicaScope
 	}
 
 	p.ts = ts
@@ -111,11 +116,11 @@ func (p *baseProcessor) getAsOfTS(asOf *ast.AsOfClause) (uint64, error) {
 }
 
 func (p *baseProcessor) useStmtOrTxnReadTS(stmtTS uint64) (ts uint64, err error) {
-	if p.sctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() != 0 && stmtTS != 0 {
+	staleReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if staleReadTS != 0 && stmtTS != 0 {
 		return 0, errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 	}
 
-	staleReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if staleReadTS == 0 {
 		staleReadTS = stmtTS
 	}
@@ -139,7 +144,7 @@ func (p *baseProcessor) getReadStalenessTS() (uint64, func(sctx sessionctx.Conte
 	}, nil
 }
 
-func (p *baseProcessor) onStmtTS(ts uint64) error {
+func (p *baseProcessor) onStmtTS(ts uint64, readReplicaScope string) error {
 	if p.txnManager.InExplicitTxn() {
 		if ts != 0 {
 			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
@@ -165,7 +170,7 @@ func (p *baseProcessor) onStmtTS(ts uint64) error {
 	}
 
 	if !p.evaluated {
-		err = p.setEvaluatedTS(staleReadTS)
+		err = p.setEvaluatedTS(staleReadTS, readReplicaScope)
 		if err != nil {
 			return err
 		}
@@ -205,7 +210,11 @@ func (p *StmtPreprocessor) OnTSEvaluatorInExecute(evaluator func(sctx sessionctx
 		}
 	}
 
-	return p.onStmtTS(ts)
+	if err = p.onStmtTS(ts, config.GetTxnScopeFromConfig()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *StmtPreprocessor) OnSelectTable(tn *ast.TableName) error {
@@ -213,7 +222,7 @@ func (p *StmtPreprocessor) OnSelectTable(tn *ast.TableName) error {
 	if err != nil {
 		return err
 	}
-	return p.onStmtTS(ts)
+	return p.onStmtTS(ts, getStaleReadReplicaScope(p.sctx))
 }
 
 func (p *StmtPreprocessor) OnStartTransaction(begin *ast.BeginStmt) error {
@@ -227,13 +236,16 @@ func (p *StmtPreprocessor) OnStartTransaction(begin *ast.BeginStmt) error {
 	}
 
 	if !p.txnManager.InExplicitTxn() {
-		ts, err = p.useStmtOrTxnReadTS(ts)
-		if err != nil {
-			return err
+		if p.sctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() != 0 && ts != 0 {
+			return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
+		}
+
+		if ts == 0 {
+			ts = p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 		}
 	}
 
-	if err = p.setEvaluatedTS(ts); err != nil {
+	if err = p.setEvaluatedTS(ts, config.GetTxnScopeFromConfig()); err != nil {
 		return err
 	}
 

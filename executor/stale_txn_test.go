@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1113,8 +1112,6 @@ func (s *testStaleTxnSerialSuite) TestStmtCtxStaleFlag(c *C) {
 			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
 		tk.MustExec(testcase.sql)
 		failpoint.Disable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness")
-		// assert stale read flag should be false after each statement execution
-		c.Assert(staleread.IsTxnStaleness(tk.Se), IsFalse)
 	}
 }
 
