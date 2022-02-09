@@ -388,7 +388,7 @@ func (s *testSuite) TestFix29401(c *C) {
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
 }
 
-func (s *testSuite) TestSharIndexPlan(c *C) {
+func (s *testSuite) TestShardIndexPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
