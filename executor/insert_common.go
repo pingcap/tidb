@@ -1021,8 +1021,11 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 }
 
 func (e *InsertValues) handleWarning(err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	sc.AppendWarning(err)
+	if !e.isLoadData {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	} else {
+		e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 }
 
 func (e *InsertValues) collectRuntimeStatsEnabled() bool {
@@ -1098,7 +1101,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 						return err2
 					}
 				} else {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if !e.isLoadData {
+						e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					} else {
+						e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					}
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
@@ -1109,7 +1116,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				if !e.isLoadData {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				} else {
+					e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				}
 				skip = true
 				break
 			}
