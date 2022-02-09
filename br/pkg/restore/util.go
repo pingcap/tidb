@@ -394,8 +394,8 @@ func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb
 	if startID != endID {
 		return nil
 	}
-	err, rule := rewriteRawKey(file.GetStartKey(), rules)
-	if err != nil {
+	_, rule := rewriteRawKey(file.GetStartKey(), rules)
+	if rule == nil {
 		// fall back to encoded key
 		_, rule = rewriteEncodedKey(file.GetStartKey(), rules)
 	}
