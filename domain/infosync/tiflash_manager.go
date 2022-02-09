@@ -525,7 +525,7 @@ func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return &MockTiFlashError{"MockTiFlash is not accessible"}
+		return nil
 	}
 	return m.tiflash.HandleSetPlacementRule(rule)
 }
@@ -535,7 +535,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return &MockTiFlashError{"MockTiFlash is not accessible"}
+		return nil
 	}
 	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
@@ -547,7 +547,7 @@ func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group s
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return nil, &MockTiFlashError{"MockTiFlash is not accessible"}
+		return []placement.TiFlashRule{}, nil
 	}
 	return m.tiflash.HandleGetGroupRules(group)
 }
@@ -557,7 +557,7 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return &MockTiFlashError{"MockTiFlash is not accessible"}
+		return nil
 	}
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
@@ -569,7 +569,7 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return &MockTiFlashError{"MockTiFlash is not accessible"}
+		return nil
 	}
 	*stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
