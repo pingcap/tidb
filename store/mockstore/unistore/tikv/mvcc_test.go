@@ -1703,8 +1703,8 @@ func TestTiKVRCRead(t *testing.T) {
 }
 
 func TestAssertion(t *testing.T) {
-	store, close := NewTestStore("TestAssertion", "TestAssertion", t)
-	defer close()
+	store, clean := NewTestStore("TestAssertion", "TestAssertion", t)
+	defer clean()
 
 	// Prepare
 	MustPrewriteOptimistic([]byte("k1"), []byte("k1"), []byte("v1"), 1, 100, 0, store)
