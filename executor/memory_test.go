@@ -110,4 +110,12 @@ func TestGlobalMemoryTrackerOnCleanUp(t *testing.T) {
 	tk.MustExec("update t set id = 6 where id = 3")
 	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
 	require.Equal(t, afterConsume, originConsume)
+
+	// assert stmt trackers haven't been detaced before Next
+	rs, err := tk.Exec("select * from t t1 join t t2 join t t3")
+	require.NoError(t, err)
+	defer rs.Close()
+	req := rs.NewChunk(nil)
+	rs.Next(context.Background(), req)
+	require.Greater(t, executor.GlobalMemoryUsageTracker.BytesConsumed(), originConsume)
 }
