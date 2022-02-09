@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
+	atomic2 "go.uber.org/atomic"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -70,13 +71,13 @@ type stmtSummaryByDigestMap struct {
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
 
-	// sysVars encapsulates system variables needed to control statement summary.
-	optEnabled             bool
-	optEnableInternalQuery bool
-	optMaxStmtCount        uint
-	optRefreshInterval     int64
-	optHistorySize         int
-	optMaxSQLLength        int
+	// These options are set by global system variables and are accessed concurrently.
+	optEnabled             *atomic2.Bool
+	optEnableInternalQuery *atomic2.Bool
+	optMaxStmtCount        *atomic2.Uint32
+	optRefreshInterval     *atomic2.Int64
+	optHistorySize         *atomic2.Int32
+	optMaxSQLLength        *atomic2.Int32
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -257,12 +258,12 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	maxStmtCount := uint(3000)
 	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap:             kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		optMaxStmtCount:        maxStmtCount,
-		optEnabled:             true,
-		optEnableInternalQuery: false,
-		optRefreshInterval:     1800,
-		optHistorySize:         24,
-		optMaxSQLLength:        4096,
+		optMaxStmtCount:        atomic2.NewUint32(uint32(maxStmtCount)),
+		optEnabled:             atomic2.NewBool(true),
+		optEnableInternalQuery: atomic2.NewBool(false),
+		optRefreshInterval:     atomic2.NewInt64(1800),
+		optHistorySize:         atomic2.NewInt32(24),
+		optMaxSQLLength:        atomic2.NewInt32(4096),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
@@ -418,7 +419,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 
 // SetEnabled enables or disables statement summary
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(value bool) error {
-	ssMap.optEnabled = value
+	// `optEnabled` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optEnabled.Store(value)
 	if !value {
 		ssMap.Clear()
 	}
@@ -427,12 +429,13 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value bool) error {
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	return ssMap.optEnabled
+	return ssMap.optEnabled.Load()
 }
 
 // SetEnabledInternalQuery enables or disables internal statement summary
 func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
-	ssMap.optEnableInternalQuery = value
+	// `optEnableInternalQuery` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optEnableInternalQuery.Store(value)
 	if !value {
 		ssMap.clearInternal()
 	}
@@ -441,34 +444,35 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
 
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
-	return ssMap.optEnableInternalQuery
+	return ssMap.optEnableInternalQuery.Load()
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
 func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value int64) error {
-	ssMap.optRefreshInterval = value
+	ssMap.optRefreshInterval.Store(value)
 	return nil
 }
 
 // refreshInterval gets the refresh interval for summaries.
 func (ssMap *stmtSummaryByDigestMap) refreshInterval() int64 {
-	return ssMap.optRefreshInterval
+	return ssMap.optRefreshInterval.Load()
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value int) error {
-	ssMap.optHistorySize = value
+	ssMap.optHistorySize.Store(int32(value))
 	return nil
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	return ssMap.optHistorySize
+	return int(ssMap.optHistorySize.Load())
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
-	ssMap.optMaxStmtCount = value
+	// `optMaxStmtCount` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optMaxStmtCount.Store(uint32(value))
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
@@ -476,18 +480,19 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 }
 
 // Used by tests
+// nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
-	return int(ssMap.optMaxStmtCount)
+	return int(ssMap.optMaxStmtCount.Load())
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value int) error {
-	ssMap.optMaxSQLLength = value
+	ssMap.optMaxSQLLength.Store(int32(value))
 	return nil
 }
 
 func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
-	return ssMap.optMaxSQLLength
+	return int(ssMap.optMaxSQLLength.Load())
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.

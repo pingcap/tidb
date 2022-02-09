@@ -170,6 +170,7 @@ A new system table `information_schema.placement_policies` is added to view all 
 | LEARNER_CONSTRAINTS  | varchar(1024) | YES  |      | NULL    |       |
 | SCHEDULE             | varchar(20)   | YES  |      | NULL    |       |
 | FOLLOWERS            | bigint(64)    | YES  |      | NULL    |       |
+| LEARNERS             | bigint(64)    | YES  |      | NULL    |       |
 +----------------------+---------------+------+------+---------+-------+
 ```
 
