@@ -3215,7 +3215,7 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 	if !ok {
 		return input, false
 	}
-	for v > 0 && v*10 < 1000000 {
+	for i := length; i < 6; i++ {
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))
