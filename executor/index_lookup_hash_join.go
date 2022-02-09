@@ -668,7 +668,6 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	if err != nil {
 		return err
 	}
-	iw.wg.Wait()
 
 	joinStartTime = time.Now()
 	if !task.keepOuterOrder {
