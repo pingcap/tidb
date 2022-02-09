@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
@@ -64,7 +65,12 @@ func (d *dataSampleCheck) logCheckFailedRow(row []types.Datum, fileMeta mydump.S
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(d.String())
+		// see Datum.String()
+		v := d.GetValue()
+		if b, ok := v.([]byte); ok && d.Kind() == types.KindBytes {
+			v = string(b)
+		}
+		sb.WriteString(fmt.Sprintf("%v", v))
 	}
 	log.L().Error("data check failed", zap.String("raw-data", sb.String()),
 		zap.String("file", fileMeta.Path),
@@ -81,7 +87,6 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 	}()
 
 	rc := d.controller
-	mydumperCfg := &rc.cfg.Mydumper
 	for fileInfo := range fileChan {
 		fileMeta := fileInfo.DataFile.FileMeta
 		fileParser, err := rc.createDataFileParser(ctx, fileMeta, config.DefaultCSVDataInvalidCharReplace)
@@ -92,7 +97,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			return
 		}
 
-		var columnCountMismatchRows, invalidCharRows, lastOffset int64
+		var rowsChecked, columnCountMismatchRows, invalidCharRows, lastOffset int64
 		columnCount := len(fileInfo.TableInfo.Columns)
 		for i := 0; i < d.checkCfg.Rows; i++ {
 			err = fileParser.ReadRow()
@@ -109,21 +114,19 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			}
 
 			row := fileParser.LastRow()
+			rowsChecked++
 			if len(row.Row) != columnCount {
 				columnCountMismatchRows++
 				d.logCheckFailedRow(row.Row, fileMeta, lastOffset,
 					fmt.Sprintf("column count mismatch, expect %d, got %d", columnCount, len(row.Row)))
 			}
 
-			if fileMeta.Type != mydump.SourceTypeCSV ||
-				mydumperCfg.DataCharacterSet != config.DefaultCSVDataCharacterSet {
-				for _, col := range row.Row {
-					// for non-string column, it returns empty string
-					colStr := col.GetString()
-					if strings.Contains(colStr, config.DefaultCSVDataInvalidCharReplace) {
-						invalidCharRows++
-						d.logCheckFailedRow(row.Row, fileMeta, lastOffset, "contains invalid char")
-					}
+			for _, col := range row.Row {
+				// for non-string column, it returns empty string
+				colStr := col.GetString()
+				if !utf8.ValidString(colStr) || strings.Contains(colStr, config.DefaultCSVDataInvalidCharReplace) {
+					invalidCharRows++
+					d.logCheckFailedRow(row.Row, fileMeta, lastOffset, "contains invalid char")
 				}
 			}
 			fileParser.RecycleRow(row)
@@ -133,7 +136,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 
 		fileParser.Close()
 
-		d.totalRows.Add(int64(d.checkCfg.Rows))
+		d.totalRows.Add(rowsChecked)
 		d.totalColumnCountMismatchRows.Add(columnCountMismatchRows)
 		d.totalInvalidCharRows.Add(invalidCharRows)
 	}
@@ -141,10 +144,6 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 
 func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 	rc := d.controller
-	mydumperCfg := &rc.cfg.Mydumper
-	if mydumperCfg.DataCharacterSet == config.DefaultCSVDataCharacterSet {
-		log.L().Warn("sample data check of csv files will be skipped since charset is binary")
-	}
 
 	targetFiles, err := d.getSampledDataFiles(ctx)
 	if err != nil {
@@ -184,7 +183,7 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 
 	passed := d.totalColumnCountMismatchRows.Load() == 0 && d.totalInvalidCharRows.Load() == 0
 	msg := fmt.Sprintf("Total sample of %d rows of data checked, %d errors found.",
-		d.totalRows, d.totalColumnCountMismatchRows.Load()+d.totalInvalidCharRows.Load())
+		d.totalRows.Load(), d.totalColumnCountMismatchRows.Load()+d.totalInvalidCharRows.Load())
 	d.checkTemplate.Collect(Critical, passed, msg)
 
 	fmt.Println(d.checkTemplate.Output())
@@ -193,7 +192,7 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 		fmt.Println("All checks have been passed, but there may still be other types of errors that can only be found during the actual insertion of data.")
 	} else {
 		fmt.Println("Some checks failed, please check the log for more information.")
-		fmt.Printf("Log file location: %s", rc.cfg.LogCfg.File)
+		fmt.Printf("Log file location: %s\n", rc.cfg.LogCfg.File)
 		return errors.Errorf("tidb-lightning data file sample check failed: %s", d.checkTemplate.FailedMsg())
 	}
 
