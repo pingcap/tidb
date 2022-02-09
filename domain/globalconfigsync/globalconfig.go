@@ -28,6 +28,7 @@ type GlobalConfigSyncer struct {
 	NotifyCh chan pd.GlobalConfigItem
 }
 
+// StoreGlobalConfigSyncer is used to store global config.
 func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
 	err := s.pd.StoreGlobalConfig(ctx, []pd.GlobalConfigItem{item})
 	if err != nil {
@@ -38,10 +39,12 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Glob
 	return err
 }
 
+// PushGlobalConfig pushes global config to internal channel and will be sync into pd's GlobalConfig.
 func (s *GlobalConfigSyncer) PushGlobalConfigItem(globalConfigItem pd.GlobalConfigItem) {
 	s.NotifyCh <- globalConfigItem
 }
 
+// NewGlobalConfigSyncer creates a GlobalConfigSyncer.
 func NewGlobalConfigSyncer(p pd.Client) *GlobalConfigSyncer {
 	return &GlobalConfigSyncer{
 		pd:       p,
