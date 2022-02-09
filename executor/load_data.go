@@ -388,9 +388,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 						err = innerErr
 						// reset rows buffer, will reallocate buffer but NOT reuse
 						commitTaskInner.loadDataInfoSub.SetMaxRowsInBatchBySub(commitTaskInner.loadDataInfoSub.maxRowsInBatch)
-						select {
-						case commitTaskInner.loadDataInfoSub.loadDataInfo.LoadDataInfoSubQueue <- commitTaskInner.loadDataInfoSub:
-						}
+						commitTaskInner.loadDataInfoSub.loadDataInfo.LoadDataInfoSubQueue <- commitTaskInner.loadDataInfoSub
 						waitGroup.Done()
 					}()
 
@@ -582,13 +580,11 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 
 	if e.CurrentLoadDataInfoSub == nil {
 		// 获取每个子任务
-		select {
-		case currentLoadDataInfoSub, ok := <-e.LoadDataInfoSubQueue:
-			if ok {
-				e.CurrentLoadDataInfoSub = currentLoadDataInfoSub
-			} else {
-				return nil, false, errors.New("can not get currentLoadDataInfoSub from e.LoadDataInfoSubQueue")
-			}
+		currentLoadDataInfoSub, ok := <-e.LoadDataInfoSubQueue
+		if ok {
+			e.CurrentLoadDataInfoSub = currentLoadDataInfoSub
+		} else {
+			return nil, false, errors.New("can not get currentLoadDataInfoSub from e.LoadDataInfoSubQueue")
 		}
 	}
 
