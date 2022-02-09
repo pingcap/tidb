@@ -952,7 +952,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
 
 		// arithmetical functions.
-		ast.PI, ast.Round, ast.Truncate,
+		ast.PI, ast.Truncate,
 		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
 
 		// math functions.
@@ -1002,6 +1002,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracDec:
+			return true
+		}
 	case ast.Rand:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:

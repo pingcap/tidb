@@ -2482,7 +2482,7 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int,c varchar(11),d datetime)")
+	tk.MustExec("create table t(id int,c varchar(11),d datetime,b double)")
 	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
@@ -2641,6 +2641,14 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 
 	rows[1][2] = "repeat(test.t.c, 2)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where repeat(c,2)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "round(test.t.b)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "round(test.t.b, 2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b,2)").
 		CheckAt([]int{0, 3, 6}, rows)
 
 }
