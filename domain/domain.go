@@ -822,6 +822,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		GetPDClient() pd.Client
 	}); ok {
 		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(store.GetPDClient())
+	} else {
+		logutil.BgLogger().Warn("could not properly initialize GlobalConfigSyncer, due to store does not contain GetPDClient method")
+		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(nil)
 	}
 
 	err = do.ddl.SchemaSyncer().Init(ctx)
