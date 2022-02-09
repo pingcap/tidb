@@ -1950,9 +1950,16 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	if exprTp.Tp == mysql.TypeNewDecimal && argLen != int(types.UnspecifiedFsp) {
 		argLen += 3
 	}
+
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
+		//For TypeBit, castAsString will return length of int(( bit_len + 7 ) / 8) bytes;
+		//Hint TiKV push down the bit's real len; for "where ascii(bit)".
+		if exprTp.Tp == mysql.TypeBit {
+			argLen = (exprTp.Flen + 7) / 8
+		}
 	}
+
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
 	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1

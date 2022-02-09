@@ -1132,6 +1132,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			} else {
 				castFunction.SetRepertoire(expression.UNICODE)
 			}
+
+			//If arg is bit, should rewrite v.Tp.Flen, to hint TiKV push down the bit's real len; for "where CAST(bit as CAHR)"
+			if arg.GetType().Tp == mysql.TypeBit {
+				v.Tp.Flen = (arg.GetType().Flen + 7) / 8
+			}
 		} else {
 			castFunction.SetCoercibility(expression.CoercibilityNumeric)
 			castFunction.SetRepertoire(expression.ASCII)
