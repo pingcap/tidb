@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -533,7 +532,6 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_direct_placement=1")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
@@ -704,20 +702,13 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
 	defer tk.MustExec("drop placement policy p1")
-	tk.MustExec("drop table if exists placement_table1, placement_table1")
+	tk.MustExec("drop table if exists placement_table1")
 	tk.MustExec("create table placement_table1(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists placement_table1")
-	tk.MustExec("create table placement_table2(id int) LEADER_CONSTRAINTS='[+region=hz]' FOLLOWERS=3")
-	defer tk.MustExec("drop table if exists placement_table2")
 
 	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create global temporary table g_tmp_placement2 like placement_table2 on commit delete rows")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-
 	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create temporary table l_tmp_placement2 like placement_table2")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
 }
 
@@ -1529,9 +1520,6 @@ func (s *testSerialSuite) TestAutoRandomWithPreSplitRegion(c *C) {
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1565,8 +1553,6 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 }
 
 func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
