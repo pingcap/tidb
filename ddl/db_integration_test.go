@@ -956,11 +956,11 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a varchar(5) charset utf8 collate utf8_unicode_ci) charset utf8 collate utf8_unicode_ci")
-	tk.MustExec("alter table t collate utf8_danish_ci")
+	tk.MustExec("alter table t collate utf8_general_ci")
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().Charset, Equals, "utf8")
-	c.Assert(tbl.Meta().Collate, Equals, "utf8_danish_ci")
+	c.Assert(tbl.Meta().Collate, Equals, "utf8_general_ci")
 	for _, col := range tbl.Meta().Columns {
 		c.Assert(col.Charset, Equals, "utf8")
 		// Column collate should remain unchanged.
@@ -2836,7 +2836,7 @@ func (s *testIntegrationSuite3) TestStrictDoubleTypeCheck(c *C) {
 }
 
 func (s *testSerialDBSuite) TestDuplicateErrorMessage(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
