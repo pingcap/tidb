@@ -60,7 +60,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -456,6 +458,8 @@ func (rc *Controller) Run(ctx context.Context) error {
 	} else {
 		// rc.cfg.CheckOnlyCfg.Mode == config.CheckModeSample
 		opts = []processFunc{
+			rc.setGlobalVariables,
+			rc.loadSchemaForCheckOnly,
 			rc.checkDataBySample,
 		}
 	}
@@ -787,13 +791,38 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	return nil
 }
 
+func (rc *Controller) getTableInfoFromMeta(ctx context.Context, tableMeta *mydump.MDTableMeta) (*model.TableInfo, error) {
+	schema, err := tableMeta.GetSchema(ctx, rc.store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sqlParser := rc.tidbGlue.GetParser()
+	stmtNodes, _, err := sqlParser.ParseSQL(schema)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(stmtNodes) != 1 {
+		return nil, errors.Errorf("unexpected create table statement: %s", schema)
+	}
+	createTableStmt, ok := stmtNodes[0].(*ast.CreateTableStmt)
+	if !ok {
+		return nil, errors.Errorf("invalid create table statement")
+	}
+
+	tableInfo, err := ddl.BuildTableInfoFromAST(createTableStmt)
+	// BuildTableInfoFromAST doesn't set State, we set it to public
+	if err == nil {
+		tableInfo.State = model.StatePublic
+	}
+	return tableInfo, err
+}
+
 func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
 		getTableFunc = rc.tidbGlue.GetTables
 	}
-
-	sqlParser := rc.tidbGlue.GetParser()
 
 	result := make(map[string]*checkpoints.TidbDBInfo, len(rc.dbMetas))
 	existedTblMap := make(map[string]map[string]*model.TableInfo, len(rc.dbMetas))
@@ -826,7 +855,7 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 				if tbl.SchemaFile.FileMeta.Path == "" {
 					return errors.Errorf("table `%s`.`%s` schema not found", schema.Name, tbl.Name)
 				}
-				tblInfo, err = getTableInfoFromMeta(ctx, tbl, rc.store, sqlParser)
+				tblInfo, err = rc.getTableInfoFromMeta(ctx, tbl)
 				if err != nil {
 					return err
 				}

@@ -30,11 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
 )
@@ -145,7 +141,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 	rc := d.controller
 
-	targetFiles, err := d.getSampledDataFiles(ctx)
+	targetFiles, err := d.getSampledDataFiles()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -205,34 +201,8 @@ type sampledDataFileInfo struct {
 	TableInfo *model.TableInfo
 }
 
-func getTableInfoFromMeta(ctx context.Context, tableMeta *mydump.MDTableMeta, store storage.ExternalStorage, sqlParser *parser.Parser) (*model.TableInfo, error) {
-	schema, err := tableMeta.GetSchema(ctx, store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	stmtNodes, _, err := sqlParser.ParseSQL(schema)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(stmtNodes) != 1 {
-		return nil, errors.Errorf("unexpected create table statement: %s", schema)
-	}
-	createTableStmt, ok := stmtNodes[0].(*ast.CreateTableStmt)
-	if !ok {
-		return nil, errors.Errorf("invalid create table statement")
-	}
-
-	tableInfo, err := ddl.BuildTableInfoFromAST(createTableStmt)
-	// BuildTableInfoFromAST doesn't set State, we set it to public
-	if err == nil {
-		tableInfo.State = model.StatePublic
-	}
-	return tableInfo, err
-}
-
-func (d *dataSampleCheck) getSampledDataFiles(ctx context.Context) ([]*sampledDataFileInfo, error) {
+func (d *dataSampleCheck) getSampledDataFiles() ([]*sampledDataFileInfo, error) {
 	rc := d.controller
-	sqlParser := rc.tidbGlue.GetParser()
 
 	dataFiles := d.getRandomDataFiles()
 	stmtMap := make(map[string]*model.TableInfo)
@@ -243,13 +213,10 @@ func (d *dataSampleCheck) getSampledDataFiles(ctx context.Context) ([]*sampledDa
 			fileInfo.TableInfo = t
 			continue
 		}
-		tableInfo, err := getTableInfoFromMeta(ctx, tableMeta, rc.store, sqlParser)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 
-		fileInfo.TableInfo = tableInfo
-		stmtMap[fullName] = tableInfo
+		tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
+		fileInfo.TableInfo = tableInfo.Core
+		stmtMap[fullName] = tableInfo.Core
 	}
 	return dataFiles, nil
 }

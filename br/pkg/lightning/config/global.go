@@ -33,7 +33,7 @@ import (
 
 const (
 	CheckModeNormal = "normal"
-	CheckModeSample = "sampling"
+	CheckModeSample = "sample"
 
 	DefaultSampleRate = 0.01
 	DefaultCheckRows  = 1000
