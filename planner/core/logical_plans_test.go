@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +56,6 @@ func SubstituteCol2CorCol(expr expression.Expression, colIDs map[int64]struct{})
 }
 
 func TestIndexPathSplitCorColCond(t *testing.T) {
-	defer testleak.AfterTestT(t)()
 	ctx := MockContext()
 	totalSchema := expression.NewSchema()
 	totalSchema.Append(&expression.Column{
