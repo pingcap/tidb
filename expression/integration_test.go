@@ -9652,6 +9652,35 @@ func (s *testIntegrationSuite) TestGlobalCacheCorrectness(c *C) {
 	tk.MustExec("SET GLOBAL max_connections=151")
 }
 
+func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null)")
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select a, count(*) from t1 join t2 using (a) group by a").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a, count(*) from t1 natural join t2 group by a").Check(testkit.Rows("1 1"))
+	err := tk.ExecToErr("select a, count(*) from t1 join t2 on t1.a=t2.a group by a")
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
+	tk.MustQuery("select t1.a, t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1 1"))
+	err = tk.ExecToErr("select t1.a, t2.a from t1 join t2 using(a) group by a")
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in group statement is ambiguous")
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	// The test below cannot pass now since we do not infer functional dependencies from filters as MySQL, hence would fail in only_full_group_by check.
+	// tk.MustQuery("select t1.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 join t2 using(a)").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a, t2.a from t1 join t2 using(a)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
+}
+
 func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	defer s.cleanEnv(c)
 

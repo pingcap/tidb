@@ -838,6 +838,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
 	if joinTp == ast.RightJoin {
+		leftPlan, rightPlan = rightPlan, leftPlan
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -935,16 +936,18 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-	if joinTp == ast.RightJoin {
-		leftPlan, rightPlan = rightPlan, leftPlan
-	}
 	// We record the full `rightPlan.Schema` as `redundantSchema` in order to
 	// record the redundant column in `rightPlan` and the output columns order
 	// of the `rightPlan`.
 	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
 	// retrieve the column order of `t2.*` from the `redundantSchema`.
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
-	p.redundantNames = append(p.redundantNames.Shallow(), rightPlan.OutputNames().Shallow()...)
+	p.redundantNames = p.redundantNames.Shallow()
+	for _, name := range rightPlan.OutputNames() {
+		cpyName := *name
+		cpyName.Redundant = true
+		p.redundantNames = append(p.redundantNames, &cpyName)
+	}
 	if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
 		resetNotNullFlag(p.redundantSchema, 0, p.redundantSchema.Len())
 	}
@@ -2530,6 +2533,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
+				g.err = ErrAmbiguous.GenWithStackByArgs(v.Name.Name.L, clauseMsg[groupByClause])
 				return inNode, false
 			}
 			if idx >= 0 {
