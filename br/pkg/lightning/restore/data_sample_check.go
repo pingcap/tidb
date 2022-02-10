@@ -169,7 +169,7 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 			d.wg.Wait()
 
 			log.L().Error("meet error when checking", zap.Error(err))
-			fmt.Printf("failed to do data sample check: %s", err.Error())
+			fmt.Printf("failed to do data sample check: %s\n", err.Error())
 			return errors.Trace(err)
 		}
 	}
@@ -189,7 +189,6 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 	} else {
 		fmt.Println("Some checks failed, please check the log for more information.")
 		fmt.Printf("Log file location: %s\n", rc.cfg.LogCfg.File)
-		return errors.Errorf("tidb-lightning data file sample check failed: %s", d.checkTemplate.FailedMsg())
 	}
 
 	return nil
@@ -205,18 +204,11 @@ func (d *dataSampleCheck) getSampledDataFiles() ([]*sampledDataFileInfo, error) 
 	rc := d.controller
 
 	dataFiles := d.getRandomDataFiles()
-	stmtMap := make(map[string]*model.TableInfo)
 	for _, fileInfo := range dataFiles {
 		tableMeta := fileInfo.Table
-		fullName := utils.EncloseDBAndTable(tableMeta.DB, tableMeta.Name)
-		if t, ok := stmtMap[fullName]; ok {
-			fileInfo.TableInfo = t
-			continue
-		}
 
 		tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
 		fileInfo.TableInfo = tableInfo.Core
-		stmtMap[fullName] = tableInfo.Core
 	}
 	return dataFiles, nil
 }

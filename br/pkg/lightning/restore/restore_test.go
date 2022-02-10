@@ -437,6 +437,7 @@ func TestLoadSchemaForCheckOnly(t *testing.T) {
 	}
 
 	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, rc.cfg, store)
+	require.NoError(t, err)
 	rc.dbMetas = mydumpLoader.GetDatabases()
 
 	exec := mock.NewMockSQLExecutor(mockCtrl)
