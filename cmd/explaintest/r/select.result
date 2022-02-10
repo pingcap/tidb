@@ -514,4 +514,4 @@ a	b	c	d
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 select * from t3 where a > 0x80;
-Error 1105: Cannot convert string '80' from binary to utf8mb4
+Error 1105: Cannot convert string '\x80' from binary to utf8mb4

@@ -20,16 +20,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite1) TestSingleTableRead(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestSingleTableRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
 	tk.MustExec("create index t1a on t1(a)")
@@ -47,8 +50,11 @@ func (s *testSuite1) TestSingleTableRead(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
 }
 
-func (s *testSuite1) TestJoin(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
 	tk.MustExec("create index t1a on t1(a)")
@@ -61,8 +67,10 @@ func (s *testSuite1) TestJoin(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 5").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite1) TestIndexMergeReaderAndGeneratedColumn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT AS (1), c1 INT PRIMARY KEY)")
@@ -73,8 +81,10 @@ func (s *testSuite1) TestIndexMergeReaderAndGeneratedColumn(c *C) {
 }
 
 // issue 25045
-func (s *testSuite1) TestIndexMergeReaderIssue25045(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIndexMergeReaderIssue25045(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int primary key, b int, c int, key(b), key(c));")
@@ -88,8 +98,11 @@ func (s *testSuite1) TestIndexMergeReaderIssue25045(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows("10 10 10"))
 }
 
-func (s *testSuite1) TestIssue16910(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue16910(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2, t3;")
 	tk.MustExec("create table t1 (a int not null, b tinyint not null, index (a), index (b)) partition by range (a) (" +
@@ -105,19 +118,20 @@ func (s *testSuite1) TestIssue16910(c *C) {
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a where t1.a < 40 or t1.b < 30;").Check(testkit.Rows("1 1 1 1"))
 }
 
-func (s *testSuite1) TestIndexMergeCausePanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIndexMergeCausePanic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
 	tk.MustExec("create table t (a int, b int, c int, primary key(a), key(b))")
 	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1")
 }
 
-func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
-	tk := testkit.NewTestKit(c, s.store)
+func TestPartitionTableRandomIndexMerge(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_index_merge=1")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -175,8 +189,10 @@ func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
 	}
 }
 
-func (s *testSuite1) TestIndexMergeWithPreparedStmt(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIndexMergeWithPreparedStmt(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
@@ -189,26 +205,29 @@ func (s *testSuite1) TestIndexMergeWithPreparedStmt(c *C) {
 	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
-	tk.Se.SetSessionManager(&mockSessionManager1{
-		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	tk.Session().SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
-	explainStr := "explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)
+	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
 	res := tk.MustQuery(explainStr)
 	indexMergeLine := res.Rows()[1][0].(string)
 	re, err := regexp.Compile(".*IndexMerge.*")
-	c.Assert(err, IsNil)
-	c.Assert(re.MatchString(indexMergeLine), IsTrue)
+	require.NoError(t, err)
+	require.True(t, re.MatchString(indexMergeLine))
 
 	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ? and c3';")
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
 	res = tk.MustQuery(explainStr)
 	indexMergeLine = res.Rows()[1][0].(string)
-	c.Assert(re.MatchString(indexMergeLine), IsTrue)
+	require.True(t, re.MatchString(indexMergeLine))
 }
 
-func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIndexMergeInTransaction(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	for i := 0; i < 2; i++ {
 		tk.MustExec("drop table if exists t1;")
@@ -304,7 +323,7 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 
 	// Test partition table.
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec(`create table t1(c1 int, c2 int, c3 int, pk int, part int, key(c1), key(c2), key(c3), primary key(pk, part)) 
+	tk.MustExec(`create table t1(c1 int, c2 int, c3 int, pk int, part int, key(c1), key(c2), key(c3), primary key(pk, part))
 			partition by range(part) (
 			partition p0 values less than (10),
 			partition p1 values less than (20),
@@ -351,15 +370,18 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testSuite1) TestIndexMergeReaderInTransIssue30685(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	// This is a case generated by sqlgen to test if clustered index is ok.
 	// Detect the bugs in memIndexMergeReader.getMemRowsHandle().
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1 (col_30 decimal default 0 ,
-				      col_31 char(99) collate utf8_bin default 'sVgzHblmYYtEjVg' not null , 
-				      col_37 int unsigned default 377206828 , 
+				      col_31 char(99) collate utf8_bin default 'sVgzHblmYYtEjVg' not null ,
+				      col_37 int unsigned default 377206828 ,
 				      primary key idx_16 ( col_37 ) , key idx_19 ( col_31) ) collate utf8mb4_general_ci ;`)
 	tk.MustExec("begin;")
 	tk.MustExec("insert ignore into t1 values (388021, '', 416235653);")
@@ -368,14 +390,14 @@ func (s *testSuite1) TestIndexMergeReaderInTransIssue30685(c *C) {
 
 	tk.MustExec("drop table if exists tbl_3;")
 	tk.MustExec(`create table tbl_3 ( col_30 decimal , col_31 char(99) , col_32 smallint ,
-				  col_33 tinyint unsigned not null , col_34 char(209) , 
+				  col_33 tinyint unsigned not null , col_34 char(209) ,
 				  col_35 char(110) , col_36 int unsigned , col_37 int unsigned ,
-				  col_38 decimal(50,15) not null , col_39 char(104), 
+				  col_38 decimal(50,15) not null , col_39 char(104),
 				  primary key ( col_37 ) , unique key ( col_33,col_30,col_36,col_39 ) ,
-				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) , 
-				  key ( col_31,col_33,col_32,col_35,col_36 ) , 
-				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) , 
-				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) , 
+				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) ,
+				  key ( col_31,col_33,col_32,col_35,col_36 ) ,
+				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) ,
+				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) ,
 				  key ( col_38,col_32,col_33 ) )`)
 	tk.MustExec("begin;")
 	tk.MustExec("insert ignore into tbl_3 values ( 71,'Fipc',-6676,30,'','FgfK',2464927398,4084082400,5602.5868,'' );")
@@ -421,8 +443,10 @@ func (s *testSuite1) TestIndexMergeReaderInTransIssue30685(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
-	tk := testkit.NewTestKit(c, test.store)
+func TestIndexMergeReaderMemTracker(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
 
@@ -432,7 +456,7 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
-	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
+	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
 
 	tk.MustExec(insertStr)
 
@@ -442,22 +466,24 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 
 	newMaxUsage := memTracker.MaxConsumed()
-	c.Assert(newMaxUsage, Greater, oriMaxUsage)
+	require.Greater(t, newMaxUsage, oriMaxUsage)
 
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
-	c.Assert(len(res.Rows()), Equals, 4)
+	require.Len(t, res.Rows(), 4)
 	// Parse "xxx KB" and check it's greater than 0.
 	memStr := res.Rows()[0][7].(string)
 	re, err := regexp.Compile("[0-9]+ KB")
-	c.Assert(err, IsNil)
-	c.Assert(re.MatchString(memStr), IsTrue)
+	require.NoError(t, err)
+	require.True(t, re.MatchString(memStr))
 	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
-	c.Assert(err, IsNil)
-	c.Assert(bytes, Greater, 0.0)
+	require.NoError(t, err)
+	require.Greater(t, bytes, 0.0)
 }
 
-func (test *testSerialSuite2) TestIndexMergeSplitTable(c *C) {
-	tk := testkit.NewTestKit(c, test.store)
+func TestIndexMergeSplitTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("DROP TABLE IF EXISTS tab2;")
 	tk.MustExec("CREATE TABLE tab2(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
@@ -476,9 +502,11 @@ func (test *testSerialSuite2) TestIndexMergeSplitTable(c *C) {
 	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
 }
 
-func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) {
+func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
-	tk := testkit.NewTestKit(c, test.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -494,7 +522,7 @@ func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) 
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 
-	tk1 := testkit.NewTestKit(c, test.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set @@tidb_partition_prune_mode = 'static'")
 
@@ -546,8 +574,8 @@ func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) 
 
 	tk.MustExec("commit")
 	// tk1 should be blocked until tk commit, check the order.
-	c.Assert(<-ch, Equals, int32(1))
-	c.Assert(<-ch, Equals, int32(0))
+	require.Equal(t, <-ch, int32(1))
+	require.Equal(t, <-ch, int32(0))
 	<-ch // wait for goroutine to quit.
 
 	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
