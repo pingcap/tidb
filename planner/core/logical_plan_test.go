@@ -630,7 +630,7 @@ func (s *testPlanSuite) TestCS3389(c *C) {
 	ctx := context.Background()
 	stmt, err := s.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
 	c.Assert(err, IsNil)
-	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
 	c.Assert(err, IsNil)
