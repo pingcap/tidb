@@ -1712,13 +1712,8 @@ create table t(
 }
 
 func TestTableShardIndex(t *testing.T) {
-
-	dom, store, err := newDomainStoreWithBootstrap(t)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	testKit := testkit.NewTestKit(t, store)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
