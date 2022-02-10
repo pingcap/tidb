@@ -3483,36 +3483,33 @@ func TestExprPushdown(t *testing.T) {
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
 	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
 	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
+
 func TestIssue16973(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
