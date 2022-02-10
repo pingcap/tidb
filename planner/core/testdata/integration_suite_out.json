@@ -2064,7 +2064,6 @@
         "Plan": [
           "Projection 15.99 root  1->Column#5",
           "└─IndexMerge 0.04 root  ",
-          "  └─IndexMerge 19.99 root  ",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(from_base64(to_base64(test.t1.c1)), \"ab\")))",
