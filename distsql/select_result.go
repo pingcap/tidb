@@ -401,9 +401,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-				zap.Int("expected", len(r.copPlanIDs)),
-				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
+			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
+			// not trigger an error log in this case.
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+					zap.Int("expected", len(r.copPlanIDs)),
+					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			}
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
