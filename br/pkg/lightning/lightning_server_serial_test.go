@@ -45,7 +45,7 @@ type lightningServerSuite struct {
 
 func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 	initProgressOnce.Do(web.EnableCurrentProgress)
-	
+
 	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"
 	cfg.TiDB.Port = 4000
