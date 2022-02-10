@@ -37,15 +37,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/table/tables"
-	tmock "github.com/pingcap/tidb/util/mock"
-=======
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
->>>>>>> master
 )
 
 func TestNewTableRestore(t *testing.T) {
