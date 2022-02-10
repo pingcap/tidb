@@ -453,17 +453,20 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
-	service.RegisterChannelzServiceToServer(s.grpcServer)
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	grpcServer := NewRPCServer(s.cfg, s.dom, s)
+	service.RegisterChannelzServiceToServer(grpcServer)
+
+	s.statusServer = statusServer
+	s.grpcServer = grpcServer
 
 	go util.WithRecovery(func() {
-		err := s.grpcServer.Serve(grpcL)
+		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
-		err := s.statusServer.Serve(httpL)
+		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Error("http server error", zap.Error(err))
 	}, nil)
 

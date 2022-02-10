@@ -33,15 +33,15 @@ func TestProfiles(t *testing.T) {
 	var dom *domain.Domain
 
 	store, err = mockstore.NewMockStore()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	session.DisableStats4Test()
 	dom, err = session.BootstrapSession(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer dom.Close()
 
 	oldValue := profile.CPUProfileInterval

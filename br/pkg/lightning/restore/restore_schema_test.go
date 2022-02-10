@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
@@ -36,6 +37,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
 )
+
+func TestRestoreSchemaSuite(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&restoreSchemaSuite{})
 
