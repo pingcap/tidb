@@ -1575,12 +1575,14 @@ type AggInfo struct {
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
-// partialIsCop means whether partial agg is a cop task.
+// partialIsCop means whether partial agg is a cop task. When partialIsCop is false,
+// we do not set the AggMode for partialAgg cause it may be split further when
+// building the aggregate executor(e.g. buildHashAgg will split the AggDesc further for parallel executing).
 // firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 	defer func() {
-		if partial != nil {
+		if partial != nil && partialIsCop {
 			for _, f := range partial.AggFuncs {
 				f.Mode = aggregation.Partial1Mode
 			}
@@ -1779,10 +1781,10 @@ func BuildFinalModeAggregation(
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				newAggFunc := *aggFunc
+				newAggFunc := aggFunc.Clone()
 				newAggFunc.Name = aggFunc.Name
 				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &newAggFunc)
+				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
 				if aggFunc.Name == ast.AggFuncGroupConcat {
 					// append the last separator arg
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
