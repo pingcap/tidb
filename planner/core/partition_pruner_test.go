@@ -85,6 +85,83 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	}
 }
 
+func (s *testPartitionPruneSuit) TestRangeColumnPartitionPruningForIn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_range_col_in")
+	tk.MustExec("create database test_range_col_in")
+	tk.MustExec("use test_range_col_in")
+	tk.MustExec(`set @@session.tidb_enable_list_partition = 1`)
+	tk.MustExec("set @@session.tidb_partition_prune_mode='static'")
+
+	// case in issue-26739
+	tk.MustExec(`CREATE TABLE t1 (
+		id bigint(20)  NOT NULL AUTO_INCREMENT,
+		dt date,
+		PRIMARY KEY (id,dt))
+		PARTITION BY RANGE COLUMNS(dt) (
+		PARTITION p20201125 VALUES LESS THAN ("20201126"),
+		PARTITION p20201126 VALUES LESS THAN ("20201127"),
+		PARTITION p20201127 VALUES LESS THAN ("20201128"),
+		PARTITION p20201128 VALUES LESS THAN ("20201129"),
+		PARTITION p20201129 VALUES LESS THAN ("20201130"))`)
+	tk.MustQuery(`explain format='brief' select /*+ HASH_AGG() */ count(1) from t1 where dt in ('2020-11-27','2020-11-28')`).Check(
+		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#5)->Column#4",
+			"└─PartitionUnion 2.00 root  ",
+			"  ├─HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+			"  │ └─IndexReader 1.00 root  index:HashAgg",
+			"  │   └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+			"  │     └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
+			"  │       └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201127, index:PRIMARY(id, dt) keep order:false, stats:pseudo",
+			"  └─HashAgg 1.00 root  funcs:count(Column#10)->Column#5",
+			"    └─IndexReader 1.00 root  index:HashAgg",
+			"      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
+			"        └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
+			"          └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201128, index:PRIMARY(id, dt) keep order:false, stats:pseudo"))
+
+	tk.MustExec(`insert into t1 values (1, "2020-11-25")`)
+	tk.MustExec(`insert into t1 values (2, "2020-11-26")`)
+	tk.MustExec(`insert into t1 values (3, "2020-11-27")`)
+	tk.MustExec(`insert into t1 values (4, "2020-11-28")`)
+	tk.MustQuery(`select id from t1 where dt in ('2020-11-27','2020-11-28') order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,'2020-11-28') order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,20201128) order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,20201128,null) order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in ('2020-11-26','2020-11-25','2020-11-28') order by id`).Check(testkit.Rows("1", "2", "4"))
+	tk.MustQuery(`select id from t1 where dt in ('2020-11-26','wrong','2020-11-28') order by id`).Check(testkit.Rows("2", "4"))
+
+	// int
+	tk.MustExec(`create table t2 (a int) partition by range columns(a) (
+		partition p0 values less than (0),
+		partition p1 values less than (10),
+		partition p2 values less than (20))`)
+	tk.MustExec(`insert into t2 values (-1), (1), (11), (null)`)
+	tk.MustQuery(`select a from t2 where a in (-1, 1) order by a`).Check(testkit.Rows("-1", "1"))
+	tk.MustQuery(`select a from t2 where a in (1, 11, null) order by a`).Check(testkit.Rows("1", "11"))
+	tk.MustQuery(`explain format='brief' select a from t2 where a in (-1, 1)`).Check(testkit.Rows("PartitionUnion 40.00 root  ",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+		"└─TableReader 20.00 root  data:Selection",
+		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo"))
+
+	// for other types, the in-pruning shouldn't be working for safety
+	tk.MustExec(`create table t3 (a varchar(10)) partition by range columns(a) (
+		partition p0 values less than ("aaa"),
+		partition p1 values less than ("bbb"),
+		partition p2 values less than ("ccc"))`)
+	tk.MustQuery(`explain format='brief' select a from t3 where a in ('aaa', 'aab')`).Check(testkit.Rows("PartitionUnion 60.00 root  ",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p0 keep order:false, stats:pseudo",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p1 keep order:false, stats:pseudo",
+		"└─TableReader 20.00 root  data:Selection",
+		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p2 keep order:false, stats:pseudo"))
+}
+
 func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_partition;")
