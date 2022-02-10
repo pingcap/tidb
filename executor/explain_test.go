@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -390,9 +389,7 @@ func (s *testSuite) TestFix29401(c *C) {
 
 func (s *testSuite) TestShardIndexPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
+
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists test3, test5")

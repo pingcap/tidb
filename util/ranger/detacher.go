@@ -888,7 +888,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 // @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
 //                          columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
 //                          is empty.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //            error                     if error gernerated, return error
 func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -911,7 +911,7 @@ func AddGcColumnCond(sctx sessionctx.Context,
 
 // AddGcColumn4InCond add the `tidb_shard(x) = xxx` for `IN` condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //            error                     if error gernerated, return error
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -942,7 +942,7 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 			return accessesCond, err
 		}
 
-		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg1 is like `a = 100`
+		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg2 is like `a = 100`
 		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
 		tmpArg1, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
 		if err != nil {
@@ -978,8 +978,8 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 
 // AddGcColumn4EqCond add the `tidb_shard(x) = xxx` prefix for equal condition
 // For param explanation, please refer to the function `AddGcColumnCond`.
-// @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
-//            []*valueInfo              the values of every columns in the returned new condtions
+// @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
+//            []*valueInfo              the values of every columns in the returned new conditions
 //            error                     if error gernerated, return error
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -1018,7 +1018,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 // AddExpr4EqAndInCondition add the `tidb_shard(x) = xxx` prefix
 // Add tidb_shard() for EQ and IN function. e.g. input condition is `WHERE a = 1`,
 // output condition is `WHERE tidb_shard(a) = 214 AND a = 1`. e.g. input condition
-// is `WHERE a IN (1, ,2 ,3)`, output condition is `WHERE (tidb_shard(a) = 214 AND a = 1)
+// is `WHERE a IN (1, 2 ,3)`, output condition is `WHERE (tidb_shard(a) = 214 AND a = 1)
 // OR (tidb_shard(a) = 143 AND a = 2) OR (tidb_shard(a) = 156 AND a = 3)`
 // @param[in] conditions  the original condition to be processed
 // @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
@@ -1125,7 +1125,7 @@ func NeedAddGcColumn4ShardIndex(
 
 // NeedAddColumn4EqCond `tidb_shard(x) = xxx`
 // For param explanation, please refer to the function `NeedAddGcColumn4ShardIndex`.
-// It checks whether EQ condtions need to be added tidb_shard() prefix.
+// It checks whether EQ conditions need to be added tidb_shard() prefix.
 // (1) columns in accessCond are all columns of the index except the first.
 // (2) every column in accessCond has a constan value
 func NeedAddColumn4EqCond(cols []*expression.Column,
@@ -1169,12 +1169,12 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 
 // NeedAddColumn4InCond `tidb_shard(x) = xxx`
 // For param explanation, please refer to the function `NeedAddGcColumn4ShardIndex`.
-// It checks whether "IN" condtions need to be added tidb_shard() prefix.
+// It checks whether "IN" conditions need to be added tidb_shard() prefix.
 // (1) columns in accessCond are all columns of the index except the first.
-// (2) the first param of "IN" function shoulde be a column not a expression like `a + b`
-// (3) the rest params of "IN" function all shoulde be constant
-// (4) the first param of "IN" function shoulde be the column in the expression of first index field.
-//     e.g. uk(tidb_shard(a), a). If the condtions is `WHERE b in (1, 2, 3)`, the first param of "IN" function
+// (2) the first param of "IN" function should be a column not a expression like `a + b`
+// (3) the rest params of "IN" function all should be constant
+// (4) the first param of "IN" function should be the column in the expression of first index field.
+//     e.g. uk(tidb_shard(a), a). If the conditions is `WHERE b in (1, 2, 3)`, the first param of "IN" function
 //     is `b` that's not the column in `tidb_shard(a)`.
 // @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
 func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
@@ -1229,7 +1229,7 @@ func ExtractColumnsFromExpr(virtaulExpr *expression.ScalarFunction) []*expressio
 }
 
 // IsValidShardIndex Check whether the definition of shard index is valid. The form of index
-// shoulde like `index(tidb_shard(a), a, ....)`.
+// should like `index(tidb_shard(a), a, ....)`.
 // 1) the column count shoudle be >= 2
 // 2) the first column should be tidb_shard(xxx)
 // 3) the parameter of tidb_shard shoudle be a column that is the second column of index

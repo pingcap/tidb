@@ -583,7 +583,7 @@ func TestTidbShard(t *testing.T) {
 
 	fc := funcs[ast.TiDBShard]
 
-	// tidb_shar(-1) == 81, ......
+	// tidb_shard(-1) == 81, ......
 	args := makeDatums([]int{-1, 0, 1, 9999999999999999})
 	res := makeDatums([]int{81, 167, 214, 63})
 	for i, arg := range args {
@@ -594,7 +594,7 @@ func TestTidbShard(t *testing.T) {
 		trequire.DatumEqual(t, res[i], d)
 	}
 
-	// tidb_shar("string") always return 167
+	// tidb_shard("string") always return 167
 	args2 := makeDatums([]string{"abc", "ope", "wopddd"})
 	res2 := makeDatums([]int{167})
 	for _, arg := range args2 {
