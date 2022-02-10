@@ -2473,8 +2473,8 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int,c varchar(11),d datetime)")
-	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
+	tk.MustExec("create table t(id int,b bit(1),c varchar(11),d datetime)")
+	tk.MustExec("insert into t(id,b,c,d) values (1,1,'abc','2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
@@ -2512,6 +2512,10 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 
 	rows[1][2] = "atan2(cast(test.t.id, double BINARY), cast(test.t.id, double BINARY))"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan2(id,id);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "ascii(cast(test.t.b, var_string(1)))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(b);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "hour(cast(test.t.d, time))"
