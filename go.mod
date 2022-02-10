@@ -31,12 +31,12 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.3
-	github.com/google/btree v1.0.0
+	github.com/google/btree v1.0.1
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/mux v1.8.0
-	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
+	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
@@ -56,14 +56,14 @@ require (
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220107024056-3b91949a18a7
-	github.com/prometheus/client_golang v1.5.1
+	github.com/prometheus/client_golang v1.11.0
 	github.com/prometheus/client_model v0.2.0
-	github.com/prometheus/common v0.9.1
+	github.com/prometheus/common v0.26.0
 	github.com/shirou/gopsutil/v3 v3.21.12
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	github.com/soheilhy/cmux v0.1.4
-	github.com/spf13/cobra v1.0.0
+	github.com/soheilhy/cmux v0.1.5
+	github.com/spf13/cobra v1.1.3
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -75,7 +75,11 @@ require (
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20210512015243-d19fbe541bf9
+	go.etcd.io/etcd/api/v3 v3.5.2
+	go.etcd.io/etcd/client/pkg/v3 v3.5.2
+	go.etcd.io/etcd/client/v3 v3.5.2
+	go.etcd.io/etcd/server/v3 v3.5.2
+	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.12
@@ -86,7 +90,7 @@ require (
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e
 	golang.org/x/text v0.3.7
-	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
+	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba
 	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.54.0
 	google.golang.org/grpc v1.40.0

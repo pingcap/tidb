@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
 

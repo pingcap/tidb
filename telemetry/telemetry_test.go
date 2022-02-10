@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestTrackingID(t *testing.T) {
