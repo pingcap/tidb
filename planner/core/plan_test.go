@@ -736,7 +736,11 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 				if partial != nil {
 					require.True(t, partial != nil)
 					for _, aggFunc := range partial.AggFuncs {
-						require.True(t, !isFinalAggMode(aggFunc.Mode))
+						if partialIsCop == 0 {
+							require.True(t, !isFinalAggMode(aggFunc.Mode))
+						} else {
+							require.True(t, isFinalAggMode(aggFunc.Mode))
+						}
 					}
 				}
 				require.True(t, final != nil)
