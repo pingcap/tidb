@@ -59,6 +59,29 @@ func bootstrap(t testing.TB, store kv.Storage) (*domain.Domain, func()) {
 	return dom, clean
 }
 
+// CreateMockStoreAndDomainWithoutZeroSchemaLease return a new mock kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomainWithoutZeroSchemaLease(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	dom, clean := bootstrapWithoutZeroSchemaLease(t, store)
+	return store, dom, clean
+}
+
+func bootstrapWithoutZeroSchemaLease(t testing.TB, store kv.Storage) (*domain.Domain, func()) {
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+
+	clean := func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}
+	return dom, clean
+}
+
 // CreateMockStoreWithOracle returns a new mock kv.Storage and *domain.Domain, providing the oracle for the store.
 func CreateMockStoreWithOracle(t testing.TB, oracle oracle.Oracle, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	store, err := mockstore.NewMockStore(opts...)
