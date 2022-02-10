@@ -52,16 +52,25 @@ type PreprocessOpt func(*preprocessor)
 // InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
 func InPrepare(p *preprocessor) {
 	p.flag |= inPrepare
+	p.staleReadProcessor = staleread.NewPrepareParseProcessor(p.ctx, func(evaluator staleread.PreparedTSEvaluator) {
+		p.TSEvaluatorForPreparedStmt = evaluator
+	})
 }
 
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+	p.staleReadProcessor = staleread.NewInitContextProcessor(p.ctx)
 }
 
-// InitTxnContextProvider is a PreprocessOpt that indicates preprocess should init transaction's context
-func InitTxnContextProvider(p *preprocessor) {
-	p.flag |= initTxnContextProvider
+func ValidateCreateView(p *preprocessor) {
+	p.staleReadProcessor = staleread.NewCreateViewProcessor(p.ctx)
+}
+
+// InitTxnContext is a PreprocessOpt that indicates preprocess should init transaction's context
+func InitTxnContext(p *preprocessor) {
+	p.flag |= initTxnContext
+	p.staleReadProcessor = staleread.NewInitContextProcessor(p.ctx)
 }
 
 // WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
@@ -125,14 +134,10 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 
-	v.staleReadProcessor = staleread.NewStmtPreprocessor(ctx, v.flag&initTxnContextProvider != 0)
-
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 
-	v.TSEvaluatorForPreparedStmt = v.staleReadProcessor.GetTSEvaluatorForPreparedStmt()
-	v.IsStaleness = v.staleReadProcessor.IsStaleness()
 	v.initTxnContextProviderIfNecessary()
 
 	return errors.Trace(v.err)
@@ -154,14 +159,13 @@ const (
 	// inSequenceFunction is set when visiting a sequence function.
 	// This flag indicates the tableName in these function should be checked as sequence object.
 	inSequenceFunction
-	// initTxnContextProvider is set when we should init txn context in preprocess
-	initTxnContextProvider
+	// initTxnContext is set when we should init txn context in preprocess
+	initTxnContext
 )
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	InfoSchema                 infoschema.InfoSchema
-	IsStaleness                bool
 	TSEvaluatorForPreparedStmt func(sctx sessionctx.Context) (uint64, error)
 }
 
@@ -184,7 +188,7 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]interface{}
 	withName         map[string]interface{}
 
-	staleReadProcessor *staleread.StmtPreprocessor
+	staleReadProcessor staleread.StmtProcessor
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -317,8 +321,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.withName[cte.Name.L] = struct{}{}
 		}
 	case *ast.BeginStmt:
-		p.ctx.GetSessionVars().StmtCtx.ContextProviderForBeginStmt = nil
-		p.err = p.staleReadProcessor.OnStartTransaction(node)
+		if p.staleReadProcessor != nil {
+			p.err = p.staleReadProcessor.OnBeginStmt(node)
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1409,7 +1414,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	if p.stmtTp == TypeSelect {
+	if p.stmtTp == TypeSelect && p.staleReadProcessor != nil {
 		p.err = p.staleReadProcessor.OnSelectTable(tn)
 		if p.err != nil {
 			return
@@ -1494,7 +1499,14 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		return
 	}
 
-	p.err = p.staleReadProcessor.OnTSEvaluatorInExecute(prepared.SnapshotTSEvaluator)
+	if p.staleReadProcessor != nil {
+		err = p.staleReadProcessor.OnExecuteStmtWithPreparedTS(prepared.SnapshotTSEvaluator)
+		if p.err != nil {
+			p.err = err
+			return
+		}
+	}
+
 }
 
 func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
@@ -1566,8 +1578,8 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		return p.InfoSchema
 	}
 
-	if p.staleReadProcessor.IsStaleness() {
-		p.InfoSchema = p.staleReadProcessor.GetStaleReadInfoSchema()
+	if p.staleReadProcessor != nil && p.staleReadProcessor.IsStmtStaleness() {
+		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
 		return p.InfoSchema
 	}
 
@@ -1583,7 +1595,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) initTxnContextProviderIfNecessary() {
-	if p.err != nil || p.flag&initTxnContextProvider == 0 {
+	if p.err != nil || p.flag&initTxnContext == 0 {
 		return
 	}
 

@@ -29,47 +29,88 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 )
 
-type baseProcessor struct {
-	sctx               sessionctx.Context
-	txnManager         sessiontxn.TxnManager
-	isUpdateTxnContext bool
+type PreparedTSEvaluator func(sctx sessionctx.Context) (uint64, error)
 
-	evaluated                  bool
-	ts                         uint64
-	is                         infoschema.InfoSchema
-	readReplicaScope           string
-	tsEvaluatorForPreparedStmt func(sctx sessionctx.Context) (uint64, error)
+type ProcessType uint8
+
+const (
+	ProcessTypeInitTxnContext ProcessType = iota
+	ProcessTypeParsePrepare
+	ProcessTypeValidateCreateView
+)
+
+// StmtProcessor processes the stale read stmt
+type StmtProcessor interface {
+	// GetType returns the process type
+	GetType() ProcessType
+	// IsStmtStaleness indicates that whether the stmt has the staleness declaration
+	IsStmtStaleness() bool
+	// GetStalenessInfoSchema returns the information schema if it is stale read, otherwise returns nil
+	GetStalenessInfoSchema() infoschema.InfoSchema
+	// GetStalenessReadTS returns the ts if it is stale read, otherwise returns 0
+	GetStalenessReadTS() uint64
+
+	// OnSelectTable will be called when process table in select statement.
+	// Support type: ProcessTypeInitTxnContext, ProcessTypeParsePrepare, ProcessTypeValidateCreateView
+	OnSelectTable(tn *ast.TableName) error
+	// OnExecuteStmtWithPreparedTS will be called when process execute statement
+	// Support type: ProcessTypeInitTxnContext
+	OnExecuteStmtWithPreparedTS(evaluator PreparedTSEvaluator) error
+	// OnBeginStmt will be called when process begin statement
+	// Support type: ProcessTypeInitTxnContext
+	OnBeginStmt(begin *ast.BeginStmt) error
 }
 
-func (p *baseProcessor) init(sctx sessionctx.Context, isUpdateTxnContext bool) {
+type baseProcessor struct {
+	tp         ProcessType
+	sctx       sessionctx.Context
+	txnManager sessiontxn.TxnManager
+
+	evaluated bool
+	ts        uint64
+	is        infoschema.InfoSchema
+}
+
+func (p *baseProcessor) init(sctx sessionctx.Context, tp ProcessType) {
+	p.tp = tp
 	p.sctx = sctx
 	p.txnManager = sessiontxn.GetTxnManager(sctx)
-	p.isUpdateTxnContext = isUpdateTxnContext
 }
 
-func (p *baseProcessor) IsStaleness() bool {
+func (p *baseProcessor) GetType() ProcessType {
+	return p.tp
+}
+
+func (p *baseProcessor) IsStmtStaleness() bool {
 	return p.ts != 0
 }
 
-func (p *baseProcessor) GetStaleReadTS() uint64 {
-	return p.ts
-}
-
-func (p *baseProcessor) GetStaleReadInfoSchema() infoschema.InfoSchema {
+func (p *baseProcessor) GetStalenessInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
-func (p *StmtPreprocessor) GetTSEvaluatorForPreparedStmt() func(sctx sessionctx.Context) (uint64, error) {
-	return p.tsEvaluatorForPreparedStmt
+func (p *baseProcessor) GetStalenessReadTS() uint64 {
+	return p.ts
 }
 
-func (p *baseProcessor) setEvaluatedTS(ts uint64, readReplicaScope string) error {
-	if p.evaluated {
-		return errors.New("already evaluated")
-	}
+func (p *baseProcessor) OnSelectTable(_ *ast.TableName) error {
+	return errors.New("not supported")
+}
 
-	if readReplicaScope == "" {
-		readReplicaScope = kv.GlobalReplicaScope
+func (p *baseProcessor) OnExecuteStmtWithPreparedTS(_ PreparedTSEvaluator) error {
+	return errors.New("not supported")
+}
+
+func (p *baseProcessor) OnBeginStmt(_ *ast.BeginStmt) error {
+	return errors.New("not supported")
+}
+
+func (p *baseProcessor) setEvaluatedTS(ts uint64) error {
+	if p.evaluated {
+		if ts != p.ts {
+			return errAsOf.GenWithStack("can not set different time in the as of")
+		}
+		return nil
 	}
 
 	if ts != 0 {
@@ -78,7 +119,6 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64, readReplicaScope string) error
 			return err
 		}
 		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
-		p.readReplicaScope = readReplicaScope
 	}
 
 	p.ts = ts
@@ -86,33 +126,16 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64, readReplicaScope string) error
 	return nil
 }
 
-func (p *baseProcessor) buildContextProvider() sessiontxn.TxnContextProvider {
-	if p.ts == 0 {
-		return nil
+func (p *baseProcessor) buildContextProvider(readReplicaScope string) sessiontxn.TxnContextProvider {
+	if readReplicaScope == "" {
+		readReplicaScope = kv.GlobalReplicaScope
 	}
 
 	return &staleReadTxnContextProvider{
 		is:               p.is,
 		ts:               p.ts,
-		readReplicaScope: p.readReplicaScope,
+		readReplicaScope: readReplicaScope,
 	}
-}
-
-func (p *baseProcessor) getAsOfTS(asOf *ast.AsOfClause) (uint64, error) {
-	if asOf == nil {
-		return 0, nil
-	}
-
-	staleReadTS, err := calculateAsOfTsExpr(p.sctx, asOf)
-	if err != nil {
-		return 0, err
-	}
-
-	if err = ValidateStaleReadTS(context.TODO(), p.sctx, staleReadTS); err != nil {
-		return 0, err
-	}
-
-	return staleReadTS, nil
 }
 
 func (p *baseProcessor) useStmtOrTxnReadTS(stmtTS uint64) (ts uint64, err error) {
@@ -128,81 +151,27 @@ func (p *baseProcessor) useStmtOrTxnReadTS(stmtTS uint64) (ts uint64, err error)
 	return staleReadTS, nil
 }
 
-func (p *baseProcessor) getReadStalenessTS() (uint64, func(sctx sessionctx.Context) (uint64, error), error) {
-	readStaleness := p.sctx.GetSessionVars().ReadStaleness
-	if readStaleness == 0 {
-		return 0, nil, nil
-	}
-
-	staleReadTS, err := calculateTsWithReadStaleness(p.sctx, readStaleness)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	return staleReadTS, func(sctx sessionctx.Context) (uint64, error) {
-		return calculateTsWithReadStaleness(sctx, readStaleness)
-	}, nil
+type InitTxnContextProcessor struct {
+	baseProcessor
 }
 
-func (p *baseProcessor) onStmtTS(ts uint64, readReplicaScope string) error {
-	if p.txnManager.InExplicitTxn() {
-		if ts != 0 {
-			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-		}
-		return nil
-	}
+func NewInitContextProcessor(sctx sessionctx.Context) *InitTxnContextProcessor {
+	p := &InitTxnContextProcessor{}
+	p.init(sctx, ProcessTypeInitTxnContext)
+	return p
+}
 
-	staleReadTS, err := p.useStmtOrTxnReadTS(ts)
+func (p *InitTxnContextProcessor) OnSelectTable(tn *ast.TableName) (err error) {
+	ts, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
 	if err != nil {
 		return err
 	}
 
-	var tsEvaluatorForPreparedStmt func(sctx sessionctx.Context) (uint64, error)
-	if staleReadTS == 0 {
-		staleReadTS, tsEvaluatorForPreparedStmt, err = p.getReadStalenessTS()
-		if err != nil {
-			return err
-		}
-	} else {
-		tsEvaluatorForPreparedStmt = func(sctx sessionctx.Context) (uint64, error) {
-			return staleReadTS, nil
-		}
-	}
-
-	if !p.evaluated {
-		err = p.setEvaluatedTS(staleReadTS, readReplicaScope)
-		if err != nil {
-			return err
-		}
-		p.tsEvaluatorForPreparedStmt = tsEvaluatorForPreparedStmt
-
-		if p.isUpdateTxnContext {
-			provider := p.buildContextProvider()
-			if provider != nil {
-				if err = p.txnManager.SetContextProvider(provider); err != nil {
-					return err
-				}
-			}
-		}
-	} else if staleReadTS != p.ts {
-		return errAsOf.GenWithStack("can not set different time in the as of")
-	}
-
-	return nil
+	return p.onSelectOrExecuteTS(ts)
 }
 
-type StmtPreprocessor struct {
-	baseProcessor
-}
-
-func NewStmtPreprocessor(sctx sessionctx.Context, isUpdateTxnContext bool) *StmtPreprocessor {
-	p := &StmtPreprocessor{}
-	p.init(sctx, isUpdateTxnContext)
-	return p
-}
-
-func (p *StmtPreprocessor) OnTSEvaluatorInExecute(evaluator func(sctx sessionctx.Context) (uint64, error)) (err error) {
-	ts := uint64(0)
+func (p *InitTxnContextProcessor) OnExecuteStmtWithPreparedTS(evaluator PreparedTSEvaluator) (err error) {
+	var ts uint64
 	if evaluator != nil {
 		ts, err = evaluator(p.sctx)
 		if err != nil {
@@ -210,54 +179,146 @@ func (p *StmtPreprocessor) OnTSEvaluatorInExecute(evaluator func(sctx sessionctx
 		}
 	}
 
-	if err = p.onStmtTS(ts, config.GetTxnScopeFromConfig()); err != nil {
-		return err
-	}
-
-	return nil
+	return p.onSelectOrExecuteTS(ts)
 }
 
-func (p *StmtPreprocessor) OnSelectTable(tn *ast.TableName) error {
-	ts, err := p.getAsOfTS(tn.AsOf)
-	if err != nil {
-		return err
-	}
-	return p.onStmtTS(ts, getStaleReadReplicaScope(p.sctx))
-}
-
-func (p *StmtPreprocessor) OnStartTransaction(begin *ast.BeginStmt) error {
-	if !p.isUpdateTxnContext {
-		return errors.New("Must update txn context when start transaction")
-	}
-
-	ts, err := p.getAsOfTS(begin.AsOf)
+func (p *InitTxnContextProcessor) OnBeginStmt(begin *ast.BeginStmt) error {
+	ts, err := parseAndValidateAsOf(p.sctx, begin.AsOf)
 	if err != nil {
 		return err
 	}
 
-	if !p.txnManager.InExplicitTxn() {
-		if p.sctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() != 0 && ts != 0 {
-			return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
-		}
-
-		if ts == 0 {
-			ts = p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-		}
+	txnReadTS := p.sctx.GetSessionVars().TxnReadTS
+	if txnReadTS.PeakTxnReadTS() != 0 && ts != 0 {
+		return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
 	}
 
-	if err = p.setEvaluatedTS(ts, config.GetTxnScopeFromConfig()); err != nil {
+	if ts == 0 {
+		ts = txnReadTS.UseTxnReadTS()
+	}
+
+	if err = p.setEvaluatedTS(ts); err != nil {
 		return err
 	}
 
-	if provider := p.buildContextProvider(); provider != nil {
-		p.sctx.GetSessionVars().StmtCtx.ContextProviderForBeginStmt = provider
-		if !p.txnManager.InExplicitTxn() {
-			if err = p.txnManager.SetContextProvider(provider); err != nil {
+	var provider sessiontxn.TxnContextProvider
+	if ts != 0 {
+		provider = p.buildContextProvider(config.GetTxnScopeFromConfig())
+	}
+
+	p.sctx.GetSessionVars().StmtCtx.ContextProviderForBeginStmt = provider
+	if !p.txnManager.InExplicitTxn() && provider != nil {
+		err = p.txnManager.SetContextProvider(provider)
+	}
+	return err
+}
+
+func (p *InitTxnContextProcessor) onSelectOrExecuteTS(ts uint64) (err error) {
+	if p.txnManager.InExplicitTxn() {
+		// When in explicit txn, it is not allowed to declare stale read in statement
+		// and the sys variables should also be ignored no matter it is set or not
+		if ts != 0 {
+			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+		return p.setEvaluatedTS(0)
+	}
+
+	if txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS(); txnReadTS != 0 {
+		if ts != 0 {
+			return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		}
+		ts = txnReadTS
+	}
+
+	if ts == 0 {
+		evaluator := getTsEvaluatorFromReadStaleness(p.sctx)
+		if evaluator != nil {
+			ts, err = evaluator(p.sctx)
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if err = p.setEvaluatedTS(ts); err != nil {
+		return err
+	}
+
+	if ts != 0 {
+		err = p.txnManager.SetContextProvider(p.buildContextProvider(getStaleReadReplicaScope(p.sctx)))
+	}
+
+	return err
+}
+
+type PrepareParseProcessor struct {
+	baseProcessor
+	setPreparedTSEvaluator func(evaluator PreparedTSEvaluator)
+}
+
+func NewPrepareParseProcessor(sctx sessionctx.Context, setEvaluator func(evaluator PreparedTSEvaluator)) *PrepareParseProcessor {
+	p := &PrepareParseProcessor{}
+	p.init(sctx, ProcessTypeParsePrepare)
+	p.setPreparedTSEvaluator = setEvaluator
+	return p
+}
+
+func (p *PrepareParseProcessor) OnSelectTable(tn *ast.TableName) (err error) {
+	ts, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
+	if err != nil {
+		return err
+	}
+
+	if p.txnManager.InExplicitTxn() {
+		// Prepare in explicit txn will ignore sys variables
+		return p.setEvaluatedTS(ts)
+	}
+
+	if txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS(); txnReadTS != 0 {
+		if ts != 0 {
+			return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		}
+		ts = txnReadTS
+	}
+
+	var evaluator PreparedTSEvaluator
+	if ts == 0 {
+		evaluator = getTsEvaluatorFromReadStaleness(p.sctx)
+		if evaluator != nil {
+			ts, err = evaluator(p.sctx)
+			if err != nil {
 				return err
 			}
 		}
+	} else {
+		evaluator = func(sctx sessionctx.Context) (uint64, error) {
+			return ts, nil
+		}
 	}
 
+	if err = p.setEvaluatedTS(ts); err != nil {
+		return err
+	}
+
+	p.setPreparedTSEvaluator(evaluator)
+	return
+}
+
+type CreateViewProcessor struct {
+	baseProcessor
+}
+
+func NewCreateViewProcessor(sctx sessionctx.Context) *CreateViewProcessor {
+	p := &CreateViewProcessor{}
+	p.init(sctx, ProcessTypeParsePrepare)
+	return p
+}
+
+func (p *CreateViewProcessor) OnSelectTable(tn *ast.TableName) (err error) {
+	if tn.AsOf != nil {
+		return errAsOf.FastGenWithCause("can't use select as of while create view")
+	}
 	return nil
 }
 

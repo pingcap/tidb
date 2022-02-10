@@ -87,6 +87,34 @@ func calculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 
+func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64, error) {
+	if asOf == nil {
+		return 0, nil
+	}
+
+	ts, err := calculateAsOfTsExpr(sctx, asOf)
+	if err != nil {
+		return 0, err
+	}
+
+	if err = ValidateStaleReadTS(context.TODO(), sctx, ts); err != nil {
+		return 0, err
+	}
+
+	return ts, nil
+}
+
+func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) PreparedTSEvaluator {
+	readStaleness := sctx.GetSessionVars().ReadStaleness
+	if readStaleness == 0 {
+		return nil
+	}
+
+	return func(sctx sessionctx.Context) (uint64, error) {
+		return calculateTsWithReadStaleness(sctx, readStaleness)
+	}
+}
+
 func getStaleReadReplicaScope(sctx sessionctx.Context) string {
 	instanceScope := config.GetTxnScopeFromConfig()
 	if sctx.GetSessionVars().GetReplicaRead().IsClosestRead() && instanceScope != kv.GlobalReplicaScope {

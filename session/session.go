@@ -2160,8 +2160,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	staleReadProcessor := staleread.NewStmtPreprocessor(s, true)
-	if err = staleReadProcessor.OnTSEvaluatorInExecute(preparedStmt.SnapshotTSEvaluator); err != nil {
+	if err = staleread.NewInitContextProcessor(s).OnExecuteStmtWithPreparedTS(preparedStmt.SnapshotTSEvaluator); err != nil {
 		return nil, err
 	}
 

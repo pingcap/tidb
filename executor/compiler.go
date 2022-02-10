@@ -64,7 +64,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.WithExecuteInfoSchemaUpdate(pe),
-		plannercore.InitTxnContextProvider,
+		plannercore.InitTxnContext,
 	)
 	if err != nil {
 		return nil, err
