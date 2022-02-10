@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2775,6 +2776,9 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
 
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
@@ -7023,4 +7027,22 @@ func TestIssue29708(t *testing.T) {
 		{"a"},
 		{"b"},
 	})
+}
+
+func TestIssue22206(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
+	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
+	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime(5000000000);")
+	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(unixTime))
 }
