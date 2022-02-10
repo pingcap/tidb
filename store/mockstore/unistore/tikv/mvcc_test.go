@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
@@ -154,32 +155,54 @@ func PessimisticLock(pk []byte, key []byte, startTs uint64, lockTTL uint64, forU
 // PrewriteOptimistic raises optimistic prewrite requests on store
 func PrewriteOptimistic(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
 	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, store *TestStore) error {
+	return PrewriteOptimisticWithAssertion(pk, key, value, startTs, lockTTL, minCommitTs, useAsyncCommit, secondaries,
+		kvrpcpb.Assertion_None, kvrpcpb.AssertionLevel_Off, store)
+}
+
+// PrewriteOptimisticWithAssertion raises optimistic prewrite requests on store, with specified assertion config
+func PrewriteOptimisticWithAssertion(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
+	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, assertion kvrpcpb.Assertion,
+	assertionLevel kvrpcpb.AssertionLevel, store *TestStore) error {
 	op := kvrpcpb.Op_Put
 	if value == nil {
 		op = kvrpcpb.Op_Del
 	}
+	mutation := newMutation(op, key, value)
+	mutation.Assertion = assertion
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:      []*kvrpcpb.Mutation{newMutation(op, key, value)},
+		Mutations:      []*kvrpcpb.Mutation{mutation},
 		PrimaryLock:    pk,
 		StartVersion:   startTs,
 		LockTtl:        lockTTL,
 		MinCommitTs:    minCommitTs,
 		UseAsyncCommit: useAsyncCommit,
 		Secondaries:    secondaries,
+		AssertionLevel: assertionLevel,
 	}
 	return store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 }
 
-// PrewritePessimistic raises pessmistic prewrite requests
+// PrewritePessimistic raises pessimistic prewrite requests
 func PrewritePessimistic(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
 	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) error {
+	return PrewritePessimisticWithAssertion(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs,
+		kvrpcpb.Assertion_None, kvrpcpb.AssertionLevel_Off, store)
+}
+
+// PrewritePessimisticWithAssertion raises pessimistic prewrite requests, with specified assertion config
+func PrewritePessimisticWithAssertion(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
+	isPessimisticLock []bool, forUpdateTs uint64, assertion kvrpcpb.Assertion, assertionLevel kvrpcpb.AssertionLevel,
+	store *TestStore) error {
+	mutation := newMutation(kvrpcpb.Op_Put, key, value)
+	mutation.Assertion = assertion
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:         []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Put, key, value)},
+		Mutations:         []*kvrpcpb.Mutation{mutation},
 		PrimaryLock:       pk,
 		StartVersion:      startTs,
 		LockTtl:           lockTTL,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       forUpdateTs,
+		AssertionLevel:    assertionLevel,
 	}
 	return store.MvccStore.prewritePessimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 }
@@ -1677,4 +1700,103 @@ func TestTiKVRCRead(t *testing.T) {
 		require.Nil(t, pair.Error)
 		require.Equal(t, pair.Value, v)
 	}
+}
+
+func TestAssertion(t *testing.T) {
+	store, close := NewTestStore("TestAssertion", "TestAssertion", t)
+	defer close()
+
+	// Prepare
+	MustPrewriteOptimistic([]byte("k1"), []byte("k1"), []byte("v1"), 1, 100, 0, store)
+	MustPrewriteOptimistic([]byte("k1"), []byte("k2"), []byte("v2"), 1, 100, 0, store)
+	MustPrewriteOptimistic([]byte("k1"), []byte("k3"), []byte("v3"), 1, 100, 0, store)
+	MustCommit([]byte("k1"), 1, 2, store)
+	MustCommit([]byte("k2"), 1, 2, store)
+	MustCommit([]byte("k3"), 1, 2, store)
+
+	checkAssertionFailedError := func(err error, disable bool, startTs uint64, key []byte, assertion kvrpcpb.Assertion, existingStartTs uint64, existingCommitTs uint64) {
+		t.Logf("Check error: %+q", err)
+		if disable {
+			require.Nil(t, err)
+			return
+		}
+		require.NotNil(t, err)
+		e, ok := errors.Cause(err).(*ErrAssertionFailed)
+		require.True(t, ok)
+		require.Equal(t, startTs, e.StartTS)
+		require.Equal(t, key, e.Key)
+		require.Equal(t, assertion, e.Assertion)
+		require.Equal(t, existingStartTs, e.ExistingStartTS)
+		require.Equal(t, existingCommitTs, e.ExistingCommitTS)
+	}
+
+	for _, disable := range []bool{false, true} {
+		level := kvrpcpb.AssertionLevel_Strict
+		if disable {
+			level = kvrpcpb.AssertionLevel_Off
+		}
+		// Test with optimistic transaction
+		err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 10, 100, 0, false, nil,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k1"), kvrpcpb.Assertion_NotExist, 1, 2)
+		err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 10, 100, 0, false, nil,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k11"), kvrpcpb.Assertion_Exist, 0, 0)
+
+		// Test with pessimistic transaction
+		MustAcquirePessimisticLock([]byte("k2"), []byte("k2"), 10, 10, store)
+		err = PrewritePessimisticWithAssertion([]byte("k2"), []byte("k2"), []byte("v2"), 10, 100, []bool{true}, 10,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k2"), kvrpcpb.Assertion_NotExist, 1, 2)
+		MustAcquirePessimisticLock([]byte("k22"), []byte("k22"), 10, 10, store)
+		err = PrewritePessimisticWithAssertion([]byte("k22"), []byte("k22"), []byte("v22"), 10, 100, []bool{true}, 10,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k22"), kvrpcpb.Assertion_Exist, 0, 0)
+
+		// Test with pessimistic transaction (non-pessimistic-lock)
+		err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k3"), []byte("v3"), 10, 100, []bool{false}, 10,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k3"), kvrpcpb.Assertion_NotExist, 1, 2)
+		err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 10, 100, []bool{false}, 10,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k33"), kvrpcpb.Assertion_Exist, 0, 0)
+	}
+
+	for _, k := range [][]byte{
+		[]byte("k1"),
+		[]byte("k11"),
+		[]byte("k2"),
+		[]byte("k22"),
+		[]byte("k3"),
+		[]byte("k33"),
+	} {
+		MustRollbackKey(k, 10, store)
+	}
+
+	// Test assertion passes
+	// Test with optimistic transaction
+	err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 20, 100, 0, false, nil,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 20, 100, 0, false, nil,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+
+	// Test with pessimistic transaction
+	MustAcquirePessimisticLock([]byte("k2"), []byte("k2"), 20, 10, store)
+	err = PrewritePessimisticWithAssertion([]byte("k2"), []byte("k2"), []byte("v2"), 20, 100, []bool{true}, 10,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	MustAcquirePessimisticLock([]byte("k22"), []byte("k22"), 20, 10, store)
+	err = PrewritePessimisticWithAssertion([]byte("k22"), []byte("k22"), []byte("v22"), 20, 100, []bool{true}, 10,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+
+	// Test with pessimistic transaction (non-pessimistic-lock)
+	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k3"), []byte("v3"), 20, 100, []bool{false}, 10,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 20, 100, []bool{false}, 10,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
 }
