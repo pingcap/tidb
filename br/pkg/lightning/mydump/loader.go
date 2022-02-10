@@ -23,11 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"go.uber.org/zap"
 )
 
 type MDDatabaseMeta struct {
@@ -61,7 +62,7 @@ type MDTableMeta struct {
 	Name         string
 	SchemaFile   FileInfo
 	DataFiles    []FileInfo
-	charSet      string
+	CharSet      string
 	TotalSize    int64
 	IndexRatio   float64
 	IsRowOrdered bool
@@ -76,7 +77,7 @@ type SourceFileMeta struct {
 }
 
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
-	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.CharSet)
 	if err != nil {
 		log.L().Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
@@ -459,7 +460,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 		Name:         fileInfo.TableName.Name,
 		SchemaFile:   fileInfo,
 		DataFiles:    make([]FileInfo, 0, 16),
-		charSet:      s.loader.charSet,
+		CharSet:      s.loader.charSet,
 		IndexRatio:   0.0,
 		IsRowOrdered: true,
 	}
@@ -481,7 +482,7 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
 			DB:           fileInfo.TableName.Schema,
 			Name:         fileInfo.TableName.Name,
 			SchemaFile:   fileInfo,
-			charSet:      s.loader.charSet,
+			CharSet:      s.loader.charSet,
 			IndexRatio:   0.0,
 			IsRowOrdered: true,
 		}

@@ -848,6 +848,8 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 			Tables: make(map[string]*checkpoints.TidbTableInfo),
 		}
 
+		// reset error
+		err = nil
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
@@ -866,10 +868,8 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 				metric.RecordTableCount(metric.TableStatePending, err)
 				return err
 			}
+			// err = nil
 			metric.RecordTableCount(metric.TableStatePending, err)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,

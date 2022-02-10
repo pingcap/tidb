@@ -24,13 +24,19 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
@@ -38,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewTableRestore(t *testing.T) {
@@ -326,4 +331,171 @@ func TestPreCheckFailed(t *testing.T) {
 	err1 := ctl.Run(context.Background())
 	require.Equal(t, err.Error(), err1.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetTableInfoFromMeta(t *testing.T) {
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	cfg := config.NewConfig()
+	cfg.Mydumper.DefaultFileRules = true
+	cfg.Mydumper.CharacterSet = "utf8mb4"
+	cfg.App.RegionConcurrency = 8
+
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	mockTiDBGlue := mock.NewMockGlue(gomock.NewController(t))
+	mockTiDBGlue.EXPECT().GetParser().AnyTimes().Return(p)
+
+	rc := &Controller{
+		checkTemplate: NewSimpleTemplate(),
+		cfg:           cfg,
+		store:         store,
+		tidbGlue:      mockTiDBGlue,
+	}
+
+	tableMeta := &mydump.MDTableMeta{
+		DB:         "test",
+		Name:       "test",
+		SchemaFile: mydump.FileInfo{FileMeta: mydump.SourceFileMeta{}},
+		DataFiles:  make([]mydump.FileInfo, 0),
+		CharSet:    "binary",
+	}
+
+	ctx := context.Background()
+
+	tableMeta.SchemaFile.FileMeta.Path = "not exist file"
+	_, err = rc.getTableInfoFromMeta(ctx, tableMeta)
+	require.Error(t, err)
+
+	filePath := "invalid.sql"
+	err = store.WriteFile(ctx, filePath, []byte("create t;"))
+	require.NoError(t, err)
+	tableMeta.SchemaFile.FileMeta.Path = filePath
+	_, err = rc.getTableInfoFromMeta(ctx, tableMeta)
+	require.Error(t, err)
+
+	filePath = "multiple-create-table.sql"
+	err = store.WriteFile(ctx, filePath, []byte("create table t(id int);create table t1(id int);"))
+	require.NoError(t, err)
+	tableMeta.SchemaFile.FileMeta.Path = filePath
+	_, err = rc.getTableInfoFromMeta(ctx, tableMeta)
+	require.Error(t, err)
+
+	filePath = "not-create-table.sql"
+	err = store.WriteFile(ctx, filePath, []byte("select 1 from t;"))
+	require.NoError(t, err)
+	tableMeta.SchemaFile.FileMeta.Path = filePath
+	_, err = rc.getTableInfoFromMeta(ctx, tableMeta)
+	require.Error(t, err)
+
+	filePath = "create-table.sql"
+	err = store.WriteFile(ctx, filePath, []byte("create table t(id int);"))
+	require.NoError(t, err)
+	tableMeta.SchemaFile.FileMeta.Path = filePath
+	tableInfo, err := rc.getTableInfoFromMeta(ctx, tableMeta)
+	require.NoError(t, err)
+	require.Equal(t, tableInfo.Name.L, "t")
+	require.Equal(t, tableInfo.State, model.StatePublic)
+}
+
+func TestLoadSchemaForCheckOnly(t *testing.T) {
+	ctx := context.Background()
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	cfg := config.NewConfig()
+	cfg.Mydumper.DefaultFileRules = true
+	cfg.Mydumper.CharacterSet = "utf8mb4"
+	cfg.App.RegionConcurrency = 8
+
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	mockCtrl := gomock.NewController(t)
+	mockTiDBGlue := mock.NewMockGlue(mockCtrl)
+
+	rc := &Controller{
+		checkTemplate: NewSimpleTemplate(),
+		cfg:           cfg,
+		store:         store,
+		tidbGlue:      mockTiDBGlue,
+	}
+
+	fakeDBName := "fakedb"
+	fakeFileName := fmt.Sprintf("%s-schema-create.sql", fakeDBName)
+	err = store.WriteFile(ctx, fakeFileName, []byte(fmt.Sprintf("CREATE DATABASE %s;", fakeDBName)))
+	require.NoError(t, err)
+
+	for i := 1; i <= 2; i++ {
+		fakeTableName := fmt.Sprintf("tbl%d", i)
+		fakeFileName := fmt.Sprintf("%s.%s-schema.sql", fakeDBName, fakeTableName)
+		fakeFileContent := fmt.Sprintf("CREATE TABLE %s(i int);", fakeTableName)
+		err = store.WriteFile(ctx, fakeFileName, []byte(fakeFileContent))
+		require.NoError(t, err)
+	}
+
+	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, rc.cfg, store)
+	rc.dbMetas = mydumpLoader.GetDatabases()
+
+	exec := mock.NewMockSQLExecutor(mockCtrl)
+	exec.EXPECT().QueryStringsWithLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil, nil)
+	mockTiDBGlue.EXPECT().GetParser().AnyTimes().Return(p)
+	mockTiDBGlue.EXPECT().OwnsSQLExecutor().AnyTimes().Return(false)
+	mockTiDBGlue.EXPECT().GetSQLExecutor().AnyTimes().Return(exec)
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return([]*model.TableInfo{}, nil)
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rc.dbMetas))
+	require.Equal(t, 2, len(rc.dbMetas[0].Tables))
+	require.Equal(t, 0, len(rc.existedTblMap[fakeDBName]))
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return([]*model.TableInfo{
+		{
+			Name:  model.CIStr{O: "tbl1", L: "tbl1"},
+			State: model.StatePublic,
+		},
+	}, nil)
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rc.dbMetas))
+	require.Equal(t, 2, len(rc.dbMetas[0].Tables))
+	require.Equal(t, 1, len(rc.existedTblMap[fakeDBName]))
+	require.NotNil(t, rc.existedTblMap[fakeDBName]["tbl1"])
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return([]*model.TableInfo{
+		{
+			Name:  model.CIStr{O: "tbl1", L: "tbl1"},
+			State: model.StateNone,
+		},
+	}, nil)
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.Error(t, err)
+
+	bak := rc.dbMetas[0].Tables[0].SchemaFile.FileMeta.Path
+	rc.dbMetas[0].Tables[0].SchemaFile.FileMeta.Path = ""
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return([]*model.TableInfo{}, nil)
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.Error(t, err)
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return([]*model.TableInfo{}, nil)
+	rc.dbMetas[0].Tables[0].SchemaFile.FileMeta.Path = "not-exist"
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.Error(t, err)
+
+	rc.dbMetas[0].Tables[0].SchemaFile.FileMeta.Path = bak
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return(nil, errors.New("Unknown database "+fakeDBName))
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rc.dbMetas))
+	require.Equal(t, 2, len(rc.dbMetas[0].Tables))
+	require.Equal(t, 0, len(rc.existedTblMap[fakeDBName]))
+
+	mockTiDBGlue.EXPECT().GetTables(gomock.Any(), gomock.Any()).Return(nil, errors.New("failed"))
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.Error(t, err)
 }
