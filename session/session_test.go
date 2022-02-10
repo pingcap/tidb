@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -4420,11 +4419,11 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParams(context.TODO(), true, "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParams(context.TODO(), true, "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4434,15 +4433,15 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParams(context.TODO(), true, "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()
@@ -4905,8 +4904,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
