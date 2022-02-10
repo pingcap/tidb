@@ -902,7 +902,7 @@
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c,e",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Sort->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Sort->Projection"
       },
       {
         "SQL": "select sum(e+1) from t group by e,d,c order by c,e",
