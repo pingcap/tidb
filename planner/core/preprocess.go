@@ -63,8 +63,10 @@ func InTxnRetry(p *preprocessor) {
 	p.staleReadProcessor = staleread.NewInitContextProcessor(p.ctx)
 }
 
-func ValidateCreateView(p *preprocessor) {
-	p.staleReadProcessor = staleread.NewCreateViewProcessor(p.ctx)
+func ValidateCreateView(getError func() error) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.staleReadProcessor = staleread.NewCreateViewProcessor(p.ctx, getError)
+	}
 }
 
 // InitTxnContext is a PreprocessOpt that indicates preprocess should init transaction's context

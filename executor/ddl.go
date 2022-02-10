@@ -362,7 +362,10 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := core.Preprocess(e.ctx, s.Select, core.ValidateCreateView)
+	err := core.Preprocess(e.ctx, s.Select, core.ValidateCreateView(func() error {
+		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema, s.ViewName.Name)
+	}))
+
 	if err != nil {
 		return errors.Trace(err)
 	}

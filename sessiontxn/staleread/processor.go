@@ -307,17 +307,19 @@ func (p *PrepareParseProcessor) OnSelectTable(tn *ast.TableName) (err error) {
 
 type CreateViewProcessor struct {
 	baseProcessor
+	getError func() error
 }
 
-func NewCreateViewProcessor(sctx sessionctx.Context) *CreateViewProcessor {
+func NewCreateViewProcessor(sctx sessionctx.Context, getError func() error) *CreateViewProcessor {
 	p := &CreateViewProcessor{}
 	p.init(sctx, ProcessTypeParsePrepare)
+	p.getError = getError
 	return p
 }
 
 func (p *CreateViewProcessor) OnSelectTable(tn *ast.TableName) (err error) {
 	if tn.AsOf != nil {
-		return errAsOf.FastGenWithCause("can't use select as of while create view")
+		return p.getError()
 	}
 	return nil
 }
