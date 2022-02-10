@@ -320,7 +320,11 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 		return nil
 	}
 
-	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
+	if rule.Count == 0 {
+		delete(tiflash.GlobalTiFlashPlacementRules, rule.ID)
+	} else {
+		tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
+	}
 	// Pd shall schedule TiFlash, we can mock here
 	tid := 0
 	_, err := fmt.Sscanf(rule.ID, "table-%d-r", &tid)
