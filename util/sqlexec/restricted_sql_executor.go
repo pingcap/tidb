@@ -91,6 +91,7 @@ func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	}
 }
 
+// GetExecOption applies OptionFuncs and return ExecOption
 func GetExecOption(opts []OptionFuncAlias) ExecOption {
 	var execOption ExecOption
 	for _, opt := range opts {
