@@ -2037,7 +2037,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.cfg.CheckOnlyCfg != nil || (rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements) {
+	if rc.tidbGlue.OwnsSQLExecutor() && (rc.cfg.CheckOnlyCfg != nil || rc.cfg.App.CheckRequirements) {
 		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {

@@ -182,13 +182,15 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 		d.totalRows.Load(), d.totalColumnCountMismatchRows.Load()+d.totalInvalidCharRows.Load())
 	d.checkTemplate.Collect(Critical, passed, msg)
 
-	fmt.Println(d.checkTemplate.Output())
+	if rc.tidbGlue.OwnsSQLExecutor() {
+		fmt.Println(d.checkTemplate.Output())
 
-	if d.checkTemplate.Success() {
-		fmt.Println("All checks have been passed, but there may still be other types of errors that can only be found during the actual insertion of data.")
-	} else {
-		fmt.Println("Some checks failed, please check the log for more information.")
-		fmt.Printf("Log file location: %s\n", rc.cfg.LogCfg.File)
+		if d.checkTemplate.Success() {
+			fmt.Println("All checks have been passed, but there may still be other types of errors that can only be found during the actual insertion of data.")
+		} else {
+			fmt.Println("Some checks failed, please check the log for more information.")
+			fmt.Printf("Log file location: %s\n", rc.cfg.LogCfg.File)
+		}
 	}
 
 	return nil
