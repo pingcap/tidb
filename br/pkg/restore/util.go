@@ -333,9 +333,7 @@ func rewriteEncodedKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_
 	}
 	if len(key) > 0 {
 		_, rawKey, _ := codec.DecodeBytes(key, nil)
-		rule := matchOldPrefix(rawKey, rewriteRules)
-		ret := bytes.Replace(rawKey, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
-		return codec.EncodeBytes([]byte{}, ret), rule
+		return rewriteRawKey(rawKey, rewriteRules)
 	}
 	return nil, nil
 }
