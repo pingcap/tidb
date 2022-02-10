@@ -393,7 +393,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		for i := 0; i < len(deletedMutations.GetKeys()); i++ {
 			key := deletedMutations.GetKeys()[i]
 			if _, ok := a.insertedNewIndexKeys[string(key)]; !ok {
-				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.GetPessimisticFlags()[i])
+				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.IsPessimisticLock(i), deletedMutations.IsAssertExists(i), deletedMutations.IsAssertNotExist(i))
 			}
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
@@ -402,7 +402,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 			if _, ok := a.deletedOldIndexKeys[string(key)]; ok {
 				destKeyOp = kvrpcpb.Op_Put
 			}
-			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.GetPessimisticFlags()[i])
+			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.IsPessimisticLock(i), insertedMutations.IsAssertExists(i), insertedMutations.IsAssertNotExist(i))
 		}
 	} else {
 		resAddMutations.MergeMutations(deletedMutations)
@@ -482,17 +482,18 @@ func (a *amendOperationAddIndex) genNewIdxKey(ctx context.Context, sctx sessionc
 		return nil, errors.Trace(err)
 	}
 	newIndexOp := kvrpcpb.Op_Put
-	isPessimisticLock := false
+	flags := transaction.CommitterMutationFlags(0)
 	if _, ok := a.insertedNewIndexKeys[string(newIdxKey)]; ok {
 		return nil, errors.Trace(errors.Errorf("amend process key same key=%v found for index=%v in table=%v",
 			newIdxKey, a.info.indexInfoAtCommit.Meta().Name, a.info.tblInfoAtCommit.Meta().Name))
 	}
 	if a.info.indexInfoAtCommit.Meta().Unique {
 		newIndexOp = kvrpcpb.Op_Insert
-		isPessimisticLock = true
+		flags = transaction.CommitterMutationFlags(transaction.MutationFlagIsPessimisticLock)
 	}
 	a.insertedNewIndexKeys[string(newIdxKey)] = struct{}{}
-	newMutation := &transaction.PlainMutation{KeyOp: newIndexOp, Key: newIdxKey, Value: newIdxValue, IsPessimisticLock: isPessimisticLock}
+
+	newMutation := &transaction.PlainMutation{KeyOp: newIndexOp, Key: newIdxKey, Value: newIdxValue, Flags: flags}
 	return newMutation, nil
 }
 
@@ -510,16 +511,16 @@ func (a *amendOperationAddIndex) genOldIdxKey(ctx context.Context, sctx sessionc
 	}
 	// For Op_Put the key may not exist in old key value map.
 	if len(newIdxKey) > 0 {
-		isPessimisticLock := false
+		flags := transaction.CommitterMutationFlags(0)
 		if _, ok := a.deletedOldIndexKeys[string(newIdxKey)]; ok {
 			return nil, errors.Trace(errors.Errorf("amend process key same key=%v found for index=%v in table=%v",
 				newIdxKey, a.info.indexInfoAtCommit.Meta().Name, a.info.tblInfoAtCommit.Meta().Name))
 		}
 		if a.info.indexInfoAtCommit.Meta().Unique {
-			isPessimisticLock = true
+			flags = transaction.CommitterMutationFlags(transaction.MutationFlagIsPessimisticLock)
 		}
 		a.deletedOldIndexKeys[string(newIdxKey)] = struct{}{}
-		return &transaction.PlainMutation{KeyOp: kvrpcpb.Op_Del, Key: newIdxKey, Value: emptyVal, IsPessimisticLock: isPessimisticLock}, nil
+		return &transaction.PlainMutation{KeyOp: kvrpcpb.Op_Del, Key: newIdxKey, Value: emptyVal, Flags: flags}, nil
 	}
 	return nil, nil
 }

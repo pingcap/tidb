@@ -104,11 +104,11 @@ require (
 
 // cloud.google.com/go/storage will upgrade grpc to v1.40.0
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
-replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
+// replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
 replace github.com/tikv/pd => github.com/killzoner/pd v1.1.0-beta.0.20220210154558-a3baac06ab3a
 
-// replace github.com/tikv/client-go/v2 => github.com/killzoner/client-go/v2 v2.0.0-rc.0.20220210125733-0014b6b3951c
+replace github.com/tikv/client-go/v2 => github.com/killzoner/client-go/v2 v2.0.0-rc.0.20220210125733-0014b6b3951c
 
 replace github.com/pingcap/tidb-tools => github.com/killzoner/tidb-tools v5.4.1-0.20220210151319-6bc4e51f77cb+incompatible
 

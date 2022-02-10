@@ -21,4 +21,4 @@ replace github.com/pingcap/tidb => ../../
 
 replace github.com/pingcap/tidb/parser => ../../parser
 
-replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
+// replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
