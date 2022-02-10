@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -4905,8 +4904,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
