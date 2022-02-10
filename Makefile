@@ -135,7 +135,7 @@ gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@export TZ='Asia/Shanghai'; \
 	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-	clean_ut_binary
+	@$(CLEAN_UT_BINARY)
 
 race: failpoint-enable
 	@export log_level=debug; \
