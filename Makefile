@@ -115,15 +115,19 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -rf
+
 ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 gotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -131,6 +135,7 @@ gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@export TZ='Asia/Shanghai'; \
 	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	clean_ut_binary
 
 race: failpoint-enable
 	@export log_level=debug; \
