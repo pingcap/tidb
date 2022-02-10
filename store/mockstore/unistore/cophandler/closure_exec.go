@@ -293,14 +293,18 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
+
+	// Here it is required that ExtraPhysTblID is last
 	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
-		lastColumn = e.columnInfos[len(e.columnInfos)-2]
 		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
+	// Here it is required that ExtraPidColID
+	// is after all other columns except ExtraPhysTblID
 	if lastColumn.GetColumnId() == model.ExtraPidColID {
-		lastColumn = e.columnInfos[len(e.columnInfos)-2]
 		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
@@ -921,6 +925,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 		}
 	}
 	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
 		tblID := tablecodec.DecodeTableID(key)
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
