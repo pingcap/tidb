@@ -63,7 +63,7 @@ type PointGetPlan struct {
 	IndexInfo          *model.IndexInfo
 	PartitionInfo      *model.PartitionDefinition
 	Handle             kv.Handle
-	HandleValue        *expression.Constant
+	HandleConstant     *expression.Constant
 	IndexValues        []types.Datum
 	IndexConstants     []*expression.Constant
 	IdxCols            []*expression.Column
@@ -917,7 +917,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
-		p.HandleValue = handlePair.con
+		p.HandleConstant = handlePair.con
 		p.PartitionInfo = partitionInfo
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {

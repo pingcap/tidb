@@ -720,8 +720,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
-		if x.HandleValue != nil {
-			val, err := x.HandleValue.Eval(chunk.Row{})
+		if x.HandleConstant != nil {
+			val, err := x.HandleConstant.Eval(chunk.Row{})
 			if err != nil {
 				return err
 			}
