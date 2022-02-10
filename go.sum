@@ -561,8 +561,8 @@ github.com/kataras/neffos v0.0.10/go.mod h1:ZYmJC07hQPW67eKuzlfY7SO3bC0mw83A3j6i
 github.com/kataras/pio v0.0.0-20190103105442-ea782b38602d/go.mod h1:NV88laa9UiiDuX9AhMbDPkGYSPugBOV6yTZB1l2K9Z0=
 github.com/killzoner/client-go/v2 v2.0.0-rc.0.20220210125733-0014b6b3951c h1:vT2UNJRH2zNaTvzJnekKCWCLp1GEakMmQjfVdP1CSKI=
 github.com/killzoner/client-go/v2 v2.0.0-rc.0.20220210125733-0014b6b3951c/go.mod h1:w3yl4sQk6Fb8sM6SD5HYwp9G67zLbx/mNGxQ2zYmzkw=
-github.com/killzoner/pd v1.1.0-beta.0.20220210154558-a3baac06ab3a h1:3qFGr1taYJSP7ieXOONSHLKW2mEi31e1rS6fX+vMurU=
-github.com/killzoner/pd v1.1.0-beta.0.20220210154558-a3baac06ab3a/go.mod h1:oK0cOQy7VC+/JfOTlgDYRFSiFxuM5XZbqd1wOrd/zsM=
+github.com/killzoner/pd v1.1.0-beta.0.20220210162307-eee9fd30b205 h1:WYl4No6/OlHjugIZeo6RN4Xl53WcP0u+TUbtcALXmSI=
+github.com/killzoner/pd v1.1.0-beta.0.20220210162307-eee9fd30b205/go.mod h1:oK0cOQy7VC+/JfOTlgDYRFSiFxuM5XZbqd1wOrd/zsM=
 github.com/killzoner/tidb-tools v5.4.1-0.20220210151319-6bc4e51f77cb+incompatible h1:VSK7SUorS+er5pZa2HEgparbrayRqz6XQZTEppIh06k=
 github.com/killzoner/tidb-tools v5.4.1-0.20220210151319-6bc4e51f77cb+incompatible/go.mod h1:W+VPM8Y+USTkOiIx0x8GjEmlhnMwbFTcPUy/cW2cxv4=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
