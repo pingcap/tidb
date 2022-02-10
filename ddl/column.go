@@ -602,11 +602,11 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
-		//setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -615,8 +615,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-
-		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -630,7 +628,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -646,7 +644,9 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 
 	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
+	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIds []int64
+	err = job.DecodeArgs(&colName, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
