@@ -18,18 +18,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-
-	"github.com/pingcap/tidb/parser/ast"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -113,12 +108,4 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) PreparedTSEvaluato
 	return func(sctx sessionctx.Context) (uint64, error) {
 		return calculateTsWithReadStaleness(sctx, readStaleness)
 	}
-}
-
-func getStaleReadReplicaScope(sctx sessionctx.Context) string {
-	instanceScope := config.GetTxnScopeFromConfig()
-	if sctx.GetSessionVars().GetReplicaRead().IsClosestRead() && instanceScope != kv.GlobalReplicaScope {
-		return instanceScope
-	}
-	return kv.GlobalReplicaScope
 }

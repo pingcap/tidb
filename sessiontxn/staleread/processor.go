@@ -246,7 +246,7 @@ func (p *InitTxnContextProcessor) onSelectOrExecuteTS(ts uint64) (err error) {
 	}
 
 	if ts != 0 {
-		err = p.txnManager.SetContextProvider(p.buildContextProvider(getStaleReadReplicaScope(p.sctx)))
+		err = p.txnManager.SetContextProvider(p.buildContextProvider(config.GetTxnScopeFromConfig()))
 	}
 
 	return err
