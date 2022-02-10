@@ -64,8 +64,8 @@ func (m *txnManager) InExplicitTxn() bool {
 	return m.sctx.GetSessionVars().TxnCtx.IsExplicit
 }
 
-func (m *txnManager) GetStmtReadTS() (uint64, error) {
-	return m.ctxProvider.GetStmtReadTS()
+func (m *txnManager) GetReadTS() (uint64, error) {
+	return m.ctxProvider.GetReadTS()
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {

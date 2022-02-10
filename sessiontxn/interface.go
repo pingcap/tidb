@@ -23,8 +23,9 @@ import (
 type TxnContextProvider interface {
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// GetStmtReadTS returns statement's read timestamp that is used by select statement without for update
-	GetStmtReadTS() (uint64, error)
+	// GetReadTS returns statement's read timestamp in current isolation level.
+	// It is used by ready only statements, so insert/update/delete/select-for-update should NOT use it
+	GetReadTS() (uint64, error)
 	// GetReadReplicaScope returns the read replica scope for the txn
 	GetReadReplicaScope() string
 }
@@ -33,9 +34,9 @@ type TxnContextProvider interface {
 // It is only used in refactor stage
 // TODO: remove it after refactor finished
 type SimpleTxnContextProvider struct {
-	InfoSchema        infoschema.InfoSchema
-	GetStmtReadTSFunc func() (uint64, error)
-	ReadReplicaScope  string
+	InfoSchema       infoschema.InfoSchema
+	GetReadTSFunc    func() (uint64, error)
+	ReadReplicaScope string
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -48,9 +49,9 @@ func (p *SimpleTxnContextProvider) GetReadReplicaScope() string {
 	return p.ReadReplicaScope
 }
 
-// GetStmtReadTS returns error, and we should not call it when provider is `SimpleTxnContextProvider`
-func (p *SimpleTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	return p.GetStmtReadTSFunc()
+// GetReadTS returns error, and we should not call it when provider is `SimpleTxnContextProvider`
+func (p *SimpleTxnContextProvider) GetReadTS() (uint64, error) {
+	return p.GetReadTSFunc()
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -59,11 +60,11 @@ type TxnManager interface {
 	InExplicitTxn() bool
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// GetReadTS returns statement's read timestamp in current isolation level.
+	// It is used by ready only statements, so insert/update/delete/select-for-update should NOT use it
+	GetReadTS() (uint64, error)
 	// GetReadReplicaScope returns the read replica scope for the txn
 	GetReadReplicaScope() string
-	// GetStmtReadTS returns statement's read timestamp in current isolation level.
-	// It is used by select statement without for update
-	GetStmtReadTS() (uint64, error)
 
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider

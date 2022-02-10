@@ -312,7 +312,7 @@ type CreateViewProcessor struct {
 
 func NewCreateViewProcessor(sctx sessionctx.Context, getError func() error) *CreateViewProcessor {
 	p := &CreateViewProcessor{}
-	p.init(sctx, ProcessTypeParsePrepare)
+	p.init(sctx, ProcessTypeValidateCreateView)
 	p.getError = getError
 	return p
 }

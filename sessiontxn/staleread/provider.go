@@ -34,7 +34,7 @@ func (p *staleReadTxnContextProvider) GetReadReplicaScope() string {
 	return p.readReplicaScope
 }
 
-func (p *staleReadTxnContextProvider) GetStmtReadTS() (uint64, error) {
+func (p *staleReadTxnContextProvider) GetReadTS() (uint64, error) {
 	return p.ts, nil
 }
 

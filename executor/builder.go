@@ -129,7 +129,7 @@ func newExecutorBuilder(ctx sessionctx.Context, ti *TelemetryInfo) *executorBuil
 	}
 
 	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
-		provider.GetStmtReadTSFunc = b.getReadTS
+		provider.GetReadTSFunc = b.getReadTS
 	}
 
 	return b
@@ -758,7 +758,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 			panic("is not staleness")
 		}
 
-		staleReadTS, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
+		staleReadTS, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
 		if err != nil {
 			panic(err)
 		}
@@ -1511,7 +1511,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.forUpdateTS, nil
 	}
 
-	return sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
+	return sessiontxn.GetTxnManager(b.ctx).GetReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
