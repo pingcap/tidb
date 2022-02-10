@@ -8,8 +8,8 @@ require (
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
 	github.com/pingcap/tidb v2.0.11+incompatible
 	github.com/stretchr/testify v1.7.0
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20210512015243-d19fbe541bf9
-	go.uber.org/goleak v1.1.11 // indirect
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20210512015243-d19fbe541bf9 // indirect
+	go.etcd.io/etcd/client/v3 v3.5.2
 	go.uber.org/zap v1.19.1
 	google.golang.org/grpc v1.40.0
 )

@@ -60,7 +60,9 @@ require (
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.26.0
 	github.com/shirou/gopsutil/v3 v3.21.12
+	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
+	github.com/shurcooL/vfsgen v0.0.0-20200824052919-0d455de96546 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.1.3
@@ -103,6 +105,12 @@ require (
 // cloud.google.com/go/storage will upgrade grpc to v1.40.0
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
+
+replace github.com/tikv/pd => github.com/killzoner/pd v1.1.0-beta.0.20220210154558-a3baac06ab3a
+
+// replace github.com/tikv/client-go/v2 => github.com/killzoner/client-go/v2 v2.0.0-rc.0.20220210125733-0014b6b3951c
+
+replace github.com/pingcap/tidb-tools => github.com/killzoner/tidb-tools v5.4.1-0.20220210151319-6bc4e51f77cb+incompatible
 
 replace github.com/pingcap/tidb/parser => ./parser
 
