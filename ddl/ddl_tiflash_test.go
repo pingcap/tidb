@@ -377,12 +377,20 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash2")
 
 	CheckFlashback(s, tk, t)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	r, ok := s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	require.NotNil(t, r)
+	require.True(t, ok)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.Nil(t, replica)
+	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	require.Nil(t, r)
+	require.False(t, ok)
 }
 
 // Truncate partition shall not block.

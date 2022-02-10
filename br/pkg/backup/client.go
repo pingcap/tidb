@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
@@ -82,8 +83,9 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage storage.ExternalStorage
-	backend *backuppb.StorageBackend
+	storage    storage.ExternalStorage
+	backend    *backuppb.StorageBackend
+	apiVersion kvrpcpb.APIVersion
 
 	gcTTL int64
 }
@@ -191,6 +193,16 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
+}
+
+// GetApiVersion sets api version of the TiKV storage
+func (bc *Client) GetApiVersion() kvrpcpb.APIVersion {
+	return bc.apiVersion
+}
+
+// SetApiVersion sets api version of the TiKV storage
+func (bc *Client) SetApiVersion(v kvrpcpb.APIVersion) {
+	bc.apiVersion = v
 }
 
 // CheckBackupStorageIsLocked checks whether backups is locked.
@@ -707,6 +719,8 @@ func (bc *Client) fineGrainedBackup(
 					logutil.Key("fine-grained-range-end", resp.EndKey),
 				)
 				rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
+				apiVersion := resp.ApiVersion
+				bc.SetApiVersion(apiVersion)
 
 				// Update progress
 				progressCallBack(RegionUnit)
@@ -941,7 +955,8 @@ func doSendBackup(
 		// TODO: handle errors in the resp.
 		logutil.CL(ctx).Debug("range backed up",
 			logutil.Key("small-range-start-key", resp.GetStartKey()),
-			logutil.Key("small-range-end-key", resp.GetEndKey()))
+			logutil.Key("small-range-end-key", resp.GetEndKey()),
+			zap.Int("api-version", int(resp.ApiVersion)))
 		err = respFn(resp)
 		if err != nil {
 			return errors.Trace(err)
