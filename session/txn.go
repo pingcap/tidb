@@ -499,7 +499,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	return tf.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(tf.txnScope))
 }
 
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+func (s *session) getTxnFuture(ctx context.Context, forRead bool) *txnFuture {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -511,7 +511,7 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	if s.sessionVars.LowResolutionTSO {
 		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope(), ForRead: forRead})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
