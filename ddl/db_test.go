@@ -7785,6 +7785,8 @@ func (s *testSerialDBSuite) TestIssue32079(c *C) {
 	_, checkErr = tk1.Exec("use test")
 
 	d := s.dom.DDL()
+	originHook := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	ctx := mock.NewContext()
 	ctx.Store = s.store
