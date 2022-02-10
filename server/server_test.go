@@ -896,7 +896,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, err1)
 		lastID, err1 := rs.LastInsertId()
 		require.NoError(t, err1)
-		require.Equal(t, int64(1), lastID)
+		require.Equal(t, int64(3), lastID)
 		affectedRows, err1 := rs.RowsAffected()
 		require.NoError(t, err1)
 		require.Equal(t, int64(5), affectedRows)

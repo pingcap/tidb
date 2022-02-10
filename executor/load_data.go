@@ -140,6 +140,7 @@ type LoadDataInfoSub struct {
 
 // SetTxnCtx save the ctx from context
 func (e *LoadDataInfoSub) SetTxnCtx(ctx sessionctx.Context) {
+	ctx.GetSessionVars().StmtCtx = e.ctx.GetSessionVars().StmtCtx
 	e.ctx = ctx
 }
 
