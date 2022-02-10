@@ -948,7 +948,7 @@ func TestAddTimeSig(t *testing.T) {
 	require.NoError(t, err)
 	res, _, err := du.add(ctx, now, "1", "MICROSECOND")
 	require.NoError(t, err)
-	require.Equal(t, int8(6), res.Fsp())
+	require.Equal(t, 6, res.Fsp())
 
 	tbl = []struct {
 		Input         string
@@ -1180,13 +1180,13 @@ func TestSysDate(t *testing.T) {
 	require.Error(t, err)
 }
 
-func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int8) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
 
 	f := types.NewFieldType(tp)
-	f.Decimal = int(fsp)
+	f.Decimal = fsp
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -1604,7 +1604,7 @@ func TestTimeDiff(t *testing.T) {
 		args       []interface{}
 		expectStr  string
 		isNil      bool
-		fsp        int8
+		fsp        int
 		flen       int
 		getWarning bool
 	}{
@@ -1995,7 +1995,7 @@ func TestDateArithFuncs(t *testing.T) {
 	testDurations := []struct {
 		fc       functionClass
 		dur      string
-		fsp      int8
+		fsp      int
 		unit     string
 		format   interface{}
 		expected string

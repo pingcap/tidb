@@ -350,7 +350,7 @@ func TestShowHistogramsInFlight(t *testing.T) {
 	tk.MustExec("use test")
 	result := tk.MustQuery("show histograms_in_flight")
 	rows := result.Rows()
-	require.Equal(t, len(rows), 1)
+	require.Len(t, rows, 1)
 	require.Equal(t, rows[0][0], "0")
 }
 
