@@ -92,17 +92,16 @@ func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			require.Nil(t, err)
+			require.NoError(t, err)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			require.Nil(t, err)
-			break LOOP
+			return
 		}
 	}
 }

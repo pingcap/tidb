@@ -15,7 +15,9 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math/rand"
@@ -57,7 +59,11 @@ ut run $package $test
 ut build
 
 // build a test package
-ut build xxx`
+ut build xxx
+
+// write the junitfile
+ut run --junitfile xxx`
+
 	fmt.Println(msg)
 	return true
 }
@@ -133,12 +139,10 @@ func cmdBuild(args ...string) bool {
 
 	// build all packages
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
 		}
 		return true
 	}
@@ -163,16 +167,16 @@ func cmdRun(args ...string) bool {
 		return false
 	}
 	tasks := make([]task, 0, 5000)
+	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		for _, pkg := range pkgs {
-			fmt.Println("handling package", pkg)
-			err := buildTestBinary(pkg)
-			if err != nil {
-				fmt.Println("build package error", pkg, err)
-				return false
-			}
+		err := buildTestBinaryMulti(pkgs)
+		if err != nil {
+			fmt.Println("build package error", pkgs, err)
+			return false
+		}
 
+		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
 				fmt.Println("check test binary existance error", err)
@@ -248,33 +252,99 @@ func cmdRun(args ...string) bool {
 		}
 		tasks = tmp
 	}
-	fmt.Println("building task finish...", len(tasks))
+	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
-	numactl := numactlExist()
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
 	var wg sync.WaitGroup
 	for i := 0; i < P; i++ {
-		works[i] = numa{fmt.Sprintf("%d", i), numactl, false}
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
 
 	shuffle(tasks)
+
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+	fmt.Println("run all tasks takes", time.Since(start))
+
+	if junitfile != "" {
+		out := collectTestResults(works)
+		f, err := os.Create(junitfile)
+		if err != nil {
+			fmt.Println("create junit file fail:", err)
+			return false
+		}
+		if err := write(f, out); err != nil {
+			fmt.Println("write junit file error:", err)
+			return false
+		}
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
 		}
 	}
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
 	return true
 }
 
+// handleFlags strip the '--flag xxx' from the command line os.Args
+// Example of the os.Args changes
+// Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
+// After: ut run session TestXXX
+// The value of the flag is returned.
+func handleFlags(flag string) string {
+	var res string
+	tmp := os.Args[:0]
+	// Iter to the flag
+	var i int
+	for ; i < len(os.Args); i++ {
+		if os.Args[i] == flag {
+			i++
+			break
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	// Handle the flag
+	if i < len(os.Args) {
+		res = os.Args[i]
+		i++
+	}
+	// Iter the remain flags
+	for ; i < len(os.Args); i++ {
+		tmp = append(tmp, os.Args[i])
+	}
+
+	// os.Args is now the original flags with '--coverprofile XXX' removed.
+	os.Args = tmp
+	return res
+}
+
+var junitfile string
+var coverprofile string
+var coverFileTempDir string
+
 func main() {
+	junitfile = handleFlags("--junitfile")
+	coverprofile = handleFlags("--coverprofile")
+	if coverprofile != "" {
+		var err error
+		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
+		if err != nil {
+			fmt.Println("create temp dir fail", coverFileTempDir)
+			os.Exit(1)
+		}
+		defer os.Remove(coverFileTempDir)
+	}
+
 	// Get the correct count of CPU if it's in docker.
 	P = runtime.GOMAXPROCS(0)
 	rand.Seed(time.Now().Unix())
@@ -305,6 +375,44 @@ func main() {
 		if !isSucceed {
 			os.Exit(1)
 		}
+	}
+}
+
+func collectCoverProfileFile() {
+	// Combine all the cover file of single test function into a whole.
+	files, err := os.ReadDir(coverFileTempDir)
+	if err != nil {
+		fmt.Println("collect cover file error:", err)
+		os.Exit(-1)
+	}
+
+	w, err := os.Create(coverprofile)
+	if err != nil {
+		fmt.Println("create cover file error:", err)
+		os.Exit(-1)
+	}
+	defer w.Close()
+	w.WriteString("mode: set\n")
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+		if err != nil {
+			fmt.Println("open temp cover file error:", err)
+			os.Exit(-1)
+		}
+		defer f.Close()
+
+		r := bufio.NewReader(f)
+		line, _, err := r.ReadLine()
+		if err != nil || string(line) != "mode: set" {
+			continue
+		}
+
+		io.Copy(w, r)
 	}
 }
 
@@ -351,79 +459,117 @@ func listPackages() ([]string, error) {
 }
 
 type numa struct {
-	cpu     string
-	numactl bool
 	Fail    bool
+	results []testResult
 }
 
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		start := time.Now()
 		res := n.runTestCase(t.pkg, t.test, t.old)
-		if res.err != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
-			io.Copy(os.Stderr, &res.output)
+		if res.Failure != nil {
+			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
+			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
 			n.Fail = true
 		}
+		n.results = append(n.results, res)
 	}
 }
 
 type testResult struct {
-	err    error
-	output bytes.Buffer
+	JUnitTestCase
+	d time.Duration
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
-	exe := "./" + testFileName(pkg)
-	var cmd *exec.Cmd
-	if n.numactl {
-		cmd = n.testCommandWithNumaCtl(exe, fn, old)
-	} else {
-		cmd = n.testCommand(exe, fn, old)
+func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+	res := testResult{
+		JUnitTestCase: JUnitTestCase{
+			Classname: path.Join(modulePath, pkg),
+			Name:      fn,
+		},
 	}
+	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
-	cmd.Stdout = &res.output
-	cmd.Stderr = &res.output
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
-		res.err = withTrace(err)
+		res.Failure = &JUnitFailure{
+			Message:  "Failed",
+			Contents: buf.String(),
+		}
 	}
+	res.d = time.Since(start)
+	res.Time = formatDurationAsSeconds(res.d)
 	return res
 }
 
-func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
-	if old {
-		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			"numactl", "--physcpubind", n.cpu, "--",
-			exe,
-			"-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+func collectTestResults(workers []numa) JUnitTestSuites {
+	version := goVersion()
+	// pkg => test cases
+	pkgs := make(map[string][]JUnitTestCase)
+	durations := make(map[string]time.Duration)
+
+	// The test result in workers are shuffled, so group by the packages here
+	for _, n := range workers {
+		for _, res := range n.results {
+			cases, ok := pkgs[res.Classname]
+			if !ok {
+				cases = make([]JUnitTestCase, 0, 10)
+			}
+			cases = append(cases, res.JUnitTestCase)
+			pkgs[res.Classname] = cases
+			durations[res.Classname] = durations[res.Classname] + res.d
+		}
 	}
 
-	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		"numactl", "--physcpubind", n.cpu, "--",
-		exe,
-		"-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
+	suites := JUnitTestSuites{}
+	// Turn every package result to a suite.
+	for pkg, cases := range pkgs {
+		suite := JUnitTestSuite{
+			Tests:      len(cases),
+			Failures:   failureCases(cases),
+			Time:       formatDurationAsSeconds(durations[pkg]),
+			Name:       pkg,
+			Properties: packageProperties(version),
+			TestCases:  cases,
+		}
+		suites.Suites = append(suites.Suites, suite)
+	}
+	return suites
 }
 
-func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
+func failureCases(input []JUnitTestCase) int {
+	sum := 0
+	for _, v := range input {
+		if v.Failure != nil {
+			sum++
+		}
+	}
+	return sum
+}
+
+func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+	args := make([]string, 0, 10)
+	exe := "./" + testFileName(pkg)
+	if coverprofile != "" {
+		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
+		tmpFile := path.Join(coverFileTempDir, fileName)
+		args = append(args, "-test.coverprofile", tmpFile)
+	}
+	args = append(args, "-test.cpu", "1")
+	args = append(args, []string{"-test.timeout", "2m"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		return exec.Command(
-			exe,
-			"-test.timeout", "20s",
-			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
+		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
+	} else {
+		// session.test -test.run TestClusteredPrefixColum
+		args = append(args, "-test.run", fn)
 	}
 
-	// session.test -test.run TestClusteredPrefixColum
-	return exec.Command(
-		exe,
-		"-test.timeout", "20s",
-		"-test.cpu", "1", "-test.run", fn)
+	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
@@ -438,7 +584,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
+	} else {
+		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -446,7 +597,31 @@ func buildTestBinary(pkg string) error {
 		return withTrace(err)
 	}
 	return nil
+}
 
+// buildTestBinaryMulti is much faster than build the test packages one by one.
+func buildTestBinaryMulti(pkgs []string) error {
+	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	packages := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		packages = append(packages, path.Join(modulePath, pkg))
+	}
+
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
+	} else {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+	}
+	cmd.Args = append(cmd.Args, packages...)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -457,13 +632,6 @@ func testBinaryExist(pkg string) (bool, error) {
 		}
 	}
 	return true, withTrace(err)
-}
-func numactlExist() bool {
-	find, err := exec.Command("which", "numactl").Output()
-	if err == nil && len(find) > 0 {
-		return true
-	}
-	return false
 }
 
 func testFileName(pkg string) string {
@@ -538,6 +706,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
+	rand.Seed(time.Now().UnixNano())
 	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
@@ -563,4 +732,91 @@ func withTrace(err error) error {
 	var stack [4096]byte
 	sz := runtime.Stack(stack[:], false)
 	return &errWithStack{err, stack[:sz]}
+}
+
+func formatDurationAsSeconds(d time.Duration) string {
+	return fmt.Sprintf("%f", d.Seconds())
+}
+
+func packageProperties(goVersion string) []JUnitProperty {
+	return []JUnitProperty{
+		{Name: "go.version", Value: goVersion},
+	}
+}
+
+// goVersion returns the version as reported by the go binary in PATH. This
+// version will not be the same as runtime.Version, which is always the version
+// of go used to build the gotestsum binary.
+//
+// To skip the os/exec call set the GOVERSION environment variable to the
+// desired value.
+func goVersion() string {
+	if version, ok := os.LookupEnv("GOVERSION"); ok {
+		return version
+	}
+	cmd := exec.Command("go", "version")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
+}
+
+func write(out io.Writer, suites JUnitTestSuites) error {
+	doc, err := xml.MarshalIndent(suites, "", "\t")
+	if err != nil {
+		return err
+	}
+	_, err = out.Write([]byte(xml.Header))
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(doc)
+	return err
+}
+
+// JUnitTestSuites is a collection of JUnit test suites.
+type JUnitTestSuites struct {
+	XMLName xml.Name `xml:"testsuites"`
+	Suites  []JUnitTestSuite
+}
+
+// JUnitTestSuite is a single JUnit test suite which may contain many
+// testcases.
+type JUnitTestSuite struct {
+	XMLName    xml.Name        `xml:"testsuite"`
+	Tests      int             `xml:"tests,attr"`
+	Failures   int             `xml:"failures,attr"`
+	Time       string          `xml:"time,attr"`
+	Name       string          `xml:"name,attr"`
+	Properties []JUnitProperty `xml:"properties>property,omitempty"`
+	TestCases  []JUnitTestCase
+}
+
+// JUnitTestCase is a single test case with its result.
+type JUnitTestCase struct {
+	XMLName     xml.Name          `xml:"testcase"`
+	Classname   string            `xml:"classname,attr"`
+	Name        string            `xml:"name,attr"`
+	Time        string            `xml:"time,attr"`
+	SkipMessage *JUnitSkipMessage `xml:"skipped,omitempty"`
+	Failure     *JUnitFailure     `xml:"failure,omitempty"`
+}
+
+// JUnitSkipMessage contains the reason why a testcase was skipped.
+type JUnitSkipMessage struct {
+	Message string `xml:"message,attr"`
+}
+
+// JUnitProperty represents a key/value pair used to define properties.
+type JUnitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// JUnitFailure contains data related to a failed test.
+type JUnitFailure struct {
+	Message  string `xml:"message,attr"`
+	Type     string `xml:"type,attr"`
+	Contents string `xml:",chardata"`
 }

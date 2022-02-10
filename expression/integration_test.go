@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2776,6 +2777,9 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
+
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
@@ -4761,17 +4765,6 @@ func TestIssue17287(t *testing.T) {
 	tk.MustExec("set @val2 = 1589873946;")
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
-}
-
-func TestIssue26989(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select position('a' in 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'a');").Check(testkit.Rows("1"))
 }
 
 func TestIssue17898(t *testing.T) {
@@ -7027,7 +7020,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
