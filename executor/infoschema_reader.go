@@ -141,8 +141,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionStatus:
 			err = e.setDataForTiKVRegionStatus(sctx)
-		case infoschema.TableTiKVRegionPeers:
-			err = e.setDataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(sctx)
 		case infoschema.TableConstraints:
@@ -1526,63 +1524,6 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 		row[16].SetInt64(region.ReplicationStatus.StateID)
 	}
 	e.rows = append(e.rows, row)
-}
-
-func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
-	}
-	for i := range regionsInfo.Regions {
-		e.setNewTiKVRegionPeersCols(&regionsInfo.Regions[i])
-	}
-	return nil
-}
-
-func (e *memtableRetriever) setNewTiKVRegionPeersCols(region *helper.RegionInfo) {
-	records := make([][]types.Datum, 0, len(region.Peers))
-	pendingPeerIDSet := set.NewInt64Set()
-	for _, peer := range region.PendingPeers {
-		pendingPeerIDSet.Insert(peer.ID)
-	}
-	downPeerMap := make(map[int64]int64, len(region.DownPeers))
-	for _, peerStat := range region.DownPeers {
-		downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
-	}
-	for _, peer := range region.Peers {
-		row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
-		row[0].SetInt64(region.ID)
-		row[1].SetInt64(peer.ID)
-		row[2].SetInt64(peer.StoreID)
-		if peer.IsLearner {
-			row[3].SetInt64(1)
-		} else {
-			row[3].SetInt64(0)
-		}
-		if peer.ID == region.Leader.ID {
-			row[4].SetInt64(1)
-		} else {
-			row[4].SetInt64(0)
-		}
-		if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer, mysql.DefaultCollationName)
-			row[6].SetInt64(downSec)
-		} else if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer, mysql.DefaultCollationName)
-		} else {
-			row[5].SetString(normalPeer, mysql.DefaultCollationName)
-		}
-		records = append(records, row)
-	}
-	e.rows = append(e.rows, records...)
 }
 
 const (

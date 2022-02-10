@@ -426,13 +426,31 @@ func (e *ShowExec) fetchShowTables() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	schemaTables := e.is.SchemaTables(e.DBName)
+	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	var tableTypes = make(map[string]string)
-	for _, v := range e.is.SchemaTables(e.DBName) {
+	var (
+		tableTypes          = make(map[string]string)
+		fieldPatternsRegexp *regexp.Regexp
+		FieldFilterEnable   bool
+		fieldFilter         string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
+	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+			continue
+		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(v.Meta().Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)

@@ -2735,9 +2735,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if newCollationEnabled {
-		collate.EnableNewCollations()
-	}
+	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
 	if err != nil {
