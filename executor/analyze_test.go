@@ -569,7 +569,7 @@ func (s *testSerialSuite2) TestAnalyzeIndex(c *C) {
 	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
 	tk.MustExec("set @@tidb_analyze_version=default")
 	tk.MustExec("analyze table t1")
-	c.Assert(len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
+	c.Assert(len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Equals, 0)
 
 	func() {
 		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
