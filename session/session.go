@@ -2958,6 +2958,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	return sessiontxn.GetTxnManager(s).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		Sctx:       s,
 		InfoSchema: is.(infoschema.InfoSchema),
 	})
 }

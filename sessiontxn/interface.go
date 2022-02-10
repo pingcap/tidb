@@ -34,6 +34,7 @@ type TxnContextProvider interface {
 // It is only used in refactor stage
 // TODO: remove it after refactor finished
 type SimpleTxnContextProvider struct {
+	Sctx             sessionctx.Context
 	InfoSchema       infoschema.InfoSchema
 	GetReadTSFunc    func() (uint64, error)
 	ReadReplicaScope string
@@ -56,16 +57,11 @@ func (p *SimpleTxnContextProvider) GetReadTS() (uint64, error) {
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	TxnContextProvider
 	// InExplicitTxn returns whether in an explicit txn or not
 	InExplicitTxn() bool
-	// GetTxnInfoSchema returns the information schema used by txn
-	GetTxnInfoSchema() infoschema.InfoSchema
-	// GetReadTS returns statement's read timestamp in current isolation level.
-	// It is used by ready only statements, so insert/update/delete/select-for-update should NOT use it
-	GetReadTS() (uint64, error)
 	// GetReadReplicaScope returns the read replica scope for the txn
 	GetReadReplicaScope() string
-
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
 	// SetContextProvider sets the context provider

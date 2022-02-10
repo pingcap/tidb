@@ -27,6 +27,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
+
+	"github.com/pingcap/tidb/sessiontxn"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -281,6 +285,14 @@ func defaultAggTestCase(exec string) *aggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	err := sessiontxn.GetTxnManager(ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		Sctx:             ctx,
+		InfoSchema:       nil,
+		ReadReplicaScope: kv.GlobalReplicaScope,
+	})
+	if err != nil {
+		panic(err)
+	}
 	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
 }
 

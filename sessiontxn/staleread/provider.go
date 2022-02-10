@@ -21,6 +21,7 @@ import (
 )
 
 type staleReadTxnContextProvider struct {
+	sctx             sessionctx.Context
 	is               infoschema.InfoSchema
 	ts               uint64
 	readReplicaScope string

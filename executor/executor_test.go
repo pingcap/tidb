@@ -9683,6 +9683,7 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		&plannercore.PhysicalUnionAll{},
 	}
 	err = sessiontxn.GetTxnManager(se).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		Sctx:       se,
 		InfoSchema: is,
 	})
 	c.Assert(err, IsNil)

@@ -20,6 +20,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessiontxn"
+
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -216,5 +220,15 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	se.GetSessionVars().SetHashAggFinalConcurrency(1)
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
+	err = sessiontxn.GetTxnManager(se).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		Sctx:             se,
+		InfoSchema:       se.GetInfoSchema().(infoschema.InfoSchema),
+		ReadReplicaScope: kv.GlobalReplicaScope,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
 	return se, nil
 }

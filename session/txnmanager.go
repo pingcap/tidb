@@ -15,7 +15,6 @@
 package session
 
 import (
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 )
@@ -36,43 +35,23 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 
 // txnManager implements sessiontxn.TxnManager
 type txnManager struct {
+	sessiontxn.TxnContextProvider
 	sctx sessionctx.Context
-
-	ctxProvider sessiontxn.TxnContextProvider
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
 	return &txnManager{sctx: sctx}
 }
 
-func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
-	if m.ctxProvider == nil {
-		return nil
-	}
-	return m.ctxProvider.GetTxnInfoSchema()
-}
-
-// GetReadReplicaScope returns the read replica scope for the txn
-func (m *txnManager) GetReadReplicaScope() string {
-	if m.ctxProvider == nil {
-		return ""
-	}
-	return m.ctxProvider.GetReadReplicaScope()
-}
-
 func (m *txnManager) InExplicitTxn() bool {
 	return m.sctx.GetSessionVars().TxnCtx.IsExplicit
 }
 
-func (m *txnManager) GetReadTS() (uint64, error) {
-	return m.ctxProvider.GetReadTS()
-}
-
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
-	return m.ctxProvider
+	return m.TxnContextProvider
 }
 
 func (m *txnManager) SetContextProvider(provider sessiontxn.TxnContextProvider) error {
-	m.ctxProvider = provider
+	m.TxnContextProvider = provider
 	return nil
 }

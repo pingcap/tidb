@@ -132,6 +132,7 @@ func (p *baseProcessor) buildContextProvider(readReplicaScope string) sessiontxn
 	}
 
 	return &staleReadTxnContextProvider{
+		sctx:             p.sctx,
 		is:               p.is,
 		ts:               p.ts,
 		readReplicaScope: readReplicaScope,
