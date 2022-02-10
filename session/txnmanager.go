@@ -38,8 +38,7 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 type txnManager struct {
 	sctx sessionctx.Context
 
-	ctxProvider      sessiontxn.TxnContextProvider
-	preparedProvider sessiontxn.TxnContextProvider
+	ctxProvider sessiontxn.TxnContextProvider
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
