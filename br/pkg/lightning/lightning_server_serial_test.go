@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,6 +63,8 @@ func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask"))
 		s.lightning.Stop()
 	}
+
+	web.EnableCurrentProgress()
 
 	return
 }
