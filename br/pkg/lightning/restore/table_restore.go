@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,7 +201,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		tr.logger.Error("fail to restoreEngines because indexengine is nil")
-		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
+		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
 	}
 	// If there is an index engine only, it indicates no data needs to restore.
 	// So we can change status to imported directly and avoid opening engine.
@@ -877,7 +878,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 	}
 
 	if len(unknownCols) > 0 {
-		return colPerm, errors.Errorf("unknown columns in header %s", unknownCols)
+		return colPerm, common.ErrUnknownColumns.GenWithStackByArgs(strings.Join(unknownCols, ","), tableInfo.Name)
 	}
 
 	for _, colInfo := range tableInfo.Columns {
@@ -962,7 +963,7 @@ func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChe
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		return errors.Errorf("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+		return common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),

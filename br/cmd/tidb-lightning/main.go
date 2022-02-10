@@ -97,7 +97,7 @@ func main() {
 	}
 	if err != nil {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
-		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
+		fmt.Fprintln(os.Stderr, "tidb lightning encountered error:", err)
 	} else {
 		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
 		exitMsg := "tidb lightning exit successfully"

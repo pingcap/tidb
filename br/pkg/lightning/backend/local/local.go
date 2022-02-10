@@ -256,7 +256,7 @@ func NewLocalBackend(
 
 	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
-		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
+		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
 
@@ -274,7 +274,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
+			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(localFile)
 		}
 	}
 
@@ -282,20 +282,20 @@ func NewLocalBackend(
 	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
+			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig())
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
 	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
 	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
@@ -331,7 +331,7 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	return backend.MakeBackend(local), nil

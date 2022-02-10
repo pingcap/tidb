@@ -72,7 +72,7 @@ func TestRun(t *testing.T) {
 			Driver: "invalid",
 		},
 	}, invalidGlue)
-	require.EqualError(t, err, "open checkpoint db failed: Unknown checkpoint driver invalid")
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{

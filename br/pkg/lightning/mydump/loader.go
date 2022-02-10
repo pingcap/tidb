@@ -38,7 +38,7 @@ type MDDatabaseMeta struct {
 	charSet    string
 }
 
-func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.L().Warn("failed to extract table schema",
@@ -53,7 +53,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
 	}
 
-	return schemaStr, nil
+	return schemaStr
 }
 
 type MDTableMeta struct {
@@ -112,11 +112,11 @@ type mdLoaderSetup struct {
 func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, common.NormalizeError(err)
 	}
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, common.NormalizeError(err)
 	}
 
 	return NewMyDumpLoaderWithStore(ctx, cfg, s)
@@ -127,13 +127,13 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	var err error
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
-		return nil, errors.New("table route is deprecated, can't config both [routes] and [mydumper.files]")
+		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {
 		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid table route rule")
 		}
 	}
 
@@ -145,7 +145,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		f, err = filter.Parse(cfg.Mydumper.Filter)
 	}
 	if err != nil {
-		return nil, errors.Annotate(err, "parse filter failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
 	if !cfg.Mydumper.CaseSensitive {
 		f = filter.CaseInsensitive(f)
@@ -158,7 +158,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 
 	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
-		return nil, errors.Annotate(err, "parser file routing rule failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
 
 	mdl := &MDLoader{
@@ -230,17 +230,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
 	if err := s.listFiles(ctx, store); err != nil {
-		return errors.Annotate(err, "list file failed")
+		return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 	}
 	if err := s.route(); err != nil {
-		return errors.Trace(err)
+		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
 	}
 
 	// setup database schema
 	if len(s.dbSchemas) != 0 {
 		for _, fileInfo := range s.dbSchemas {
 			if _, dbExists := s.insertDB(fileInfo); dbExists && s.loader.router == nil {
-				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -249,7 +249,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
 			if _, _, tableExists := s.insertTable(fileInfo); tableExists && s.loader.router == nil {
-				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -261,7 +261,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			if !tableExists {
 				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
 				// remove the last `-view.sql` from path as the relate table schema file path
-				return errors.Errorf("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+				return common.ErrInvalidArgument.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
 			}
 		}
 	}

@@ -167,7 +167,7 @@ func (rc *Controller) clusterResource(ctx context.Context, localSource int64) er
 }
 
 // ClusterIsAvailable check cluster is available to import data. this test can be skipped.
-func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
+func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	passed := true
 	message := "Cluster is available"
 	defer func() {
@@ -180,7 +180,6 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
 	}
-	return nil
 }
 
 func isTiFlash(store *api.MetaStore) bool {
@@ -359,7 +358,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 
 	u, err := storage.ParseBackend(rc.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return errors.Annotate(err, "parse backend failed")
+		return common.NormalizeError(err)
 	}
 	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
 		CheckPermissions: []storage.Permission{
@@ -377,7 +376,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 // HasLargeCSV checks whether input csvs is fit for Lightning import.
 // If strictFormat is false, and csv file is large. Lightning will have performance issue.
 // this test cannot be skipped.
-func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
+func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) {
 	passed := true
 	message := "Source csv files size is proper"
 	defer func() {
@@ -397,7 +396,6 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 	} else {
 		message = "Skip the csv size check, because config.StrictFormat is true"
 	}
-	return nil
 }
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
@@ -508,18 +506,18 @@ func (rc *Controller) localResource(sourceSize int64) error {
 }
 
 // CheckpointIsValid checks whether we can start this import with this checkpoint.
-func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool, error) {
+func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := rc.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		// there is no checkpoint
 		log.L().Debug("no checkpoint detected", zap.String("table", uniqueName))
-		return nil, true, nil
+		return nil, true
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
-		return nil, false, nil
+		return nil, false
 	}
 
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMaxInvalid {
@@ -541,7 +539,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 			"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 			"For details of this failure, read the log file from the PREVIOUS run",
 			uniqueName, failedStep.MetricName(), action.String()))
-		return msgs, false, nil
+		return msgs, false
 	}
 
 	dbInfo, ok := rc.dbInfos[tableInfo.DB]
@@ -554,7 +552,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 					"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 					"For details of this failure, read the log file from the PREVIOUS run",
 					uniqueName))
-				return msgs, false, nil
+				return msgs, false
 			}
 		}
 	}
@@ -575,7 +573,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 	}
 	if len(columns) == 0 {
 		log.L().Debug("no valid checkpoint detected", zap.String("table", uniqueName))
-		return nil, false, nil
+		return nil, false
 	}
 	info := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
@@ -589,7 +587,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 				"consider remove this checkpoint, and start import again.", uniqueName))
 		}
 	}
-	return msgs, false, nil
+	return msgs, false
 }
 
 // hasDefault represents col has default value.

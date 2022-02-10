@@ -181,8 +181,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
-		dbSQL, err := dbMeta.GetSchema(ctx, store)
-		require.NoError(t, err)
+		dbSQL := dbMeta.GetSchema(ctx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
 			sql, err := tblMeta.GetSchema(ctx, store)

@@ -211,7 +211,7 @@ func (s *restoreSchemaSuite) TestNoSchemaPath(c *C) {
 	s.rc.dbMetas[0].Tables = append(s.rc.dbMetas[0].Tables, &fakeTable)
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `table .* schema not found`)
+	c.Assert(err, ErrorMatches, `.*table .* schema not found`)
 	s.rc.dbMetas[0].Tables = s.rc.dbMetas[0].Tables[:len(s.rc.dbMetas[0].Tables)-1]
 }
 

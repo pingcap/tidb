@@ -24,6 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/carlmjohnson/flagext"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 )
@@ -120,7 +121,7 @@ func Must(cfg *GlobalConfig, err error) *GlobalConfig {
 	case flag.ErrHelp:
 		os.Exit(0)
 	default:
-		fmt.Println("Failed to parse command flags: ", err)
+		fmt.Println(err)
 		os.Exit(2)
 	}
 	return cfg
@@ -176,7 +177,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 
 	if err := fs.Parse(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, common.ErrInvalidArgument.Wrap(err)
 	}
 	if *printVersion {
 		fmt.Println(build.Info())
@@ -186,10 +187,10 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if len(configFilePath) > 0 {
 		data, err := os.ReadFile(configFilePath)
 		if err != nil {
-			return nil, errors.Annotatef(err, "Cannot read config file `%s`", configFilePath)
+			return nil, common.ErrReadConfigFile.Wrap(err).GenWithStackByArgs(configFilePath)
 		}
 		if err = toml.Unmarshal(data, cfg); err != nil {
-			return nil, errors.Annotatef(err, "Cannot parse config file `%s`", configFilePath)
+			return nil, common.ErrParseConfigFile.Wrap(err).GenWithStackByArgs(configFilePath)
 		}
 		cfg.ConfigFileContent = data
 	}
@@ -274,7 +275,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
-		return nil, errors.New("If server-mode is enabled, the status-addr must be a valid listen address")
+		return nil, common.ErrInvalidConfig.GenWithStack("If server-mode is enabled, the status-addr must be a valid listen address")
 	}
 
 	cfg.App.Config.Adjust()
