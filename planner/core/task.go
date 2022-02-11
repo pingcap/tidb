@@ -1094,11 +1094,19 @@ type AggInfo struct {
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
-// partialIsCop means whether partial agg is a cop task.
+// partialIsCop means whether partial agg is a cop task. When partialIsCop is false,
+// we do not set the AggMode for partialAgg cause it may be split further when
+// building the aggregate executor(e.g. buildHashAgg will split the AggDesc further for parallel executing).
+// firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
+<<<<<<< HEAD
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
+=======
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
 		GroupByItems: original.GroupByItems,
@@ -1225,6 +1233,7 @@ func BuildFinalModeAggregation(
 				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
 				sumAgg := *aggFunc
 				sumAgg.Name = ast.AggFuncSum
+<<<<<<< HEAD
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
@@ -1232,12 +1241,29 @@ func BuildFinalModeAggregation(
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
 				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
+=======
+				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
+				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
+				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
+				newAggFunc := aggFunc.Clone()
+				newAggFunc.Name = aggFunc.Name
+				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
+				if aggFunc.Name == ast.AggFuncGroupConcat {
+					// append the last separator arg
+					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
+				}
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 			} else {
-				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+				partialFuncDesc := aggFunc.Clone()
+				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
+				if aggFunc.Name == ast.AggFuncFirstRow {
+					firstRowFuncMap[partialFuncDesc] = finalAggFunc
+				}
 			}
 
 			finalAggFunc.Mode = aggregation.FinalMode
-			funcMap[aggFunc] = finalAggFunc
 		}
 
 		finalAggFunc.Args = args
@@ -1245,6 +1271,11 @@ func BuildFinalModeAggregation(
 		final.AggFuncs[i] = finalAggFunc
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
+	if partialIsCop {
+		for _, f := range partial.AggFuncs {
+			f.Mode = aggregation.Partial1Mode
+		}
+	}
 	return
 }
 
@@ -1253,7 +1284,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
-	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
+	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
@@ -1263,8 +1294,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
-		finalPref.AggFuncs, finalPref.GroupByItems,
-		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 	if copTaskType == kv.TiDB {
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
@@ -1319,12 +1349,11 @@ func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
 func RemoveUnnecessaryFirstRow(
 	sctx sessionctx.Context,
-	finalAggFuncs []*aggregation.AggFuncDesc,
 	finalGbyItems []expression.Expression,
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,
 	partialSchema *expression.Schema,
-	funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
+	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
 
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
@@ -1344,7 +1373,7 @@ func RemoveUnnecessaryFirstRow(
 				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					funcMap[aggFunc].Args[0] = finalGbyItems[j]
+					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
