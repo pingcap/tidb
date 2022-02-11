@@ -64,6 +64,15 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+
+	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// even if the performance might be slowed down.
+	AssertionStrictStr = "STRICT"
+	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	// performance should be performed.
+	AssertionFastStr = "FAST"
+	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	AssertionOffStr = "OFF"
 )
 
 // Global config name list.
