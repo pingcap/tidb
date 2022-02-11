@@ -44,8 +44,9 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStartCommand(),
 		newStreamStopCommand(),
 		newStreamPauseCommand(),
-		newStreamResumeComamnd(),
-		newStreamStatusComamnd(),
+		newStreamResumeCommand(),
+		newStreamStatusCommand(),
+		newStreamRestoreCommand(),
 	)
 	return command
 }
@@ -94,7 +95,7 @@ func newStreamPauseCommand() *cobra.Command {
 	return command
 }
 
-func newStreamResumeComamnd() *cobra.Command {
+func newStreamResumeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "resume",
 		Short: "resume a stream task",
@@ -108,7 +109,7 @@ func newStreamResumeComamnd() *cobra.Command {
 	return command
 }
 
-func newStreamStatusComamnd() *cobra.Command {
+func newStreamStatusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "get status of a stream task",
@@ -122,19 +123,50 @@ func newStreamStatusComamnd() *cobra.Command {
 	return command
 }
 
+// TODO maybe we should use `br restore stream` rather than `br stream restore`
+// because the restore and stream task has no common flags.
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "restore",
+		Short: "restore a stream backups",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return streamCommand(command, task.StreamRestore)
+		},
+	}
+	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineStreamRestoreFlags(command.Flags())
+	return command
+}
+
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
-	if err := cfg.ParseCommonFromFlags(command.Flags()); err != nil {
-		command.SilenceUsage = false
+	var err error
+	defer func() {
+		if err != nil {
+			command.SilenceUsage = false
+		}
+	}()
+	if err = cfg.Config.ParseFromFlags(command.Flags()); err != nil {
 		return errors.Trace(err)
 	}
 
-	if cmdName == task.StreamStart {
-		if err := cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
+	switch cmdName {
+	case task.StreamRestore:
+		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	case task.StreamStart:
+		if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+		// TODO use `br restore stream` rather than `br stream restore`
+		fallthrough
+	default:
+		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
 	}
-
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore

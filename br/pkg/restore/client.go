@@ -212,6 +212,10 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
+func (rc *Client) GetDomain() *domain.Domain {
+	return rc.dom
+}
+
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -244,13 +248,19 @@ func (rc *Client) Close() {
 	log.Info("Restore client closed")
 }
 
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
+	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf)
+	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
+}
+
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
 func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	externalStorage storage.ExternalStorage,
 	reader *metautil.MetaReader) error {
+
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -273,11 +283,9 @@ func (rc *Client) InitBackupMeta(
 		rc.ddlJobs = ddlJobs
 	}
 	rc.backupMeta = backupMeta
-	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, rc.backupMeta.IsRawKv)
-	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, rc.backupMeta.IsRawKv, rc.rateLimit)
+	rc.InitClients(backend, backupMeta.IsRawKv)
+	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
 
@@ -578,7 +586,7 @@ func (rc *Client) createTable(
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
-	rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+	rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
 	et := CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
@@ -817,8 +825,8 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
-// RestoreFiles tries to restore the files.
-func (rc *Client) RestoreFiles(
+// RestoreSSTFiles tries to restore the files.
+func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
@@ -836,7 +844,7 @@ func (rc *Client) RestoreFiles(
 	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreFiles", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -859,7 +867,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 
@@ -900,7 +908,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -1419,6 +1427,103 @@ func (rc *Client) PreCheckTableClusterIndex(
 				}
 			}
 		}
+	}
+	return nil
+}
+
+const (
+	streamBackupMetaPrefix = "v1_backupmeta"
+)
+
+// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
+	err := rc.storage.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		if strings.Contains(path, streamBackupMetaPrefix) {
+			m := &backuppb.Metadata{}
+			b, err := rc.storage.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = m.Unmarshal(b)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// TODO find a way to filter some unnecessary meta files.
+			log.Debug("backup stream collect meta file", zap.String("file", path))
+			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return streamBackupMetaFiles, nil
+}
+
+// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Metadata, restoreTS uint64) ([]*backuppb.DataFileInfo, error) {
+	streamBackupDataFiles := make([]*backuppb.DataFileInfo, 0)
+	for _, m := range metas {
+		for _, d := range m.Files {
+			if d.MinTs > restoreTS {
+				continue
+			}
+			streamBackupDataFiles = append(streamBackupDataFiles, d)
+			log.Debug("backup stream collect data file", zap.String("file", d.Path))
+		}
+	}
+	return streamBackupDataFiles, nil
+}
+
+func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRules, files []*backuppb.DataFileInfo) error {
+	var err error
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		if err == nil {
+			log.Info("Restore KV files", zap.Duration("take", elapsed))
+			summary.CollectSuccessUnit("files", len(files), elapsed)
+		}
+	}()
+
+	log.Debug("start to restore files", zap.Int("files", len(files)))
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, file := range files {
+		filesReplica := file
+		// get rewrite rule from table id
+		rule, ok := rules[filesReplica.TableId]
+		if !ok {
+			// TODO handle new created table
+			// For this version we do not handle new created table after full backup.
+			// in next version we will perform rewrite and restore meta key to restore new created tables.
+			// so we can simply skip the file that doesn't have the rule here.
+			log.Info("skip file due to table id not matched", zap.String("file", file.Path))
+			continue
+		}
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			fileStart := time.Now()
+			defer func() {
+				log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+			}()
+			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
+		})
+	}
+
+	if err = eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error(
+			"restore files failed",
+			zap.Error(err),
+		)
+		return errors.Trace(err)
 	}
 	return nil
 }
