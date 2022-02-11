@@ -4643,7 +4643,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	col := table.FindCol(t.Cols(), colName.L)
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	col := table.ToColumn(oldCol.Clone())
 	if col == nil {
 		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
