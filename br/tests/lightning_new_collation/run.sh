@@ -54,31 +54,10 @@ for BACKEND in local importer tidb; do
   run_sql "SELECT j FROM nc.t WHERE s = 'This_Is_Test4'";
   check_contains "j: 4"
 
-<<<<<<< HEAD
-=======
-  run_sql 'SELECT id, v from nc.gbk_test order by v limit 1;'
-  check_contains "id: 3"
-  check_contains "v: 听听听听"
-
-  run_sql "SELECT id, v2 from nc.gbk_test order by v2 limit 1;"
-  check_contains "id: 1"
-  check_contains "v2: 啊啊"
-
   run_sql "SELeCT i, v from nc.ci where v = 'aa';"
   check_contains "i: 1"
   check_contains "v: aA"
 
-
-  run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data-gbk" --config "tests/$TEST_NAME/gbk.toml"
-
-  run_sql 'SELECT count(*) from nc.gbk_source;'
-  check_contains "count(*): 3"
-
-  run_sql 'SELECT id, v from nc.gbk_source order by v limit 1;'
-  check_contains "id: 1"
-  check_contains "v: 啊啊"
-
->>>>>>> 18fc286fb... lightning: support charset for create schema (#31915)
 done
 
 # restart with original config
