@@ -105,11 +105,12 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
 		if val.(bool) {
 			lowerSQL := strings.ToLower(normalizedSQL)
-			if strings.Contains(lowerSQL, "mysql") {
+			if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
 				failpoint.Return(ctx)
 			}
 			isDML := false
-			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "commit"} {
+			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "begin",
+				"commit", "analyze", "explain", "trace", "create", "set global"} {
 				if strings.HasPrefix(lowerSQL, prefix) {
 					isDML = true
 					break

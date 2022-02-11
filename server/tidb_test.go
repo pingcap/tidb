@@ -1468,16 +1468,52 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		ca.cancel()
 	}
 
-	// Test case 4: transaction commit
+	// Test case: other statements
+	cases4 := []struct {
+		sql     string
+		plan    string
+		isQuery bool
+	}{
+		{"begin", "", false},
+		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
+		{"commit", "", false},
+		{"analyze table t", "", false},
+		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
+		{"trace select sum(b*a), sum(a+b) from t", "", true},
+		{"set global tidb_stmt_summary_history_size=5;", "", false},
+	}
 	ctx4, cancel4 := context.WithCancel(context.Background())
-	defer cancel4()
-	go ts.loopExec(ctx4, t, func(db *sql.DB) {
-		db.Exec("begin")
-		db.Exec("insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()")
-		db.Exec("commit")
-	})
-	// Check result of test case 4.
-	checkFn("commit", "")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ts.loopExec(ctx4, t, func(db *sql.DB) {
+			dbt := testkit.NewDBTestKit(t, db)
+			for _, ca := range cases4 {
+				if ca.isQuery {
+					mustQuery(t, dbt, ca.sql)
+				} else {
+					dbt.MustExec(ca.sql)
+				}
+			}
+		})
+	}()
+
+	for _, ca := range cases4 {
+		checkFn(ca.sql, ca.plan)
+	}
+	// check for internal SQL.
+	checkFn("replace into mysql.global_variables (variable_name,variable_value) values ('tidb_stmt_summary_history_size', '5')", "")
+	cancel4()
+	wg.Wait()
+}
+
+func mustQuery(t *testing.T, dbt *testkit.DBTestKit, query string) {
+	rows := dbt.MustQuery(query)
+	for rows.Next() {
+	}
+	err := rows.Close()
+	require.NoError(t, err)
 }
 
 type mockCollector struct {
