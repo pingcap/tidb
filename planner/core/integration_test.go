@@ -5195,3 +5195,39 @@ func (s *testIntegrationSuite) TestIssue20510(c *C) {
 		"4 2 <nil> <nil>",
 	))
 }
+
+func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
+	store, _ := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t32157(
+  process_code varchar(8) NOT NULL,
+  ctrl_class varchar(2) NOT NULL,
+  ctrl_type varchar(1) NOT NULL,
+  oper_no varchar(12) DEFAULT NULL,
+  modify_date datetime DEFAULT NULL,
+  d_c_flag varchar(2) NOT NULL,
+  PRIMARY KEY (process_code,ctrl_class,d_c_flag));`)
+	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '1', '10000', '2016-06-29 00:00:00', 'C')")
+	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '0', '0000', '2016-06-01 00:00:00', 'D')")
+	tk.MustExec("alter table t32157 cache")
+
+	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
+			"[└─TableReader 10.00 root  data:Selection]\n" +
+			"[  └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
+			"[    └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+
+	var readFromCacheNoPanic bool
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
+		if tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache {
+			readFromCacheNoPanic = true
+			break
+		}
+	}
+	c.Assert(readFromCacheNoPanic, IsTrue)
+
+	tk.MustExec("drop table if exists t31202")
+}
