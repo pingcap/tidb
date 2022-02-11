@@ -32,7 +32,7 @@ var metaPrefix = []byte("m")
 func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tblIDs))
 	for _, tid := range tblIDs {
-		startKey := tablecodec.EncodeTablePrefix(tid)
+		startKey := tablecodec.GenTableRecordPrefix(tid)
 		endKey := startKey.PrefixNext()
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
