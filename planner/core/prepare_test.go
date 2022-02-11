@@ -1581,15 +1581,6 @@ func (s *testPlanSerialSuite) TestParamMarker4FastPlan(c *C) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
 	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
-	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
-	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
-	// The tableDual plan can not be cached
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
-	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
-	// The tableDual plan can not be cached
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
