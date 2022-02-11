@@ -488,7 +488,6 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
@@ -496,6 +495,10 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
+	failpoint.Inject("mockGetTSFail", func() {
+		tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+		failpoint.Return(nil, errors.New("mock get timestamp fail"))
+	})
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }
