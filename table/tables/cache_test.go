@@ -545,11 +545,12 @@ func TestMetrics(t *testing.T) {
 	tk.MustQuery("select * from test_metrics").Check(testkit.Rows("1 <nil> green"))
 	cached := false
 	for i := 0; i < 20; i++ {
-		if tk.HasPlan("select * from test_metrics", "UnionScan") {
+		if lastReadFromCache(tk) {
 			cached = true
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
+		tk.MustQuery("select * from test_metrics").Check(testkit.Rows("1 <nil> green"))
 	}
 	require.True(t, cached)
 
