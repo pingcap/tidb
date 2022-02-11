@@ -85,6 +85,10 @@ type DatabaseOption struct {
 	TiFlashReplica *TiFlashReplicaSpec
 }
 
+func restoreTiFlashStmt(ctx *format.RestoreCtx, tiFlashReplica *TiFlashReplicaSpec) {
+
+}
+
 // Restore implements Node interface.
 func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
@@ -107,6 +111,19 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			StrValue:  n.Value,
 		}
 		return placementOpt.Restore(ctx)
+	case DatabaseSetTiFlashReplica:
+		ctx.WriteKeyWord("SET TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplica.Count)
+		if len(n.TiFlashReplica.Labels) == 0 {
+			break
+		}
+		ctx.WriteKeyWord(" LOCATION LABELS ")
+		for i, v := range n.TiFlashReplica.Labels {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(v)
+		}
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
