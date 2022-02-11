@@ -364,3 +364,23 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
 }
+
+func (s *testValidatorSuite) TestErrKeyPart0(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database TestErrKeyPart")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop database TestErrKeyPart")
+	_, err = s.se.Execute(context.Background(), "use TestErrKeyPart")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'a' length cannot be 0")
+
+	_, err = s.se.Execute(context.Background(), "create table t (a int, b varchar(255), key (b(0)))")
+	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'b' length cannot be 0")
+
+	_, err = s.se.Execute(context.Background(), "create table t (a int, b varchar(255))")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "alter table t add index (b(0))")
+	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'b' length cannot be 0")
+}
