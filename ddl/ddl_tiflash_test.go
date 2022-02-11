@@ -21,7 +21,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"math"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -568,4 +570,30 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
+}
+
+func TestTiFlashBackoff(t *testing.T) {
+	var maxTick ddl.TickType = 10
+	var rate ddl.TickType = 1.5
+	backoff := ddl.NewPollTiFlashBackoffContext(1, maxTick, 10, rate)
+	backoff.Put(1)
+	mustGet := func(ID int64) *ddl.PollTiFlashBackoffElement {
+		e, ok := backoff.Get(1)
+		require.True(t, ok)
+		return e
+	}
+	mustGrow := func(ID int64) {
+		e := mustGet(ID)
+		ori := e.Threshold
+		backoff.Tick(ID)
+		require.Equal(t, rate * ori, e.Threshold)
+	}
+	require.False(t, mustGet(1).NeedGrow())
+	mustGrow(1)
+
+	backoff.Put(2)
+	for i := 0; i < 10; i++ {
+		backoff.Tick(2)
+	}
+	require.Equal(t, mustGet(2).Threshold, maxTick)
 }

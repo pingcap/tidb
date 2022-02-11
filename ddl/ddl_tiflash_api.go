@@ -56,12 +56,123 @@ type TiFlashReplicaStatus struct {
 	HighPriority   bool
 }
 
+type TickType float64
+
+// PollTiFlashBackoffElement records backoff for each TiFlash Table.
+// When `Counter` reached `Threshold`, `Threshold` shall grow.
+type PollTiFlashBackoffElement struct {
+	Counter   int
+	Threshold TickType
+}
+
+// NewPollTiFlashBackoffElement initialize backoff element for a TiFlash table.
+func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
+	return &PollTiFlashBackoffElement{
+		Counter:   0,
+		Threshold: PollTiFlashBackoffMinTick,
+	}
+}
+
+// PollTiFlashBackoffContext is a collection of all backoff states.
+type PollTiFlashBackoffContext struct {
+	MinTick  TickType
+	MaxTick  TickType
+	// Capacity limits tables a backoff pool can handle, in order to limit handling of big tables.
+	Capacity int
+	Rate TickType
+	elements map[int64]*PollTiFlashBackoffElement
+}
+
+// NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
+func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate TickType) PollTiFlashBackoffContext {
+	return PollTiFlashBackoffContext{
+		MinTick:  MinTick,
+		MaxTick:  MaxTick,
+		Capacity: Capacity,
+		elements: make(map[int64]*PollTiFlashBackoffElement),
+	}
+}
+
+
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
 	TiFlashStores             map[int64]helper.StoreStat
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
+	Backoff PollTiFlashBackoffContext
+}
+
+// Tick will first check increase Counter.
+func (b *PollTiFlashBackoffContext) Tick(ID int64) bool {
+	e, ok := b.Get(ID)
+	if !ok {
+		return false
+	}
+	growed := e.MaybeGrow(b)
+	e.Counter += 1
+	return growed
+}
+
+// Limit returns current limit
+func (e *PollTiFlashBackoffElement) Limit() int {
+	return int(e.Threshold)
+}
+
+// NeedGrow returns if we need to grow
+func (e *PollTiFlashBackoffElement) NeedGrow() bool {
+	if e.Counter >= e.Limit() {
+		return true
+	}
+	return false
+}
+
+func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {
+	defer func() {
+		e.Counter = 0
+	}()
+	if e.Threshold < b.MinTick {
+		e.Threshold = b.MinTick
+	}
+	if e.Threshold * b.Rate > b.MaxTick {
+		e.Threshold = b.MaxTick
+	}
+	e.Threshold *= b.Rate
+}
+
+// MaybeGrow grows threshold and reset counter when need
+func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool {
+	if !e.NeedGrow() {
+		return false
+	}
+	e.doGrow(b)
+	return true
+}
+
+// Remove will reset table from backoff
+func (b *PollTiFlashBackoffContext) Remove(ID int64) {
+	delete(b.elements, ID)
+}
+
+// Get returns pointer to inner PollTiFlashBackoffElement.
+func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, bool) {
+	res, ok := b.elements[ID]
+	return res, ok
+}
+
+// Put will put table into backoff pool, if there are enough room, or returns false.
+func (b *PollTiFlashBackoffContext) Put(ID int64) bool {
+	_, ok := b.elements[ID]
+	if ok || b.Len() < b.Capacity {
+		b.elements[ID] = NewPollTiFlashBackoffElement()
+		return true
+	}
+	return false
+}
+
+// Len gets size of PollTiFlashBackoffContext.
+func (b *PollTiFlashBackoffContext) Len() int {
+	return len(b.elements)
 }
 
 // NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
@@ -71,6 +182,7 @@ func NewTiFlashManagementContext() *TiFlashManagementContext {
 		UpdateTiFlashStoreCounter: 0,
 		TiFlashStores:             make(map[int64]helper.StoreStat),
 		UpdateMap:                 make(map[int64]bool),
+		Backoff: NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity, PollTiFlashBackoffRate),
 	}
 }
 
@@ -81,6 +193,14 @@ var (
 	PullTiFlashPdTick = atomicutil.NewUint64(30 * 5)
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
 	UpdateTiFlashStoreTick = atomicutil.NewUint64(5)
+	// PollTiFlashBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
+	PollTiFlashBackoffMaxTick TickType = 10
+	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
+	PollTiFlashBackoffMinTick TickType = 1
+	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
+	PollTiFlashBackoffCapacity int = 1000
+	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
+	PollTiFlashBackoffRate TickType = 1000
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
