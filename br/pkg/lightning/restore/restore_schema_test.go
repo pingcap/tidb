@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"testing"
 
@@ -23,6 +24,9 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -35,8 +39,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 type restoreSchemaSuite struct {
@@ -143,6 +145,15 @@ func (s *restoreSchemaSuite) SetupTest() {
 }
 
 func (s *restoreSchemaSuite) TearDownTest() {
+	exec := mock.NewMockSQLExecutor(s.controller)
+	exec.EXPECT().Close()
+	mockTiDBGlue := mock.NewMockGlue(s.controller)
+	mockTiDBGlue.EXPECT().
+		GetSQLExecutor().
+		AnyTimes().
+		Return(exec)
+	s.rc.tidbGlue = mockTiDBGlue
+
 	s.rc.Close()
 	s.controller.Finish()
 }
@@ -154,6 +165,17 @@ func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful() {
 		require.True(s.T(), ok)
 		require.Equal(s.T(), "SYSTEM", tz)
 	}
+
+	exec := mock.NewMockSQLExecutor(s.controller)
+	exec.EXPECT().
+		QueryStringsWithLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return([][]string{{"time_zone", "SYSTEM"}}, nil)
+	mockTiDBGlue := s.rc.tidbGlue.(*mock.MockGlue)
+	mockTiDBGlue.EXPECT().
+		GetSQLExecutor().
+		AnyTimes().
+		Return(exec)
 
 	s.rc.cfg.TiDB.Vars = map[string]string{
 		"time_zone": "UTC",
@@ -168,23 +190,31 @@ func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful() {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
-	injectErr := errors.New("Something wrong")
-	mockSession := mock.NewMockSession(s.controller)
-	mockSession.EXPECT().
-		Close().
-		AnyTimes().
-		Return()
-	mockSession.EXPECT().
-		Execute(gomock.Any(), gomock.Any()).
-		AnyTimes().
-		Return(nil, injectErr)
+	// use injectErr which cannot be retried
+	injectErr := stderrors.New("could not match actual sql")
+	mockDB, sqlMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	sqlMock.ExpectExec(".*").WillReturnError(injectErr)
+	for i := 0; i < 16; i++ {
+		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
+	}
+
 	mockTiDBGlue := mock.NewMockGlue(s.controller)
 	mockTiDBGlue.EXPECT().
-		GetSession(gomock.Any()).
+		GetDB().
 		AnyTimes().
-		Return(mockSession, nil)
+		Return(mockDB, nil)
+	mockTiDBGlue.EXPECT().
+		OwnsSQLExecutor().
+		AnyTimes().
+		Return(true)
+	parser := parser.New()
+	mockTiDBGlue.EXPECT().
+		GetParser().
+		AnyTimes().
+		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
-	err := s.rc.restoreSchema(s.ctx)
+	err = s.rc.restoreSchema(s.ctx)
 	require.Error(s.T(), err)
 	require.True(s.T(), errors.ErrorEqual(err, injectErr))
 }
@@ -218,23 +248,28 @@ func (s *restoreSchemaSuite) TestNoSchemaPath() {
 
 func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 	childCtx, cancel := context.WithCancel(s.ctx)
-	mockSession := mock.NewMockSession(s.controller)
-	mockSession.EXPECT().
-		Close().
-		AnyTimes().
-		Return()
-	mockSession.EXPECT().
-		Execute(gomock.Any(), gomock.Any()).
-		AnyTimes().
-		Do(func(context.Context, string) { cancel() }).
-		Return(nil, nil)
+	mockDB, sqlMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	for i := 0; i < 17; i++ {
+		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
+	}
 	mockTiDBGlue := mock.NewMockGlue(s.controller)
 	mockTiDBGlue.EXPECT().
-		GetSession(gomock.Any()).
+		GetDB().
 		AnyTimes().
-		Return(mockSession, nil)
+		Do(func() { cancel() }).
+		Return(mockDB, nil)
+	mockTiDBGlue.EXPECT().
+		OwnsSQLExecutor().
+		AnyTimes().
+		Return(true)
+	parser := parser.New()
+	mockTiDBGlue.EXPECT().
+		GetParser().
+		AnyTimes().
+		Return(parser)
 	s.rc.tidbGlue = mockTiDBGlue
-	err := s.rc.restoreSchema(childCtx)
+	err = s.rc.restoreSchema(childCtx)
 	cancel()
 	require.Error(s.T(), err)
 	require.Equal(s.T(), childCtx.Err(), err)
