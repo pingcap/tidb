@@ -1293,11 +1293,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{stringColumn},
 		},
 		{
-			functionName: ast.Upper,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
 			functionName: ast.MakeSet,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{intColumn, stringColumn},
