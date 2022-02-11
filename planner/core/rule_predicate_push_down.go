@@ -816,7 +816,6 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 //                         `t2`, conds is {t2.a = 20}
 // @return  -     the new condition after adding expression prefix
 func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
-
 	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx,
 		conds, adder.cols)
 
@@ -830,7 +829,6 @@ func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expressio
 //                          condtion is `a = 1 OR a = 10`
 // @return 	 -          the new condition after adding expression prefix. It's still a LogicOr expression.
 func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
-
 	var err error
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
