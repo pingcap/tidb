@@ -1635,8 +1635,8 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				for task := range postProcessTaskChan {
 					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
 					// force all the remain post-process tasks to be executed
-					_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
-					restoreErr.Set(err)
+					_, err2 := task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					restoreErr.Set(err2)
 				}
 			}()
 		}

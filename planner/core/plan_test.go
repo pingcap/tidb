@@ -22,11 +22,18 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
@@ -701,4 +708,150 @@ func TestCopPaging(t *testing.T) {
 			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
 			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
+}
+
+func TestBuildFinalModeAggregation(t *testing.T) {
+	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
+		for _, agg := range aggFuncs {
+			newCol := &expression.Column{
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  agg.RetTp,
+			}
+			schema.Append(newCol)
+		}
+		return schema
+	}
+	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
+		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
+	}
+	checkResult := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
+			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
+				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+					AggFuncs:     aggFuncs,
+					GroupByItems: groubyItems,
+					Schema:       aggSchemaBuilder(sctx, aggFuncs),
+				}, partialIsCop == 0, isMPPTask == 0)
+				if partial != nil {
+					for _, aggFunc := range partial.AggFuncs {
+						if partialIsCop == 0 {
+							require.True(t, !isFinalAggMode(aggFunc.Mode))
+						} else {
+							require.True(t, isFinalAggMode(aggFunc.Mode))
+						}
+					}
+				}
+				if final != nil {
+					for _, aggFunc := range final.AggFuncs {
+						require.True(t, isFinalAggMode(aggFunc.Mode))
+					}
+				}
+			}
+		}
+	}
+
+	ctx := core.MockContext()
+
+	aggCol := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	gbyCol := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	orderCol := &expression.Column{
+		Index:   2,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	emptyGroupByItems := make([]expression.Expression, 0, 1)
+	groupByItems := make([]expression.Expression, 0, 1)
+	groupByItems = append(groupByItems, gbyCol)
+
+	orderByItems := make([]*util.ByItems, 0, 1)
+	orderByItems = append(orderByItems, &util.ByItems{
+		Expr: orderCol,
+		Desc: true,
+	})
+
+	aggFuncs := make([]*aggregation.AggFuncDesc, 0, 5)
+	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMax, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+
+	aggFuncsWithDistinct := make([]*aggregation.AggFuncDesc, 0, 2)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{aggCol}, true)
+	require.NoError(t, err)
+	aggFuncsWithDistinct = append(aggFuncsWithDistinct, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{aggCol}, true)
+	require.NoError(t, err)
+	aggFuncsWithDistinct = append(aggFuncsWithDistinct, desc)
+
+	groupConcatAggFuncs := make([]*aggregation.AggFuncDesc, 0, 4)
+	groupConcatWithoutDistinctWithoutOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, false)
+	require.NoError(t, err)
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithoutDistinctWithoutOrderBy)
+	groupConcatWithoutDistinctWithOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, false)
+	require.NoError(t, err)
+	groupConcatWithoutDistinctWithOrderBy.OrderByItems = orderByItems
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithoutDistinctWithOrderBy)
+	groupConcatWithDistinctWithoutOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, true)
+	require.NoError(t, err)
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithDistinctWithoutOrderBy)
+	groupConcatWithDistinctWithOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, true)
+	require.NoError(t, err)
+	groupConcatWithDistinctWithOrderBy.OrderByItems = orderByItems
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithDistinctWithOrderBy)
+
+	// case 1 agg without distinct
+	checkResult(ctx, aggFuncs, emptyGroupByItems)
+	checkResult(ctx, aggFuncs, groupByItems)
+
+	// case 2 agg with distinct
+	checkResult(ctx, aggFuncsWithDistinct, emptyGroupByItems)
+	checkResult(ctx, aggFuncsWithDistinct, groupByItems)
+
+	// case 3 mixed with distinct and without distinct
+	mixedAggFuncs := make([]*aggregation.AggFuncDesc, 0, 10)
+	mixedAggFuncs = append(mixedAggFuncs, aggFuncs...)
+	mixedAggFuncs = append(mixedAggFuncs, aggFuncsWithDistinct...)
+	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
+	checkResult(ctx, mixedAggFuncs, groupByItems)
+
+	// case 4 group concat
+	for _, groupConcatAggFunc := range groupConcatAggFuncs {
+		checkResult(ctx, []*aggregation.AggFuncDesc{groupConcatAggFunc}, emptyGroupByItems)
+		checkResult(ctx, []*aggregation.AggFuncDesc{groupConcatAggFunc}, groupByItems)
+	}
+	checkResult(ctx, groupConcatAggFuncs, emptyGroupByItems)
+	checkResult(ctx, groupConcatAggFuncs, groupByItems)
+
+	// case 5 mixed group concat and other agg funcs
+	for _, groupConcatAggFunc := range groupConcatAggFuncs {
+		funcs := make([]*aggregation.AggFuncDesc, 0, 10)
+		funcs = append(funcs, groupConcatAggFunc)
+		funcs = append(funcs, aggFuncs...)
+		checkResult(ctx, funcs, emptyGroupByItems)
+		checkResult(ctx, funcs, groupByItems)
+		funcs = append(funcs, aggFuncsWithDistinct...)
+		checkResult(ctx, funcs, emptyGroupByItems)
+		checkResult(ctx, funcs, groupByItems)
+	}
+	mixedAggFuncs = append(mixedAggFuncs, groupConcatAggFuncs...)
+	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
+	checkResult(ctx, mixedAggFuncs, groupByItems)
 }

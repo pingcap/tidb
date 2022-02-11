@@ -187,6 +187,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	// We need the up-to-date information about TiFlash stores.
 	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	// If MockTiFlash is not set, will issue a MockTiFlashError here.
 	if err != nil {
 		return err
 	}

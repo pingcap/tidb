@@ -237,6 +237,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	case kv.RPCInterceptor:
 		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+	case kv.AssertionLevel:
+		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	}
 }
 
@@ -288,6 +290,19 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 		return extractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+}
+
+// SetAssertion sets an assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key)
+	if err != nil && !tikverr.IsErrNotFound(err) {
+		return err
+	}
+	if err == nil && f.HasAssertionFlags() {
+		return nil
+	}
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(assertion)...)
+	return nil
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

@@ -646,7 +646,7 @@ func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tab
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{},
