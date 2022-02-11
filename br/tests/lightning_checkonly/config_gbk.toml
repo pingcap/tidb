@@ -1,0 +1,8 @@
+[tikv-importer]
+backend = "local"
+
+[mydumper]
+data-character-set="gbk"
+
+[mydumper.csv]
+header = true
