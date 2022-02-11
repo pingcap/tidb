@@ -128,6 +128,15 @@ var (
 			Help:      "Counter of query using plan cache.",
 		}, []string{LblType})
 
+	ReadFromTableCacheCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "read_from_tablecache_total",
+			Help:      "Counter of query read from table cache.",
+		},
+	)
+
 	HandShakeErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
