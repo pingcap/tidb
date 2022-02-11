@@ -1557,6 +1557,60 @@ func (s *testPlanSerialSuite) TestIssue28942(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
 }
 
+func (s *testPlanSerialSuite) TestParamMarker4FastPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
+	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	// The tableDual plan can not be cached
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	// The tableDual plan can not be cached
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	// Use the cached PointGet plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	// Use the cached PointGet plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+}
+
 func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

@@ -1187,7 +1187,12 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				con = param.(*expression.Constant)
+				con, ok = param.(*expression.Constant)
+				if !ok {
+					// The return value for the expression.ParamMarkerExpression must be constant.
+					// Add this part for safety.
+					return nil, false
+				}
 				d, err = con.Eval(chunk.Row{})
 				if err != nil {
 					return nil, false
@@ -1202,7 +1207,12 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				con = param.(*expression.Constant)
+				con, ok = param.(*expression.Constant)
+				if !ok {
+					// The return value for the expression.ParamMarkerExpression must be constant.
+					// Add this part for safety.
+					return nil, false
+				}
 				d, err = con.Eval(chunk.Row{})
 				if err != nil {
 					return nil, false
