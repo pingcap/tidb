@@ -114,3 +114,13 @@ func GetSysDBName(tempDB model.CIStr) (string, bool) {
 	}
 	return tempDB.O[len(temporaryDBNamePrefix):], true
 }
+
+func UniqueID(schema string, table string) string {
+	// QuoteSchema quotes a full table name
+	return fmt.Sprintf("`%s`.`%s`", EscapeName(schema), EscapeName(table))
+}
+
+// EscapeName replaces all "`" in name with "``"
+func EscapeName(name string) string {
+	return strings.Replace(name, "`", "``", -1)
+}

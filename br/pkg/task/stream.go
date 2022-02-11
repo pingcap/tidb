@@ -29,6 +29,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -41,40 +43,56 @@ import (
 )
 
 const (
-	flagStreamTaskName        = "task-name"
-	flagStreamTaskNameDefault = "all" // used for get status for all of tasks.
-	flagStreamStartTS         = "start-ts"
-	flagStreamEndTS           = "end-ts"
-	flagGCSafePointTTS        = "gc-ttl"
+	flagStreamTaskName          = "task-name"
+	flagStreamTaskNameDefault   = "all" // used for get status for all of tasks.
+	flagStreamStartTS           = "start-ts"
+	flagStreamEndTS             = "end-ts"
+	flagGCSafePointTTS          = "gc-ttl"
+	flagStreamRestoreTS         = "restore-ts"
+	flagStreamFullBackupStorage = "full-backup-storage"
 )
 
 var (
-	StreamStart  = "stream start"
-	StreamStop   = "stream stop"
-	StreamPause  = "stream pause"
-	StreamResume = "stream resume"
-	StreamStatus = "stream status"
+	StreamStart   = "stream start"
+	StreamStop    = "stream stop"
+	StreamPause   = "stream pause"
+	StreamResume  = "stream resume"
+	StreamStatus  = "stream status"
+	StreamRestore = "stream restore"
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
-	StreamStart:  RunStreamStart,
-	StreamStop:   RunStreamStop,
-	StreamPause:  RunStreamPause,
-	StreamResume: RunStreamResume,
-	StreamStatus: RunStreamStatus,
+	StreamStart:   RunStreamStart,
+	StreamStop:    RunStreamStop,
+	StreamPause:   RunStreamPause,
+	StreamResume:  RunStreamResume,
+	StreamStatus:  RunStreamStatus,
+	StreamRestore: RunStreamRestore,
 }
 
 // StreamConfig specifies the configure about backup stream
 type StreamConfig struct {
 	// common part that all of stream commands need
 	Config
-	TaskName string `json:"task-name" toml:"task-name"`
 
-	// startTs usually equals the tso of full-backup, but user can reset it
+	// FullBackupStorage is used to find the maps between table name and table id during restoration.
+	// if not specified. we cannot apply kv directly.
+	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
+	TaskName          string `json:"task-name" toml:"task-name"`
+
+	// StartTs usually equals the tso of full-backup, but user can reset it
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
-	SafePointTTL int64 `json:"saft-point-ttl" toml:"saft-point-ttl"`
+	SafePointTTL int64  `json:"safe-point-ttl" toml:"safe-point-ttl"`
+	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
+}
+
+func (sc *StreamConfig) adjustRestoreConfig() {
+	sc.Config.adjust()
+	if sc.Concurrency == 0 {
+		sc.Concurrency = 32
+	}
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
@@ -88,6 +106,13 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 }
 
+// DefineStreamRestoreFlags defines flags used for `stream restore`
+func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
+	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	flags.String(flagStreamFullBackupStorage, "", "find the maps between table id and table name")
+}
+
 // DefineStreamCommonFlags define common flags for `stream task`
 func DefineStreamCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, "", "The task name for backup stream log.")
@@ -97,6 +122,23 @@ func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
 		"The task name for backup stream log. If default, get status of all of tasks",
 	)
+}
+
+func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error {
+	tsString, err := flags.GetString(flagStreamRestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.FullBackupStorage, err = flags.GetString(flagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	if len(cfg.FullBackupStorage) == 0 {
+		return errors.New("must specify full backup storage.")
+	}
+	return nil
 }
 
 // ParseStreamStartFromFlags parse parameters for `stream start`
@@ -130,12 +172,9 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-// ParseCommonFromFlags parse parameters for `stream task`
-func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
+// ParseStreamCommonFromFlags parse parameters for `stream task`
+func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error {
 	var err error
-	if err = cfg.Config.ParseFromFlags(flags); err != nil {
-		return errors.Trace(err)
-	}
 
 	cfg.TaskName, err = flags.GetString(flagStreamTaskName)
 	if err != nil {
@@ -167,12 +206,11 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 		}
 	}()
 
-	client, err := backup.NewBackupClient(ctx, mgr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// just stream start need Storage
+	s := &streamMgr{
+		Cfg: cfg,
+		mgr: mgr,
+	}
 	if needStorage {
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
@@ -184,15 +222,15 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 			SendCredentials: cfg.SendCreds,
 			SkipCheckPath:   cfg.SkipCheckPath,
 		}
+		client, err := backup.NewBackupClient(ctx, mgr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	s := &streamMgr{
-		Cfg: cfg,
-		mgr: mgr,
-		bc:  client,
+		s.bc = client
 	}
 	return s, nil
 }
@@ -258,7 +296,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 }
 
 func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
-	p, l, err := s.mgr.PdController.GetPDClient().GetTS(ctx)
+	p, l, err := s.mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -506,7 +544,7 @@ func RunStreamStatus(
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
-			"task.RunStreamStatusRunStreamStatusRunStreamStatus",
+			"task.RunStreamStatus",
 			opentracing.ChildOf(span.Context()),
 		)
 		defer span1.Finish()
@@ -543,4 +581,154 @@ func RunStreamStatus(
 		summary.Log(cmdName, logutil.StreamBackupTaskInfo(&task.Info))
 	}
 	return nil
+}
+
+// RunStreamRestore start restore job
+func RunStreamRestore(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	cfg.adjustRestoreConfig()
+
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamRestore",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer streamMgr.close()
+
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	keepaliveCfg.PermitWithoutStream = true
+	client, err := restore.NewRestoreClient(g, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), streamMgr.mgr.GetTLSConfig(), keepaliveCfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer client.Close()
+
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+		SkipCheckPath:   cfg.SkipCheckPath,
+	}
+
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
+	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
+	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	err = client.LoadRestoreStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	client.InitClients(u, false)
+
+	currentTs, err := streamMgr.getTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = currentTs
+	}
+	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+
+	// get full backup meta to generate rewrite rules.
+	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rewriteRules, err := initRewriteRules(client, fullBackupTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// read meta by given ts.
+	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(metas) == 0 {
+		log.Info("nothing to restore.")
+		return nil
+	}
+	// read data file by given ts.
+	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// TODO split put and delete files
+	// perform restore kv files
+	return client.RestoreKVFiles(ctx, rewriteRules, datas)
+}
+
+func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
+	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	err = backupMeta.Unmarshal(metaData)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	reader := metautil.NewMetaReader(backupMeta, s, nil)
+
+	// read full backup databases to get map[table]table.Info
+	databases, err := utils.LoadBackupTables(ctx, reader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := make(map[string]*metautil.Table)
+	for _, db := range databases {
+		dbName := db.Info.Name.O
+		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+			dbName = name
+		}
+		for _, table := range db.Tables {
+			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+				continue
+			}
+			tables[utils.UniqueID(dbName, table.Info.Name.String())] = table
+		}
+	}
+	return tables, nil
+
+}
+
+func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
+	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
+	rules := make(map[int64]*restore.RewriteRules)
+	for _, t := range tables {
+		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
+		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0, false)
+	}
+	return rules, nil
 }
