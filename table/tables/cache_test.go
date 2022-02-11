@@ -581,12 +581,12 @@ func TestMetrics(t *testing.T) {
 		i++
 		counter.Write(pb)
 		hit := pb.GetCounter().GetValue()
-		require.Equal(t, float64(i), hit)
+		require.Equal(t, i, hit)
 	}
 
 	// A counter-example that doesn't increase metrics.ReadFromTableCacheCounter.
 	tk.MustQuery("select * from nt")
 	counter.Write(pb)
 	hit := pb.GetCounter().GetValue()
-	require.Equal(t, float64(i), hit)
+	require.Equal(t, i, hit)
 }
