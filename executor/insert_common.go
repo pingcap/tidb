@@ -761,8 +761,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
-			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min)
+			if !e.isLoadData {
+				if e.lastInsertID == 0 {
+					e.lastInsertID = uint64(min)
+				}
+			} else {
+				if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+					e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(min))
+				}
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
@@ -830,8 +836,14 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
-		if e.lastInsertID == 0 {
-			e.lastInsertID = uint64(recordID)
+		if !e.isLoadData {
+			if e.lastInsertID == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
+		} else {
+			if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+				e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(recordID))
+			}
 		}
 	}
 
@@ -913,8 +925,14 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
-		if e.lastInsertID == 0 {
-			e.lastInsertID = uint64(recordID)
+		if !e.isLoadData {
+			if e.lastInsertID == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
+		} else {
+			if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+				e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(recordID))
+			}
 		}
 	}
 
@@ -1228,9 +1246,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		}
 	} else {
 		e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-		if e.lastInsertID != 0 && e.lastInsertID > e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID {
-			e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
-		}
+		// lastInsertID not handle here again
 	}
 
 	return nil
