@@ -181,20 +181,8 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.Parse(createTable, "", "")
-=======
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
->>>>>>> 18fc286fb... lightning: support charset for create schema (#31915)
 	if err != nil {
 		return []string{}, err
 	}
