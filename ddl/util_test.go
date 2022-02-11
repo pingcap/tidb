@@ -170,7 +170,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 		Args:       []interface{}{tblInfo},
 	}
 	err := d.doDDLJob(ctx, job)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic

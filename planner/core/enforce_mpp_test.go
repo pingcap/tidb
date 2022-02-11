@@ -308,6 +308,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
 	}
+	collate.SetNewCollationEnabledForTest(true)
 }
 
 // Test enforce mpp warning for joins
