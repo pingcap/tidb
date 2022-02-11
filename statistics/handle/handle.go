@@ -92,6 +92,7 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
+	// Deprecated: only used by feedback now
 	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
