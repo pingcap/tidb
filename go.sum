@@ -819,8 +819,8 @@ github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJH
 github.com/tidwall/gjson v1.6.0/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
-github.com/tikv/client-go/v2 v2.0.0-rc.0.20220107040026-d22815099720 h1:GgXeSpvljDDkwScjOXM4NSVrR6hWnQthM8ZiHGHyBf8=
-github.com/tikv/client-go/v2 v2.0.0-rc.0.20220107040026-d22815099720/go.mod h1:Yn4EKNn2y8XrudACiBGnVpDwfIXqi5oLPADpIoAcPyg=
+github.com/tikv/client-go/v2 v2.0.0-rc.0.20220210073132-b5eb031edde7 h1:ODU6Pr4S0CjOSP/jqlQIz1hvfkLEXBTtgamVl4/3n88=
+github.com/tikv/client-go/v2 v2.0.0-rc.0.20220210073132-b5eb031edde7/go.mod h1:Yn4EKNn2y8XrudACiBGnVpDwfIXqi5oLPADpIoAcPyg=
 github.com/tikv/pd v1.1.0-beta.0.20211214024235-3c626f28bd32/go.mod h1:v9lIYxM8VeWZl4aF7jqsDXvqQoRjXdi7vYo5cO1g/2w=
 github.com/tikv/pd v1.1.0-beta.0.20220207063535-9268bed87199 h1:54W4oA8BhAEyxliOZgWeIiOZQB6Oc25EXXRN3/hOSEE=
 github.com/tikv/pd v1.1.0-beta.0.20220207063535-9268bed87199/go.mod h1:PWnQYE+JxAk4A31CtmZiBAhBMLXsAc9JaHCHpakX9Is=
