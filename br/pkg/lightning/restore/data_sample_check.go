@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -243,8 +244,9 @@ func (d *dataSampleCheck) getRandomDataFiles() []*sampledDataFileInfo {
 	}
 
 	currSlice := allFiles
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	for i := 0; i < count; i++ {
-		j := rand.Int() % len(currSlice)
+		j := rnd.Int() % len(currSlice)
 		currSlice[0], currSlice[j] = currSlice[j], currSlice[0]
 		currSlice = currSlice[1:]
 	}
