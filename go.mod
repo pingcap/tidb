@@ -67,7 +67,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-rc.0.20220107040026-d22815099720
+	github.com/tikv/client-go/v2 v2.0.0-rc.0.20220210073132-b5eb031edde7
 	github.com/tikv/pd v1.1.0-beta.0.20220207063535-9268bed87199
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
