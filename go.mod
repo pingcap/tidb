@@ -31,6 +31,7 @@ require (
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
+<<<<<<< HEAD
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
@@ -53,6 +54,31 @@ require (
 	github.com/sirupsen/logrus v1.2.0
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
+=======
+	github.com/opentracing/opentracing-go v1.1.0
+	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
+	github.com/pingcap/check v0.0.0-20211026125417-57bd13f7b5f0
+	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
+	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
+	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+	github.com/pingcap/kvproto v0.0.0-20211224055123-d1a140660c39
+	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
+	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
+	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20220110031732-29e23c62eeac
+	github.com/prometheus/client_golang v1.5.1
+	github.com/prometheus/client_model v0.2.0
+	github.com/prometheus/common v0.9.1
+	github.com/shirou/gopsutil/v3 v3.21.12
+	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
+	github.com/sirupsen/logrus v1.8.1 // indirect
+	github.com/soheilhy/cmux v0.1.4
+	github.com/spf13/cobra v1.0.0
+	github.com/spf13/pflag v1.0.5
+	github.com/stretchr/testify v1.7.0
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
