@@ -1581,14 +1581,6 @@ type AggInfo struct {
 // firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
-	defer func() {
-		if partial != nil && partialIsCop {
-			for _, f := range partial.AggFuncs {
-				f.Mode = aggregation.Partial1Mode
-			}
-		}
-	}()
-
 	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
@@ -1805,6 +1797,11 @@ func BuildFinalModeAggregation(
 		final.AggFuncs[i] = finalAggFunc
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
+	if partial != nil && partialIsCop {
+		for _, f := range partial.AggFuncs {
+			f.Mode = aggregation.Partial1Mode
+		}
+	}
 	return
 }
 
