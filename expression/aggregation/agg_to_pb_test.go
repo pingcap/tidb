@@ -88,6 +88,7 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 
 	jsons := []string{
+<<<<<<< HEAD
 		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
@@ -95,6 +96,15 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+=======
+		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3007,"val":"AAAAAAAABAA=","children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":15,"flag":0,"flen":-1,"decimal":-1,"collate":-46,"charset":"utf8mb4"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary"},"has_distinct":%v,"aggFuncMode":0}`,
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	}
 	for i, funcName := range funcNames {
 		aggFunc := &AggFuncDesc{
