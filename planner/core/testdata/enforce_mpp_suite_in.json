@@ -82,7 +82,7 @@
       "EXPLAIN SELECT * from t join s; -- can use mpp",
       "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
       "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
-      "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+      "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
       "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
     ]
   }

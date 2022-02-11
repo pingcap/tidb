@@ -191,7 +191,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
@@ -462,7 +462,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	require.True(t, ok)
 	require.Equal(t, "general", result.sqlType)
 	require.Equal(t, "dag", result.label)
-	require.Equal(t, len(colTypes), result.rowLen)
+	require.Len(t, colTypes, result.rowLen)
 
 	resp, ok := result.resp.(*mockResponse)
 	require.True(t, ok)
@@ -505,7 +505,7 @@ func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, [
 	require.NoError(t, err)
 	result, ok := response.(*streamResult)
 	require.True(t, ok)
-	require.Equal(t, len(colTypes), result.rowLen)
+	require.Len(t, colTypes, result.rowLen)
 
 	resp, ok := result.resp.(*mockResponse)
 	require.True(t, ok)

@@ -1,3 +1,4 @@
+set names utf8mb4;
 set @@sql_mode = '';
 -- test for builtin function hex(), length(), ascii(), octet_length()
 drop table if exists t;
@@ -191,14 +192,18 @@ select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
 select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
 select a like 0xe4b880, b like 0xd2bb from t;
 
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select a = 0xb6fe from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select b = 0xe4ba8c from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select concat(a, 0xb6fe) from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select concat(b, 0xe4ba8c) from t;
+--error 3854
+select concat(convert('a' using gbk), 0x3fff) from t;
+--error 3854
+select concat(convert('a' using gbk), 0x3fffffffffffffff) from t;
 
 set @@tidb_enable_vectorized_expression = false;
 select hex(concat(a, c)), hex(concat(b, c)) from t;
@@ -217,13 +222,13 @@ select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
 select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
 select a like 0xe4b880, b like 0xd2bb from t;
 
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select a = 0xb6fe from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select b = 0xe4ba8c from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select concat(a, 0xb6fe) from t;
---error ER_CANNOT_CONVERT_STRING
+--error 3854
 select concat(b, 0xe4ba8c) from t;
 
 -- test for builtin function aes_encrypt()
@@ -239,3 +244,22 @@ select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123',
 set @@block_encryption_mode='aes-128-ecb';
 select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin crc32()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select crc32(a), crc32(b), crc32(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select crc32(a), crc32(b), crc32(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for elt
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+

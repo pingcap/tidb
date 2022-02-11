@@ -30,7 +30,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 func TestGlobalConfigSyncer(t *testing.T) {
 	syncer := globalconfigsync.NewGlobalConfigSyncer(nil)
 	syncer.Notify("a", "b")
-	require.Equal(t, len(syncer.NotifyCh), 1)
+	require.Len(t, syncer.NotifyCh, 1)
 	entry := <-syncer.NotifyCh
 	require.Equal(t, entry.Name, "a")
 	err := syncer.StoreGlobalConfig(context.Background(), entry)
@@ -84,7 +84,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 			continue
 		}
 
-		require.Equal(t, len(resp.Kvs), 1)
+		require.Len(t, resp.Kvs, 1)
 		require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
 		require.Equal(t, resp.Kvs[0].Value, []byte("true"))
 		return

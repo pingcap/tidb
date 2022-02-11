@@ -59,8 +59,22 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable(),
-		MockRangePartitionTable(), MockHashPartitionTable(), MockListPartitionTable()})
+	tblInfos := []*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable(),
+		MockRangePartitionTable(), MockHashPartitionTable(), MockListPartitionTable()}
+	id := int64(0)
+	for _, tblInfo := range tblInfos {
+		tblInfo.ID = id
+		id += 1
+		pi := tblInfo.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			def.ID = id
+			id += 1
+		}
+	}
+	s.is = infoschema.MockInfoSchema(tblInfos)
 	s.ctx = MockContext()
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
@@ -94,6 +108,24 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		})
 		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", ca, ith))
 	}
+}
+
+// Issue: 31399
+func (s *testPlanSuite) TestImplicitCastNotNullFlag(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	ca := "select count(*) from t3 group by a having bit_and(b) > 1;"
+	comment := Commentf("for %s", ca)
+	stmt, err := s.ParseOneStmt(ca, "", "")
+	c.Assert(err, IsNil, comment)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
+	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
+	var nullableFlag uint = 0
+	c.Assert(castNotNullFlag, Equals, nullableFlag)
 }
 
 func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
@@ -2053,6 +2085,26 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 			c.Assert(plan, IsNil)
 		}
 	}
+}
+
+func (s *testPlanSuite) TestTraceFastPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = false
+	}()
+	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
+	sql := "select * from t where a=1"
+	comment := Commentf("sql:%s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	c.Assert(err, IsNil, comment)
+	plan := TryFastPlan(s.ctx, stmt)
+	c.Assert(plan, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan, NotNil)
+	c.Assert(s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan, IsTrue)
 }
 
 func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {

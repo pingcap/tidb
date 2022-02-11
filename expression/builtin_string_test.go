@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1403,8 +1402,6 @@ func TestBitLength(t *testing.T) {
 }
 
 func TestChar(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	tbl := []struct {
@@ -2190,9 +2187,6 @@ func TestInsert(t *testing.T) {
 }
 
 func TestOrd(t *testing.T) {
-	// TODO: Remove this and enable test parallel after new charset enabled
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -2559,16 +2553,16 @@ func TestWeightString(t *testing.T) {
 		{7, "NONE", 0, nil},
 		{7.0, "NONE", 0, nil},
 		{"a", "NONE", 0, "a"},
-		{"a ", "NONE", 0, "a "},
+		{"a ", "NONE", 0, "a"},
 		{"中", "NONE", 0, "中"},
-		{"中 ", "NONE", 0, "中 "},
+		{"中 ", "NONE", 0, "中"},
 		{nil, "CHAR", 5, nil},
 		{7, "CHAR", 5, nil},
 		{7.0, "NONE", 0, nil},
-		{"a", "CHAR", 5, "a    "},
-		{"a ", "CHAR", 5, "a    "},
-		{"中", "CHAR", 5, "中    "},
-		{"中 ", "CHAR", 5, "中    "},
+		{"a", "CHAR", 5, "a"},
+		{"a ", "CHAR", 5, "a"},
+		{"中", "CHAR", 5, "中"},
+		{"中 ", "CHAR", 5, "中"},
 		{nil, "BINARY", 5, nil},
 		{7, "BINARY", 2, "7\x00"},
 		{7.0, "NONE", 0, nil},
@@ -2668,8 +2662,6 @@ func TestTranslate(t *testing.T) {
 
 func TestCIWeightString(t *testing.T) {
 	ctx := createContext(t)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	type weightStringTest struct {
 		str     string

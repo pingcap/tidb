@@ -20,9 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/stmtsummary"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,7 +146,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on TableCache."))
 	}
 	assertSelect()
 
@@ -221,6 +225,8 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
 			break
 		}
+		// Wait for the cache to be loaded.
+		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, i < 10)
 
@@ -316,7 +322,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	for i := 0; i < 50; i++ {
+	cacheUsed = false
+	for i := 0; i < 100; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if tk2.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true
@@ -454,7 +461,13 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	se := tk.Session()
+
+	// This line is a hack, if auth user string is "", the statement summary is skipped,
+	// so it's added to make the later code been covered.
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")
 	tk.MustExec("alter table wait_tb1 cache")
@@ -467,6 +480,113 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 		}
 	}
 	require.True(t, i < 10)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into wait_tb1 values(1)")
 	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
+
+	tk.MustQuery("select DIGEST_TEXT from INFORMATION_SCHEMA.STATEMENTS_SUMMARY where MAX_BACKOFF_TIME > 0 or MAX_WAIT_TIME > 0").Check(testkit.Rows("insert into `wait_tb1` values ( ? )"))
+}
+
+func TestTableCacheLeaseVariable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Check default value.
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("3"))
+
+	// Check a valid value.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 1;")
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("1"))
+
+	// Check a invalid value, the valid range is [2, 10]
+	tk.MustExec("set @@global.tidb_table_cache_lease = 111;")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_table_cache_lease value: '111'"))
+	tk.MustQuery("select @@global.tidb_table_cache_lease").Check(testkit.Rows("10"))
+
+	// Change to a non-default value and verify the behaviour.
+	tk.MustExec("set @@global.tidb_table_cache_lease = 2;")
+
+	tk.MustExec("drop table if exists test_lease_variable;")
+	tk.MustExec(`create table test_lease_variable(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_lease_variable(c0, c1, c2) values (1, null, 'green');`)
+	tk.MustExec(`alter table test_lease_variable cache;`)
+
+	tk.MustQuery("select * from test_lease_variable").Check(testkit.Rows("1 <nil> green"))
+	cached := false
+	for i := 0; i < 20; i++ {
+		if tk.HasPlan("select * from test_lease_variable", "UnionScan") {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	start := time.Now()
+	tk.MustExec("update test_lease_variable set c0 = 2")
+	duration := time.Since(start)
+
+	// The lease is 2s, check how long the write operation takes.
+	require.True(t, duration > time.Second)
+	require.True(t, duration < 3*time.Second)
+}
+
+func TestMetrics(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_metrics;")
+	tk.MustExec(`create table test_metrics(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`create table nt (c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_metrics(c0, c1, c2) values (1, null, 'green');`)
+	tk.MustExec(`alter table test_metrics cache;`)
+
+	tk.MustQuery("select * from test_metrics").Check(testkit.Rows("1 <nil> green"))
+	cached := false
+	for i := 0; i < 20; i++ {
+		if tk.HasPlan("select * from test_metrics", "UnionScan") {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	counter := metrics.ReadFromTableCacheCounter
+	pb := &dto.Metric{}
+
+	queries := []string{
+		// Table scan
+		"select * from test_metrics",
+		// Index scan
+		"select c0 from test_metrics use index(uk) where c0 > 1",
+		// Index Lookup
+		"select c1 from test_metrics use index(uk) where c0 = 1",
+		// Point Get
+		"select c0 from test_metrics use index(uk) where c0 = 1",
+		// // Aggregation
+		"select count(*) from test_metrics",
+		// Join
+		"select * from test_metrics as a join test_metrics as b on a.c0 = b.c0 where a.c1 != 'xxx'",
+	}
+	counter.Write(pb)
+	i := pb.GetCounter().GetValue()
+
+	for _, query := range queries {
+		tk.MustQuery(query)
+		i++
+		counter.Write(pb)
+		hit := pb.GetCounter().GetValue()
+		require.Equal(t, i, hit)
+	}
+
+	// A counter-example that doesn't increase metrics.ReadFromTableCacheCounter.
+	tk.MustQuery("select * from nt")
+	counter.Write(pb)
+	hit := pb.GetCounter().GetValue()
+	require.Equal(t, i, hit)
 }

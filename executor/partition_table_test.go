@@ -205,7 +205,7 @@ func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 		  c_double double DEFAULT NULL,
 		  c_decimal decimal(12,6) DEFAULT NULL,
 		  PRIMARY KEY (c_int,c_str,c_datetime)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 		 PARTITION BY RANGE (c_int)
 		(PARTITION p0 VALUES LESS THAN (2) ENGINE = InnoDB,
 		 PARTITION p1 VALUES LESS THAN (4) ENGINE = InnoDB,
@@ -526,10 +526,10 @@ func (s *partitionTableSuite) TestDirectReadingwithIndexJoin(c *C) {
 	// hash and range partition
 	tk.MustExec("create table thash (a int, b int, c int, primary key(a), index idx_b(b)) partition by hash(a) partitions 4;")
 	tk.MustExec(`create table trange (a int, b int, c int, primary key(a), index idx_b(b)) partition by range(a) (
-		  partition p0 values less than(1000),
-		  partition p1 values less than(2000),
-		  partition p2 values less than(3000),
-		  partition p3 values less than(4000));`)
+		 partition p0 values less than(1000),
+		 partition p1 values less than(2000),
+		 partition p2 values less than(3000),
+		 partition p3 values less than(4000));`)
 
 	// regualr table
 	tk.MustExec(`create table tnormal (a int, b int, c int, primary key(a), index idx_b(b));`)
@@ -3119,4 +3119,8 @@ func (s *partitionTableSuite) TestIssue26251(c *C) {
 		// Unexpected, test fail.
 		c.Fail()
 	}
+
+	// Clean up
+	<-ch
+	tk2.MustExec("rollback")
 }

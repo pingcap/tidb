@@ -54,10 +54,10 @@ func TestNormalize(t *testing.T) {
 		{"select * from `table`", "select * from `table`"},
 		{"select * from `30`", "select * from `30`"},
 		{"select * from `select`", "select * from `select`"},
+		{"select * from 🥳", "select * from `🥳`"},
 		// test syntax error, it will be checked by parser, but it should not make normalize dead loop.
 		{"select * from t ignore index(", "select * from `t` ignore index"},
 		{"select /*+ ", "select "},
-		{"select * from 🥳", "select * from"},
 		{"select 1 / 2", "select ? / ?"},
 		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},

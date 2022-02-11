@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -89,6 +90,10 @@ type copTask struct {
 
 	// For table partition.
 	partitionInfo PartitionInfo
+
+	// expectCnt is the expected row count of upper task, 0 for unlimited.
+	// It's used for deciding whether using paging distsql.
+	expectCnt uint64
 }
 
 func (t *copTask) invalid() bool {
@@ -740,7 +745,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
-		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nlTask = nlTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
@@ -752,7 +757,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if rChanged {
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
-		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nrTask = nrTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
@@ -914,7 +919,17 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// (indexRows / batchSize) * batchSize * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	indexRows := t.indexPlan.statsInfo().RowCount
-	newTask.cst += indexRows * sessVars.CPUFactor
+	idxCst := indexRows * sessVars.CPUFactor
+	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
+	// paging API reduces the count of index and table rows, however introduces more seek cost.
+	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
+		p.Paging = true
+		pagingCst := calcPagingCost(ctx, t)
+		// prevent enlarging the cost because we take paging as a better plan,
+		// if the cost is enlarged, it'll be easier to go another plan.
+		idxCst = math.Min(idxCst, pagingCst)
+	}
+	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
 	numTblWorkers := float64(sessVars.IndexLookupConcurrency())
 	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
@@ -951,6 +966,41 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	return newTask
 }
 
+func extractRows(p PhysicalPlan) float64 {
+	f := float64(0)
+	for _, c := range p.Children() {
+		if len(c.Children()) != 0 {
+			f += extractRows(c)
+		} else {
+			f += c.statsInfo().RowCount
+		}
+	}
+	return f
+}
+
+// calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
+func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
+	sessVars := ctx.GetSessionVars()
+	indexRows := t.indexPlan.statsInfo().RowCount
+	expectCnt := t.expectCnt
+	sourceRows := extractRows(t.indexPlan)
+	// with paging, the scanned rows is always less than or equal to source rows.
+	if uint64(sourceRows) < expectCnt {
+		expectCnt = uint64(sourceRows)
+	}
+	seekCnt := paging.CalculateSeekCnt(expectCnt)
+	indexSelectivity := float64(1)
+	if sourceRows > indexRows {
+		indexSelectivity = indexRows / sourceRows
+	}
+	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
+	pagingCst *= indexSelectivity
+
+	// we want the diff between idxCst and pagingCst here,
+	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
+	return pagingCst - sessVars.GetSeekFactor(nil)
+}
+
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
 	return t.copy().(*rootTask)
 }
@@ -968,8 +1018,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
-	needExtraProj := false
-	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
@@ -985,11 +1033,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema = ts.schema.Clone()
+		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		if len(ts.Columns) > prevColumnLen {
+		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add an projection to make sure not to output extract columns.
-			needExtraProj = true
+			t.needExtraProj = true
+			t.originSchema = prevSchema
 		}
 	}
 	t.cst /= copIterWorkers
@@ -1005,6 +1054,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		p.cost = newTask.cost()
+		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
@@ -1055,9 +1105,9 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			aggPushedDown = true
 		}
 
-		if needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
-			proj.SetSchema(prevSchema)
+		if t.needExtraProj && !aggPushedDown {
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
+			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			proj.cost = t.cost()
 			newTask.p = proj
@@ -1066,6 +1116,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 	}
 
+	t.handleRootTaskConds(ctx, newTask)
+	return newTask
+}
+
+func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask) {
 	if len(t.rootTaskConds) > 0 {
 		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
 		if err != nil {
@@ -1077,8 +1132,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		newTask.p = sel
 		sel.cost = newTask.cost()
 	}
-
-	return newTask
 }
 
 // setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
@@ -1556,7 +1609,7 @@ func BuildFinalModeAggregation(
 	}
 
 	// TODO: Refactor the way of constructing aggregation functions.
-	// This fop loop is ugly, but I do not find a proper way to reconstruct
+	// This for loop is ugly, but I do not find a proper way to reconstruct
 	// it right away.
 
 	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
@@ -2021,6 +2074,20 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
+	inputRows := mpp.count()
+	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+	// only push down the original agg
+	proj := p.convertAvgForMPP()
+	attachPlan2Task(p.self, mpp)
+	if proj != nil {
+		attachPlan2Task(proj, mpp)
+	}
+	mpp.addCost(p.GetCost(inputRows, false, true))
+	p.cost = mpp.cost()
+	return mpp
+}
+
 func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	t := tasks[0].copy()
 	mpp, ok := t.(*mppTask)
@@ -2041,6 +2108,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		p.cost = mpp.cost()
 		return mpp
 	case Mpp2Phase:
+		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
@@ -2095,6 +2163,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
+		if !mpp.needEnforceExchanger(prop) {
+			return p.attach2TaskForMpp1Phase(mpp)
+		}
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
@@ -2104,8 +2176,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
-		newMpp := mpp.enforceExchangerImpl(prop)
+		newMpp := mpp.enforceExchanger(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2291,17 +2362,21 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	return rt
 }
 
-func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
+func (t *mppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
 	case property.BroadcastType:
 		return true
+	case property.SinglePartitionType:
+		return t.partTp != property.SinglePartitionType
 	default:
 		if t.partTp != property.HashType {
 			return true
 		}
 		// TODO: consider equalivant class
+		// TODO: `prop.IsSubsetOf` is enough, instead of equal.
+		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
@@ -2319,7 +2394,7 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
-	if !t.needEnforce(prop) {
+	if !t.needEnforceExchanger(prop) {
 		return t
 	}
 	return t.copy().(*mppTask).enforceExchangerImpl(prop)
@@ -2336,7 +2411,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),
+		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
