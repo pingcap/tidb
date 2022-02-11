@@ -1366,6 +1366,43 @@ func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Met
 	return streamBackupDataFiles, nil
 }
 
+// FixIndex tries to fix a single index.
+func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("Client.LoadRestoreStores index: %s.%s:%s",
+			schema, table, index), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	sql := fmt.Sprintf("ADMIN RECOVER INDEX %s %s;",
+		utils.EncloseDBAndTable(schema, table),
+		utils.EncloseName(index))
+	log.Debug("Executing fix index sql.", zap.String("sql", sql))
+	err := rc.db.se.Execute(ctx, sql)
+	if err != nil {
+		return errors.Annotatef(err, "failed to execute %s", sql)
+	}
+	return nil
+}
+
+// FixIndicdesOfTable tries to fix the indices of the table via `ADMIN RECOVERY INDEX`.
+func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo) error {
+	tableName := table.Name.L
+	// NOTE: Maybe we can create multi sessions and restore indices concurrently?
+	for _, index := range table.Indices {
+		start := time.Now()
+		if err := rc.FixIndex(ctx, schema, tableName, index.Name.L); err != nil {
+			return errors.Annotatef(err, "failed to fix index %s for table %s", index.Name, tableName)
+		}
+		log.Info("Fix index done.", zap.Stringer("take", time.Since(start)),
+			zap.String("table", tableName),
+			zap.String("database", schema),
+			zap.Stringer("index", index.Name))
+	}
+	return nil
+}
+
 func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRules, files []*backuppb.DataFileInfo) error {
 	var err error
 	start := time.Now()
@@ -1401,7 +1438,7 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 			fileStart := time.Now()
 			defer func() {
-				log.Debug("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+				log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 			}()
 			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
 		})
