@@ -233,7 +233,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
 '''
 
 ["admin:8224"]
@@ -923,12 +923,12 @@ Export failed: %s
 
 ["executor:8133"]
 error = '''
-handle %#v, index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 '''
 
 ["executor:8134"]
 error = '''
-col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
 '''
 
 ["executor:8212"]
@@ -1821,6 +1821,21 @@ error = '''
 column %s can't be in none state
 '''
 
+["table:8138"]
+error = '''
+writing inconsistent data in table: %s, expected-values:{%s} != record-values:{%s}
+'''
+
+["table:8139"]
+error = '''
+writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v
+'''
+
+["table:8140"]
+error = '''
+writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}
+'''
+
 ["tikv:1105"]
 error = '''
 Unknown error
@@ -1839,6 +1854,11 @@ Query execution was interrupted
 ["tikv:3572"]
 error = '''
 Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
+'''
+
+["tikv:8141"]
+error = '''
+assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v
 '''
 
 ["tikv:8229"]
