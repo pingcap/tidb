@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
 	"io"
 	"math/rand"
 	"net/http"
@@ -33,8 +34,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-
-	// "github.com/pingcap/failpoint"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -1259,13 +1259,12 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.Falsef(t, rows.Next(), "unexpected data")
 		require.NoError(t, rows.Close())
 		// fail error processing test
-		// TODO failpoint can't enable
-		//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"))
-		//_, err1 = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ','`, path))
-		//mysqlErr, ok := err1.(*mysql.MySQLError)
-		//require.True(t, ok)
-		//require.Equal(t, "mock commit one task error", mysqlErr.Message)
-		//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"))
+		_, err1 = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ','`, path))
+		mysqlErr, ok := err1.(*mysql.MySQLError)
+		require.True(t, ok)
+		require.Equal(t, "mock commit one task error", mysqlErr.Message)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"))
 
 		dbt.MustExec("drop table if exists pn")
 	})
