@@ -1254,8 +1254,8 @@ func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Met
 // FixIndex tries to fix a single index.
 func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(fmt.Sprintf("Client.LoadRestoreStores index: %s",
-			strings.Join([]string{schema, table, index}, ".")), opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("Client.LoadRestoreStores index: %s.%s:%s",
+			schema, table, index), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
