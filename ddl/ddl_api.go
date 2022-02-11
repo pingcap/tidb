@@ -4644,10 +4644,10 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
 	oldCol := table.FindCol(t.Cols(), colName.L)
-	col := table.ToColumn(oldCol.Clone())
-	if col == nil {
+	if oldCol == nil {
 		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
+	col := table.ToColumn(oldCol.Clone())
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
