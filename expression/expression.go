@@ -968,7 +968,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// string functions.
 		ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, /* ast.Lower, ast.InsertFunc */
+		ast.Trim, ast.FromBase64, ast.ToBase64, /* ast.Upper,  ast.Lower, ast.InsertFunc */
 		ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
 		ast.FindInSet, ast.Repeat,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
