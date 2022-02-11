@@ -1244,7 +1244,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, con: con}), false
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, con: con}), false
 	}
 	return nil, false
 }
