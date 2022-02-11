@@ -1554,7 +1554,15 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
-	se, clean, err := s.getInternalSession(opts)
+	execOption := sqlexec.GetExecOption(opts)
+	var se *session
+	var clean func()
+	var err error
+	if execOption.UseCurSession {
+		se, clean, err = s.useCurrentSession(execOption)
+	} else {
+		se, clean, err = s.getInternalSession(execOption)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1585,16 +1593,37 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	return rows, rs.Fields(), err
 }
 
-func (s *session) getInternalSession(opts []sqlexec.OptionFuncAlias) (*session, func(), error) {
+// only set and clean session with execOption
+func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, func(), error) {
+	var err error
+	if execOption.SnapshotTS != 0 {
+		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+	}
+	prevStatsVer := s.sessionVars.AnalyzeVersion
+	if execOption.AnalyzeVer != 0 {
+		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
+	}
+	return s, func() {
+		s.sessionVars.AnalyzeVersion = prevStatsVer
+		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+		}
+		s.sessionVars.SnapshotInfoschema = nil
+	}, nil
+}
+
+func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, func(), error) {
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	se := tmp.(*session)
-	var execOption sqlexec.ExecOption
-	for _, opt := range opts {
-		opt(&execOption)
-	}
 
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
@@ -1644,7 +1673,15 @@ func (s *session) getInternalSession(opts []sqlexec.OptionFuncAlias) (*session, 
 }
 
 func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, clean, err := s.getInternalSession(opts)
+	execOption := sqlexec.GetExecOption(opts)
+	var se *session
+	var clean func()
+	var err error
+	if execOption.UseCurSession {
+		se, clean, err = s.useCurrentSession(execOption)
+	} else {
+		se, clean, err = s.getInternalSession(execOption)
+	}
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
