@@ -120,7 +120,7 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// statsLoad is used to load stats concurrently
+	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 }
 
@@ -141,7 +141,7 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt)
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionUseCurSession)
 	})
 }
 
@@ -158,7 +158,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer])
+		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionUseCurSession)
 	})
 }
 
@@ -168,7 +168,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession)
 	})
 }
 
