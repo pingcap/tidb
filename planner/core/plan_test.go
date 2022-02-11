@@ -18,12 +18,30 @@ import (
 	"fmt"
 	"strings"
 
+<<<<<<< HEAD
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/types"
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -545,3 +563,264 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 		core.EncodePlan(p)
 	}
 }
+<<<<<<< HEAD
+=======
+
+// Close issue 25729
+func TestIssue25729(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	// Case1
+	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
+			"Projection 0.10 root  test.tt.a, test.tt.b",
+			"└─IndexLookUp 0.10 root  ",
+			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
+	}
+
+	tk.MustExec("insert into tt values(4, 3);")
+	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
+
+	// Case2
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `a` varchar(10) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  KEY `expression_index` ((concat(`a`, `b`)))," +
+		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
+		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
+		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
+		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
+		");")
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader 0.10 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+
+		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
+			"Projection 33.33 root  test.t1.b",
+			"└─IndexReader 33.33 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
+	}
+	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
+	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
+}
+
+func TestCopPaging(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set session tidb_enable_paging = 1")
+	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
+	defer tk.MustExec("drop table t")
+	for i := 0; i < 1024; i++ {
+		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
+	}
+	tk.MustExec("analyze table t")
+
+	// limit 960 should go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit 4.00 root  offset:0, count:960",
+			"└─IndexLookUp 4.00 root  paging:true",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// selection between limit and indexlookup, limit 960 should also go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit 3.20 root  offset:0, count:960",
+			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
+			"  └─IndexLookUp 3.20 root  paging:true",
+			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
+			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+	}
+
+	// limit 961 exceeds the threshold, it should not go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit 4.00 root  offset:0, count:961",
+			"└─IndexLookUp 4.00 root  ",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// selection between limit and indexlookup, limit 961 should not go paging too
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit 3.20 root  offset:0, count:961",
+			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
+			"  └─IndexLookUp 3.20 root  ",
+			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
+			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+	}
+}
+
+func TestBuildFinalModeAggregation(t *testing.T) {
+	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
+		for _, agg := range aggFuncs {
+			newCol := &expression.Column{
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  agg.RetTp,
+			}
+			schema.Append(newCol)
+		}
+		return schema
+	}
+	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
+		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
+	}
+	checkResult := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
+			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
+				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+					AggFuncs:     aggFuncs,
+					GroupByItems: groubyItems,
+					Schema:       aggSchemaBuilder(sctx, aggFuncs),
+				}, partialIsCop == 0, isMPPTask == 0)
+				if partial != nil {
+					for _, aggFunc := range partial.AggFuncs {
+						if partialIsCop == 0 {
+							require.True(t, !isFinalAggMode(aggFunc.Mode))
+						} else {
+							require.True(t, isFinalAggMode(aggFunc.Mode))
+						}
+					}
+				}
+				if final != nil {
+					for _, aggFunc := range final.AggFuncs {
+						require.True(t, isFinalAggMode(aggFunc.Mode))
+					}
+				}
+			}
+		}
+	}
+
+	ctx := core.MockContext()
+
+	aggCol := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	gbyCol := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	orderCol := &expression.Column{
+		Index:   2,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	emptyGroupByItems := make([]expression.Expression, 0, 1)
+	groupByItems := make([]expression.Expression, 0, 1)
+	groupByItems = append(groupByItems, gbyCol)
+
+	orderByItems := make([]*util.ByItems, 0, 1)
+	orderByItems = append(orderByItems, &util.ByItems{
+		Expr: orderCol,
+		Desc: true,
+	})
+
+	aggFuncs := make([]*aggregation.AggFuncDesc, 0, 5)
+	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMax, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{aggCol}, false)
+	require.NoError(t, err)
+	aggFuncs = append(aggFuncs, desc)
+
+	aggFuncsWithDistinct := make([]*aggregation.AggFuncDesc, 0, 2)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{aggCol}, true)
+	require.NoError(t, err)
+	aggFuncsWithDistinct = append(aggFuncsWithDistinct, desc)
+	desc, err = aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{aggCol}, true)
+	require.NoError(t, err)
+	aggFuncsWithDistinct = append(aggFuncsWithDistinct, desc)
+
+	groupConcatAggFuncs := make([]*aggregation.AggFuncDesc, 0, 4)
+	groupConcatWithoutDistinctWithoutOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, false)
+	require.NoError(t, err)
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithoutDistinctWithoutOrderBy)
+	groupConcatWithoutDistinctWithOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, false)
+	require.NoError(t, err)
+	groupConcatWithoutDistinctWithOrderBy.OrderByItems = orderByItems
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithoutDistinctWithOrderBy)
+	groupConcatWithDistinctWithoutOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, true)
+	require.NoError(t, err)
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithDistinctWithoutOrderBy)
+	groupConcatWithDistinctWithOrderBy, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{aggCol, aggCol}, true)
+	require.NoError(t, err)
+	groupConcatWithDistinctWithOrderBy.OrderByItems = orderByItems
+	groupConcatAggFuncs = append(groupConcatAggFuncs, groupConcatWithDistinctWithOrderBy)
+
+	// case 1 agg without distinct
+	checkResult(ctx, aggFuncs, emptyGroupByItems)
+	checkResult(ctx, aggFuncs, groupByItems)
+
+	// case 2 agg with distinct
+	checkResult(ctx, aggFuncsWithDistinct, emptyGroupByItems)
+	checkResult(ctx, aggFuncsWithDistinct, groupByItems)
+
+	// case 3 mixed with distinct and without distinct
+	mixedAggFuncs := make([]*aggregation.AggFuncDesc, 0, 10)
+	mixedAggFuncs = append(mixedAggFuncs, aggFuncs...)
+	mixedAggFuncs = append(mixedAggFuncs, aggFuncsWithDistinct...)
+	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
+	checkResult(ctx, mixedAggFuncs, groupByItems)
+
+	// case 4 group concat
+	for _, groupConcatAggFunc := range groupConcatAggFuncs {
+		checkResult(ctx, []*aggregation.AggFuncDesc{groupConcatAggFunc}, emptyGroupByItems)
+		checkResult(ctx, []*aggregation.AggFuncDesc{groupConcatAggFunc}, groupByItems)
+	}
+	checkResult(ctx, groupConcatAggFuncs, emptyGroupByItems)
+	checkResult(ctx, groupConcatAggFuncs, groupByItems)
+
+	// case 5 mixed group concat and other agg funcs
+	for _, groupConcatAggFunc := range groupConcatAggFuncs {
+		funcs := make([]*aggregation.AggFuncDesc, 0, 10)
+		funcs = append(funcs, groupConcatAggFunc)
+		funcs = append(funcs, aggFuncs...)
+		checkResult(ctx, funcs, emptyGroupByItems)
+		checkResult(ctx, funcs, groupByItems)
+		funcs = append(funcs, aggFuncsWithDistinct...)
+		checkResult(ctx, funcs, emptyGroupByItems)
+		checkResult(ctx, funcs, groupByItems)
+	}
+	mixedAggFuncs = append(mixedAggFuncs, groupConcatAggFuncs...)
+	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
+	checkResult(ctx, mixedAggFuncs, groupByItems)
+}
+>>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
