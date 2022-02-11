@@ -20,11 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -526,4 +528,62 @@ func TestTableCacheLeaseVariable(t *testing.T) {
 	// The lease is 2s, check how long the write operation takes.
 	require.True(t, duration > time.Second)
 	require.True(t, duration < 3*time.Second)
+}
+
+func TestMetrics(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_metrics;")
+	tk.MustExec(`create table test_metrics(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`create table nt (c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_metrics(c0, c1, c2) values (1, null, 'green');`)
+	tk.MustExec(`alter table test_metrics cache;`)
+
+	tk.MustQuery("select * from test_metrics").Check(testkit.Rows("1 <nil> green"))
+	cached := false
+	for i := 0; i < 20; i++ {
+		if tk.HasPlan("select * from test_metrics", "UnionScan") {
+			cached = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cached)
+
+	counter := metrics.ReadFromTableCacheCounter
+	pb := &dto.Metric{}
+
+	queries := []string{
+		// Table scan
+		"select * from test_metrics",
+		// Index scan
+		"select c0 from test_metrics use index(uk) where c0 > 1",
+		// Index Lookup
+		"select c1 from test_metrics use index(uk) where c0 = 1",
+		// Point Get
+		"select c0 from test_metrics use index(uk) where c0 = 1",
+		// // Aggregation
+		"select count(*) from test_metrics",
+		// Join
+		"select * from test_metrics as a join test_metrics as b on a.c0 = b.c0 where a.c1 != 'xxx'",
+	}
+	counter.Write(pb)
+	i := pb.GetCounter().GetValue()
+
+	for _, query := range queries {
+		tk.MustQuery(query)
+		i++
+		counter.Write(pb)
+		hit := pb.GetCounter().GetValue()
+		require.Equal(t, i, hit)
+	}
+
+	// A counter-example that doesn't increase metrics.ReadFromTableCacheCounter.
+	tk.MustQuery("select * from nt")
+	counter.Write(pb)
+	hit := pb.GetCounter().GetValue()
+	require.Equal(t, i, hit)
 }
