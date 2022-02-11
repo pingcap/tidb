@@ -145,7 +145,7 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt)
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionUseCurSession)
 	})
 }
 
@@ -170,7 +170,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(
 		}
 		trackFunc(exec.(sessionctx.Context))
 		defer deferFunc(exec.(sessionctx.Context))
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionIgnoreSessionPool)
+		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionUseCurSession)
 	})
 }
 
@@ -180,7 +180,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession)
 	})
 }
 
