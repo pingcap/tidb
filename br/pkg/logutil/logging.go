@@ -122,6 +122,11 @@ func RewriteRule(rewriteRule *import_sstpb.RewriteRule) zap.Field {
 	return zap.Object("rewriteRule", zapRewriteRuleMarshaler{rewriteRule})
 }
 
+// RewriteRuleObject make zap object marshaler for a rewrite rule.
+func RewriteRuleObject(rewriteRule *import_sstpb.RewriteRule) zapcore.ObjectMarshaler {
+	return zapRewriteRuleMarshaler{rewriteRule}
+}
+
 type zapMarshalRegionMarshaler struct{ *metapb.Region }
 
 func (region zapMarshalRegionMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
