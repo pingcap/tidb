@@ -20,11 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1604,15 +1602,7 @@ func (p *preprocessor) initTxnContextProviderIfNecessary() {
 	txnManager := sessiontxn.GetTxnManager(p.ctx)
 	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
 		provider.InfoSchema = p.ensureInfoSchema()
-		provider.ReadReplicaScope = p.getReadReplicaScope()
+		provider.ReadReplicaScope = p.ctx.GetSessionVars().CheckAndGetTxnScope()
 	}
 	return
-}
-
-func (p *preprocessor) getReadReplicaScope() string {
-	instanceScope := config.GetTxnScopeFromConfig()
-	if p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && instanceScope != kv.GlobalReplicaScope {
-		return instanceScope
-	}
-	return p.ctx.GetSessionVars().TxnCtx.TxnScope
 }

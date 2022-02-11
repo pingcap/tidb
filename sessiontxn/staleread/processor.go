@@ -126,9 +126,10 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) error {
 	return nil
 }
 
-func (p *baseProcessor) buildContextProvider(readReplicaScope string) sessiontxn.TxnContextProvider {
-	if readReplicaScope == "" {
-		readReplicaScope = kv.GlobalReplicaScope
+func (p *baseProcessor) buildContextProvider() sessiontxn.TxnContextProvider {
+	readReplicaScope := kv.GlobalReplicaScope
+	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		readReplicaScope = config.GetTxnScopeFromConfig()
 	}
 
 	return &staleReadTxnContextProvider{
@@ -204,7 +205,7 @@ func (p *InitTxnContextProcessor) OnBeginStmt(begin *ast.BeginStmt) error {
 
 	var provider sessiontxn.TxnContextProvider
 	if ts != 0 {
-		provider = p.buildContextProvider(config.GetTxnScopeFromConfig())
+		provider = p.buildContextProvider()
 	}
 
 	p.sctx.GetSessionVars().StmtCtx.ContextProviderForBeginStmt = provider
@@ -247,7 +248,7 @@ func (p *InitTxnContextProcessor) onSelectOrExecuteTS(ts uint64) (err error) {
 	}
 
 	if ts != 0 {
-		err = p.txnManager.SetContextProvider(p.buildContextProvider(config.GetTxnScopeFromConfig()))
+		err = p.txnManager.SetContextProvider(p.buildContextProvider())
 	}
 
 	return err
