@@ -85,10 +85,6 @@ type DatabaseOption struct {
 	TiFlashReplica *TiFlashReplicaSpec
 }
 
-func restoreTiFlashStmt(ctx *format.RestoreCtx, tiFlashReplica *TiFlashReplicaSpec) {
-
-}
-
 // Restore implements Node interface.
 func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
