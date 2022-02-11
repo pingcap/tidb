@@ -5235,7 +5235,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
@@ -5244,7 +5244,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
