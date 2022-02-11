@@ -749,7 +749,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
+				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 
@@ -790,7 +790,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
+				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {

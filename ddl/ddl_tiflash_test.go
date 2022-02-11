@@ -359,12 +359,20 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
 
 	s.CheckFlashback(tk, c)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	r, ok := s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	c.Assert(r, NotNil)
+	c.Assert(ok, Equals, true)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, IsNil)
+	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	c.Assert(r, IsNil)
+	c.Assert(ok, Equals, false)
 }
 
 // Truncate partition shall not block.
