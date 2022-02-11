@@ -1797,7 +1797,7 @@ func BuildFinalModeAggregation(
 		final.AggFuncs[i] = finalAggFunc
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
-	if partial != nil && partialIsCop {
+	if partialIsCop {
 		for _, f := range partial.AggFuncs {
 			f.Mode = aggregation.Partial1Mode
 		}
