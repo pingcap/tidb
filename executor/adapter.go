@@ -966,6 +966,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+
+	if sessVars.StmtCtx.ReadFromTableCache {
+		metrics.ReadFromTableCacheCounter.Inc()
+	}
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
