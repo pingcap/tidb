@@ -73,14 +73,16 @@ const (
 	DatabaseOptionCharset
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
+	DatabaseSetTiFlashReplica
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
 // DatabaseOption represents database option.
 type DatabaseOption struct {
-	Tp        DatabaseOptionType
-	Value     string
-	UintValue uint64
+	Tp             DatabaseOptionType
+	Value          string
+	UintValue      uint64
+	TiFlashReplica *TiFlashReplicaSpec
 }
 
 // Restore implements Node interface.
