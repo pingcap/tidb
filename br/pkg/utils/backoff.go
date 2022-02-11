@@ -60,7 +60,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	} else {
 		e := errors.Cause(err)
 		switch e { // nolint:errorlint
-		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed:
+		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:

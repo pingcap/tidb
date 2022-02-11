@@ -32,9 +32,20 @@ var (
 	quoteRegexp     = regexp.MustCompile("`(?:[^`]|``)*`")
 )
 
+// ApplyedFile has two types for now.
+// 1. SST file used by full backup/restore.
+// 2. KV file used by pitr restore.
+type ApplyedFile interface {
+	GetStartKey() []byte
+	GetEndKey() []byte
+}
+
 // GetRewriteRules returns the rewrite rule of the new table and the old table.
+// getDetailRule is used for normal backup & restore.
+// if set to true, means we collect the rules like tXXX_r, tYYY_i.
+// if set to false, means we only collect the rules contain table_id, tXXX, tYYY.
 func GetRewriteRules(
-	newTable, oldTable *model.TableInfo, newTimeStamp uint64,
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
 ) *RewriteRules {
 	tableIDs := make(map[int64]int64)
 	tableIDs[oldTable.ID] = newTable.ID
@@ -58,15 +69,23 @@ func GetRewriteRules(
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
-		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
-			NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
-			NewTimestamp: newTimeStamp,
-		})
-		for oldIndexID, newIndexID := range indexIDs {
+		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
-				NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+				OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
+				NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
+				NewTimestamp: newTimeStamp,
+			})
+			for oldIndexID, newIndexID := range indexIDs {
+				dataRules = append(dataRules, &import_sstpb.RewriteRule{
+					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+					NewTimestamp: newTimeStamp,
+				})
+			}
+		} else {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
 				NewTimestamp: newTimeStamp,
 			})
 		}
@@ -307,7 +326,19 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 	return nil
 }
 
-// Rewrites a raw key and returns a encoded key.
+// Rewrites an encoded key and returns a encoded key.
+func rewriteEncodedKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
+	if rewriteRules == nil {
+		return key, nil
+	}
+	if len(key) > 0 {
+		_, rawKey, _ := codec.DecodeBytes(key, nil)
+		return rewriteRawKey(rawKey, rewriteRules)
+	}
+	return nil, nil
+}
+
+// Rewrites a raw key with raw key rewrite rule and returns an encoded key.
 func rewriteRawKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
 	if rewriteRules == nil {
 		return codec.EncodeBytes([]byte{}, key), nil
@@ -355,32 +386,43 @@ func SplitRanges(
 	})
 }
 
-func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_sstpb.RewriteRule {
+func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	if startID != endID {
 		return nil
 	}
-	_, rule := rewriteRawKey(file.StartKey, rules)
+	_, rule := rewriteRawKey(file.GetStartKey(), rules)
+	if rule == nil {
+		// fall back to encoded key
+		_, rule = rewriteEncodedKey(file.GetStartKey(), rules)
+	}
 	return rule
 }
 
-func rewriteFileKeys(file *backuppb.File, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			log.Error("cannot find rewrite rule",
+			// fall back to encoded key
+			log.Info("cannot find rewrite rule with raw key format",
 				logutil.Key("startKey", file.GetStartKey()),
 				zap.Reflect("rewrite data", rewriteRules.Data))
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
+			if rule == nil {
+				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+			}
 			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+			endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
+			if rewriteRules != nil && rule == nil {
+				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+			}
 			return
 		}
 	} else {
