@@ -569,3 +569,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
+
+
+func (s *tiflashDDLTestSuite) TestAlterDatabaseFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'")
+}

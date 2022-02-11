@@ -272,6 +272,21 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 	return placementPolicyRef, nil
 }
 
+func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption) error {
+	hasSetTiFlashReplica := false
+	if len(specs) > 1 {
+		for _, spec := range specs {
+			if spec.Tp == ast.DatabaseSetTiFlashReplica {
+				if hasSetTiFlashReplica {
+					return errRunMultiSchemaChanges
+				}
+				hasSetTiFlashReplica = true
+			}
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
@@ -280,6 +295,11 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		placementPolicyRef                                           *model.PolicyRefInfo
 		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
+
+	err = checkMultiSchemaSpecs(ctx, stmt.Options)
+	if err != nil {
+		return err
+	}
 
 	for _, val := range stmt.Options {
 		switch val.Tp {
