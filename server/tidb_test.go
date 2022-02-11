@@ -1333,7 +1333,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.NoError(t, timeoutCtx.Err())
 		stats := mc.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
-		require.Greaterf(t, len(stats), 0, "sql: %v", sql)
+		require.Greaterf(t, len(stats), 0, "sql: "+sql)
 
 		for _, s := range stats {
 			sqlStr := mc.GetSQL(s.SQLDigest)
@@ -1468,7 +1468,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		ca.cancel()
 	}
 
-	// Test case: other statements
+	// Test case for other statements
 	cases4 := []struct {
 		sql     string
 		plan    string
@@ -1505,6 +1505,28 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	// check for internal SQL.
 	checkFn("replace into mysql.global_variables (variable_name,variable_value) values ('tidb_stmt_summary_history_size', '5')", "")
 	cancel4()
+	wg.Wait()
+
+	// Test case for multi-statement.
+	multiStatement := "delete from t limit 1;update t set b=1 where b is null limit 10;"
+	ctx5, cancel5 := context.WithCancel(context.Background())
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ts.loopExec(ctx5, t, func(db *sql.DB) {
+			dbt := testkit.NewDBTestKit(t, db)
+			dbt.MustExec("SET tidb_multi_statement_mode='ON'")
+			dbt.MustExec(multiStatement)
+		})
+	}()
+	checkFn("delete from t limit 1", "")
+	//sqls := strings.Split(multiStatement, ";")
+	//require.Equal(t, 3, len(sqls))
+	//for _, sqlStr := range sqls {
+	//	fmt.Printf("%v  -----\n", sqlStr)
+	//	checkFn(sqlStr, "")
+	//}
+	cancel5()
 	wg.Wait()
 }
 
