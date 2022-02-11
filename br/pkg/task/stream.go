@@ -333,7 +333,7 @@ func RunStreamCommand(
 	cfg.adjust()
 	commandFn, exist := StreamCommandMap[cmdName]
 	if !exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s\n", cmdName)
+		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s", cmdName)
 	}
 
 	if err := commandFn(ctx, g, cmdName, cfg); err != nil {
@@ -676,9 +676,19 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// TODO split put and delete files
 	// perform restore kv files
-	return client.RestoreKVFiles(ctx, rewriteRules, datas)
+	if err := client.RestoreKVFiles(ctx, rewriteRules, datas); err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, table := range fullBackupTables {
+		if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info); err != nil {
+			return errors.Annotate(err, "failed to fix index for table")
+		}
+	}
+
+	// TODO split put and delete files
+	return nil
 }
 
 func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
@@ -729,6 +739,20 @@ func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table)
 		}
 		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
 		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0, false)
+		log.Info("Using rewrite rule for table.", zap.Stringer("table", t.Info.Name),
+			zap.Stringer("database", t.DB.Name),
+			zap.Int("old-id", int(t.Info.ID)),
+			zap.Array("rewrite-rules", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+				for _, r := range rules {
+					for _, rule := range r.Data {
+						if err := ae.AppendObject(logutil.RewriteRuleObject(rule)); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			})),
+		)
 	}
 	return rules, nil
 }
