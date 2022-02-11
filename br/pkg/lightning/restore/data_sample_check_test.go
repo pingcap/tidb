@@ -66,7 +66,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 		cfg:           cfg,
 		store:         store,
 		tidbGlue:      mockTiDBGlue,
-		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+		ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
 	}
 
 	fakeDBName := "fakedb"
@@ -153,7 +153,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.NoError(t, os.Remove(path.Join(fakeDataDir, tbl1FileZero)))
 	require.NoError(t, os.Remove(path.Join(fakeDataDir, tbl1FileOne)))
 
-	cfg.Mydumper.CSV.Header=false
+	cfg.Mydumper.CSV.Header = false
 	cfg.Mydumper.DataCharacterSet = "gbk"
 
 	tbl1FileZero = fmt.Sprintf("%s.%s.000000000.csv", fakeDBName, tbl1)
