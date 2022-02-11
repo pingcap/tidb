@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
@@ -843,7 +841,7 @@ func TestInsertSetWithDefault(t *testing.T) {
 	tk.MustExec("insert into t1 set a=default(b)+default(a);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("30 20"))
 	// With generated columns
-	tk.MustExec("create table t2 (a int default 10, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("create table t2 (a int default 10 primary key, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
 	tk.MustExec("insert into t2 set a=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
@@ -859,11 +857,48 @@ func TestInsertSetWithDefault(t *testing.T) {
 	tk.MustExec("insert into t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
+	// Looks like MySQL accepts this, but still the inserted value would be default(b) i.e. ignored
 	tk.MustGetErrCode("insert into t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
+	// Looks like MySQL accepts this, but inserted values are all NULL
 	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 set a=default(a), c=default(c)")
 	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b)")
+	// This fails most likely due only the generated column is updated -> no change -> duplicate key?
+	// Too odd to create a bug, better to have it documented by this test instead...
+	tk.MustGetErrCode("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b)", mysql.ErrDupEntry)
+	tk.MustGetErrCode("insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(a)", mysql.ErrBadGeneratedColumn)
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("10 -10 -10", "3 -3 -3"))
 	tk.MustExec("drop table t1, t2")
+	// Issue 29926
+	tk.MustExec("create table t1 (a int not null auto_increment,primary key(a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@timestamp = 1637541064")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustExec("insert into t1 set a=default,t=default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@timestamp = 1637541082")
+	tk.MustExec("insert into t1 VALUES (default,default)")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"1 2021-11-22 08:31:04",
+		"2 2021-11-22 08:31:22"))
+	tk.MustExec("set @@timestamp = 1637541332")
+	tk.MustExec("insert into t1 set a=1,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("insert into t1 set a=2,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default(t)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"1 2021-11-22 08:35:32",
+		"2 2021-11-22 08:35:32"))
+	tk.MustExec(`DROP TABLE t1`)
+	tk.MustExec(`CREATE TABLE t1 (a int default 1 PRIMARY KEY, b int default 2)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (2,2), (3,3)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (3,2) ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustExec(`INSERT INTO t1 SET a = 2, b = 3 ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"2 1",
+		"3 1"))
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {
@@ -894,12 +929,18 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("3 -3 -3"))
 	tk.MustExec("insert into t2 values (3,default,default) on duplicate key update c=default, b=default, a=4;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
-	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 values (4,default,default) on duplicate key update b=default, a=5, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5 -5 -5"))
+	tk.MustGetErrCode("insert into t2 values (5,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("insert into t2 values (5,default,default) on duplicate key update a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 (a) values (1);")
+	tk.MustExec("insert into t2 values (1,default,default) on duplicate key update a=default(b), b=default(b);")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 (a) values (1);")
+	tk.MustGetErrCode("insert into t2 values (1,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 
 	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -1091,9 +1132,21 @@ func TestReplace(t *testing.T) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1", "3 1 -1 -1"))
 	tk.MustGetErrCode("replace t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrNoDefaultForField)
+	tk.MustGetErrCode("replace t2 set c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
+}
+
+func TestReplaceWithCICollation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a varchar(20) charset utf8mb4 collate utf8mb4_general_ci primary key);")
+	tk.MustExec("replace into t(a) values (_binary'A '),(_binary'A');")
+	tk.MustQuery("select a from t use index(primary);").Check(testkit.Rows("A"))
+	tk.MustQuery("select a from t ignore index(primary);").Check(testkit.Rows("A"))
 }
 
 func TestGeneratedColumnForInsert(t *testing.T) {
@@ -1893,8 +1946,6 @@ func TestLoadData(t *testing.T) {
 	tk.MustExec(createSQL)
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	require.Error(t, err)
-	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' replace into table load_data_test")
-	require.Error(t, err)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
 	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
@@ -2104,31 +2155,12 @@ func TestLoadDataEscape(t *testing.T) {
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
+		// data broken at escape character.
+		{[]byte("1\ta string\\"), []byte("\n1\n"), []string{"1|a string\n1"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataWithLongContent(t *testing.T) {
-	e := &executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
-		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
-	}
-	tests := []struct {
-		content       string
-		inQuoter      bool
-		expectedIndex int
-	}{
-		{"123,123\n123,123", false, 7},
-		{"123123\\n123123", false, -1},
-		{"123123\n123123", true, -1},
-		{"123123\n123123\"\n", true, 14},
-	}
-
-	for _, tt := range tests {
-		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
-	}
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
@@ -2179,6 +2211,28 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataReplace(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
+	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
+	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
+	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace")
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{nil, []byte("1\tline1\n2\tline2\n"), []string{"1|line1", "2|line2"}, nil, "Records: 2  Deleted: 2  Skipped: 0  Warnings: 0"},
+		{nil, []byte("2\tnew line2\n3\tnew line3\n"), []string{"1|line1", "2|new line2", "3|new line3"}, nil, "Records: 2  Deleted: 1  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "DO 1"
+	selectSQL := "TABLE load_data_replace;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
@@ -4137,10 +4191,19 @@ func TestUpdate(t *testing.T) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "40 -40 -40"))
 	tk.MustExec("update t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+	tk.MustExec("update t2 set a=default(b), b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustGetErrCode("update t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("update t2 set a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+	tk.MustExec("update t2 set a=default(b), b=default(b)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
+	tk.MustExec("update t2 set a=default(a), c=default(c)")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	// Allowed in MySQL, but should probably not be allowed.
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(a)", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -4190,9 +4253,6 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4206,9 +4266,6 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4223,9 +4280,6 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

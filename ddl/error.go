@@ -177,6 +177,8 @@ var (
 	ErrDropPartitionNonExistent = dbterror.ClassDDL.NewStd(mysql.ErrDropPartitionNonExistent)
 	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartition)
+	// ErrSameNamePartitionField returns duplicate partition field.
+	ErrSameNamePartitionField = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartitionField)
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
 	ErrRangeNotIncreasing = dbterror.ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
@@ -269,9 +271,6 @@ var (
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
 
-	// ErrPlacementDisabled  is returned when tidb_enable_alter_placement = 0
-	ErrPlacementDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Alter Placement Rule is disabled, please set 'tidb_enable_alter_placement' if you need to enable it", nil))
-
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 
@@ -310,4 +309,6 @@ var (
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
+	ErrIncompatibleTiFlashAndPlacement = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
 )

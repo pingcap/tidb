@@ -736,11 +736,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSignForInteger()
 		}
-	case mysql.TypeFloat, mysql.TypeDouble:
-		switch newCol.Tp {
-		case mysql.TypeFloat, mysql.TypeDouble:
-			return needTruncationOrToggleSign()
-		}
+		// conversion between float and double needs reorganization, see issue #31372
 	}
 
 	return true
@@ -847,7 +843,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
 		if !needChangeColumnData(oldCol, jobParam.newCol) {
-			return rollbackModifyColumnJob(t, tblInfo, job, oldCol, jobParam.modifyColumnTp)
+			return rollbackModifyColumnJob(t, tblInfo, job, jobParam.newCol, oldCol, jobParam.modifyColumnTp)
 		}
 		// For those column-type-change jobs which reorg the data.
 		return rollbackModifyColumnJobWithData(t, tblInfo, job, oldCol, jobParam)
@@ -996,12 +992,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), valStr)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
-				}
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1262,7 +1253,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        sqlMode,
@@ -1354,7 +1345,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	val := w.rowMap[w.oldColInfo.ID]
 	col := w.newColInfo
 	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.Flag) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, int8(col.Decimal)); err == nil {
+		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, col.Decimal); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
 			w.rowMap[w.oldColInfo.ID] = v
 		}
@@ -1483,6 +1474,10 @@ func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.Ind
 func (w *worker) doModifyColumn(
 	d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
+	if oldCol.ID != newCol.ID {
+		job.State = model.JobStateRollingback
+		return ver, errKeyColumnDoesNotExits.GenWithStack("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", oldCol.Name, newCol.ID)
+	}
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
@@ -1703,11 +1698,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		}
 	}
 	buf.WriteString(" limit 1")
-	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, buf.String(), paramsList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1757,17 +1748,20 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) bool {
+func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 || (!isMultiSchemaChange && len(indexInfo.Columns) == 1) {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return false
+					return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 				}
 			}
 		}
+		if len(indexInfo.Columns) == 1 && indexInfo.Columns[0].Name.L == colName && !isMultiSchemaChange {
+			return errCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema is disable", colName)
+		}
 	}
-	return true
+	return nil
 }
 
 func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.IndexInfo {
@@ -1804,9 +1798,9 @@ func checkAddColumnTooManyColumns(colNum int) error {
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
-func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
+func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, newCol, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
 	var err error
-	if modifyColumnTp == mysql.TypeNull {
+	if oldCol.ID == newCol.ID && modifyColumnTp == mysql.TypeNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		// field PreventNullInsertFlag flag reset.
@@ -1878,9 +1872,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, col.Decimal).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, col.Decimal).String()
 		}
 	}
 	return odValue, nil

@@ -237,11 +237,11 @@ insert into t1(c1, c2) values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	4060.74	root		test.t1.c1
-└─IndexMerge_12	2250.55	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2250.55	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	2250.55	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	2
@@ -252,11 +252,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	5098.44	root		test.t1.c1
-└─IndexMerge_12	2825.66	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2825.66	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), eq(test.t1.c3, plus(test.t1.c1, test.t1.c2))))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	2825.66	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), eq(test.t1.c3, plus(test.t1.c1, test.t1.c2))))
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
 c1	c2	c3
 1	1	2
@@ -267,11 +267,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
 id	estRows	task	access object	operator info
 Sort_5	5098.44	root		test.t1.c1
-└─IndexMerge_12	2825.66	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2825.66	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), istrue_with_null(cast(substring(cast(test.t1.c3, var_string(20)), test.t1.c2), double BINARY))))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	2825.66	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), istrue_with_null(cast(substring(cast(test.t1.c3, var_string(20)), test.t1.c2), double BINARY))))
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
 c1	c2	c3
 1	1	2
@@ -282,11 +282,11 @@ c1	c2	c3
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	4800.37	root		test.t1.c1
-└─IndexMerge_12	2660.47	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2660.47	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), test.t1.c3))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	2660.47	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), test.t1.c3))
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
 c1	c2	c3
 1	1	2
@@ -302,11 +302,11 @@ select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10
 explain select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	4060.74	root		test.t1.c1
-└─IndexMerge_12	2250.55	root		
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	2250.55	cop[tikv]		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_12	2250.55	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
+  └─IndexMerge_11	5542.21	root		
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 c1	c2	c3
 1	1	2
@@ -322,7 +322,7 @@ drop view if exists v2;
 create view v2 as select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10;
 show create view v2;
 View	Create View	character_set_client	collation_connection
-v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_general_ci
+v2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v2` (`c1`, `c2`, `c3`) AS SELECT /*+ USE_INDEX_MERGE(`t1` )*/ `test`.`t1`.`c1` AS `c1`,`test`.`t1`.`c2` AS `c2`,`test`.`t1`.`c3` AS `c3` FROM `test`.`t1` WHERE `c1`<10 OR `c2`<10 AND `c3`<10	utf8mb4	utf8mb4_bin
 select * from v2 order by 1;
 c1	c2	c3
 1	1	1
@@ -481,7 +481,7 @@ explain select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 <
 id	estRows	task	access object	operator info
 Sort_6	1473.49	root		Column#5
 └─HashAgg_11	1473.49	root		group by:Column#10, funcs:sum(Column#9)->Column#5
-  └─Projection_18	1841.86	root		cast(test.t1.c1, decimal(32,0) BINARY)->Column#9, test.t1.c1
+  └─Projection_18	1841.86	root		cast(test.t1.c1, decimal(10,0) BINARY)->Column#9, test.t1.c1
     └─IndexMerge_16	1841.86	root		
       ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
@@ -705,11 +705,11 @@ c1	c2	c3	c4	c5
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
 id	estRows	task	access object	operator info
 Sort_5	4433.77	root		test.t1.c1
-└─Selection_8	4433.77	root		eq(truncate(test.t1.c1, 1), 1)
-  └─IndexMerge_12	5542.21	root		
-    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexMerge_12	4433.77	root		
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	4433.77	cop[tikv]		eq(truncate(test.t1.c1, 1), 1)
+    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1

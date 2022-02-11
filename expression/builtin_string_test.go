@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -920,6 +919,7 @@ func TestConvert(t *testing.T) {
 	wrongFunction := f.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	require.Error(t, err)
 	require.Equal(t, "[expression:1115]Unknown character set: 'wrongcharset'", err.Error())
 }
 
@@ -1403,13 +1403,7 @@ func TestBitLength(t *testing.T) {
 
 func TestChar(t *testing.T) {
 	ctx := createContext(t)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
-	defer func() {
-		stmtCtx.IgnoreTruncate = origin
-	}()
-
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1418,30 +1412,36 @@ func TestChar(t *testing.T) {
 		result   interface{}
 		warnings int
 	}{
-		{"65", 66, 67.5, "utf8", "ABD", 0},               // float
-		{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
-		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // nagtive int
-		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
-		// TODO: Uncomment it when issue #29685 be closed
-		// {"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
-		// {"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
-		// TODO: Uncomment it when gbk be added into charsetInfos
-		// {"1234567", 1234567, 1234567, "gbk", "謬謬謬", 0},  // test char for gbk
-		// {"123456789", 123456789, 123456789, "gbk", nil, 3}, // invalid 123456789 in gbk
+		{"65", 66, 67.5, "utf8", "ABD", 0},                               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},                           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},                   // negative int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0},                 // invalid 'a'
+		{"65", -1, 67.5, "utf8", nil, 1},                                 // with utf8, return nil
+		{"a", -1, 67.5, "utf8", nil, 1},                                  // with utf8, return nil
+		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
+		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
 	}
-	for _, v := range tbl {
+	run := func(i int, result interface{}, warnCnt int, dts ...interface{}) {
 		fc := funcs[ast.CharFunc]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, v.charset)))
-		require.NoError(t, err)
-		require.NotNil(t, f)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
+		require.NoError(t, err, i)
+		require.NotNil(t, f, i)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(v.result), r)
-		if v.warnings != 0 {
-			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-			require.Equal(t, v.warnings, len(warnings))
+		require.NoError(t, err, i)
+		trequire.DatumEqual(t, types.NewDatum(result), r, i)
+		if warnCnt != 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
+			require.Equal(t, warnCnt, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
 		}
 	}
+	for i, v := range tbl {
+		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
+	}
+	// char() returns null only when the sql_mode is strict.
+	ctx.GetSessionVars().StrictSQLMode = true
+	run(-1, nil, 1, 123456, "utf8")
+	ctx.GetSessionVars().StrictSQLMode = false
+	run(-2, string([]byte{1}), 1, 123456, "utf8")
 }
 
 func TestCharLength(t *testing.T) {
@@ -2187,9 +2187,6 @@ func TestInsert(t *testing.T) {
 }
 
 func TestOrd(t *testing.T) {
-	// TODO: Remove this and enable test parallel after new charset enabled
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -2205,11 +2202,11 @@ func TestOrd(t *testing.T) {
 		{2.3, 50, "", false, false},
 		{nil, 0, "", true, false},
 		{"", 0, "", false, false},
-		{"你好", 14990752, "", false, false},
-		{"にほん", 14909867, "", false, false},
-		{"한국", 15570332, "", false, false},
-		{"👍", 4036989325, "", false, false},
-		{"א", 55184, "", false, false},
+		{"你好", 14990752, "utf8mb4", false, false},
+		{"にほん", 14909867, "utf8mb4", false, false},
+		{"한국", 15570332, "utf8mb4", false, false},
+		{"👍", 4036989325, "utf8mb4", false, false},
+		{"א", 55184, "utf8mb4", false, false},
 		{"abc", 97, "gbk", false, false},
 		{"一二三", 53947, "gbk", false, false},
 		{"àáèé", 43172, "gbk", false, false},
@@ -2556,16 +2553,16 @@ func TestWeightString(t *testing.T) {
 		{7, "NONE", 0, nil},
 		{7.0, "NONE", 0, nil},
 		{"a", "NONE", 0, "a"},
-		{"a ", "NONE", 0, "a "},
+		{"a ", "NONE", 0, "a"},
 		{"中", "NONE", 0, "中"},
-		{"中 ", "NONE", 0, "中 "},
+		{"中 ", "NONE", 0, "中"},
 		{nil, "CHAR", 5, nil},
 		{7, "CHAR", 5, nil},
 		{7.0, "NONE", 0, nil},
-		{"a", "CHAR", 5, "a    "},
-		{"a ", "CHAR", 5, "a    "},
-		{"中", "CHAR", 5, "中    "},
-		{"中 ", "CHAR", 5, "中    "},
+		{"a", "CHAR", 5, "a"},
+		{"a ", "CHAR", 5, "a"},
+		{"中", "CHAR", 5, "中"},
+		{"中 ", "CHAR", 5, "中"},
 		{nil, "BINARY", 5, nil},
 		{7, "BINARY", 2, "7\x00"},
 		{7.0, "NONE", 0, nil},
@@ -2665,8 +2662,6 @@ func TestTranslate(t *testing.T) {
 
 func TestCIWeightString(t *testing.T) {
 	ctx := createContext(t)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	type weightStringTest struct {
 		str     string

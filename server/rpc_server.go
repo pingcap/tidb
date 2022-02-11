@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -64,6 +65,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
+	topsql.RegisterPubSubServer(s)
 	return s
 }
 

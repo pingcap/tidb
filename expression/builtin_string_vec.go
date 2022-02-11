@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -46,11 +46,10 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+		result.SetRaw(i, []byte(enc.ToLower(result.GetString(i))))
 	}
-
 	return nil
 }
 
@@ -98,7 +97,9 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		str := buf.GetString(i)
 		byteLength := len(str)
 		if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("repeat", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "repeat", b.maxAllowedPacket); err != nil {
+				return err
+			}
 			result.AppendNull()
 			continue
 		}
@@ -146,9 +147,9 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(enc.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
@@ -281,7 +282,10 @@ func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 			num = 0
 		}
 		if uint64(num) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("space", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "space", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -351,7 +355,10 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			}
 			byteBuf = buf.GetBytes(i)
 			if uint64(len(strs[i])+len(byteBuf)) > b.maxAllowedPacket {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+				if err := handleAllowedPacketOverflowed(b.ctx, "concat", b.maxAllowedPacket); err != nil {
+					return err
+				}
+
 				isNulls[i] = true
 				continue
 			}
@@ -578,7 +585,10 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		}
 		newstrI := newstr.GetString(i)
 		if uint64(strLength-lengthI+int64(len(newstrI))) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "insert", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -639,7 +649,10 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 				targetLengths[i] += len(seps[i])
 			}
 			if uint64(targetLengths[i]) > b.maxAllowedPacket {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				if err := handleAllowedPacketOverflowed(b.ctx, "concat_ws", b.maxAllowedPacket); err != nil {
+					return err
+				}
+
 				isNulls[i] = true
 				continue
 			}
@@ -677,49 +690,59 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
 		return err
 	}
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
-	}
-	decoder := encoding.NewDecoder()
-	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
-	isRetBinary := types.IsBinaryStr(b.tp)
-	enc := charset.NewEncoding(b.tp.Charset)
-	if isRetBinary {
-		enc = charset.NewEncoding(b.args[0].GetType().Charset)
-	}
-
+	argTp, resultTp := b.args[0].GetType(), b.tp
 	result.ReserveString(n)
+	done := vecEvalStringConvertBinary(result, n, expr, argTp, resultTp)
+	if done {
+		return nil
+	}
+	enc := charset.FindEncoding(resultTp.Charset)
+	encBuf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		exprI := expr.GetString(i)
-		if isBinaryStr {
-			target, _, err := transform.String(decoder, exprI)
-			if err != nil {
-				result.AppendNull()
-				continue
-			}
-			result.AppendString(target)
+		exprI := expr.GetBytes(i)
+		if !enc.IsValid(exprI) {
+			val, _ := enc.Transform(encBuf, exprI, charset.OpReplaceNoErr)
+			result.AppendBytes(val)
 		} else {
-			if isRetBinary {
-				str, err := enc.EncodeString(exprI)
-				if err != nil {
-					return err
-				}
-				result.AppendString(str)
-				continue
-			}
-			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
+			result.AppendBytes(exprI)
 		}
 	}
 	return nil
+}
+
+func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
+	argTp, resultTp *types.FieldType) (done bool) {
+	var chs string
+	var op charset.Op
+	if types.IsBinaryStr(argTp) {
+		chs = resultTp.Charset
+		op = charset.OpDecode
+	} else if types.IsBinaryStr(resultTp) {
+		chs = argTp.Charset
+		op = charset.OpEncode
+	} else {
+		return false
+	}
+	enc := charset.FindEncoding(chs)
+	encBuf := &bytes.Buffer{}
+	for i := 0; i < n; i++ {
+		if expr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		val, err := enc.Transform(encBuf, expr.GetBytes(i), op)
+		if err != nil {
+			result.AppendNull()
+		} else {
+			result.AppendBytes(val)
+		}
+		continue
+	}
+	return true
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
@@ -963,7 +986,10 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		}
 		targetLength := int(i64s[i])
 		if uint64(targetLength) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "lpad", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -1031,7 +1057,10 @@ func (b *builtinLpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 		targetLength := int(i64s[i])
 		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "lpad", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -1418,7 +1447,10 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		}
 		targetLength := int(i64s[i])
 		if uint64(targetLength) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "rpad", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -1855,7 +1887,10 @@ func (b *builtinInsertUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		strHead := string(runes[0 : pos-1])
 		strTail := string(runes[pos+length-1:])
 		if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "insert", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -2068,15 +2103,9 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	charSet := b.args[0].GetType().Charset
-	ord, err := chooseOrdFunc(charSet)
-	if err != nil {
-		return err
-	}
-
-	enc := charset.NewEncoding(charSet)
-	var encodedBuf []byte
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	var x [4]byte
+	encBuf := bytes.NewBuffer(x[:])
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2084,12 +2113,15 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetBytes(i)
-		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
+		strBytes := buf.GetBytes(i)
+		w := len(charset.EncodingUTF8Impl.Peek(strBytes))
+		val, err := enc.Transform(encBuf, strBytes[:w], charset.OpEncode)
 		if err != nil {
-			return err
+			i64s[i] = calcOrd(strBytes[:1])
+			continue
 		}
-		i64s[i] = ord(encoded)
+		// Only the first character is considered.
+		i64s[i] = calcOrd(val[:len(enc.Peek(val))])
 	}
 	return nil
 }
@@ -2231,9 +2263,6 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
-	argTp := b.args[0].GetType()
-	enc := charset.NewEncoding(argTp.Charset)
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2242,11 +2271,7 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		str := buf.GetBytes(i)
-		dBytes, err := enc.Encode(nil, str)
-		if err != nil {
-			return err
-		}
-		i64s[i] = int64(len(dBytes) * 8)
+		i64s[i] = int64(len(str) * 8)
 	}
 	return nil
 }
@@ -2281,8 +2306,9 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	for i := 0; i < l-1; i++ {
 		bufint[i] = buf[i].Int64s()
 	}
-	var resultBytes []byte
-	enc := charset.NewEncoding(b.tp.Charset)
+	encBuf := &bytes.Buffer{}
+	enc := charset.FindEncoding(b.tp.Charset)
+	hasStrictMode := b.ctx.GetSessionVars().StrictSQLMode
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2292,12 +2318,13 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			bigints = append(bigints, bufint[j][i])
 		}
 		dBytes := b.convertToBytes(bigints)
-
-		resultBytes, err := enc.Decode(resultBytes, dBytes)
+		resultBytes, err := enc.Transform(encBuf, dBytes, charset.OpDecode)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			result.AppendNull()
-			continue
+			if hasStrictMode {
+				result.AppendNull()
+				continue
+			}
 		}
 		result.AppendString(string(resultBytes))
 	}
@@ -2461,7 +2488,10 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendNull()
 			continue
 		} else if needEncodeLen > int(b.maxAllowedPacket) {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("to_base64", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "to_base64", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
@@ -2550,7 +2580,10 @@ func (b *builtinRpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 		targetLength := int(i64s[i])
 		if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "rpad", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}
@@ -2847,7 +2880,10 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			result.AppendNull()
 			continue
 		} else if needDecodeLen > int(b.maxAllowedPacket) {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("from_base64", b.maxAllowedPacket))
+			if err := handleAllowedPacketOverflowed(b.ctx, "from_base64", b.maxAllowedPacket); err != nil {
+				return err
+			}
+
 			result.AppendNull()
 			continue
 		}

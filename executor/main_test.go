@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -32,14 +31,16 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
 var aggMergeSuiteData testdata.TestData
+var executorSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-
-	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
+	testbridge.SetupForCommonTest()
 	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
-	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
+	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	aggMergeSuiteData = testDataMap["agg_suite"]
+	executorSuiteData = testDataMap["executor_suite"]
+	prepareMergeSuiteData = testDataMap["prepare_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -49,9 +50,6 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	tmpDir := config.GetGlobalConfig().TempStoragePath
-	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(tmpDir, 0755)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),

@@ -75,9 +75,15 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoin returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -549,7 +555,7 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
-	// in predicate push down and used only in partition pruning.
+	// in predicate push down and used in partition pruning/index merge.
 	allConds []expression.Expression
 
 	statisticTable *statistics.Table
@@ -1261,6 +1267,8 @@ type ShowContents struct {
 type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.
@@ -1284,10 +1292,11 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag  uint64
-	HasLimit bool
-	LimitBeg uint64
-	LimitEnd uint64
+	optFlag   uint64
+	HasLimit  bool
+	LimitBeg  uint64
+	LimitEnd  uint64
+	IsInApply bool
 }
 
 // LogicalCTE is for CTE.
@@ -1307,7 +1316,7 @@ type LogicalCTETable struct {
 	name         string
 	idForStorage int
 
-	// seedSchema is only used in predicateColumnCollector to get column mapping
+	// seedSchema is only used in columnStatsUsageCollector to get column mapping
 	seedSchema *expression.Schema
 }
 
