@@ -1146,13 +1146,19 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 	return nil
 }
 
-// checkIndexInfo checks index name and index column names.
+// checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
+	}
+	for _, idxSpec := range IndexPartSpecifications {
+		// -1 => unspecified/full, > 0 OK, 0 => error
+		if idxSpec.Expr == nil && idxSpec.Length == 0 {
+			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
+		}
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
 }

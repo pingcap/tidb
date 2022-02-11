@@ -29,9 +29,7 @@ import (
 )
 
 func TestExportStatementNoTrailingNewLine(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reader_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
@@ -78,9 +76,7 @@ func TestExportStatementWithCommentNoTrailingNewLine(t *testing.T) {
 }
 
 func exportStatmentShouldBe(t *testing.T, stmt string, expected string) {
-	dir, err := os.MkdirTemp("", "reader_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
@@ -101,9 +97,7 @@ func exportStatmentShouldBe(t *testing.T, stmt string, expected string) {
 }
 
 func TestExportStatementGBK(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reader_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
@@ -129,9 +123,7 @@ func TestExportStatementGBK(t *testing.T) {
 }
 
 func TestExportStatementGibberishError(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reader_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
 	require.NoError(t, err)
 	defer os.Remove(file.Name())

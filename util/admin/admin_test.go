@@ -353,7 +353,6 @@ func TestIsJobRollbackable(t *testing.T) {
 
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
-		ErrDataInConsistent,
 		ErrDDLJobNotFound,
 		ErrCancelFinishedDDLJob,
 		ErrCannotCancelDDLJob,

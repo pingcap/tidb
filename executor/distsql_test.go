@@ -256,7 +256,7 @@ func TestInconsistentIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		err = tk.QueryToErr("select * from t use index(idx_a) where a >= 0")
-		require.Equal(t, fmt.Sprintf("inconsistent index idx_a handle count %d isn't equal to value count 10", i+11), err.Error())
+		require.Equal(t, fmt.Sprintf("[executor:8133]data inconsistency in table: t, index: idx_a, index-count:%d != record-count:10", i+11), err.Error())
 		// if has other conditions, the inconsistent index check doesn't work.
 		err = tk.QueryToErr("select * from t where a>=0 and b<10")
 		require.NoError(t, err)
