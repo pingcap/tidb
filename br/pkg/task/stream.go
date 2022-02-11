@@ -691,14 +691,6 @@ func RunStreamRestore(
 	return nil
 }
 
-func countIndices(ts map[string]*metautil.Table) int64 {
-	result := int64(0)
-	for _, t := range ts {
-		result += int64(len(t.Info.Indices))
-	}
-	return result
-}
-
 func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
 	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
 	if err != nil {
