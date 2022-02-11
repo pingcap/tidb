@@ -388,21 +388,21 @@ const (
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
-		id BIGINT(64) AUTO_INCREMENT,
-		table_schema VARCHAR(255) NOT NULL,
-		table_name VARCHAR(255) NOT NULL,
-		partition_name VARCHAR(255),
-		job_info VARCHAR(255),
+		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		table_schema CHAR(64),
+		table_name CHAR(64),
+		partition_name CHAR(64),
+		job_info TEXT,
 		processed_rows BIGINT(64),
 		start_time TIMESTAMP,
 		end_time TIMESTAMP,
-		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		state ENUM('PENDING', 'RUNNING', 'FINISHED', 'FAILED') NOT NULL,
 		tidb_address VARCHAR(32),
 		session_id BIGINT(64),
-		PRIMARY KEY (id),
+		PRIMARY KEY (id) CLUSTERED,
 		KEY (update_time)
-	};`
+	);`
 )
 
 // bootstrap initiates system DB for a store.
