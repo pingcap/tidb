@@ -734,7 +734,6 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),
 				}, partialIsCop == 0, isMPPTask == 0)
 				if partial != nil {
-					require.False(t, partial == nil)
 					for _, aggFunc := range partial.AggFuncs {
 						if partialIsCop == 0 {
 							require.True(t, !isFinalAggMode(aggFunc.Mode))
@@ -743,9 +742,10 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 						}
 					}
 				}
-				require.False(t, final == nil)
-				for _, aggFunc := range final.AggFuncs {
-					require.True(t, isFinalAggMode(aggFunc.Mode))
+				if final != nil {
+					for _, aggFunc := range final.AggFuncs {
+						require.True(t, isFinalAggMode(aggFunc.Mode))
+					}
 				}
 			}
 		}
