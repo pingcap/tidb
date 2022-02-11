@@ -75,11 +75,11 @@ func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
 
 // PollTiFlashBackoffContext is a collection of all backoff states.
 type PollTiFlashBackoffContext struct {
-	MinTick  TickType
-	MaxTick  TickType
+	MinTick TickType
+	MaxTick TickType
 	// Capacity limits tables a backoff pool can handle, in order to limit handling of big tables.
 	Capacity int
-	Rate TickType
+	Rate     TickType
 	elements map[int64]*PollTiFlashBackoffElement
 }
 
@@ -90,9 +90,9 @@ func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate 
 		MaxTick:  MaxTick,
 		Capacity: Capacity,
 		elements: make(map[int64]*PollTiFlashBackoffElement),
+		Rate:     Rate,
 	}
 }
-
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
@@ -100,7 +100,7 @@ type TiFlashManagementContext struct {
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
-	Backoff PollTiFlashBackoffContext
+	Backoff                   PollTiFlashBackoffContext
 }
 
 // Tick will first check increase Counter.
@@ -134,10 +134,11 @@ func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {
 	if e.Threshold < b.MinTick {
 		e.Threshold = b.MinTick
 	}
-	if e.Threshold * b.Rate > b.MaxTick {
+	if e.Threshold*b.Rate > b.MaxTick {
 		e.Threshold = b.MaxTick
+	} else {
+		e.Threshold *= b.Rate
 	}
-	e.Threshold *= b.Rate
 }
 
 // MaybeGrow grows threshold and reset counter when need
@@ -182,7 +183,7 @@ func NewTiFlashManagementContext() *TiFlashManagementContext {
 		UpdateTiFlashStoreCounter: 0,
 		TiFlashStores:             make(map[int64]helper.StoreStat),
 		UpdateMap:                 make(map[int64]bool),
-		Backoff: NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity, PollTiFlashBackoffRate),
+		Backoff:                   NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity, PollTiFlashBackoffRate),
 	}
 }
 

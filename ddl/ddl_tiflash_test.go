@@ -578,22 +578,36 @@ func TestTiFlashBackoff(t *testing.T) {
 	backoff := ddl.NewPollTiFlashBackoffContext(1, maxTick, 10, rate)
 	backoff.Put(1)
 	mustGet := func(ID int64) *ddl.PollTiFlashBackoffElement {
-		e, ok := backoff.Get(1)
+		e, ok := backoff.Get(ID)
 		require.True(t, ok)
 		return e
+	}
+	mustNotGrow := func(ID int64) {
+		e := mustGet(ID)
+		ori := e.Threshold
+		c := e.Counter
+		growed := backoff.Tick(ID)
+		require.False(t, growed)
+		require.Equal(t, e.Threshold, ori)
+		require.Equal(t, e.Counter, c+1)
 	}
 	mustGrow := func(ID int64) {
 		e := mustGet(ID)
 		ori := e.Threshold
-		backoff.Tick(ID)
-		require.Equal(t, rate * ori, e.Threshold)
+		growed := backoff.Tick(ID)
+		require.True(t, growed)
+		require.Equal(t, e.Threshold, rate*ori)
+		require.Equal(t, 1, e.Counter)
 	}
 	require.False(t, mustGet(1).NeedGrow())
+	mustNotGrow(1)
 	mustGrow(1)
 
 	backoff.Put(2)
-	for i := 0; i < 10; i++ {
-		backoff.Tick(2)
+	for i := 0; i < 20; i++ {
+		d := backoff.Tick(2)
+		z := mustGet(2).Threshold
+		fmt.Printf("%v %v\n", z, d)
 	}
-	require.Equal(t, mustGet(2).Threshold, maxTick)
+	require.Equal(t, maxTick, mustGet(2).Threshold)
 }
