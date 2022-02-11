@@ -3253,7 +3253,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 
-	if ret.table.Meta() != nil && ret.table.Meta().TempTableType != model.TempTableNone {
+	if ret.table.Meta().TempTableType != model.TempTableNone {
 		ret.dummy = true
 	}
 
