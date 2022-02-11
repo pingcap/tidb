@@ -736,9 +736,10 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
-	sqls := make([]sqlWithErr, 2)
+	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
 	sqls[1] = sqlWithErr{"delete from t1 where b=1", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	sqls[2] = sqlWithErr{"update t1 set a = 2 where a=1;", nil}
 	prepare := func() {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("create table t1(a int key, b int, c int, index idx(b));")
