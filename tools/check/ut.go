@@ -401,20 +401,7 @@ func collectCoverProfileFile() {
 		if file.IsDir() {
 			continue
 		}
-
-		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
-		if err != nil {
-			fmt.Println("open temp cover file error:", err)
-			os.Exit(-1)
-		}
-		defer f.Close()
-
-		profs, err := cover.ParseProfilesFromReader(f)
-		if err != nil {
-			fmt.Println("parse cover profile file error:", err)
-			os.Exit(-1)
-		}
-		mergeProfile(result, profs)
+		collectOneCoverProfileFile(result, file)
 	}
 
 	w1 := bufio.NewWriter(w)
@@ -435,6 +422,22 @@ func collectCoverProfileFile() {
 			os.Exit(-1)
 		}
 	}
+}
+
+func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
+	f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+	if err != nil {
+		fmt.Println("open temp cover file error:", err)
+		os.Exit(-1)
+	}
+	defer f.Close()
+
+	profs, err := cover.ParseProfilesFromReader(f)
+	if err != nil {
+		fmt.Println("parse cover profile file error:", err)
+		os.Exit(-1)
+	}
+	mergeProfile(result, profs)
 }
 
 func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
