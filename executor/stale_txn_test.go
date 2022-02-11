@@ -567,7 +567,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 		require.NotEqual(t, tk.Session().GetSessionVars().TxnCtx.StartTS, testcase.expectedTS)
 		tk.MustExec("commit")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
 	}
 
 	err = tk.ExecToErr(`SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness(invalid1, invalid2')`)
