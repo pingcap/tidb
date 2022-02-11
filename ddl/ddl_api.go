@@ -204,6 +204,16 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
+func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+	dbName := model.NewCIStr(stmt.Name)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	_, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	return nil
+}
+
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -265,9 +275,10 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate                       string
-		isAlterCharsetAndCollate, isAlterPlacement bool
-		placementPolicyRef                         *model.PolicyRefInfo
+		toCharset, toCollate                                         string
+		isAlterCharsetAndCollate, isAlterPlacement, isTiFlashReplica bool
+		placementPolicyRef                                           *model.PolicyRefInfo
+		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
 
 	for _, val := range stmt.Options {
@@ -294,6 +305,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{Name: model.NewCIStr(val.Value)}
 			isAlterPlacement = true
+		case ast.DatabaseSetTiFlashReplica:
+			tiflashReplica = val.TiFlashReplica
+			isTiFlashReplica = true
 		}
 	}
 
@@ -307,7 +321,11 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			return err
 		}
 	}
-
+	if isTiFlashReplica {
+		if err = d.ModifySchemaSetTiFlashReplica(ctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
