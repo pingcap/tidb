@@ -40,6 +40,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 		conf.OOMAction = config.OOMActionLog
+		conf.TempStoragePath = t.TempDir()
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
@@ -98,6 +99,7 @@ func TestIssue16696(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 		conf.OOMAction = config.OOMActionLog
+		conf.TempStoragePath = t.TempDir()
 	})
 	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
 	variable.MemoryUsageAlarmRatio.Store(0.0)
