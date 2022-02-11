@@ -1133,8 +1133,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				castFunction.SetRepertoire(expression.UNICODE)
 			}
 
-            //See detailed comment in `expression/builtin_cast.go:WrapWithCastAsString()`; eg: "where CAST(bit as CAHR)"
-            if arg.GetType().Tp == mysql.TypeBit {
+			//See detailed comment in `expression/builtin_cast.go:WrapWithCastAsString()`; eg: "where CAST(bit as CAHR)"
+			if arg.GetType().Tp == mysql.TypeBit {
 				v.Tp.Flen = (arg.GetType().Flen + 7) / 8
 			}
 		} else {
