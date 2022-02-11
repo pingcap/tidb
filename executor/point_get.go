@@ -38,8 +38,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
