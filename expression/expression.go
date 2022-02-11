@@ -985,7 +985,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// date functions.
 		ast.DateFormat,                                               /* Date */
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month, /* ast.MonthName */
-		ast.DayName, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
 		ast.Weekday, ast.WeekOfYear, ast.Year, /* ast.YearWeek */
 		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
