@@ -1864,6 +1864,8 @@ func TestFulltextIndexIgnore(t *testing.T) {
 }
 
 func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
+	restoreFunc := config.RestoreFunc()
+	defer restoreFunc()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

@@ -1464,9 +1464,9 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	}
 
 	// index hash join with semi join
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"))
+	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"))
+		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"))
 	}()
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
@@ -2331,14 +2331,11 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 }
 
 func TestIssue18070(t *testing.T) {
+	restoreFunc := config.RestoreFunc()
+	defer restoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = config.OOMActionLog
-		})
-	}()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2353,9 +2350,9 @@ func TestIssue18070(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
-	require.Nil(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
-		require.Nil(t, failpoint.Disable(fpName))
+		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
@@ -2401,9 +2398,9 @@ func TestIssue18572_1(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"))
+	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"))
+		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
@@ -2423,9 +2420,9 @@ func TestIssue18572_2(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"))
+	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"))
+		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
@@ -2445,9 +2442,9 @@ func TestIssue18572_3(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"))
+	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"))
+		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
@@ -2702,9 +2699,9 @@ func TestIssue20779(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIssue20779", "return"))
+	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/executor/testIssue20779", "return"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIssue20779"))
+		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/executor/testIssue20779"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
@@ -2760,9 +2757,9 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("create table t2(a int, index(a));")
 	func() {
 		fpName := "github.com/pingcap/tidb/executor/TestIssue30211"
-		require.Nil(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
+		require.NoError(t, failpoint.Enable((fpName, `panic("TestIssue30211 IndexJoinPanic")`))
 		defer func() {
-			require.Nil(t, failpoint.Disable(fpName))
+			require.NoError(t, failpoint.Disable((fpName))
 		}()
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
@@ -2811,31 +2808,31 @@ func TestIssue31129(t *testing.T) {
 
 	// Test IndexNestedLoopHashJoin keepOrder.
 	fpName := "github.com/pingcap/tidb/executor/TestIssue31129"
-	require.Nil(t, failpoint.Enable(fpName, "return"))
+	require.NoError(t, failpoint.Enable((fpName, "return"))
 	err := tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	require.True(t, strings.Contains(err.Error(), "TestIssue31129"))
-	require.Nil(t, failpoint.Disable(fpName))
+	require.NoError(t, failpoint.Disable((fpName))
 
 	// Test IndexNestedLoopHashJoin build hash table panic.
 	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic"
-	require.Nil(t, failpoint.Enable(fpName, `panic("IndexHashJoinBuildHashTablePanic")`))
+	require.NoError(t, failpoint.Enable((fpName, `panic("IndexHashJoinBuildHashTablePanic")`))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
-	require.Nil(t, failpoint.Disable(fpName))
+	require.NoError(t, failpoint.Disable((fpName))
 
 	// Test IndexNestedLoopHashJoin fetch inner fail.
 	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	require.Nil(t, failpoint.Enable(fpName, "return"))
+	require.NoError(t, failpoint.Enable((fpName, "return"))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinFetchInnerResultsErr"))
-	require.Nil(t, failpoint.Disable(fpName))
+	require.NoError(t, failpoint.Disable((fpName))
 
 	// Test IndexNestedLoopHashJoin build hash table panic and IndexNestedLoopHashJoin fetch inner fail at the same time.
 	fpName1, fpName2 := "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic", "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	require.Nil(t, failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`))
-	require.Nil(t, failpoint.Enable(fpName2, "return"))
+	require.NoError(t, failpoint.Enable((fpName1, `panic("IndexHashJoinBuildHashTablePanic")`))
+	require.NoError(t, failpoint.Enable((fpName2, "return"))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
-	require.Nil(t, failpoint.Disable(fpName1))
-	require.Nil(t, failpoint.Disable(fpName2))
+	require.NoError(t, failpoint.Disable((fpName1))
+	require.NoError(t, failpoint.Disable((fpName2))
 }
