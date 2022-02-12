@@ -226,9 +226,9 @@ func TestSpillActionDeadLock(t *testing.T) {
 	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
 	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
 	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
-	require.NoError(t, failpoint.Enable(("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable(("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
 	}()
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
