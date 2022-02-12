@@ -2366,6 +2366,10 @@ const (
 	SequenceCache
 	SequenceNoCycle
 	SequenceCycle
+	SequenceNoScale
+	SequenceScale
+	SequenceNoExtend
+	SequenceExtend
 	// SequenceRestart is only used in alter sequence statement.
 	SequenceRestart
 	SequenceRestartWith
@@ -2404,6 +2408,14 @@ func (n *SequenceOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("NOCYCLE")
 	case SequenceCycle:
 		ctx.WriteKeyWord("CYCLE")
+	case SequenceNoScale:
+		ctx.WriteKeyWord("NOSCALE")
+	case SequenceScale:
+		ctx.WriteKeyWord("SCALE")
+	case SequenceNoExtend:
+		ctx.WriteKeyWord("NOEXTEND")
+	case SequenceExtend:
+		ctx.WriteKeyWord("EXTEND")
 	case SequenceRestart:
 		ctx.WriteKeyWord("RESTART")
 	case SequenceRestartWith:
