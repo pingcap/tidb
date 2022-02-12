@@ -219,8 +219,10 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 
-	e.memTracker.Consume(-e.memTracker.BytesConsumed())
-	e.memTracker = nil
+	if e.memTracker != nil {
+		e.memTracker.Consume(-e.memTracker.BytesConsumed())
+		e.memTracker = nil
+	}
 
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)

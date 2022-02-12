@@ -203,9 +203,10 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
-
-	e.memTracker.Consume(-e.memTracker.BytesConsumed())
-	e.memTracker = nil
+	if e.memTracker != nil {
+		e.memTracker.Consume(-e.memTracker.BytesConsumed())
+		e.memTracker = nil
+	}
 
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
