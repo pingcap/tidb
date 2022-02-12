@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -970,5 +971,142 @@ func BenchmarkMergeNullsNonVectorized(b *testing.B) {
 		for i := 0; i < 1024; i++ {
 			cols[0].SetNull(i, cols[1].IsNull(i) || cols[2].IsNull(i))
 		}
+	}
+}
+
+func BenchmarkNewColumnFixedMakeSlice(b *testing.B) {
+	cap := 2
+	elemLen := 8
+	n := 0
+	var c *Column
+	for i := 0; i < b.N; i++ {
+		c = &Column{
+			elemBuf:    make([]byte, elemLen),
+			data:       make([]byte, 0, cap*elemLen),
+			nullBitmap: make([]byte, 0, (cap+7)>>3),
+		}
+
+		n = len(c.elemBuf) + len(c.data) + len(c.nullBitmap) + n
+	}
+}
+
+func BenchmarkNewColumnFixedMakeSlice2(b *testing.B) {
+	cap := 2
+	elemLen := 8
+	n := 0
+	var c *Column
+	for i := 0; i < b.N; i++ {
+		c = newFixedLenColumn(elemLen, cap)
+
+		n = len(c.elemBuf) + len(c.data) + len(c.nullBitmap) + n
+	}
+}
+
+func BenchmarkNewColumnVarMakeSlice(b *testing.B) {
+	cap := 2
+	estimatedElemLen := 8
+	n := 0
+	var c *Column
+	for i := 0; i < b.N; i++ {
+		c = &Column{
+			offsets:    make([]int64, 1, cap+1),
+			data:       make([]byte, 0, cap*estimatedElemLen),
+			nullBitmap: make([]byte, 0, (cap+7)>>3),
+		}
+
+		n = len(c.elemBuf) + len(c.data) + len(c.nullBitmap) + n
+	}
+}
+
+func BenchmarkNewColumnVarMakeSlice2(b *testing.B) {
+	cap := 2
+	estimatedElemLen := 8
+
+	n := 0
+	var c *Column
+	for i := 0; i < b.N; i++ {
+		len0 := (cap + 1) * 8
+		len1 := cap * estimatedElemLen
+		len2 := (cap + 7) >> 3
+
+		buf := make([]byte, len0+len1+len2)
+
+		c = &Column{}
+
+		c.offsets = hack.BytesToInt64s(buf[0:len0])[0:1]
+		if cap > 0 {
+			c.data = unsafe.Slice(&buf[len0], len1)[0:0]
+			c.nullBitmap = unsafe.Slice(&buf[len0+len1], len2)[0:0]
+		}
+
+		n = len(c.offsets) + len(c.data) + len(c.nullBitmap) + n
+	}
+}
+
+func BenchmarkNewColumnVarMakeSlice3(b *testing.B) {
+	cap := 2
+
+	n := 0
+	var c *Column
+	for i := 0; i < b.N; i++ {
+
+		c = newVarLenColumn(cap)
+
+		n = len(c.offsets) + len(c.data) + len(c.nullBitmap) + n
+	}
+}
+
+func TestNewColumnFixedMakeSlice(t *testing.T) {
+
+	tbl := []struct {
+		capcaity int
+		elemLen  int
+	}{
+		{2, 8},
+		{0, 1},
+		{16, 16},
+		{3, 24},
+	}
+
+	for _, d := range tbl {
+		capacity := d.capcaity
+		elemLen := d.elemLen
+
+		elemBuf := make([]byte, elemLen)
+		data := make([]byte, 0, capacity*elemLen)
+		nullBitmap := make([]byte, 0, (capacity+7)>>3)
+
+		c := newFixedLenColumn(elemLen, capacity)
+
+		require.EqualValues(t, len(elemBuf), len(c.elemBuf))
+		require.EqualValues(t, len(data), len(c.data))
+		require.EqualValues(t, len(nullBitmap), len(c.nullBitmap))
+
+		require.EqualValues(t, cap(elemBuf), cap(c.elemBuf))
+		require.EqualValues(t, cap(data), cap(c.data))
+		require.EqualValues(t, cap(nullBitmap), cap(c.nullBitmap))
+	}
+
+}
+
+func TestNewColumnVarMakeSlice(t *testing.T) {
+	estimatedElemLen := 8
+
+	capacities := []int{0, 2, 8, 16}
+
+	for _, capacity := range capacities {
+		offsets := make([]int64, 1, capacity+1)
+		data := make([]byte, 0, capacity*estimatedElemLen)
+		nullBitmap := make([]byte, 0, (capacity+7)>>3)
+
+		c := newVarLenColumn(capacity)
+
+		require.EqualValues(t, len(offsets), len(c.offsets))
+		require.EqualValues(t, len(data), len(c.data))
+		require.EqualValues(t, len(nullBitmap), len(c.nullBitmap))
+
+		require.EqualValues(t, cap(offsets), cap(c.offsets))
+		require.EqualValues(t, cap(data), cap(c.data))
+		require.EqualValues(t, cap(nullBitmap), cap(c.nullBitmap))
 	}
 }

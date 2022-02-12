@@ -98,11 +98,23 @@ func newColumn(typeSize, cap int) *Column {
 
 // newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
 func newFixedLenColumn(elemLen, cap int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
+	len1 := cap * elemLen
+	len2 := (cap + 7) >> 3
+
+	buf := make([]byte, elemLen+len1+len2)
+
+	c := &Column{}
+
+	if elemLen > 0 {
+		c.elemBuf = unsafe.Slice(&buf[0], elemLen)
 	}
+
+	if cap > 0 {
+		c.data = unsafe.Slice(&buf[elemLen], len1)[0:0]
+		c.nullBitmap = unsafe.Slice(&buf[len1+elemLen], len2)[0:0]
+	}
+
+	return c
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
@@ -111,11 +123,21 @@ func newVarLenColumn(cap int) *Column {
 	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
 	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
 
-	return &Column{
-		offsets:    make([]int64, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
+	len0 := (cap + 1) * 8
+	len1 := cap * estimatedElemLen
+	len2 := (cap + 7) >> 3
+
+	buf := make([]byte, len0+len1+len2)
+
+	c := &Column{}
+
+	c.offsets = hack.BytesToInt64s(buf[0:len0])[0:1]
+	if cap > 0 {
+		c.data = unsafe.Slice(&buf[len0], len1)[0:0]
+		c.nullBitmap = unsafe.Slice(&buf[len0+len1], len2)[0:0]
 	}
+
+	return c
 }
 
 func (c *Column) typeSize() int {
