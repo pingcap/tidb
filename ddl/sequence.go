@@ -113,6 +113,14 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cycle = true
 		case ast.SequenceNoCycle:
 			sequenceInfo.Cycle = false
+		case ast.SequenceScale:
+			sequenceInfo.Scale = true
+		case ast.SequenceNoScale:
+			sequenceInfo.Scale = false
+		case ast.SequenceExtend:
+			sequenceInfo.Extend = true
+		case ast.SequenceNoExtend:
+			sequenceInfo.Extend = false
 		}
 	}
 	// Fill the default value, min/max/start should be adjusted with the sign of sequenceInfo.Increment.
@@ -166,6 +174,8 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 	sequenceInfo := &model.SequenceInfo{
 		Cache:      model.DefaultSequenceCacheBool,
 		Cycle:      model.DefaultSequenceCycleBool,
+		Scale:      model.DefaultSequenceScaleBool,
+		Extend:     model.DefaultSequenceExtendBool,
 		CacheValue: model.DefaultSequenceCacheValue,
 		Increment:  model.DefaultSequenceIncrementValue,
 	}
@@ -215,6 +225,14 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			oldSequence.Cycle = true
 		case ast.SequenceNoCycle:
 			oldSequence.Cycle = false
+		case ast.SequenceScale:
+			oldSequence.Scale = true
+		case ast.SequenceNoScale:
+			oldSequence.Scale = false
+		case ast.SequenceExtend:
+			oldSequence.Extend = true
+		case ast.SequenceNoExtend:
+			oldSequence.Extend = false
 		case ast.SequenceRestart:
 			restartFlag = true
 		case ast.SequenceRestartWith:

@@ -760,6 +760,8 @@ type ViewInfo struct {
 const (
 	DefaultSequenceCacheBool          = true
 	DefaultSequenceCycleBool          = false
+	DefaultSequenceScaleBool          = false
+	DefaultSequenceExtendBool         = false
 	DefaultSequenceOrderBool          = false
 	DefaultSequenceCacheValue         = int64(1000)
 	DefaultSequenceIncrementValue     = int64(1)
@@ -776,6 +778,8 @@ type SequenceInfo struct {
 	Start      int64  `json:"sequence_start"`
 	Cache      bool   `json:"sequence_cache"`
 	Cycle      bool   `json:"sequence_cycle"`
+	Scale      bool   `json:"sequence_cycle"`
+	Extend     bool   `json:"sequence_cycle"`
 	MinValue   int64  `json:"sequence_min_value"`
 	MaxValue   int64  `json:"sequence_max_value"`
 	Increment  int64  `json:"sequence_increment"`
