@@ -2218,8 +2218,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(d.callHookOnChanged(err))
 	}
 
-	for j := range infos {
-		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
+	for j := range args {
+		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}
 	}
@@ -4643,10 +4643,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	col := table.FindCol(t.Cols(), colName.L)
-	if col == nil {
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	if oldCol == nil {
 		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
+	col := table.ToColumn(oldCol.Clone())
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag

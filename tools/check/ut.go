@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"math/rand"
@@ -24,12 +25,14 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
+	"golang.org/x/tools/cover"
 )
 
 func usage() bool {
@@ -58,7 +61,11 @@ ut run $package $test
 ut build
 
 // build a test package
-ut build xxx`
+ut build xxx
+
+// write the junitfile
+ut run --junitfile xxx`
+
 	fmt.Println(msg)
 	return true
 }
@@ -258,11 +265,28 @@ func cmdRun(args ...string) bool {
 	}
 
 	shuffle(tasks)
+
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+	fmt.Println("run all tasks takes", time.Since(start))
+
+	if junitfile != "" {
+		out := collectTestResults(works)
+		f, err := os.Create(junitfile)
+		if err != nil {
+			fmt.Println("create junit file fail:", err)
+			return false
+		}
+		if err := write(f, out); err != nil {
+			fmt.Println("write junit file error:", err)
+			return false
+		}
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
@@ -306,10 +330,12 @@ func handleFlags(flag string) string {
 	return res
 }
 
+var junitfile string
 var coverprofile string
 var coverFileTempDir string
 
 func main() {
+	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
 	if coverprofile != "" {
 		var err error
@@ -370,26 +396,137 @@ func collectCoverProfileFile() {
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
+	result := make(map[string]*cover.Profile)
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
+		collectOneCoverProfileFile(result, file)
+	}
 
-		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
-		if err != nil {
-			fmt.Println("open temp cover file error:", err)
+	w1 := bufio.NewWriter(w)
+	for _, prof := range result {
+		for _, block := range prof.Blocks {
+			fmt.Fprintf(w1, "%s:%d.%d,%d.%d %d %d\n",
+				prof.FileName,
+				block.StartLine,
+				block.StartCol,
+				block.EndLine,
+				block.EndCol,
+				block.NumStmt,
+				block.Count,
+			)
+		}
+		if err := w1.Flush(); err != nil {
+			fmt.Println("flush data to cover profile file error:", err)
 			os.Exit(-1)
 		}
-		defer f.Close()
+	}
+}
 
-		r := bufio.NewReader(f)
-		line, _, err := r.ReadLine()
-		if err != nil || string(line) != "mode: set" {
+func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
+	f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+	if err != nil {
+		fmt.Println("open temp cover file error:", err)
+		os.Exit(-1)
+	}
+	defer f.Close()
+
+	profs, err := cover.ParseProfilesFromReader(f)
+	if err != nil {
+		fmt.Println("parse cover profile file error:", err)
+		os.Exit(-1)
+	}
+	mergeProfile(result, profs)
+}
+
+func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
+	for _, prof := range profs {
+		sort.Sort(blocksByStart(prof.Blocks))
+		old, ok := m[prof.FileName]
+		if !ok {
+			m[prof.FileName] = prof
 			continue
 		}
 
-		io.Copy(w, r)
+		// Merge samples from the same location.
+		// The data has already been sorted.
+		tmp := old.Blocks[:0]
+		var i, j int
+		for i < len(old.Blocks) && j < len(prof.Blocks) {
+			v1 := old.Blocks[i]
+			v2 := prof.Blocks[j]
+
+			switch compareProfileBlock(v1, v2) {
+			case -1:
+				tmp = appendWithReduce(tmp, v1)
+				i++
+			case 1:
+				tmp = appendWithReduce(tmp, v2)
+				j++
+			default:
+				tmp = appendWithReduce(tmp, v1)
+				tmp = appendWithReduce(tmp, v2)
+				i++
+				j++
+			}
+		}
+		for ; i < len(old.Blocks); i++ {
+			tmp = appendWithReduce(tmp, old.Blocks[i])
+		}
+		for ; j < len(prof.Blocks); j++ {
+			tmp = appendWithReduce(tmp, prof.Blocks[j])
+		}
+
+		m[prof.FileName] = old
 	}
+}
+
+// appendWithReduce works like append(), but it merge the duplicated values.
+func appendWithReduce(input []cover.ProfileBlock, b cover.ProfileBlock) []cover.ProfileBlock {
+	if len(input) >= 1 {
+		last := &input[len(input)-1]
+		if b.StartLine == last.StartLine &&
+			b.StartCol == last.StartCol &&
+			b.EndLine == last.EndLine &&
+			b.EndCol == last.EndCol {
+			if b.NumStmt != last.NumStmt {
+				panic(fmt.Errorf("inconsistent NumStmt: changed from %d to %d", last.NumStmt, b.NumStmt))
+			}
+			// Merge the data with the last one of the slice.
+			last.Count |= b.Count
+			return input
+		}
+	}
+	return append(input, b)
+}
+
+type blocksByStart []cover.ProfileBlock
+
+func compareProfileBlock(x, y cover.ProfileBlock) int {
+	if x.StartLine < y.StartLine {
+		return -1
+	}
+	if x.StartLine > y.StartLine {
+		return 1
+	}
+
+	// Now x.StartLine == y.StartLine
+	if x.StartCol < y.StartCol {
+		return -1
+	}
+	if x.StartCol > y.StartCol {
+		return 1
+	}
+
+	return 0
+}
+
+func (b blocksByStart) Len() int      { return len(b) }
+func (b blocksByStart) Swap(i, j int) { b[i], b[j] = b[j], b[i] }
+func (b blocksByStart) Less(i, j int) bool {
+	bi, bj := b[i], b[j]
+	return bi.StartLine < bj.StartLine || bi.StartLine == bj.StartLine && bi.StartCol < bj.StartCol
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
@@ -436,40 +573,107 @@ func listPackages() ([]string, error) {
 
 type numa struct {
 	Fail    bool
+	results []testResult
 }
 
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		start := time.Now()
 		res := n.runTestCase(t.pkg, t.test, t.old)
-		if res.err != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
-			io.Copy(os.Stderr, &res.output)
+		if res.Failure != nil {
+			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
+			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
 			n.Fail = true
 		}
+		n.results = append(n.results, res)
 	}
 }
 
 type testResult struct {
-	err    error
-	output bytes.Buffer
+	JUnitTestCase
+	d time.Duration
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
-	exe := "./" + testFileName(pkg)
-	cmd := n.testCommand(exe, fn, old)
+func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+	res := testResult{
+		JUnitTestCase: JUnitTestCase{
+			Classname: path.Join(modulePath, pkg),
+			Name:      fn,
+		},
+	}
+	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
-	cmd.Stdout = &res.output
-	cmd.Stderr = &res.output
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
-		res.err = withTrace(err)
+		res.Failure = &JUnitFailure{
+			Message:  "Failed",
+			Contents: buf.String(),
+		}
 	}
+	res.d = time.Since(start)
+	res.Time = formatDurationAsSeconds(res.d)
 	return res
 }
 
-func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
+func collectTestResults(workers []numa) JUnitTestSuites {
+	version := goVersion()
+	// pkg => test cases
+	pkgs := make(map[string][]JUnitTestCase)
+	durations := make(map[string]time.Duration)
+
+	// The test result in workers are shuffled, so group by the packages here
+	for _, n := range workers {
+		for _, res := range n.results {
+			cases, ok := pkgs[res.Classname]
+			if !ok {
+				cases = make([]JUnitTestCase, 0, 10)
+			}
+			cases = append(cases, res.JUnitTestCase)
+			pkgs[res.Classname] = cases
+			durations[res.Classname] = durations[res.Classname] + res.d
+		}
+	}
+
+	suites := JUnitTestSuites{}
+	// Turn every package result to a suite.
+	for pkg, cases := range pkgs {
+		suite := JUnitTestSuite{
+			Tests:      len(cases),
+			Failures:   failureCases(cases),
+			Time:       formatDurationAsSeconds(durations[pkg]),
+			Name:       pkg,
+			Properties: packageProperties(version),
+			TestCases:  cases,
+		}
+		suites.Suites = append(suites.Suites, suite)
+	}
+	return suites
+}
+
+func failureCases(input []JUnitTestCase) int {
+	sum := 0
+	for _, v := range input {
+		if v.Failure != nil {
+			sum++
+		}
+	}
+	return sum
+}
+
+func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+	args := make([]string, 0, 10)
+	exe := "./" + testFileName(pkg)
+	if coverprofile != "" {
+		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
+		tmpFile := path.Join(coverFileTempDir, fileName)
+		args = append(args, "-test.coverprofile", tmpFile)
+	}
+	args = append(args, "-test.cpu", "1")
+	args = append(args, []string{"-test.timeout", "2m"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
@@ -510,23 +714,27 @@ func buildTestBinary(pkg string) error {
 
 // buildTestBinaryMulti is much faster than build the test packages one by one.
 func buildTestBinaryMulti(pkgs []string) error {
-       // go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
-       xprogPath := path.Join(workDir, "tools/bin/xprog")
-       packages := make([]string, 0, len(pkgs))
-       for _, pkg := range pkgs {
-               packages = append(packages, path.Join(modulePath, pkg))
-       }
+	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	packages := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		packages = append(packages, path.Join(modulePath, pkg))
+	}
 
-       var cmd *exec.Cmd
-	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
-       cmd.Args = append(cmd.Args, packages...)
-       cmd.Dir = workDir
-       cmd.Stdout = os.Stdout
-       cmd.Stderr = os.Stderr
-       if err := cmd.Run(); err != nil {
-               return withTrace(err)
-       }
-       return nil
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
+	} else {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+	}
+	cmd.Args = append(cmd.Args, packages...)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -538,6 +746,7 @@ func testBinaryExist(pkg string) (bool, error) {
 	}
 	return true, withTrace(err)
 }
+
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
 	return file + ".test.bin"
@@ -610,6 +819,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
+	rand.Seed(time.Now().UnixNano())
 	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]
@@ -635,4 +845,91 @@ func withTrace(err error) error {
 	var stack [4096]byte
 	sz := runtime.Stack(stack[:], false)
 	return &errWithStack{err, stack[:sz]}
+}
+
+func formatDurationAsSeconds(d time.Duration) string {
+	return fmt.Sprintf("%f", d.Seconds())
+}
+
+func packageProperties(goVersion string) []JUnitProperty {
+	return []JUnitProperty{
+		{Name: "go.version", Value: goVersion},
+	}
+}
+
+// goVersion returns the version as reported by the go binary in PATH. This
+// version will not be the same as runtime.Version, which is always the version
+// of go used to build the gotestsum binary.
+//
+// To skip the os/exec call set the GOVERSION environment variable to the
+// desired value.
+func goVersion() string {
+	if version, ok := os.LookupEnv("GOVERSION"); ok {
+		return version
+	}
+	cmd := exec.Command("go", "version")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
+}
+
+func write(out io.Writer, suites JUnitTestSuites) error {
+	doc, err := xml.MarshalIndent(suites, "", "\t")
+	if err != nil {
+		return err
+	}
+	_, err = out.Write([]byte(xml.Header))
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(doc)
+	return err
+}
+
+// JUnitTestSuites is a collection of JUnit test suites.
+type JUnitTestSuites struct {
+	XMLName xml.Name `xml:"testsuites"`
+	Suites  []JUnitTestSuite
+}
+
+// JUnitTestSuite is a single JUnit test suite which may contain many
+// testcases.
+type JUnitTestSuite struct {
+	XMLName    xml.Name        `xml:"testsuite"`
+	Tests      int             `xml:"tests,attr"`
+	Failures   int             `xml:"failures,attr"`
+	Time       string          `xml:"time,attr"`
+	Name       string          `xml:"name,attr"`
+	Properties []JUnitProperty `xml:"properties>property,omitempty"`
+	TestCases  []JUnitTestCase
+}
+
+// JUnitTestCase is a single test case with its result.
+type JUnitTestCase struct {
+	XMLName     xml.Name          `xml:"testcase"`
+	Classname   string            `xml:"classname,attr"`
+	Name        string            `xml:"name,attr"`
+	Time        string            `xml:"time,attr"`
+	SkipMessage *JUnitSkipMessage `xml:"skipped,omitempty"`
+	Failure     *JUnitFailure     `xml:"failure,omitempty"`
+}
+
+// JUnitSkipMessage contains the reason why a testcase was skipped.
+type JUnitSkipMessage struct {
+	Message string `xml:"message,attr"`
+}
+
+// JUnitProperty represents a key/value pair used to define properties.
+type JUnitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// JUnitFailure contains data related to a failed test.
+type JUnitFailure struct {
+	Message  string `xml:"message,attr"`
+	Type     string `xml:"type,attr"`
+	Contents string `xml:",chardata"`
 }

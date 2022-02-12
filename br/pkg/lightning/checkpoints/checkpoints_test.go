@@ -1,7 +1,6 @@
 package checkpoints
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -284,9 +283,7 @@ func TestApplyDiff(t *testing.T) {
 }
 
 func TestCheckpointMarshallUnmarshall(t *testing.T) {
-	dir, err := os.MkdirTemp("", "cptest")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	path := filepath.Join(dir, "filecheckpoint")
 	fileChkp := NewFileCheckpointsDB(path)
 	fileChkp.checkpoints.Checkpoints["a"] = &checkpointspb.TableCheckpointModel{
