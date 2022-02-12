@@ -3431,6 +3431,10 @@ func TestDDL(t *testing.T) {
 		{"create sequence if not exists seq no extend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` NOEXTEND"},
 		{"create sequence if not exists seq scale noextend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` SCALE NOEXTEND"},
 		{"create sequence if not exists seq scale extend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` SCALE EXTEND"},
+		{"create sequence if not exists seq start with 1 maxvalue 9999999999999999 scale", true, "CREATE SEQUENCE IF NOT EXISTS `seq` START WITH 1 MAXVALUE 9999999999999999 SCALE"},
+		{"create sequence if not exists seq start with 1 maxvalue 9999999999999999 scale no extend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` START WITH 1 MAXVALUE 9999999999999999 SCALE NOEXTEND"},
+		{"create sequence if not exists seq start with 1 maxvalue 9999999999999999 scale extend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` START WITH 1 MAXVALUE 9999999999999999 SCALE EXTEND"},
+		{"create sequence if not exists seq start with 1 maxvalue 9999999999999999 increment 1 scale extend", true, "CREATE SEQUENCE IF NOT EXISTS `seq` START WITH 1 MAXVALUE 9999999999999999 INCREMENT BY 1 SCALE EXTEND"},
 		{"create sequence seq increment 1 start with 0 minvalue 0 maxvalue 1000", true, "CREATE SEQUENCE `seq` INCREMENT BY 1 START WITH 0 MINVALUE 0 MAXVALUE 1000"},
 		{"create sequence seq increment 1 start with 0 minvalue 0 maxvalue 1000", true, "CREATE SEQUENCE `seq` INCREMENT BY 1 START WITH 0 MINVALUE 0 MAXVALUE 1000"},
 		// TODO : support or replace if need : care for it will conflict on temporary.

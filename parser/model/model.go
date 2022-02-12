@@ -778,8 +778,8 @@ type SequenceInfo struct {
 	Start      int64  `json:"sequence_start"`
 	Cache      bool   `json:"sequence_cache"`
 	Cycle      bool   `json:"sequence_cycle"`
-	Scale      bool   `json:"sequence_cycle"`
-	Extend     bool   `json:"sequence_cycle"`
+	Scale      bool   `json:"sequence_scale"`
+	Extend     bool   `json:"sequence_extend"`
 	MinValue   int64  `json:"sequence_min_value"`
 	MaxValue   int64  `json:"sequence_max_value"`
 	Increment  int64  `json:"sequence_increment"`
