@@ -3822,23 +3822,25 @@ func TestIssue29326(t *testing.T) {
 	require.True(t, infoschema.ErrColumnExists.Equal(err))
 }
 
-func (s *testIntegrationSuite3) TestInvalidPartitionNameWhenCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database invalidPartitionNames")
 	defer tk.MustExec("drop database invalidPartitionNames")
 	tk.MustExec("USE invalidPartitionNames")
 
 	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
 
 	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
 
 	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
 	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongPartitionName), IsTrue, Commentf("err %v", err))
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
 }
