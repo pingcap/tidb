@@ -231,7 +231,6 @@ func TestColHybird(t *testing.T) {
 }
 
 func TestInColumnArray(t *testing.T) {
-
 	// normal case, col is in column array
 	col0, col1 := &Column{ID: 0, UniqueID: 0}, &Column{ID: 1, UniqueID: 1}
 	cols := []*Column{col0, col1}
@@ -245,7 +244,6 @@ func TestInColumnArray(t *testing.T) {
 }
 
 func TestGcColumnExprIsTidbShard(t *testing.T) {
-
 	ctx := mock.NewContext()
 
 	// abnormal case
