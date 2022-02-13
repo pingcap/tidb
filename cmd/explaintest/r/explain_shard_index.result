@@ -33,7 +33,7 @@ Projection	8000.00	root		test.test3.id, test.test3.a, test.test3.b
 └─Selection	8000.00	root		or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), or(and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)), gt(test.test3.a, 997)))
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
-explain format=brief select * from test3   where ((a=100 and b = 100) or a = 200) and b = 300;
+explain format=brief select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
 id	estRows	task	access object	operator info
 Projection	0.01	root		test.test3.id, test.test3.a, test.test3.b
 └─TableReader	0.01	root		data:Selection
