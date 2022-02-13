@@ -19,44 +19,32 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-type testSuiteJoin1 struct {
-	*baseTestSuite
-}
-
-type testSuiteJoin2 struct {
-	*baseTestSuite
-}
-
-type testSuiteJoin3 struct {
-	*baseTestSuite
-}
-
-type testSuiteJoinSerial struct {
-	*baseTestSuite
-}
-
-func (s *testSuiteJoin1) TestJoinPanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestJoinPanic2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 
 	// Test for PR 18983, use to detect race.
 	tk.MustExec("use test")
@@ -68,20 +56,24 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 	tk.MustQuery("select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;").Check(testkit.Rows("1 1"))
 }
 
-func (s *testSuite) TestJoinInDisk(c *C) {
-	defer config.RestoreFunc()()
+func TestJoinInDisk(t *testing.T) {
+	origin := config.RestoreFunc()
+	defer origin()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
 	})
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	sm := &mockSessionManager1{
 		PS: make([]*util.ProcessInfo, 0),
 	}
-	tk.Se.SetSessionManager(sm)
-	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	tk.Session().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	// TODO(fengliyuan): how to ensure that it is using disk really?
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
@@ -95,14 +87,16 @@ func (s *testSuite) TestJoinInDisk(c *C) {
 	result.Check(testkit.Rows("2 2 2 3"))
 }
 
-func (s *testSuiteJoin2) TestJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestJoin2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
-	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency(), Equals, 200)
+	require.Equal(t, 200, tk.Session().GetSessionVars().IndexLookupJoinConcurrency())
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 4")
-	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency(), Equals, 4)
+	require.Equal(t, 4, tk.Session().GetSessionVars().IndexLookupJoinConcurrency())
 
 	tk.MustExec("set @@tidb_index_lookup_size = 2")
 	tk.MustExec("use test")
@@ -218,11 +212,11 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 
 	// Test that two conflict hints will return warning.
 	tk.MustExec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	tk.MustExec("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ * from t join t1 on t.a=t1.a")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	tk.MustExec("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ * from t join t1 on t.a=t1.a")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -352,8 +346,10 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 	tk.MustQuery("select min(t2.b) from t1 right join t2 on t2.a=t1.a right join t3 on t2.a=t3.a left join t4 on t3.a=t4.a").Check(testkit.Rows("1"))
 }
 
-func (s *testSuiteJoin2) TestJoinCast(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestJoinCast(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
 	tk.MustExec("use test")
@@ -423,7 +419,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t value(18446744073709551615);")
 	tk.MustExec("insert into t1 value(-1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
-	c.Check(len(result.Rows()), Equals, 1)
+	require.Len(t, result.Rows(), 1)
 
 	/* Issues 11896 */
 	tk.MustExec("drop table if exists t;")
@@ -433,7 +429,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t value(1);")
 	tk.MustExec("insert into t1 value(1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
-	c.Check(len(result.Rows()), Equals, 1)
+	require.Len(t, result.Rows(), 1)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -443,7 +439,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(18446744073709551615);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	// TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
-	c.Check(len(result.Rows()), Equals, 0)
+	require.Len(t, result.Rows(), 0)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -538,8 +534,10 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("set @@tidb_init_chunk_size=32")
 }
 
-func (s *testSuiteJoin1) TestUsing(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUsing(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
@@ -656,8 +654,10 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
 }
 
-func (s *testSuiteWithData) TestUsingAndNaturalJoinSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUsingAndNaturalJoinSchema(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
 	tk.MustExec("create table t1 (c int, b int);")
@@ -679,18 +679,20 @@ func (s *testSuiteWithData) TestUsingAndNaturalJoinSchema(c *C) {
 		SQL string
 		Res []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	executorSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
 
-func (s *testSuiteWithData) TestNaturalJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestNaturalJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -705,20 +707,22 @@ func (s *testSuiteWithData) TestNaturalJoin(c *C) {
 		Plan []string
 		Res  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	executorSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
 
-func (s *testSuiteJoin3) TestMultiJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestMultiJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
 	tk.MustExec("create table t40(a40 int primary key, b40 int, x40 int)")
@@ -809,8 +813,10 @@ AND b44=a42`)
 	result.Check(testkit.Rows("7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7"))
 }
 
-func (s *testSuiteJoin3) TestSubquerySameTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSubquerySameTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
@@ -821,8 +827,10 @@ func (s *testSuiteJoin3) TestSubquerySameTable(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuiteJoin3) TestSubquery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
 	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
@@ -911,10 +919,10 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
-	c.Check(err, IsNil)
-	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Check(err, NotNil)
-	c.Check(rs.Close(), IsNil)
+	require.NoError(t, err)
+	_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.Error(t, err)
+	require.NoError(t, rs.Close())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists s")
@@ -1060,8 +1068,10 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
-func (s *testSuiteJoin1) TestInSubquery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
@@ -1127,8 +1137,10 @@ func (s *testSuiteJoin1) TestInSubquery(c *C) {
 	result.Check(testkit.Rows("2", "2", "1"))
 }
 
-func (s *testSuiteJoin1) TestJoinLeak(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestJoinLeak(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1139,18 +1151,20 @@ func (s *testSuiteJoin1) TestJoinLeak(c *C) {
 	}
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	req := result.NewChunk(nil)
 	err = result.Next(context.Background(), req)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	time.Sleep(time.Millisecond)
-	c.Assert(result.Close(), IsNil)
+	require.NoError(t, result.Close())
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
-func (s *testSuiteJoin1) TestHashJoinExecEncodeDecodeRow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestHashJoinExecEncodeDecodeRow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -1162,8 +1176,10 @@ func (s *testSuiteJoin1) TestHashJoinExecEncodeDecodeRow(c *C) {
 	result.Check(testkit.Rows("2003-06-09 10:51:26"))
 }
 
-func (s *testSuiteJoin1) TestSubqueryInJoinOn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSubqueryInJoinOn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -1173,11 +1189,13 @@ func (s *testSuiteJoin1) TestSubqueryInJoinOn(c *C) {
 	tk.MustExec("insert into t2 values (1)")
 
 	err := tk.ExecToErr("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testSuiteJoin1) TestIssue5255(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue5255(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b date, c float, primary key(a, b))")
@@ -1189,8 +1207,10 @@ func (s *testSuiteJoin1) TestIssue5255(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
 }
 
-func (s *testSuiteJoin1) TestIssue5278(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue5278(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int, b int)")
@@ -1199,24 +1219,28 @@ func (s *testSuiteJoin1) TestIssue5278(c *C) {
 	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
 }
 
-func (s *testSuiteJoin1) TestIssue15850JoinNullValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue15850JoinNullValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 
 	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("drop view if exists v0;")
 	tk.MustExec("CREATE TABLE t0(c0 TEXT);")
 	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
 	tk.MustQuery("SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 }
 
-func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIndexLookupJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("DROP TABLE IF EXISTS t")
@@ -1403,13 +1427,15 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
 
-func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIndexNestedLoopHashJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -1434,13 +1460,13 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	))
 	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
-		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
+		require.Equal(t, fmt.Sprintf("%d", i), row[0].(string))
 	}
 
 	// index hash join with semi join
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"))
 	}()
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
@@ -1457,8 +1483,8 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table t")
 
 	// test semi join
-	tk.Se.GetSessionVars().InitChunkSize = 2
-	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.Session().GetSessionVars().InitChunkSize = 2
+	tk.Session().GetSessionVars().MaxChunkSize = 2
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
@@ -1541,8 +1567,10 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("drop table orders")
 }
 
-func (s *testSuiteJoin3) TestIssue15686(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue15686(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, k;")
 	tk.MustExec("create table k (a int, pk int primary key, index(a));")
@@ -1554,8 +1582,10 @@ func (s *testSuiteJoin3) TestIssue15686(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
 }
 
-func (s *testSuiteJoin3) TestIssue13449(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue13449(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s;")
 	tk.MustExec("create table t(a int, index(a));")
@@ -1578,8 +1608,10 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
-func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestMergejoinOrder(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a bigint primary key, b bigint);")
@@ -1623,8 +1655,10 @@ func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	))
 }
 
-func (s *testSuiteJoin1) TestEmbeddedOuterJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestEmbeddedOuterJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
@@ -1634,8 +1668,10 @@ func (s *testSuiteJoin1) TestEmbeddedOuterJoin(c *C) {
 		Check(testkit.Rows("1 1 <nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
-func (s *testSuiteJoin1) TestHashJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestHashJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int);")
@@ -1654,16 +1690,18 @@ func (s *testSuiteJoin1) TestHashJoin(c *C) {
 	// 5   └─Selection_11        9990.00  5 cop[tikv]          time:243.395µs, loops:6                                              not(isnull(test.t1.a))                      N/A       N/A
 	// 6     └─TableFullScan_10  10000.00 5 cop[tikv] table:t1 time:206.273µs, loops:6                                              keep order:false, stats:pseudo              N/A       N/A
 	row := result.Rows()
-	c.Assert(len(row), Equals, 7)
+	require.Equal(t, 7, len(row))
 	innerActRows := row[1][2].(string)
-	c.Assert(innerActRows, Equals, "0")
+	require.Equal(t, "0", innerActRows)
 	outerActRows := row[4][2].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
-	c.Assert(outerActRows, Equals, "5")
+	require.Equal(t, "5", outerActRows)
 }
 
-func (s *testSuiteJoin1) TestJoinDifferentDecimals(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestJoinDifferentDecimals(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("Use test")
 	tk.MustExec("Drop table if exists t1")
 	tk.MustExec("Create table t1 (v int)")
@@ -1677,12 +1715,14 @@ func (s *testSuiteJoin1) TestJoinDifferentDecimals(c *C) {
 	tk.MustExec("Insert into t2 value (000003.000000)")
 	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
 	row := rst.Rows()
-	c.Assert(len(row), Equals, 3)
+	require.Equal(t, 3, len(row))
 	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
 }
 
-func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestNullEmptyAwareSemiJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idb_b(b), index idx_c(c))")
@@ -2075,8 +2115,10 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 	))
 }
 
-func (s *testSuiteJoin1) TestScalarFuncNullSemiJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestScalarFuncNullSemiJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
@@ -2091,8 +2133,10 @@ func (s *testSuiteJoin1) TestScalarFuncNullSemiJoin(c *C) {
 	tk.MustQuery("select a in (select a+b from s) from t").Check(testkit.Rows("<nil>", "<nil>"))
 }
 
-func (s *testSuiteJoin1) TestInjectProjOnTopN(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInjectProjOnTopN(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -2104,8 +2148,10 @@ func (s *testSuiteJoin1) TestInjectProjOnTopN(c *C) {
 	))
 }
 
-func (s *testSuiteJoin1) TestIssue11544(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue11544(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table 11544t(a int)")
 	tk.MustExec("create table 11544tt(a int, b varchar(10), index idx(a, b(3)))")
@@ -2122,8 +2168,10 @@ func (s *testSuiteJoin1) TestIssue11544(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Sort().Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
 }
 
-func (s *testSuiteJoin1) TestIssue11390(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue11390(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table 11390t (k1 int unsigned, k2 int unsigned, key(k1, k2))")
 	tk.MustExec("insert into 11390t values(1, 1)")
@@ -2132,10 +2180,12 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
-func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
+func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
 	tk.MustExec("create table t (a int,b int)")
@@ -2167,8 +2217,10 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 		"    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
 }
 
-func (s *testSuiteJoin1) TestIssue13177(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue13177(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a varchar(20), b int, c int)")
@@ -2207,22 +2259,26 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	))
 }
 
-func (s *testSuiteJoin1) TestIssue14514(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue14514(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
 	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
 }
 
-func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
+func TestOuterMatchStatusIssue14742(t *testing.T) {
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists testjoin;")
 	tk.MustExec("create table testjoin(a int);")
-	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.Session().GetSessionVars().MaxChunkSize = 2
 
 	tk.MustExec("insert into testjoin values (NULL);")
 	tk.MustExec("insert into testjoin values (1);")
@@ -2238,13 +2294,15 @@ func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
 	))
 }
 
-func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
+func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// Two necessary factors to reproduce this issue:
 	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
 	plannercore.ForcedHashLeftJoin4Test = true
 	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists S, T")
 	tk.MustExec("create table S (a int not null, b int, c int);")
@@ -2272,7 +2330,7 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"        └─TableFullScan 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
 }
 
-func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
+func TestIssue18070(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
@@ -2281,7 +2339,9 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 			conf.OOMAction = config.OOMActionLog
 		})
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, index(a))")
@@ -2290,19 +2350,21 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
 	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
-	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	require.Nil(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
-		c.Assert(failpoint.Disable(fpName), IsNil)
+		require.Nil(t, failpoint.Disable(fpName))
 	}()
 	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }
 
-func (s *testSuiteJoin1) TestIssue18564(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue18564(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
@@ -2313,8 +2375,10 @@ func (s *testSuiteJoin1) TestIssue18564(c *C) {
 }
 
 // test hash join when enum column got invalid value
-func (s *testSuiteJoin1) TestInvalidEnumVal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInvalidEnumVal(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set sql_mode = '';")
 	tk.MustExec("drop table if exists t1;")
@@ -2327,65 +2391,77 @@ func (s *testSuiteJoin1) TestInvalidEnumVal(c *C) {
 	rows.Check(testkit.Rows("a a", " ", " ", " ", " "))
 }
 
-func (s *testSuiteJoinSerial) TestIssue18572_1(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue18572_1(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"), IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
-	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
-	c.Assert(rs.Close(), IsNil)
+	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"))
+	require.NoError(t, rs.Close())
 }
 
-func (s *testSuiteJoinSerial) TestIssue18572_2(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue18572_2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
-	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
-	c.Assert(rs.Close(), IsNil)
+	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"))
+	require.NoError(t, rs.Close())
 }
 
-func (s *testSuiteJoinSerial) TestIssue18572_3(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue18572_3(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"), IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
-	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
-	c.Assert(rs.Close(), IsNil)
+	require.True(t, strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"))
+	require.NoError(t, rs.Close())
 }
 
-func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyOuterAggEmptyInput(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
@@ -2405,8 +2481,11 @@ func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
 	))
 }
 
-func (s *testSuite9) TestIssue19112(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue19112(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 ( c_int int, c_decimal decimal(12, 6), key(c_int), unique key(c_decimal) )")
 	tk.MustExec("create table t2 like t1")
@@ -2417,8 +2496,11 @@ func (s *testSuite9) TestIssue19112(c *C) {
 		"3 1.010000 3 1.010000"))
 }
 
-func (s *testSuiteJoin3) TestIssue11896(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue11896(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	// compare bigint to bit(64)
 	tk.MustExec("drop table if exists t")
@@ -2471,8 +2553,11 @@ func (s *testSuiteJoin3) TestIssue11896(c *C) {
 		testkit.Rows("1 \x01"))
 }
 
-func (s *testSuiteJoin3) TestIssue19498(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue19498(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
@@ -2501,8 +2586,11 @@ func (s *testSuiteJoin3) TestIssue19498(c *C) {
 	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
 }
 
-func (s *testSuiteJoin3) TestIssue19500(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue19500(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
@@ -2516,8 +2604,11 @@ func (s *testSuiteJoin3) TestIssue19500(c *C) {
 		Check(testkit.Rows("<nil>", "<nil>", "3", "3", "3"))
 }
 
-func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestExplainAnalyzeJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int, b int, unique index (a));")
 	tk.MustExec("create table t2 (a int, b int, unique index (a))")
@@ -2525,30 +2616,33 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(4,4),(5,5)")
 	// Test for index lookup join.
 	rows := tk.MustQuery("explain analyze select /*+ INL_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	c.Assert(len(rows), Equals, 8)
-	c.Assert(rows[0][0], Matches, "IndexJoin_.*")
-	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*}, probe:.*")
+	require.Equal(t, 8, len(rows))
+	require.Regexp(t, "IndexJoin_.*", rows[0][0])
+	require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*}, probe:.*", rows[0][5])
 	// Test for index lookup hash join.
 	rows = tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	c.Assert(len(rows), Equals, 8)
-	c.Assert(rows[0][0], Matches, "IndexHashJoin.*")
-	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}")
+	require.Equal(t, 8, len(rows))
+	require.Regexp(t, "IndexHashJoin.*", rows[0][0])
+	require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[0][5])
 	// Test for hash join.
 	rows = tk.MustQuery("explain analyze select /*+ HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	c.Assert(len(rows), Equals, 7)
-	c.Assert(rows[0][0], Matches, "HashJoin.*")
-	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
+	require.Equal(t, 7, len(rows))
+	require.Regexp(t, "HashJoin.*", rows[0][0])
+	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}", rows[0][5])
 	// Test for index merge join.
 	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	c.Assert(len(rows), Equals, 9)
-	c.Assert(rows[0][0], Matches, "IndexMergeJoin_.*")
-	c.Assert(rows[0][5], Matches, fmt.Sprintf(".*Concurrency:%v.*", tk.Se.GetSessionVars().IndexLookupJoinConcurrency()))
+	require.Len(t, rows, 9)
+	require.Regexp(t, "IndexMergeJoin_.*", rows[0][0])
+	require.Regexp(t, fmt.Sprintf(".*Concurrency:%v.*", tk.Session().GetSessionVars().IndexLookupJoinConcurrency()), rows[0][5])
 }
 
-func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue20270(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	err := failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 int, c2 int)")
@@ -2556,24 +2650,27 @@ func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	require.Equal(t, executor.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	plannercore.ForceUseOuterBuild4Test = true
 	defer func() {
 		plannercore.ForceUseOuterBuild4Test = false
 	}()
 	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	require.Equal(t, executor.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue20710(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists s;")
 	tk.MustExec("create table t(a int, b int)")
@@ -2595,27 +2692,33 @@ func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
-func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue20779(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx(b));")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue20779", "return"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIssue20779", "return"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue20779"), IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIssue20779"))
 	}()
 
 	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
-	c.Assert(err.Error(), Matches, "testIssue20779")
-	c.Assert(rs.Close(), IsNil)
+	require.EqualError(t, err, "testIssue20779")
+	require.NoError(t, rs.Close())
 }
 
-func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue20219(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,s ")
 	tk.MustExec("CREATE TABLE `t` (   `a` set('a','b','c','d','e','f','g','h','i','j') DEFAULT NULL );")
 	tk.MustExec("insert into t values('i'), ('j');")
@@ -2627,8 +2730,11 @@ func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
-func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue25902(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt1,tt2,tt3; ")
 	tk.MustExec("create table tt1 (ts timestamp);")
 	tk.MustExec("create table tt2 (ts varchar(32));")
@@ -2644,23 +2750,26 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustExec("set @@session.time_zone = @tmp;")
 }
 
-func (s *testSuiteJoinSerial) TestIssue30211(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue30211(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a int, index(a));")
 	tk.MustExec("create table t2(a int, index(a));")
 	func() {
 		fpName := "github.com/pingcap/tidb/executor/TestIssue30211"
-		c.Assert(failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`), IsNil)
+		require.Nil(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
 		defer func() {
-			c.Assert(failpoint.Disable(fpName), IsNil)
+			require.Nil(t, failpoint.Disable(fpName))
 		}()
-		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-		c.Assert(err, Matches, "failpoint panic: TestIssue30211 IndexJoinPanic")
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
 
-		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-		c.Assert(err, Matches, "failpoint panic: TestIssue30211 IndexJoinPanic")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
+
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
@@ -2675,18 +2784,20 @@ func (s *testSuiteJoinSerial) TestIssue30211(c *C) {
 		})
 	}()
 	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
+	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
+	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
 }
 
-func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue31129(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -2700,31 +2811,31 @@ func (s *testSuiteJoinSerial) TestIssue31129(c *C) {
 
 	// Test IndexNestedLoopHashJoin keepOrder.
 	fpName := "github.com/pingcap/tidb/executor/TestIssue31129"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	require.Nil(t, failpoint.Enable(fpName, "return"))
 	err := tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	c.Assert(strings.Contains(err.Error(), "TestIssue31129"), IsTrue)
-	c.Assert(failpoint.Disable(fpName), IsNil)
+	require.True(t, strings.Contains(err.Error(), "TestIssue31129"))
+	require.Nil(t, failpoint.Disable(fpName))
 
 	// Test IndexNestedLoopHashJoin build hash table panic.
 	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic"
-	c.Assert(failpoint.Enable(fpName, `panic("IndexHashJoinBuildHashTablePanic")`), IsNil)
+	require.Nil(t, failpoint.Enable(fpName, `panic("IndexHashJoinBuildHashTablePanic")`))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	c.Assert(strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"), IsTrue)
-	c.Assert(failpoint.Disable(fpName), IsNil)
+	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
+	require.Nil(t, failpoint.Disable(fpName))
 
 	// Test IndexNestedLoopHashJoin fetch inner fail.
 	fpName = "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	require.Nil(t, failpoint.Enable(fpName, "return"))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	c.Assert(strings.Contains(err.Error(), "IndexHashJoinFetchInnerResultsErr"), IsTrue)
-	c.Assert(failpoint.Disable(fpName), IsNil)
+	require.True(t, strings.Contains(err.Error(), "IndexHashJoinFetchInnerResultsErr"))
+	require.Nil(t, failpoint.Disable(fpName))
 
 	// Test IndexNestedLoopHashJoin build hash table panic and IndexNestedLoopHashJoin fetch inner fail at the same time.
 	fpName1, fpName2 := "github.com/pingcap/tidb/executor/IndexHashJoinBuildHashTablePanic", "github.com/pingcap/tidb/executor/IndexHashJoinFetchInnerResultsErr"
-	c.Assert(failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`), IsNil)
-	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+	require.Nil(t, failpoint.Enable(fpName1, `panic("IndexHashJoinBuildHashTablePanic")`))
+	require.Nil(t, failpoint.Enable(fpName2, "return"))
 	err = tk.QueryToErr("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	c.Assert(strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"), IsTrue)
-	c.Assert(failpoint.Disable(fpName1), IsNil)
-	c.Assert(failpoint.Disable(fpName2), IsNil)
+	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
+	require.Nil(t, failpoint.Disable(fpName1))
+	require.Nil(t, failpoint.Disable(fpName2))
 }

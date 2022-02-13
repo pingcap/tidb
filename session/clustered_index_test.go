@@ -676,9 +676,6 @@ func TestPartitionTable(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/23106
 func TestClusteredIndexDecodeRestoredDataV5(t *testing.T) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -702,9 +699,6 @@ func TestClusteredIndexDecodeRestoredDataV5(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/23178
 func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -724,9 +718,6 @@ func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
 func TestClusteredIndexNewCollationWithOldRowFormat(t *testing.T) {
 	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
 	// but unistore doesn't support old row format.
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

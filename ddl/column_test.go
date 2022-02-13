@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -1171,9 +1170,6 @@ func (s *testColumnSuiteToVerify) TestDropColumns() {
 }
 
 func TestModifyColumn(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	d, err := testNewDDLAndStart(

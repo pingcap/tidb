@@ -24,7 +24,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 3)
+var testDataMap = make(testdata.BookKeeper, 5)
 var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
@@ -35,6 +35,8 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
@@ -57,4 +59,12 @@ func GetIntegrationPartitionSuiteData() testdata.TestData {
 
 func GetPlanNormalizedSuiteData() testdata.TestData {
 	return testDataMap["plan_normalized_suite"]
+}
+
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
+}
+
+func GetOrderedResultModeSuiteData() testdata.TestData {
+	return testDataMap["ordered_result_mode_suite"]
 }
