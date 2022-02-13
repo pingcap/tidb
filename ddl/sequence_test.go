@@ -1080,6 +1080,7 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale noextend")
 	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%1000000").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("1"))
 	tk.MustExec("drop sequence if exists seq")
 
@@ -1087,6 +1088,7 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale extend")
 	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%1000000").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("0"))
 
 }
