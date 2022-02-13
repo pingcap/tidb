@@ -744,10 +744,11 @@ var defaultConf = Config{
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 	},
-	DeprecateIntegerDisplayWidth: false,
-	EnableEnumLengthLimit:        true,
-	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	DeprecateIntegerDisplayWidth:         false,
+	EnableEnumLengthLimit:                true,
+	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:                     defTiKVCfg.EnableForwarding,
+	NewCollationsEnabledOnFirstBootstrap: true,
 }
 
 var (

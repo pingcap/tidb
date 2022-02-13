@@ -141,8 +141,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionStatus:
 			err = e.setDataForTiKVRegionStatus(sctx)
-		case infoschema.TableTiKVRegionPeers:
-			err = e.setDataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(sctx)
 		case infoschema.TableConstraints:
@@ -190,11 +188,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, count from mysql.stats_meta")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +209,7 @@ type tableHistID struct {
 
 func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -1536,63 +1526,6 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 	e.rows = append(e.rows, row)
 }
 
-func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
-	}
-	for i := range regionsInfo.Regions {
-		e.setNewTiKVRegionPeersCols(&regionsInfo.Regions[i])
-	}
-	return nil
-}
-
-func (e *memtableRetriever) setNewTiKVRegionPeersCols(region *helper.RegionInfo) {
-	records := make([][]types.Datum, 0, len(region.Peers))
-	pendingPeerIDSet := set.NewInt64Set()
-	for _, peer := range region.PendingPeers {
-		pendingPeerIDSet.Insert(peer.ID)
-	}
-	downPeerMap := make(map[int64]int64, len(region.DownPeers))
-	for _, peerStat := range region.DownPeers {
-		downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
-	}
-	for _, peer := range region.Peers {
-		row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
-		row[0].SetInt64(region.ID)
-		row[1].SetInt64(peer.ID)
-		row[2].SetInt64(peer.StoreID)
-		if peer.IsLearner {
-			row[3].SetInt64(1)
-		} else {
-			row[3].SetInt64(0)
-		}
-		if peer.ID == region.Leader.ID {
-			row[4].SetInt64(1)
-		} else {
-			row[4].SetInt64(0)
-		}
-		if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer, mysql.DefaultCollationName)
-			row[6].SetInt64(downSec)
-		} else if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer, mysql.DefaultCollationName)
-		} else {
-			row[5].SetString(normalPeer, mysql.DefaultCollationName)
-		}
-		records = append(records, row)
-	}
-	e.rows = append(e.rows, records...)
-}
-
 const (
 	normalPeer  = "NORMAL"
 	pendingPeer = "PENDING"
@@ -2892,6 +2825,12 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 		// also convert them to LeaderConstraints and FollowerConstraints
 		// for better user experience searching for particular constraints
 
+		// Followers == 0 means not set, so the default value 2 will be used
+		followerCnt := policy.PlacementSettings.Followers
+		if followerCnt == 0 {
+			followerCnt = 2
+		}
+
 		row := types.MakeDatums(
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
@@ -2903,7 +2842,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.FollowerConstraints,
 			policy.PlacementSettings.LearnerConstraints,
 			policy.PlacementSettings.Schedule,
-			policy.PlacementSettings.Followers,
+			followerCnt,
 			policy.PlacementSettings.Learners,
 		)
 		rows = append(rows, row)

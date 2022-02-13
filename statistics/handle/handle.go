@@ -120,7 +120,7 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// statsLoad is used to load stats concurrently
+	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 }
 
@@ -137,17 +137,17 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt)
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionUseCurSession)
 	})
 }
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
 		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
 			pruneMode := h.CurrentPruneMode()
@@ -158,17 +158,17 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer])
+		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionUseCurSession)
 	})
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession)
 	})
 }
 
@@ -1403,14 +1403,10 @@ type statsReader struct {
 
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
-	stmt, err := sr.ctx.ParseWithParams(ctx, true, sql, args...)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
 	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(sr.snapshot))
+		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
-	return sr.ctx.ExecRestrictedStmt(ctx, stmt)
+	return sr.ctx.ExecRestrictedSQL(ctx, nil, sql, args...)
 }
 
 func (sr *statsReader) isHistory() bool {

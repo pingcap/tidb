@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -56,7 +55,7 @@ func checkGoroutineExists(keyword string) bool {
 func TestCopClientSend(t *testing.T) {
 	t.Skip("not stable")
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
@@ -78,7 +77,6 @@ func TestCopClientSend(t *testing.T) {
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
 	require.NoError(t, err)
@@ -258,7 +256,7 @@ func TestInconsistentIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		err = tk.QueryToErr("select * from t use index(idx_a) where a >= 0")
-		require.Equal(t, fmt.Sprintf("inconsistent index idx_a handle count %d isn't equal to value count 10", i+11), err.Error())
+		require.Equal(t, fmt.Sprintf("[executor:8133]data inconsistency in table: t, index: idx_a, index-count:%d != record-count:10", i+11), err.Error())
 		// if has other conditions, the inconsistent index check doesn't work.
 		err = tk.QueryToErr("select * from t where a>=0 and b<10")
 		require.NoError(t, err)
