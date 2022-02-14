@@ -1591,14 +1591,14 @@ func (s *testPlanSerialSuite) TestParamMarker4FastPlan(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
 	// Use the cached PointGet plan
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	// Use the cached PointGet plan
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 }
 

@@ -734,7 +734,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		EnableGlobalKill: false,
 	},
-	EnableCollectExecutionInfo: true,
+	EnableCollectExecutionInfo: false,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,

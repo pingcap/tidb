@@ -64,6 +64,7 @@ type PointGetPlan struct {
 	PartitionInfo      *model.PartitionDefinition
 	Handle             kv.Handle
 	HandleConstant     *expression.Constant
+	handleFieldType    *types.FieldType
 	IndexValues        []types.Datum
 	IndexConstants     []*expression.Constant
 	IdxCols            []*expression.Column
@@ -917,6 +918,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
+		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
 		p.PartitionInfo = partitionInfo
 		return p
@@ -1183,7 +1185,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				param, err := expression.ParamMarkerExpression(ctx, x)
+				param, err := expression.ParamMarkerExpression(ctx, x, true)
 				if err != nil {
 					return nil, false
 				}
@@ -1203,7 +1205,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				param, err := expression.ParamMarkerExpression(ctx, x)
+				param, err := expression.ParamMarkerExpression(ctx, x, true)
 				if err != nil {
 					return nil, false
 				}
