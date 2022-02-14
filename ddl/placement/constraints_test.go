@@ -15,30 +15,27 @@
 package placement
 
 import (
-	"errors"
+	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testConstraintsSuite{})
-
-type testConstraintsSuite struct{}
-
-func (t *testConstraintsSuite) TestNew(c *C) {
+func TestNew(t *testing.T) {
 	_, err := NewConstraints(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = NewConstraints([]string{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = NewConstraints([]string{"+zonesh"})
-	c.Assert(errors.Is(err, ErrInvalidConstraintFormat), IsTrue)
+	require.ErrorIs(t, err, ErrInvalidConstraintFormat)
 
 	_, err = NewConstraints([]string{"+zone=sh", "-zone=sh"})
-	c.Assert(errors.Is(err, ErrConflictingConstraints), IsTrue)
+	require.ErrorIs(t, err, ErrConflictingConstraints)
 }
 
-func (t *testConstraintsSuite) TestAdd(c *C) {
+func TestAdd(t *testing.T) {
 	type TestCase struct {
 		name   string
 		labels Constraints
@@ -48,9 +45,9 @@ func (t *testConstraintsSuite) TestAdd(c *C) {
 	var tests []TestCase
 
 	labels, err := NewConstraints([]string{"+zone=sh"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	label, err := NewConstraint("-zone=sh")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests = append(tests, TestCase{
 		"always false match",
 		labels, label,
@@ -58,9 +55,9 @@ func (t *testConstraintsSuite) TestAdd(c *C) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	label, err = NewConstraint("+zone=sh")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests = append(tests, TestCase{
 		"duplicated constraints, skip",
 		labels, label,
@@ -78,7 +75,7 @@ func (t *testConstraintsSuite) TestAdd(c *C) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests = append(tests, TestCase{
 		"invalid label in operand",
 		labels, Constraint{Op: "["},
@@ -98,28 +95,28 @@ func (t *testConstraintsSuite) TestAdd(c *C) {
 	})
 
 	labels, err = NewConstraints([]string{"+zone=sh"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	label, err = NewConstraint("-zone=bj")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests = append(tests, TestCase{
 		"normal",
 		labels, label,
 		nil,
 	})
 
-	for _, t := range tests {
-		err := t.labels.Add(t.label)
-		comment := Commentf("%s: %v", t.name, err)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, comment)
+	for _, test := range tests {
+		err := test.labels.Add(test.label)
+		comment := fmt.Sprintf("%s: %v", test.name, err)
+		if test.err == nil {
+			require.NoError(t, err, comment)
+			require.Equal(t, test.label, test.labels[len(test.labels)-1], comment)
 		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, comment)
+			require.ErrorIs(t, err, test.err, comment)
 		}
 	}
 }
 
-func (t *testConstraintsSuite) TestRestore(c *C) {
+func TestRestore(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  Constraints
@@ -136,9 +133,9 @@ func (t *testConstraintsSuite) TestRestore(c *C) {
 	})
 
 	input1, err := NewConstraint("+zone=bj")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input2, err := NewConstraint("-zone=sh")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests = append(tests, TestCase{
 		"normal2",
 		Constraints{input1, input2},
@@ -157,14 +154,14 @@ func (t *testConstraintsSuite) TestRestore(c *C) {
 		ErrInvalidConstraintFormat,
 	})
 
-	for _, t := range tests {
-		res, err := t.input.Restore()
-		comment := Commentf("%s: %v", t.name, err)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			c.Assert(res, Equals, t.output, comment)
+	for _, test := range tests {
+		res, err := test.input.Restore()
+		comment := fmt.Sprintf("%s: %v", test.name, err)
+		if test.err == nil {
+			require.NoError(t, err, comment)
+			require.Equal(t, test.output, res, comment)
 		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, comment)
+			require.ErrorIs(t, err, test.err, comment)
 		}
 	}
 }
