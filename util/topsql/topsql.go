@@ -104,33 +104,41 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
 		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
 		if val.(bool) {
-			lowerSQL := strings.ToLower(normalizedSQL)
-			if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
-				failpoint.Return(ctx)
-			}
-			isDML := false
-			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "begin",
-				"commit", "analyze", "explain", "trace", "create", "set global"} {
-				if strings.HasPrefix(lowerSQL, prefix) {
-					isDML = true
-					break
-				}
-			}
-			if !isDML {
-				failpoint.Return(ctx)
-			}
-			start := time.Now()
-			logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
-			for {
-				if time.Since(start) > 11*time.Millisecond {
-					break
-				}
-				for i := 0; i < 10e5; i++ {
-				}
+			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
+				"commit", "analyze", "explain", "trace", "create", "set global"}
+			if MockHighLoad(normalizedSQL, sqlPrefixes) {
+				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
 			}
 		}
 	})
 	return ctx
+}
+
+// MockHighLoad mocks high cpu load, only use in failpoint test.
+func MockHighLoad(sql string, sqlPrefixs []string) bool {
+	lowerSQL := strings.ToLower(sql)
+	if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
+		return false
+	}
+	match := false
+	for _, prefix := range sqlPrefixs {
+		if strings.HasPrefix(lowerSQL, prefix) {
+			match = true
+			break
+		}
+	}
+	if !match {
+		return false
+	}
+	start := time.Now()
+	for {
+		if time.Since(start) > 11*time.Millisecond {
+			break
+		}
+		for i := 0; i < 10e5; i++ {
+		}
+	}
+	return true
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {

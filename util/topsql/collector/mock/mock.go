@@ -119,6 +119,20 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	return stats
 }
 
+// GetSQLCPUTimeBySQL uses for testing.
+func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
+	sqlDigest := GenSQLDigest(sql)
+	cpuTime := uint32(0)
+	c.Lock()
+	for _, stmt := range c.sqlStatsMap {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
+			cpuTime += stmt.CPUTimeMs
+		}
+	}
+	c.Unlock()
+	return cpuTime
+}
+
 // GetSQL uses for testing.
 func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
 	c.Lock()

@@ -1561,6 +1561,26 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
 	}
 	ts.testCase(t, mc, execFn, check)
+
+	// Test case for high cost of plan optimize.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize", "return"))
+	selectSQL := "select sum(a+b), count(distinct b) from t where a+b >0"
+	updateSQL := "update t set a=a+100 where a > 10000000"
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		mustQuery(t, dbt, selectSQL)
+		dbt.MustExec(updateSQL)
+	}
+	check = func() {
+		mc.WaitCollectCnt(2)
+		checkFn(selectSQL, "")
+		checkFn(updateSQL, "")
+		selectCPUTime := mc.GetSQLCPUTimeBySQL(selectSQL)
+		updateCPUTime := mc.GetSQLCPUTimeBySQL(updateSQL)
+		require.Less(t, updateCPUTime, selectCPUTime)
+	}
+	ts.testCase(t, mc, execFn, check)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize"))
 }
 
 func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
