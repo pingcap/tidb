@@ -575,7 +575,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 func TestTiFlashBackoff(t *testing.T) {
 	var maxTick ddl.TickType = 10
 	var rate ddl.TickType = 1.5
-	backoff := ddl.NewPollTiFlashBackoffContext(1, maxTick, 10, rate)
+	cap := 2
+	backoff, err := ddl.NewPollTiFlashBackoffContext(1, maxTick, cap, rate)
+	require.NoError(t, err)
 	backoff.Put(1)
 	mustGet := func(ID int64) *ddl.PollTiFlashBackoffElement {
 		e, ok := backoff.Get(ID)
@@ -599,15 +601,38 @@ func TestTiFlashBackoff(t *testing.T) {
 		require.Equal(t, e.Threshold, rate*ori)
 		require.Equal(t, 1, e.Counter)
 	}
+	// Test grow
 	require.False(t, mustGet(1).NeedGrow())
-	mustNotGrow(1)
-	mustGrow(1)
+	mustNotGrow(1) // 0;1 -> 1;1
+	mustGrow(1)    // 1;1 -> 0;1.5 -> 1;1.5
+	mustGrow(1)    // 1;1.5 -> 0;2.25 -> 1;2.25
+	mustNotGrow(1) // 1;2.25 -> 2;2.25
+	mustGrow(1)    // 2;2.25 -> 0;3.375 -> 1;3.375
+	mustNotGrow(1) // 1;3.375 -> 2;3.375
+	mustNotGrow(1) // 2;3.375 -> 3;3.375
+	mustGrow(1)    // 3;3.375 -> 0;5.0625
 
+	// Test converge
 	backoff.Put(2)
 	for i := 0; i < 20; i++ {
-		d := backoff.Tick(2)
-		z := mustGet(2).Threshold
-		fmt.Printf("%v %v\n", z, d)
+		backoff.Tick(2)
 	}
 	require.Equal(t, maxTick, mustGet(2).Threshold)
+
+	// Test context
+	require.False(t, backoff.Put(3))
+	backoff.Remove(1)
+	require.Equal(t, 1, backoff.Len())
+
+	// Test error context
+	_, err = ddl.NewPollTiFlashBackoffContext(0.5, 1, 1, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(10, 1, 1, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 0, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 1, 0.5)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 1, -1)
+	require.Error(t, err)
 }

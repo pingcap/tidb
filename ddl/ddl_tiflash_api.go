@@ -84,14 +84,26 @@ type PollTiFlashBackoffContext struct {
 }
 
 // NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
-func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate TickType) PollTiFlashBackoffContext {
-	return PollTiFlashBackoffContext{
+func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate TickType) (*PollTiFlashBackoffContext, error) {
+	if MaxTick < MinTick {
+		return nil, fmt.Errorf("`MaxTick` should always be larger than `MinTick`")
+	}
+	if MinTick <= 1 {
+		return nil, fmt.Errorf("`MinTick` should always be larger than 1")
+	}
+	if Capacity < 0 {
+		return nil, fmt.Errorf("negative `Capacity`")
+	}
+	if Rate <= 1 {
+		return nil, fmt.Errorf("`Rate` shoule always larger than 1")
+	}
+	return &PollTiFlashBackoffContext{
 		MinTick:  MinTick,
 		MaxTick:  MaxTick,
 		Capacity: Capacity,
 		elements: make(map[int64]*PollTiFlashBackoffElement),
 		Rate:     Rate,
-	}
+	}, nil
 }
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
@@ -100,7 +112,7 @@ type TiFlashManagementContext struct {
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
-	Backoff                   PollTiFlashBackoffContext
+	Backoff                   *PollTiFlashBackoffContext
 }
 
 // Tick will first check increase Counter.
@@ -156,6 +168,7 @@ func (b *PollTiFlashBackoffContext) Remove(ID int64) {
 }
 
 // Get returns pointer to inner PollTiFlashBackoffElement.
+// Only exported for test.
 func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, bool) {
 	res, ok := b.elements[ID]
 	return res, ok
@@ -177,14 +190,18 @@ func (b *PollTiFlashBackoffContext) Len() int {
 }
 
 // NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
-func NewTiFlashManagementContext() *TiFlashManagementContext {
+func NewTiFlashManagementContext() (*TiFlashManagementContext, error) {
+	c, err := NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity, PollTiFlashBackoffRate)
+	if err != nil {
+		return nil, err
+	}
 	return &TiFlashManagementContext{
 		HandlePdCounter:           0,
 		UpdateTiFlashStoreCounter: 0,
 		TiFlashStores:             make(map[int64]helper.StoreStat),
 		UpdateMap:                 make(map[int64]bool),
-		Backoff:                   NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity, PollTiFlashBackoffRate),
-	}
+		Backoff:                   c,
+	}, nil
 }
 
 var (
@@ -533,7 +550,10 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 }
 
 func (d *ddl) PollTiFlashRoutine() {
-	pollTiflashContext := NewTiFlashManagementContext()
+	pollTiflashContext, err := NewTiFlashManagementContext()
+	if err != nil {
+		logutil.BgLogger().Fatal("TiFlashManagement init failed", zap.Error(err))
+	}
 	for {
 		select {
 		case <-d.ctx.Done():
