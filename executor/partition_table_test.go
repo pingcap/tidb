@@ -3264,14 +3264,17 @@ func TestIssue26251(t *testing.T) {
 	tk2.MustExec("rollback")
 }
 
-func (s *partitionTableSuite) TestLeftJoinForUpdate(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
+func TestLeftJoinForUpdate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestLeftJoinForUpdate")
 	defer tk1.MustExec("drop database TestLeftJoinForUpdate")
 	tk1.MustExec("use TestLeftJoinForUpdate")
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use TestLeftJoinForUpdate")
-	tk3 := testkit.NewTestKit(c, s.store)
+	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use TestLeftJoinForUpdate")
 
 	tk1.MustExec("drop table if exists nt, pt")
@@ -3314,10 +3317,10 @@ func (s *partitionTableSuite) TestLeftJoinForUpdate(c *C) {
 	tk1.MustExec("rollback")
 
 	checkOrder := func() {
-		c.Assert(<-ch, Equals, 1)
+		require.Equal(t, <-ch, 1)
 		v1 := <-ch
 		v2 := <-ch
-		c.Assert((v1 == 2 && v2 == 3) || (v1 == 3 && v2 == 2), IsTrue)
+		require.True(t, (v1 == 2 && v2 == 3) || (v1 == 3 && v2 == 2))
 	}
 	checkOrder()
 
@@ -3346,8 +3349,11 @@ func (s *partitionTableSuite) TestLeftJoinForUpdate(c *C) {
 	checkOrder()
 }
 
-func (s *partitionTableSuite) TestIssue31024(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
+func TestIssue31024(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestIssue31024")
 	defer tk1.MustExec("drop database TestIssue31024")
 	tk1.MustExec("use TestIssue31024")
@@ -3362,7 +3368,7 @@ func (s *partitionTableSuite) TestIssue31024(c *C) {
 	tk1.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
 	tk1.MustExec("SET GLOBAL tidb_txn_mode = 'pessimistic'")
 
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use TestIssue31024")
 
 	ch := make(chan int, 10)
@@ -3383,14 +3389,17 @@ func (s *partitionTableSuite) TestIssue31024(c *C) {
 	ch <- 1
 	tk1.MustExec("rollback")
 
-	c.Assert(<-ch, Equals, 1)
-	c.Assert(<-ch, Equals, 2)
+	require.Equal(t, <-ch, 1)
+	require.Equal(t, <-ch, 2)
 
 	tk2.MustExec("rollback")
 }
 
-func (s *partitionTableSuite) TestIssue27346(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
+func TestIssue27346(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("create database TestIssue27346")
 	defer tk1.MustExec("drop database TestIssue27346")
 	tk1.MustExec("use TestIssue27346")
