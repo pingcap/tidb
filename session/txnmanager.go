@@ -15,6 +15,7 @@
 package session
 
 import (
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 )
@@ -45,6 +46,20 @@ func newTxnManager(sctx sessionctx.Context) *txnManager {
 
 func (m *txnManager) InExplicitTxn() bool {
 	return m.sctx.GetSessionVars().TxnCtx.IsExplicit
+}
+
+func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
+	if m.TxnContextProvider == nil {
+		return nil
+	}
+	return m.TxnContextProvider.GetTxnInfoSchema()
+}
+
+func (m *txnManager) GetReadReplicaScope() string {
+	if m.TxnContextProvider == nil {
+		return ""
+	}
+	return m.TxnContextProvider.GetReadReplicaScope()
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {

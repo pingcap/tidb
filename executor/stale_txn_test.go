@@ -996,6 +996,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 		placement.DCLabelKey: "sh",
 	}
 	config.StoreGlobalConfig(&conf)
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	time1 := time.Now()
 	tso := oracle.ComposeTS(time1.Unix()*1000, 0)
 	time.Sleep(200 * time.Millisecond)
