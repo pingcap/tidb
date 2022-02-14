@@ -1785,6 +1785,6 @@
       ]
    },
    "timezone": "browser",
-   "title": "DS_TEST-CLUSTER-TiDB-Summary",
+   "title": "Test-Cluster-TiDB-Summary",
    "version": 0
 }
