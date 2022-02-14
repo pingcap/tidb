@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -411,9 +410,6 @@ func TestOrderByandLimit(t *testing.T) {
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -472,10 +468,6 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 }
 
 func TestView(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -548,10 +540,6 @@ func TestView(t *testing.T) {
 }
 
 func TestDirectReadingwithIndexJoin(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -665,10 +653,6 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 }
 
 func TestDynamicPruningUnderIndexJoin(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -729,10 +713,6 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 }
 
 func TestIssue25527(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -799,9 +779,6 @@ func TestIssue25598(t *testing.T) {
 }
 
 func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -905,10 +882,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -987,10 +960,6 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1788,10 +1757,6 @@ func TestDynamicPruneModeWithExpression(t *testing.T) {
 }
 
 func TestAddDropPartitions(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1826,10 +1791,6 @@ func TestAddDropPartitions(t *testing.T) {
 }
 
 func TestMPPQueryExplainInfo(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1860,10 +1821,6 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 }
 
 func TestPartitionPruningInTransaction(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1917,10 +1874,6 @@ func TestIssue25253(t *testing.T) {
 }
 
 func TestDML(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1982,10 +1935,6 @@ func TestDML(t *testing.T) {
 }
 
 func TestUnion(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2037,10 +1986,6 @@ func TestUnion(t *testing.T) {
 }
 
 func TestSubqueries(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2107,10 +2052,6 @@ func TestSubqueries(t *testing.T) {
 }
 
 func TestSplitRegion(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2148,10 +2089,6 @@ func TestSplitRegion(t *testing.T) {
 }
 
 func TestParallelApply(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2292,10 +2229,6 @@ func TestParallelApply(t *testing.T) {
 }
 
 func TestDirectReadingWithUnionScan(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2400,10 +2333,6 @@ func TestIssue25030(t *testing.T) {
 }
 
 func TestUnsignedPartitionColumn(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2528,10 +2457,6 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 }
 
 func TestDirectReadingWithAgg(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2740,9 +2665,6 @@ func TestIssue24636(t *testing.T) {
 }
 
 func TestIdexMerge(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
