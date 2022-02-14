@@ -16,10 +16,10 @@ package placement
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,23 +30,6 @@ func TestClone(t *testing.T) {
 
 	require.Equal(t, &Rule{ID: "434"}, rule)
 	require.Equal(t, &Rule{ID: "121"}, newRule)
-}
-
-func matchRules(t1, t2 []*Rule, prefix string, c *C) {
-	c.Assert(len(t2), Equals, len(t1), Commentf(prefix))
-	for i := range t1 {
-		found := false
-		for j := range t2 {
-			ok, _ := DeepEquals.Check([]interface{}{t2[j], t1[i]}, []string{})
-			if ok {
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.Errorf("%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
-		}
-	}
 }
 
 func matchRulesT(t1, t2 []*Rule, prefix string, t *testing.T) {
@@ -157,11 +140,11 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	for _, tt := range tests {
-		comment := Commentf("[%s]", tt.name)
+		comment := fmt.Sprintf("[%s]", tt.name)
 		output, err := NewRules(Voter, tt.replicas, tt.input)
 		if tt.err == nil {
 			require.NoError(t, err, comment)
-			matchRulesT(tt.output, output, comment.CheckCommentString(), t)
+			matchRulesT(tt.output, output, comment, t)
 		} else {
 			require.True(t, errors.Is(err, tt.err), "[%s]\n%s\n%s\n", tt.name, err, tt.err)
 		}

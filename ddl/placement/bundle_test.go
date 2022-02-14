@@ -718,6 +718,23 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	}
 }
 
+func matchRules(t1, t2 []*Rule, prefix string, c *C) {
+	c.Assert(len(t2), Equals, len(t1), Commentf(prefix))
+	for i := range t1 {
+		found := false
+		for j := range t2 {
+			ok, _ := DeepEquals.Check([]interface{}{t2[j], t1[i]}, []string{})
+			if ok {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.Errorf("%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
+		}
+	}
+}
+
 func (s *testBundleSuite) TestResetBundleWithSingleRule(c *C) {
 	bundle := &Bundle{
 		ID: GroupID(1),
