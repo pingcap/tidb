@@ -496,8 +496,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	failpoint.Inject("mockGetTSFail", func() {
-		tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
-		failpoint.Return(nil, errors.New("mock get timestamp fail"))
+		_, _ = tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+		failpoint.Return(nil, err)
 	})
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
