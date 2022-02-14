@@ -117,7 +117,7 @@ type TiFlashManagementContext struct {
 
 // Tick will first check increase Counter.
 func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool) {
-	e, ok := b.Put(ID)
+	e, ok := b.Get(ID)
 	if !ok {
 		return false, false
 	}
@@ -173,8 +173,7 @@ func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, b
 	return res, ok
 }
 
-// Put will put table into backoff pool, if there are enough room, or returns false.
-// Only exported for test.
+// Put will record table into backoff pool, if there is enough room, or returns false.
 func (b *PollTiFlashBackoffContext) Put(ID int64) (*PollTiFlashBackoffElement, bool) {
 	e, ok := b.elements[ID]
 	if ok {
@@ -220,7 +219,7 @@ var (
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
 	PollTiFlashBackoffCapacity int = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
-	PollTiFlashBackoffRate TickType = 1000
+	PollTiFlashBackoffRate TickType = 1.5
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -397,6 +396,10 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
+			growed, inqueue := pollTiFlashContext.Backoff.Tick(tb.ID)
+			if inqueue && !growed {
+				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
+			}
 
 			// We don't need to set accelerate schedule for this table, since it is already done in DDL, when
 			// 1. Add partition
@@ -426,12 +429,14 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 
 			if !avail {
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
+				pollTiFlashContext.Backoff.Put(tb.ID)
 				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 				if err != nil {
 					return false, err
 				}
 			} else {
 				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)))
+				pollTiFlashContext.Backoff.Remove(tb.ID)
 				err := infosync.DeleteTiFlashTableSyncProgress(tb.ID)
 				if err != nil {
 					return false, err

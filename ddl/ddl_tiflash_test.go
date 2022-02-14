@@ -572,7 +572,8 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	c.Assert(res, Equals, false)
 }
 
-func TestTiFlashBackoff(t *testing.T) {
+// Test standalone backoffer
+func TestTiFlashBackoffer(t *testing.T) {
 	var maxTick ddl.TickType = 10
 	var rate ddl.TickType = 1.5
 	cap := 2
