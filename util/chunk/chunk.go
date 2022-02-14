@@ -57,17 +57,17 @@ const (
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
-func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
-	return New(fields, cap, cap)
+func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
+	return New(fields, capacity, capacity)
 }
 
 // New creates a new chunk.
 //  cap: the limit for the max number of rows.
 //  maxChunkSize: the max limit for the number of rows.
-func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 	chk := &Chunk{
 		columns:  make([]*Column, 0, len(fields)),
-		capacity: mathutil.Min(cap, maxChunkSize),
+		capacity: mathutil.Min(capacity, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
 		// "chk.NumRows() < maxChunkSize"
@@ -83,14 +83,14 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 
 // renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
-func renewWithCapacity(chk *Chunk, cap, requiredRows int) *Chunk {
+func renewWithCapacity(chk *Chunk, capacity, requiredRows int) *Chunk {
 	if chk.columns == nil {
 		return &Chunk{}
 	}
 	return &Chunk{
-		columns:        renewColumns(chk.columns, cap),
+		columns:        renewColumns(chk.columns, capacity),
 		numVirtualRows: 0,
-		capacity:       cap,
+		capacity:       capacity,
 		requiredRows:   requiredRows,
 	}
 }
@@ -107,10 +107,10 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
 // created columns is equal to cap.
-func renewColumns(oldCol []*Column, cap int) []*Column {
+func renewColumns(oldCol []*Column, capacity int) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
-		columns = append(columns, newColumn(col.typeSize(), cap))
+		columns = append(columns, newColumn(col.typeSize(), capacity))
 	}
 	return columns
 }
