@@ -977,7 +977,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
-				touchedTableIDs[tblID] = true
 				logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", tblID))
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
@@ -987,10 +986,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
-						touchedTableIDs[physTblID] = true
 						logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int("physTblColIdx", physTblColIdx), zap.Int64("tableID from row", physTblID))
 					}
 					//logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", physTblID), zap.Int64("handle", handle.IntValue()))
+					touchedTableIDs[physTblID] = true
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
@@ -1002,13 +1001,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = tikvstore.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
-	}
-
-	if len(e.tblID2Handle) > 0 {
-		for id := range e.tblID2Handle {
-			e.updateDeltaForTableID(id)
-			delete(touchedTableIDs, id)
-		}
 	}
 
 	for id := range touchedTableIDs {
