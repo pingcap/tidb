@@ -397,3 +397,8 @@ func TestGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 	require.NoError(t, err)
 	return tbl
 }
+
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
