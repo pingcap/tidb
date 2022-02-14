@@ -32,7 +32,7 @@ func TestClone(t *testing.T) {
 	require.Equal(t, &Rule{ID: "121"}, newRule)
 }
 
-func matchRulesT(t1, t2 []*Rule, prefix string, t *testing.T) {
+func matchRules(t1, t2 []*Rule, prefix string, t *testing.T) {
 	require.Equal(t, len(t2), len(t1), prefix)
 	for i := range t1 {
 		found := false
@@ -144,7 +144,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		output, err := NewRules(Voter, tt.replicas, tt.input)
 		if tt.err == nil {
 			require.NoError(t, err, comment)
-			matchRulesT(tt.output, output, comment, t)
+			matchRules(tt.output, output, comment, t)
 		} else {
 			require.True(t, errors.Is(err, tt.err), "[%s]\n%s\n%s\n", tt.name, err, tt.err)
 		}
