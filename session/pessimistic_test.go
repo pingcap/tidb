@@ -62,14 +62,20 @@ func (s *testPessimisticSuite) new1PCTestKitWithInit(c *C) *testkit.TestKit {
 	return tk
 }
 
+type lockTTL uint64
+
+func setLockTTL(v uint64) lockTTL { return lockTTL(atomic.SwapUint64(&transaction.ManagedLockTTL, v)) }
+
+func (v lockTTL) restore() { atomic.StoreUint64(&transaction.ManagedLockTTL, uint64(v)) }
+
 type testPessimisticSuite struct {
 	testSessionSuiteBase
 }
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.testSessionSuiteBase.SetUpSuite(c)
-	// Set it to 300ms for testing lock resolve.
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	// Set it to 5s for testing lock resolve.
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 }
 
@@ -439,11 +445,6 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
-	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 1000)
-	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
-	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists conflict")
@@ -661,6 +662,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 
 func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
 	// Test killing an idle pessimistic session stop its ttlManager.
+	defer setLockTTL(300).restore()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists test_kill")
@@ -721,11 +723,6 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
-	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
-	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -850,11 +847,6 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
-	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
-	}()
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer tk.MustExec("drop table if exists tk")
@@ -1203,9 +1195,7 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
-	// set lock ttl to 3s, tk1 lock wait timeout is 2s
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	// tk1 lock wait timeout is 2s
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1309,8 +1299,6 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("use test")
@@ -1457,8 +1445,6 @@ func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
 }
 
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
@@ -1531,6 +1517,7 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 
 func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	// Test kill command works on waiting pessimistic lock.
+	defer setLockTTL(300).restore()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists test_kill")
@@ -2586,10 +2573,6 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-	defer func() {
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
-	}()
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
