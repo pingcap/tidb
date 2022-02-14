@@ -5514,3 +5514,33 @@ func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
 
 	tk.MustExec("drop table if exists t31202")
 }
+
+func (s *testIntegrationSuite) TestIssue31240(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31240(a int, b int);")
+	tk.MustExec("set @@tidb_allow_mpp = 0")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select count(*) from t31240;").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@tidb_isolation_read_engines=\"tiflash,tidb\";")
+
+	tk.MustQuery("explain format = 'brief' select count(*) from t31240;").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists t31240")
+}
