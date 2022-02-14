@@ -294,7 +294,7 @@ func TestFormatDurationForExplain(t *testing.T) {
 	}
 	for _, ca := range cases {
 		d, err := time.ParseDuration(ca.t)
-		require.Nil(t, err)
+		require.NoError(t, err)
 
 		result := FormatDuration(d)
 		require.Equal(t, ca.s, result)

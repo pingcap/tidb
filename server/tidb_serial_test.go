@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -354,8 +353,6 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 	defer cleanup()
 
 	// issue #21194
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	// 255 is the collation id of mysql client 8 default collation_connection
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
 	require.NoError(t, err)
