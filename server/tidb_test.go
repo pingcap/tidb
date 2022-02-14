@@ -1568,6 +1568,24 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize"))
+
+	// Test case for DDL execute failed but should still have CPU data.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"))
+	dbt.MustExec(fmt.Sprintf("insert into t values (%v,%v), (%v, %v);", 2000, 2000, 2001, 2000))
+	addIndexStr := "alter table t add unique index idx_b (b)"
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("alter table t drop index if exists idx_b")
+		_, err := db.Exec(addIndexStr)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1062: Duplicate entry '1' for key 'idx_b'", err.Error())
+	}
+	check = func() {
+		mc.WaitCollectCnt(1)
+		checkFn(addIndexStr, "")
+	}
+	ts.testCase(t, mc, execFn, check)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex"))
 }
 
 func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {

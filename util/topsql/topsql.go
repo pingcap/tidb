@@ -132,7 +132,7 @@ func MockHighLoad(sql string, sqlPrefixs []string) bool {
 	}
 	start := time.Now()
 	for {
-		if time.Since(start) > 11*time.Millisecond {
+		if time.Since(start) > 12*time.Millisecond {
 			break
 		}
 		for i := 0; i < 10e5; i++ {

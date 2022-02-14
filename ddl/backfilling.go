@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -307,6 +308,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				w.resultCh <- result
 				failpoint.Continue()
 			}
+		})
+
+		failpoint.Inject("mockHighLoadForAddIndex", func() {
+			sqlPrefixes := []string{"alter"}
+			topsql.MockHighLoad(job.Query, sqlPrefixes)
 		})
 
 		// Dynamic change batch size.
