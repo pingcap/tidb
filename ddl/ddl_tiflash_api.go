@@ -56,13 +56,14 @@ type TiFlashReplicaStatus struct {
 	HighPriority   bool
 }
 
-type TickType float64
+// TiFlashTick is type for backoff threshold.
+type TiFlashTick float64
 
 // PollTiFlashBackoffElement records backoff for each TiFlash Table.
 // When `Counter` reached `Threshold`, `Threshold` shall grow.
 type PollTiFlashBackoffElement struct {
 	Counter   int
-	Threshold TickType
+	Threshold TiFlashTick
 }
 
 // NewPollTiFlashBackoffElement initialize backoff element for a TiFlash table.
@@ -75,16 +76,16 @@ func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
 
 // PollTiFlashBackoffContext is a collection of all backoff states.
 type PollTiFlashBackoffContext struct {
-	MinTick TickType
-	MaxTick TickType
+	MinTick TiFlashTick
+	MaxTick TiFlashTick
 	// Capacity limits tables a backoff pool can handle, in order to limit handling of big tables.
 	Capacity int
-	Rate     TickType
+	Rate     TiFlashTick
 	elements map[int64]*PollTiFlashBackoffElement
 }
 
 // NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
-func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate TickType) (*PollTiFlashBackoffContext, error) {
+func NewPollTiFlashBackoffContext(MinTick, MaxTick TiFlashTick, Capacity int, Rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
 	if MaxTick < MinTick {
 		return nil, fmt.Errorf("`MaxTick` should always be larger than `MinTick`")
 	}
@@ -213,13 +214,13 @@ var (
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
 	UpdateTiFlashStoreTick = atomicutil.NewUint64(5)
 	// PollTiFlashBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashBackoffMaxTick TickType = 10
+	PollTiFlashBackoffMaxTick TiFlashTick = 10
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashBackoffMinTick TickType = 1
+	PollTiFlashBackoffMinTick TiFlashTick = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
 	PollTiFlashBackoffCapacity int = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
-	PollTiFlashBackoffRate TickType = 1.5
+	PollTiFlashBackoffRate TiFlashTick = 1.5
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -399,6 +400,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			growed, inqueue := pollTiFlashContext.Backoff.Tick(tb.ID)
 			if inqueue && !growed {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
+				continue
 			}
 
 			// We don't need to set accelerate schedule for this table, since it is already done in DDL, when

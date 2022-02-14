@@ -21,7 +21,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"math"
 	"testing"
 	"time"
@@ -599,8 +598,8 @@ func TestSetPlacementRuleFail(t *testing.T) {
 
 // Test standalone backoffer
 func TestTiFlashBackoffer(t *testing.T) {
-	var maxTick ddl.TickType = 10
-	var rate ddl.TickType = 1.5
+	var maxTick ddl.TiFlashTick = 10
+	var rate ddl.TiFlashTick = 1.5
 	cap := 2
 	backoff, err := ddl.NewPollTiFlashBackoffContext(1, maxTick, cap, rate)
 	require.NoError(t, err)
@@ -669,4 +668,43 @@ func TestTiFlashBackoffer(t *testing.T) {
 	require.Error(t, err)
 	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 1, -1)
 	require.Error(t, err)
+}
+
+// Test backoffer in TiFlash.
+func TestTiFlashBackoff(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+
+	// Not available for all tables
+	ddl.DisableTiFlashPoll(s.dom.DDL())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
+	ddl.EnableTiFlashPoll(s.dom.DDL())
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
+		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+	}()
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	// 1, 1.5, 2.25, 3.375, 5.5625
+	// (1), 1, 1, 2, 3, 5
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	require.False(t, tb.Meta().TiFlashReplica.Available)
+
+	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
+	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	require.True(t, tb.Meta().TiFlashReplica.Available)
 }
