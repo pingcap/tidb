@@ -78,7 +78,7 @@ There are two types of hotspot regions: `read` and `write`. The memory table ret
 
 1. TiDB send an HTTP request to the PD to obtain current hotspot regions. 
    
-1. PD returns the following fields：
+2. PD returns the following fields：
 
     ```go
     // HotPeerStatShow records the hot region statistics for output
@@ -94,9 +94,9 @@ There are two types of hotspot regions: `read` and `write`. The memory table ret
     }
     ```
 
-1. After TiDB catch the response, it  fetch the `START_KEY` and `END_KEY` of the hot region from region cache or PD by `REGION_ID` to decode the corresponding schema information like：`DB_NAME`, `TABLE_NAME`,  `TABLE_ID`,  `INDEX_NAME`, `INDEX_ID`.
+3. After TiDB catch the response, it  fetch the `START_KEY` and `END_KEY` of the hot region from region cache or PD by `REGION_ID` to decode the corresponding schema information like：`DB_NAME`, `TABLE_NAME`,  `TABLE_ID`,  `INDEX_NAME`, `INDEX_ID`.
 
-1. TiDB return the hotspot region row to the upper caller.
+4. TiDB return the hotspot region row to the upper caller.
 
 In addition, hot regions can also be obtained directly through [pd-ctl](https://docs.pingcap.com/zh/tidb/stable/pd-control#health).  
 
@@ -193,7 +193,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
          
          |  Only Write Data Size Per Day(MB) |  Only Write Data Size Per Week(MB) |  Only Write Data Size Per Month (MB) |
          | --------------------- | ---------------------- | ------------------------ |
-         | 20                | 264                 | 528                 |
+         | 22.39                |  139.01                | 586.86                 |
          
          Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete by LevelDB's auto compaction. 
 
