@@ -296,14 +296,14 @@ func TestStaleReadKVRequest(t *testing.T) {
 	}
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
-		failpoint.Enable(testcase.assert, `return("sh")`)
+		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 		require.NoError(t, failpoint.Disable(testcase.assert))
 	}
 	for _, testcase := range testcases {
-		failpoint.Enable(testcase.assert, `return("sh")`)
+		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
 		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)`)
 		tk.MustExec(`begin;`)
 		tk.MustQuery(testcase.sql)
@@ -312,7 +312,7 @@ func TestStaleReadKVRequest(t *testing.T) {
 	}
 	// assert follower read closest read
 	for _, testcase := range testcases {
-		failpoint.Enable(testcase.assert, `return("sh")`)
+		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
 		tk.MustQuery(testcase.sql)
 		require.NoError(t, failpoint.Disable(testcase.assert))
 	}
@@ -1251,20 +1251,20 @@ func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	// statement stale read
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`))
 	tk.MustQuery("select * from t as of timestamp NOW() - INTERVAL 2 SECOND")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 
 	// set and statement stale read
 	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`))
 	tk.MustQuery("select * from t")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 
 	// stale read transaction
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`))
 	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
 	tk.MustQuery("select * from t")
 	tk.MustExec("commit")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 
 	// set and stale read transaction
 	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
@@ -1272,11 +1272,11 @@ func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select * from t")
 	tk.MustExec("commit")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 
 	// use tidb_read_staleness
 	tk.MustExec(`set @@tidb_read_staleness='-1'`)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`))
 	tk.MustQuery("select * from t")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 }
