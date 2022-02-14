@@ -285,7 +285,7 @@ func (importer *FileImporter) ImportKVFiles(
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
 	var startKey, endKey []byte
-	start, end, err := rewriteFileKeys(file, rule)
+	start, end, err := RewriteFileKeys(file, rule)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -349,6 +349,7 @@ func (importer *FileImporter) ImportKVFiles(
 				zap.Stringer("take", time.Since(startTime)),
 				logutil.Key("fileStart", file.StartKey),
 				logutil.Key("fileEnd", file.EndKey),
+				logutil.Region(info.Region),
 			)
 		}
 		return nil
@@ -373,7 +374,7 @@ func (importer *FileImporter) ImportSSTFiles(
 		endKey = files[0].EndKey
 	} else {
 		for _, f := range files {
-			start, end, err := rewriteFileKeys(f, rewriteRules)
+			start, end, err := RewriteFileKeys(f, rewriteRules)
 			if err != nil {
 				return errors.Trace(err)
 			}

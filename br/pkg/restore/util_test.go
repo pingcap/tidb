@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	"testing"
 
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -13,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testRestoreUtilSuite{})
@@ -272,4 +274,38 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	c.Assert(err, ErrorMatches, ".*region endKey not equal to next region startKey.*")
 
+}
+
+func TestRewriteFileKeys(t *testing.T) {
+	rewriteRules := restore.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(2),
+				OldKeyPrefix: tablecodec.GenTablePrefix(1),
+			},
+		},
+	}
+	rawKeyFile := backuppb.File{
+		Name:     "backup.sst",
+		StartKey: tablecodec.GenTableRecordPrefix(1),
+		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
+	}
+	start, end, err := restore.RewriteFileKeys(&rawKeyFile, &rewriteRules)
+	require.NoError(t, err)
+	_, end, err = codec.DecodeBytes(end, nil)
+	require.NoError(t, err)
+	_, start, err = codec.DecodeBytes(start, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(2)), start)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
+
+	encodeKeyFile := backuppb.DataFileInfo{
+		Path:     "bakcup.log",
+		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
+		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
+	}
+	start, end, err = restore.RewriteFileKeys(&encodeKeyFile, &rewriteRules)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2)), start)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
 }
