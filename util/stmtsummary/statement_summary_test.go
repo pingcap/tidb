@@ -740,7 +740,7 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 			Offset: i,
 		}
 	}
-	reader := NewStmtSummaryReader(nil, true, cols, "")
+	reader := NewStmtSummaryReader(nil, true, cols, "", time.Local)
 	reader.ssMap = ssMap
 	return reader
 }

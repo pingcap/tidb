@@ -39,16 +39,18 @@ type stmtSummaryReader struct {
 	ssMap                *stmtSummaryByDigestMap
 	columnValueFactories []columnValueFactory
 	checker              *stmtSummaryChecker
+	tz                   *time.Location
 }
 
 // NewStmtSummaryReader return a new statement summaries reader.
-func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*model.ColumnInfo, instanceAddr string) *stmtSummaryReader {
+func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*model.ColumnInfo, instanceAddr string, tz *time.Location) *stmtSummaryReader {
 	reader := &stmtSummaryReader{
 		user:           user,
 		hasProcessPriv: hasProcessPriv,
 		columns:        cols,
 		instanceAddr:   instanceAddr,
 		ssMap:          StmtSummaryByDigestMap,
+		tz:             tz,
 	}
 	// initialize column value factories.
 	reader.columnValueFactories = make([]columnValueFactory, len(reader.columns))
@@ -566,12 +568,19 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	AvgAffectedRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount)
 	},
-	FirstSeenStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		ssElement.firstSeen.Location()
-		return types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0)
+	FirstSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		firstSeen := ssElement.firstSeen
+		if firstSeen.Location() != reader.tz {
+			firstSeen = firstSeen.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(firstSeen), mysql.TypeTimestamp, 0)
 	},
-	LastSeenStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0)
+	LastSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		lastSeen := ssElement.lastSeen
+		if lastSeen.Location() != reader.tz {
+			lastSeen = lastSeen.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 0)
 	},
 	PlanInCacheStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return ssElement.planInCache
