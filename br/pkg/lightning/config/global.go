@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +81,7 @@ type GlobalConfig struct {
 	TikvImporter GlobalImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
 	Security     Security          `toml:"security" json:"security"`
-	CheckOnlyCfg *CheckOnlyConfig  `toml:"-" json:"-"`
+	CheckOnly    *CheckOnly        `toml:"-" json:"-"`
 
 	ConfigFileContent []byte
 }
@@ -96,7 +95,7 @@ type GlobalPostRestore struct {
 	Analyze  PostOpLevel `toml:"analyze" json:"analyze"`
 }
 
-type CheckOnlyConfig struct {
+type CheckOnly struct {
 	Mode string `toml:"-" json:"-"`
 
 	// take effects when Mode=CheckModeSample
@@ -302,7 +301,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 		if err != nil {
 			return nil, err
 		}
-		cfg.CheckOnlyCfg = checkOnlyConfig
+		cfg.CheckOnly = checkOnlyConfig
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
@@ -313,40 +312,35 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	return cfg, nil
 }
 
-func extractCheckOnlyCfg(str string) (*CheckOnlyConfig, error) {
+func extractCheckOnlyCfg(str string) (*CheckOnly, error) {
 	splits := strings.Split(str, "=")
 	invalidCfg := errors.New("invalid check-only config: " + str)
 	if len(splits) > 2 || (splits[0] != CheckModeNormal && splits[0] != CheckModeSample) {
 		return nil, invalidCfg
 	}
 
-	switch splits[0] {
-	case CheckModeNormal:
+	if splits[0] == CheckModeNormal {
 		if len(splits) != 1 {
 			return nil, invalidCfg
 		}
-		return &CheckOnlyConfig{Mode: CheckModeNormal}, nil
-	case CheckModeSample:
+		return &CheckOnly{Mode: CheckModeNormal}, nil
+	} else { // CheckModeSample
 		if len(splits) == 1 {
-			return &CheckOnlyConfig{Mode: CheckModeSample, Rate: DefaultSampleRate, Rows: DefaultCheckRows}, nil
+			return &CheckOnly{Mode: CheckModeSample, Rate: DefaultSampleRate, Rows: DefaultCheckRows}, nil
 		}
-		if len(splits) != 2 {
+
+		var rate float64
+		var rows int64
+		n, err := fmt.Sscanf(str, "sample=%f,%d", &rate, &rows)
+		if n != 2 || err != nil {
 			return nil, invalidCfg
 		}
-		params := strings.Split(splits[1], ",")
-		if len(params) != 2 {
-			return nil, invalidCfg
-		}
-		rate, err := strconv.ParseFloat(params[0], 64)
-		if err != nil || rate > 1 || rate <= 0 {
+		if rate > 1 || rate <= 0 {
 			return nil, errors.Wrap(invalidCfg, "rate should be in range (0, 1]")
 		}
-		rows, err := strconv.ParseInt(params[1], 10, 32)
-		if err != nil || rows <= 0 {
+		if rows <= 0 {
 			return nil, errors.Wrap(invalidCfg, "rows should be greater than 0")
 		}
-		return &CheckOnlyConfig{Mode: CheckModeSample, Rate: rate, Rows: int(rows)}, nil
-	default:
-		return nil, invalidCfg
+		return &CheckOnly{Mode: CheckModeSample, Rate: rate, Rows: int(rows)}, nil
 	}
 }

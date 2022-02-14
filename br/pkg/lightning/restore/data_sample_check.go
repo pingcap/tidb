@@ -39,7 +39,7 @@ import (
 type dataSampleCheck struct {
 	controller *Controller
 
-	checkCfg      *config.CheckOnlyConfig
+	checkCfg      *config.CheckOnly
 	checkTemplate Template
 	wg            sync.WaitGroup
 
@@ -52,7 +52,7 @@ func newDataSampleCheck(controller *Controller) *dataSampleCheck {
 	return &dataSampleCheck{
 		controller:    controller,
 		checkTemplate: NewSimpleTemplate(),
-		checkCfg:      controller.cfg.CheckOnlyCfg,
+		checkCfg:      controller.cfg.CheckOnly,
 	}
 }
 

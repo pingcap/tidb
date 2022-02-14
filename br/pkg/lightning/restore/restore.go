@@ -439,7 +439,7 @@ func (rc *Controller) Close() {
 func (rc *Controller) Run(ctx context.Context) error {
 	type processFunc func(context.Context) error
 	var opts []processFunc
-	if rc.cfg.CheckOnlyCfg == nil {
+	if rc.cfg.CheckOnly == nil {
 		opts = []processFunc{
 			rc.setGlobalVariables,
 			rc.restoreSchema,
@@ -449,14 +449,14 @@ func (rc *Controller) Run(ctx context.Context) error {
 			rc.fullCompact,
 			rc.cleanCheckpoints,
 		}
-	} else if rc.cfg.CheckOnlyCfg.Mode == config.CheckModeNormal {
+	} else if rc.cfg.CheckOnly.Mode == config.CheckModeNormal {
 		opts = []processFunc{
 			rc.setGlobalVariables,
 			rc.loadSchemaForCheckOnly,
 			rc.preCheckRequirements,
 		}
 	} else {
-		// rc.cfg.CheckOnlyCfg.Mode == config.CheckModeSample
+		// rc.cfg.CheckOnly.Mode == config.CheckModeSample
 		opts = []processFunc{
 			rc.setGlobalVariables,
 			rc.loadSchemaForCheckOnly,
@@ -2037,7 +2037,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.tidbGlue.OwnsSQLExecutor() && (rc.cfg.CheckOnlyCfg != nil || rc.cfg.App.CheckRequirements) {
+	if rc.tidbGlue.OwnsSQLExecutor() && (rc.cfg.CheckOnly != nil || rc.cfg.App.CheckRequirements) {
 		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {

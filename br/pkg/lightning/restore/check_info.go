@@ -1139,7 +1139,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	}
 	for _, db := range rc.dbMetas {
 		for _, tbl := range db.Tables {
-			if rc.cfg.CheckOnlyCfg != nil {
+			if rc.cfg.CheckOnly != nil {
 				// we don't create missing tables in check-only mode
 				if _, ok := rc.existedTblMap[tbl.DB][tbl.Name]; ok {
 					ch <- common.UniqueTable(tbl.DB, tbl.Name)

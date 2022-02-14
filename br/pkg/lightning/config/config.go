@@ -144,7 +144,7 @@ type Config struct {
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
 	Security     Security            `toml:"security" json:"security"`
-	CheckOnlyCfg *CheckOnlyConfig    `toml:"-" json:"-"`
+	CheckOnly    *CheckOnly          `toml:"-" json:"-"`
 	LogCfg       log.Config          `toml:"-" json:"-"`
 
 	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
@@ -741,7 +741,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.App.CheckRequirements = global.App.CheckRequirements
 	cfg.Security = global.Security
 	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
-	cfg.CheckOnlyCfg = global.CheckOnlyCfg
+	cfg.CheckOnly = global.CheckOnly
 	cfg.LogCfg = global.App.Config
 	return nil
 }

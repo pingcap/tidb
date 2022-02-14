@@ -44,7 +44,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	cfg.Mydumper.CharacterSet = "utf8mb4"
 	cfg.Mydumper.ReadBlockSize = 1024
 	cfg.App.RegionConcurrency = 8
-	cfg.CheckOnlyCfg = &config.CheckOnlyConfig{
+	cfg.CheckOnly = &config.CheckOnly{
 		Mode: config.CheckModeSample,
 		Rate: 0.01,
 		Rows: 1,
@@ -104,7 +104,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnlyCfg.Rows = 2
+	cfg.CheckOnly.Rows = 2
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnlyCfg.Rows = 3
+	cfg.CheckOnly.Rows = 3
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
 	// more lines than file
-	cfg.CheckOnlyCfg.Rows = 1000
+	cfg.CheckOnly.Rows = 1000
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
-	rc.cfg.CheckOnlyCfg.Rate = 1
+	rc.cfg.CheckOnly.Rate = 1
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.Error(t, err)
@@ -167,7 +167,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
-	cfg.CheckOnlyCfg.Rows = 1
+	cfg.CheckOnly.Rows = 1
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnlyCfg.Rows = 2
+	cfg.CheckOnly.Rows = 2
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnlyCfg.Rows = 3
+	cfg.CheckOnly.Rows = 3
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 
 func Test_dataSampleCheck_getRandomDataFiles(t *testing.T) {
 	cfg := config.NewConfig()
-	cfg.CheckOnlyCfg = &config.CheckOnlyConfig{
+	cfg.CheckOnly = &config.CheckOnly{
 		Mode: config.CheckModeSample,
 		Rate: 0.01,
 		Rows: 100,
