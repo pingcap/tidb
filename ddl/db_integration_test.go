@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -690,7 +689,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
 	tk.MustExec("create table t2 (c1 int, c2 int)")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session()
 	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	db, ok := is.SchemaByName(model.NewCIStr("umt_db"))
@@ -817,7 +816,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset := func(chs, coll string) {
-		tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+		tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 		require.NotNil(t, tbl)
 		require.Equal(t, chs, tbl.Meta().Charset)
 		require.Equal(t, coll, tbl.Meta().Collate)
@@ -847,7 +846,7 @@ func TestChangingTableCharset(t *testing.T) {
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
@@ -869,7 +868,7 @@ func TestChangingTableCharset(t *testing.T) {
 
 	// check table charset is ""
 	tk.MustExec("alter table t add column b varchar(10);") //  load latest schema.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "", tbl.Meta().Charset)
 	require.Equal(t, "", tbl.Meta().Collate)
@@ -878,14 +877,14 @@ func TestChangingTableCharset(t *testing.T) {
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset is "".
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Columns[0].Charset = ""
 	tblInfo.Columns[0].Collate = ""
 	updateTableInfo(tblInfo)
 	// check table charset is ""
 	tk.MustExec("alter table t drop column b;") //  load latest schema.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "", tbl.Meta().Columns[0].Charset)
 	require.Equal(t, "", tbl.Meta().Columns[0].Collate)
@@ -904,7 +903,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a varchar(5) charset utf8) charset utf8")
 	tk.MustExec("alter table t charset utf8mb4")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "utf8mb4", tbl.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tbl.Meta().Collate)
@@ -917,7 +916,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a varchar(5) charset utf8 collate utf8_unicode_ci) charset utf8 collate utf8_unicode_ci")
 	tk.MustExec("alter table t collate utf8_general_ci")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "utf8", tbl.Meta().Charset)
 	require.Equal(t, "utf8_general_ci", tbl.Meta().Collate)
@@ -1091,7 +1090,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test_charset_collate"))
 	require.True(t, ok)
-	tbl := testGetTableByNameT(t, tk.Session(), "test_charset_collate", "t5")
+	tbl := testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5")
 	tblInfo := tbl.Meta().Clone()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
@@ -1116,7 +1115,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo(tblInfo)
 	tk.MustExec("alter table t5 add column b varchar(10);") //  load latest schema.
 
-	tblInfo = testGetTableByNameT(t, tk.Session(), "test_charset_collate", "t5").Meta()
+	tblInfo = testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5").Meta()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
 
@@ -1127,7 +1126,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo(tblInfo)
 	tk.MustExec("alter table t5 add column c varchar(10);") //  load latest schema.
 
-	tblInfo = testGetTableByNameT(t, tk.Session(), "test_charset_collate", "t5").Meta()
+	tblInfo = testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5").Meta()
 	require.Equal(t, "UTF8MB4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
 }
@@ -1447,7 +1446,7 @@ func TestResolveCharset(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists resolve_charset")
 	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
@@ -1605,7 +1604,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
 	tk.MustExec("insert into test_alter_column set b = 'a', c = 'aa'")
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
@@ -1882,7 +1881,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 
 	// Mock old version table info with column charset is utf8.
 	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(model.NewCIStr("test"))
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
@@ -1920,7 +1919,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with table and column charset is utf8.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Charset = charset.CharsetUTF8
 	tblInfo.Collate = charset.CollationUTF8
@@ -1954,7 +1953,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		conf.TreatOldVersionUTF8AsUTF8MB4 = true
 	})
 	tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
 	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
@@ -1965,13 +1964,13 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Test for change column should not modify the column version.
 	tk.MustExec("alter table t change column a a varchar(20)") //  change column.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
 	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
 
 	// Test for v2.1.5 and v2.1.6 that table version is 1 but column version is 0.
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Charset = charset.CharsetUTF8
 	tblInfo.Collate = charset.CollationUTF8
@@ -2023,7 +2022,7 @@ func TestDefaultValueIsString(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default b'1');")
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.Equal(t, "1", tbl.Meta().Columns[0].DefaultValue)
 }
 
@@ -2844,13 +2843,13 @@ func TestEnumAndSetDefaultValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
-	tbl := testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.Equal(t, "a", tbl.Meta().Columns[0].DefaultValue)
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
-	tbl = testGetTableByNameT(t, tk.Session(), "test", "t")
+	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
 	require.Equal(t, "a", tbl.Meta().Columns[0].DefaultValue)
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 }
@@ -3291,7 +3290,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table if not exists b_table_local_and_normal (id int)")
 	tk.MustQuery("select * from b_table_local_and_normal").Check(testkit.Rows())
 	tk.MustExec("drop table b_table_local_and_normal")
-	sequenceTable := testGetTableByNameT(t, tk.Session(), "test", "b_table_local_and_normal")
+	sequenceTable := testkit.TestGetTableByName(t, tk.Session(), "test", "b_table_local_and_normal")
 	require.Equal(t, model.TempTableNone, sequenceTable.Meta().TempTableType)
 	tk.MustExec("drop table if exists b_table_local_and_normal")
 	_, err = tk.Exec("select * from b_table_local_and_normal")
