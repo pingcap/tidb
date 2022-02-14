@@ -16,6 +16,7 @@ package mock
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 	"time"
 
@@ -173,6 +174,21 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 			time.Sleep(time.Millisecond * 10)
 		}
 	}
+}
+
+func (c *TopSQLCollector) Debug() string {
+	buf := bytes.NewBuffer(nil)
+	c.Lock()
+	defer c.Unlock()
+
+	for _, stmt := range c.sqlStatsMap {
+		sqlStr, ok := c.sqlMap[string(stmt.SQLDigest)]
+		if !ok {
+			buf.WriteString(fmt.Sprintf("%x sql not fount\n", stmt.SQLDigest))
+		}
+		buf.WriteString(fmt.Sprintf("%v, %x, %x , %v\n", sqlStr, stmt.SQLDigest, stmt.PlanDigest, stmt.CPUTimeMs))
+	}
+	return buf.String()
 }
 
 // CollectCnt uses for testing.

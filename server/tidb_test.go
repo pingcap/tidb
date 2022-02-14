@@ -1508,7 +1508,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	wg.Wait()
 
 	// Test case for multi-statement.
-	multiStatement := "delete from t limit 1;update t set b=1 where b is null limit 10;"
+	multiStatement := "delete from t limit 1;update t set b=1 where b is null limit 1;select sum(a+b*2) from t;"
 	ctx5, cancel5 := context.WithCancel(context.Background())
 	wg.Add(1)
 	go func() {
@@ -1519,13 +1519,14 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			dbt.MustExec(multiStatement)
 		})
 	}()
-	checkFn("delete from t limit 1", "")
-	//sqls := strings.Split(multiStatement, ";")
-	//require.Equal(t, 3, len(sqls))
-	//for _, sqlStr := range sqls {
-	//	fmt.Printf("%v  -----\n", sqlStr)
-	//	checkFn(sqlStr, "")
-	//}
+	require.NoError(t, timeoutCtx.Err())
+	sqlStrs := strings.Split(multiStatement, ";")
+	require.Equal(t, 4, len(sqlStrs))
+	sqlStrs = sqlStrs[:3] // the last is ""
+	for _, sqlStr := range sqlStrs {
+		sqlStr += ";"
+		checkFn(sqlStr, ".*TableReader.*")
+	}
 	cancel5()
 	wg.Wait()
 }
