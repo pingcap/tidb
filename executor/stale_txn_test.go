@@ -1009,14 +1009,15 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	tk.MustExec("execute p2")
 	tk.MustExec("commit")
 
-	// assert execute prepared statement in stale read txn
+	// assert prepared select statement without as of timestamp in stale txn
 	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%v'", time1.Format("2006-1-2 15:04:05")))
 	tk.MustExec("execute p2")
 	failpoint.Disable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption")
 
-	// test prepared stale select in stale txn
+	// assert prepared select statement with as of timestamp in stale txn
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	c.Assert("execute p1", NotNil)
+	_, err := tk.Exec("execute p1")
+	c.Assert(err, NotNil)
 	tk.MustExec("commit")
 
 	// assert execute prepared statement should be error after set transaction read only as of
