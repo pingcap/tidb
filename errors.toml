@@ -271,6 +271,19 @@ error = '''
 This partition function is not allowed
 '''
 
+<<<<<<< HEAD
+=======
+["ddl:1567"]
+error = '''
+Incorrect partition name
+'''
+
+["ddl:1652"]
+error = '''
+Duplicate partition field name '%-.192s'
+'''
+
+>>>>>>> f5eb1e9fe... ddl: Added check for partition name ending with space (#31785)
 ["ddl:1654"]
 error = '''
 Partition column values of incorrect type

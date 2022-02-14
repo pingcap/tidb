@@ -2770,3 +2770,26 @@ func (s *testIntegrationSuite3) TestIssue21835(c *C) {
 	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
 	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }
+
+func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database invalidPartitionNames")
+	defer tk.MustExec("drop database invalidPartitionNames")
+	tk.MustExec("USE invalidPartitionNames")
+
+	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
+	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+}
