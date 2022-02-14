@@ -1482,53 +1482,101 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
 	}
-	ctx4, cancel4 := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ts.loopExec(ctx4, t, func(db *sql.DB) {
-			dbt := testkit.NewDBTestKit(t, db)
-			for _, ca := range cases4 {
-				if ca.isQuery {
-					mustQuery(t, dbt, ca.sql)
-				} else {
-					dbt.MustExec(ca.sql)
-				}
+	execFn := func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		for _, ca := range cases4 {
+			if ca.isQuery {
+				mustQuery(t, dbt, ca.sql)
+			} else {
+				dbt.MustExec(ca.sql)
 			}
-		})
-	}()
-
-	for _, ca := range cases4 {
-		checkFn(ca.sql, ca.plan)
+		}
 	}
-	// check for internal SQL.
-	checkFn("replace into mysql.global_variables (variable_name,variable_value) values ('tidb_stmt_summary_history_size', '5')", "")
-	cancel4()
-	wg.Wait()
+	check := func() {
+		for _, ca := range cases4 {
+			checkFn(ca.sql, ca.plan)
+		}
+		// check for internal SQL.
+		checkFn("replace into mysql.global_variables (variable_name,variable_value) values ('tidb_stmt_summary_history_size', '5')", "")
+	}
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for multi-statement.
-	multiStatement := "delete from t limit 1;update t set b=1 where b is null limit 1;select sum(a+b*2) from t;"
-	ctx5, cancel5 := context.WithCancel(context.Background())
+	cases5 := []string{
+		"delete from t limit 1;",
+		"update t set b=1 where b is null limit 1;",
+		"select sum(a+b*2) from t;",
+	}
+	multiStatement := strings.Join(cases5, "")
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
+		dbt.MustExec(multiStatement)
+	}
+	check = func() {
+		for _, sqlStr := range cases5 {
+			checkFn(sqlStr, ".*TableReader.*")
+		}
+	}
+	ts.testCase(t, mc, execFn, check)
+
+	// Test case for multi-statement, but first statements execute failed
+	cases6 := []string{
+		"delete from t_not_exist;",
+		"update t set a=1 where a is null limit 1;",
+	}
+	multiStatement = strings.Join(cases6, "")
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
+		_, err := db.Exec(multiStatement)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+	}
+	check = func() {
+		mc.WaitCollectCnt(1)
+		for i := 1; i < len(cases6); i++ {
+			sqlStr := cases6[i]
+			stats := mc.GetSQLStatsBySQL(sqlStr, false)
+			require.Equal(t, 0, len(stats), sqlStr)
+		}
+	}
+	ts.testCase(t, mc, execFn, check)
+
+	// Test case for multi-statement, the first statements execute success but the second statement execute failed.
+	cases7 := []string{
+		"update t set a=1 where a is null limit 1;",
+		"delete from t_not_exist;",
+	}
+	multiStatement = strings.Join(cases7, "")
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
+		_, err := db.Exec(multiStatement)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+	}
+	check = func() {
+		mc.WaitCollectCnt(1)
+		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
+	}
+	ts.testCase(t, mc, execFn, check)
+}
+
+func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ts.loopExec(ctx5, t, func(db *sql.DB) {
-			dbt := testkit.NewDBTestKit(t, db)
-			dbt.MustExec("SET tidb_multi_statement_mode='ON'")
-			dbt.MustExec(multiStatement)
-		})
+		ts.loopExec(ctx, t, execFn)
 	}()
-	require.NoError(t, timeoutCtx.Err())
-	sqlStrs := strings.Split(multiStatement, ";")
-	require.Equal(t, 4, len(sqlStrs))
-	sqlStrs = sqlStrs[:3] // the last is ""
-	for _, sqlStr := range sqlStrs {
-		sqlStr += ";"
-		checkFn(sqlStr, ".*TableReader.*")
-	}
-	cancel5()
+
+	checkFn()
+	cancel()
 	wg.Wait()
+	mc.Reset()
 }
 
 func mustQuery(t *testing.T, dbt *testkit.DBTestKit, query string) {

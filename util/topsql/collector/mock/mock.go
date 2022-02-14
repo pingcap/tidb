@@ -191,6 +191,16 @@ func (c *TopSQLCollector) Debug() string {
 	return buf.String()
 }
 
+// Reset cleans all collected data.
+func (c *TopSQLCollector) Reset() {
+	c.Lock()
+	defer c.Unlock()
+	c.sqlMap = make(map[string]string)
+	c.planMap = make(map[string]string)
+	c.sqlStatsMap = make(map[string]*collector.SQLCPUTimeRecord)
+	c.collectCnt.Store(0)
+}
+
 // CollectCnt uses for testing.
 func (c *TopSQLCollector) CollectCnt() int64 {
 	return c.collectCnt.Load()
