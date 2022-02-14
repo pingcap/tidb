@@ -426,7 +426,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
 				avail = val.(bool)
 			})
-			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Int("regionCount", regionCount), zap.Int("flashRegionCount", flashRegionCount), zap.Int64("tb.ID", tb.ID))
+			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Int64("tb.ID", tb.ID), zap.Any("regionReplica", regionReplica))
 
 			if !avail {
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
