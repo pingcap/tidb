@@ -1507,57 +1507,44 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		"update t set b=1 where b is null limit 1;",
 		"select sum(a+b*2) from t;",
 	}
-	multiStatement := strings.Join(cases5, "")
-	execFn = func(db *sql.DB) {
-		dbt := testkit.NewDBTestKit(t, db)
-		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
-		dbt.MustExec(multiStatement)
-	}
-	check = func() {
-		for _, sqlStr := range cases5 {
-			checkFn(sqlStr, ".*TableReader.*")
-		}
-	}
-	ts.testCase(t, mc, execFn, check)
-
+	multiStatement5 := strings.Join(cases5, "")
 	// Test case for multi-statement, but first statements execute failed
 	cases6 := []string{
 		"delete from t_not_exist;",
 		"update t set a=1 where a is null limit 1;",
 	}
-	multiStatement = strings.Join(cases6, "")
+	multiStatement6 := strings.Join(cases6, "")
+	// Test case for multi-statement, the first statements execute success but the second statement execute failed.
+	cases7 := []string{
+		"update t set a=1 where a <0 limit 1;",
+		"delete from t_not_exist;",
+	}
+	multiStatement7 := strings.Join(cases7, "")
+
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
 		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
-		_, err := db.Exec(multiStatement)
+		dbt.MustExec(multiStatement5)
+
+		_, err := db.Exec(multiStatement6)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+
+		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
 	}
 	check = func() {
-		mc.WaitCollectCnt(1)
+		for _, sqlStr := range cases5 {
+			checkFn(sqlStr, ".*TableReader.*")
+		}
+
 		for i := 1; i < len(cases6); i++ {
 			sqlStr := cases6[i]
 			stats := mc.GetSQLStatsBySQL(sqlStr, false)
 			require.Equal(t, 0, len(stats), sqlStr)
 		}
-	}
-	ts.testCase(t, mc, execFn, check)
 
-	// Test case for multi-statement, the first statements execute success but the second statement execute failed.
-	cases7 := []string{
-		"update t set a=1 where a is null limit 1;",
-		"delete from t_not_exist;",
-	}
-	multiStatement = strings.Join(cases7, "")
-	execFn = func(db *sql.DB) {
-		dbt := testkit.NewDBTestKit(t, db)
-		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
-		_, err := db.Exec(multiStatement)
-		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
-	}
-	check = func() {
-		mc.WaitCollectCnt(1)
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
 	}
 	ts.testCase(t, mc, execFn, check)
@@ -1586,7 +1573,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
