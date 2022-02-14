@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+func TestNewConstraints(t *testing.T) {
 	_, err := NewConstraints(nil)
 	require.NoError(t, err)
 
@@ -116,7 +116,7 @@ func TestAdd(t *testing.T) {
 	}
 }
 
-func TestRestore(t *testing.T) {
+func TestRestoreConstraints(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  Constraints
