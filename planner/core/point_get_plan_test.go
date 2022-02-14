@@ -19,62 +19,37 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testPointGetSuite{})
-
-type testPointGetSuite struct {
-	store    kv.Storage
-	dom      *domain.Domain
-	testData testutil.TestData
-}
-
-func (s *testPointGetSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.store = store
-	s.dom = dom
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "point_get_plan")
-	c.Assert(err, IsNil)
-}
-
-func (s *testPointGetSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetPlanCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
-	var err error
-	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	tk.SetSession(sess)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -111,26 +86,26 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustExec("set @param=1")
 	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("1 1 1"))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(0))
+	require.Equal(t, float64(0), hit)
 	tk.MustExec("set @param=2")
 	tk.MustQuery("execute stmt1 using @param").Check(testkit.Rows("2 2 2"))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(1))
+	require.Equal(t, float64(1), hit)
 	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("2 2 2"))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(1))
+	require.Equal(t, float64(1), hit)
 	tk.MustExec("set @param=1")
 	tk.MustQuery("execute stmt2 using @param, @param").Check(testkit.Rows("1 1 1"))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 	// PointGetPlan for Update.
 	tk.MustExec(`prepare stmt3 from "update t set b=b+1, c=c+1 where a = ?"`)
 	tk.MustExec(`prepare stmt4 from "update t set a=a+1 where b = ? and c = ?"`)
@@ -142,9 +117,9 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"3 4 4",
 	))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 	tk.MustExec("set @param=4")
 	tk.MustExec("execute stmt4 using @param, @param")
 	tk.MustQuery("select * from t").Check(testkit.Rows(
@@ -153,9 +128,9 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"4 4 4",
 	))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 	// PointGetPlan for Delete.
 	tk.MustExec(`prepare stmt5 from "delete from t where a = ?"`)
 	tk.MustExec(`prepare stmt6 from "delete from t where b = ? and c = ?"`)
@@ -165,18 +140,18 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"2 2 2",
 	))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 	tk.MustExec("set @param=2")
 	tk.MustExec("execute stmt6 using @param, @param")
 	tk.MustQuery("select * from t").Check(testkit.Rows(
 		"1 1 1",
 	))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 	tk.MustExec("insert into t (a, b, c) values (18446744073709551615, 4, 4)")
 	tk.MustExec("set @p1=-1")
 	tk.MustExec("set @p2=1")
@@ -184,31 +159,35 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("execute stmt7 using @p1").Check(testkit.Rows())
 	tk.MustQuery("execute stmt7 using @p2").Check(testkit.Rows("1"))
 	err = counter.Write(pb)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
-	c.Check(hit, Equals, float64(2))
+	require.Equal(t, float64(2), hit)
 }
 
-func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetForUpdate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table fu (id int primary key, val int)")
 	tk.MustExec("insert into fu values (6, 6)")
 
 	// In autocommit mode, outside a transaction, "for update" doesn't take effect.
-	checkUseForUpdate(tk, c, false)
+	checkUseForUpdate(tk, t, false)
 
 	tk.MustExec("begin")
-	checkUseForUpdate(tk, c, true)
+	checkUseForUpdate(tk, t, true)
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@session.autocommit = 0")
-	checkUseForUpdate(tk, c, true)
+	checkUseForUpdate(tk, t, true)
 	tk.MustExec("rollback")
 }
 
-func (s *testPointGetSuite) TestPointGetForUpdateWithSubquery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetForUpdateWithSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE users (id bigint(20) unsigned NOT NULL primary key, name longtext DEFAULT NULL, company_id bigint(20) DEFAULT NULL)")
 	tk.MustExec("create table companies(id bigint primary key, name longtext default null)")
@@ -220,18 +199,20 @@ func (s *testPointGetSuite) TestPointGetForUpdateWithSubquery(c *C) {
 	tk.MustQuery("select * from users").Check(testkit.Rows("239 Company15 15"))
 }
 
-func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
+func checkUseForUpdate(tk *testkit.TestKit, t *testing.T, expectLock bool) {
 	res := tk.MustQuery("explain format = 'brief' select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6
 	opInfo := res.Rows()[0][4]
 	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
-	c.Assert(selectLock, Equals, expectLock)
+	require.Equal(t, expectLock, selectLock)
 
 	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6 6"))
 }
 
-func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestWhereIn2BatchPointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key auto_increment not null, b int, c int, unique key idx_abc(a, b, c))")
@@ -317,34 +298,38 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 }
 
 // Test that the plan id will be reset before optimization every time.
-func (s *testPointGetSuite) TestPointGetId(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetId(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	defer tk.MustExec("drop table if exists t")
 	pointGetQuery := "select c2 from t where c1 = 1"
 	for i := 0; i < 2; i++ {
-		ctx := tk.Se.(sessionctx.Context)
+		ctx := tk.Session().(sessionctx.Context)
 		stmts, err := session.Parse(ctx, pointGetQuery)
-		c.Assert(err, IsNil)
-		c.Assert(stmts, HasLen, 1)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
-		c.Assert(p.ID(), Equals, 1)
+		require.Equal(t, 1, p.ID())
 	}
 }
 
-func (s *testPointGetSuite) TestCBOPointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCBOPointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
 	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 
@@ -354,251 +339,256 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 		Plan []string
 		Res  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	statsSuiteData := core.GetPointGetPlanData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
 		res := tk.MustQuery(sql)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
 
-func (s *testPointGetSuite) TestPartitionBatchPointGetPlanCache(c *C) {
-	testKit := testkit.NewTestKit(c, s.store)
+func TestPartitionBatchPointGetPlanCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
-
-	var err error
-	testKit.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	tk.SetSession(sess)
 
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, unique key(a))")
-	testKit.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	testKit.MustExec("prepare stmt from 'select * from t use index(a) where (a >= ? and a <= ?) or a = 3'")
-	testKit.MustExec("set @p=1,@q=2,@u=3")
-	testKit.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, unique key(a))")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("prepare stmt from 'select * from t use index(a) where (a >= ? and a <= ?) or a = 3'")
+	tk.MustExec("set @p=1,@q=2,@u=3")
+	tk.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"3 3",
 	))
-	testKit.MustQuery("execute stmt using @u,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @u,@q").Sort().Check(testkit.Rows(
 		"3 3",
 	))
 
-	testKit.MustExec("drop table t")
-	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
-	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
-	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	tk.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
+	tk.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
 		"2 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 		"3 1",
 	))
-	testKit.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
-	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
+	tk.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 		"2 2",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
-	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
+	tk.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
 		"2 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 		"1 3",
 	))
-	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
 		"1 2",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
-	testKit.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
+	tk.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
 		"2 1",
 		"2 2",
 	))
 
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	testKit.MustExec("drop table t")
-	testKit.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
-	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
-	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
-	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
+	tk.MustExec("insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+	tk.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?'")
+	tk.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
 		"2 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 		"3 1",
 	))
-	testKit.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @u,@p,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
-	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a in (?,?) and b = ?'")
+	tk.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@p").Sort().Check(testkit.Rows(
 		"2 1",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 		"2 2",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
-	testKit.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)'")
+	tk.MustQuery("execute stmt using @p,@p,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q,@q").Sort().Check(testkit.Rows(
 		"2 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@p,@u").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 		"1 3",
 	))
-	testKit.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@u,@p").Sort().Check(testkit.Rows(
 		"1 2",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
-	testKit.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a = ? and b in (?,?)'")
+	tk.MustQuery("execute stmt using @p,@p,@q").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@p").Sort().Check(testkit.Rows(
 		"1 1",
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@q,@q").Sort().Check(testkit.Rows(
 		"1 2",
 	))
-	testKit.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@p,@q").Sort().Check(testkit.Rows(
 		"2 1",
 		"2 2",
 	))
 
-	testKit.MustExec("drop table t")
-	testKit.MustExec("create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2")
-	testKit.MustExec("insert into t values(1,0),(2,0),(3,0),(4,0)")
-	testKit.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'")
-	testKit.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values(1,0),(2,0),(3,0),(4,0)")
+	tk.MustExec("prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'")
+	tk.MustQuery("execute stmt using @p,@p").Sort().Check(testkit.Rows(
 		"1 0",
 		"2 0",
 	))
-	testKit.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
 		"2 0",
 	))
-	testKit.MustQuery("execute stmt using @p,@u").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @p,@u").Sort().Check(testkit.Rows(
 		"1 0",
 		"2 0",
 		"3 0",
 	))
-	testKit.MustQuery("execute stmt using @u,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @u,@p").Sort().Check(testkit.Rows(
 		"2 0",
 	))
 
-	testKit.MustExec("prepare stmt from 'select * from t where a in (?,?) and 1 = 1'")
-	testKit.MustQuery("execute stmt using @p,@q").Sort().Check(testkit.Rows(
+	tk.MustExec("prepare stmt from 'select * from t where a in (?,?) and 1 = 1'")
+	tk.MustQuery("execute stmt using @p,@q").Sort().Check(testkit.Rows(
 		"1 0",
 		"2 0",
 	))
-	testKit.MustQuery("execute stmt using @q,@p").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@p").Sort().Check(testkit.Rows(
 		"1 0",
 		"2 0",
 	))
-	testKit.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @q,@q").Sort().Check(testkit.Rows(
 		"2 0",
 	))
 }
 
-func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetPlanCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
 
-	var err error
-	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	tk.SetSession(sess)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -620,22 +610,23 @@ func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 	))
 }
 
-func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
 
-	var err error
-	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	c.Assert(err, IsNil)
-
+	require.NoError(t, err)
+	tk.SetSession(sess)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
@@ -679,9 +670,11 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
 }
 
-func (s *testPointGetSuite) TestIssue19141(c *C) {
+func TestIssue19141(t *testing.T) {
 	// For issue 19141, fix partition selection on batch point get.
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4")
 	tk.MustExec("insert into t19141 values (1), (2), (3), (4)")
@@ -698,8 +691,10 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
 }
 
-func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSelectInMultiColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
@@ -707,48 +702,46 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
 
 	_, err := tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1, 1));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+	require.Error(t, err)
+	require.Equal(t, "[expression:1241]Operand should contain 3 column(s)", err.Error())
 
 	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+	require.Error(t, err)
+	require.Equal(t, "[expression:1241]Operand should contain 3 column(s)", err.Error())
 
 	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+	require.Error(t, err)
+	require.Equal(t, "[expression:1241]Operand should contain 3 column(s)", err.Error())
 }
 
-func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
+func TestUpdateWithTableReadLockWillFail(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tbllock(id int, c int);")
 	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
 	tk.MustExec("lock table tbllock read;")
 	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
+	require.Error(t, err)
+	require.Equal(t, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated", err.Error())
 }
 
-func (s *testPointGetSuite) TestIssue20692(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue20692(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v int, vv int, vvv int, unique key u0(id, v, vv));")
 	tk.MustExec("insert into t values(1, 1, 1, 1);")
-	se1, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
-	se2, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk2 := testkit.NewTestKitWithSession(c, s.store, se2)
-	se3, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk3 := testkit.NewTestKitWithSession(c, s.store, se3)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	tk1.MustExec("begin pessimistic;")
 	tk1.MustExec("use test")
 	tk2.MustExec("begin pessimistic;")
@@ -769,7 +762,7 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	// wait 50ms to ensure tk3 is blocked by tk2
 	select {
 	case <-stop2:
-		c.Fail()
+		t.Fail()
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -779,8 +772,10 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
 }
 
-func (s *testPointGetSuite) TestPointGetWithInvisibleIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetWithInvisibleIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, unique(c1))")
@@ -792,8 +787,10 @@ func (s *testPointGetSuite) TestPointGetWithInvisibleIndex(c *C) {
 	))
 }
 
-func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetWithInvisibleIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, unique(c1))")
@@ -805,10 +802,12 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 	))
 }
 
-func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCBOShouldNotUsePointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(id varchar(20) primary key)")
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
@@ -827,22 +826,27 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		Plan []string
 		Res  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+
+	statsSuiteData := core.GetPointGetPlanData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
 		res := tk.MustQuery(sql)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
 
-func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPointGetWithIndexHints(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	// point get
@@ -887,20 +891,24 @@ func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 		"  └─TableRowIDScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
-func (s *testPointGetSuite) TestIssue18042(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue18042(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), index ab(a, b));")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB) */ * FROM t where a = 1;")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1<<20))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	require.Equal(t, int64(1<<20), tk.Session().GetSessionVars().StmtCtx.MemQuotaQuery)
+	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustExec("drop table t")
 }
 
-func (s *testPointGetSuite) TestIssue26638(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue26638(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a float, unique index uidx(a));")
@@ -929,8 +937,10 @@ func (s *testPointGetSuite) TestIssue26638(c *C) {
 	tk.MustQuery("execute stmt4 using @i,@e,@d,@a,@b,@c,@e,@g,@h;").Check(testkit.Rows("0 1 2"))
 }
 
-func (s *testPointGetSuite) TestIssue23511(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue23511(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
