@@ -848,6 +848,16 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
 	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
+	}
 }
 
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
@@ -1117,6 +1127,14 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
 				p.err = ErrInternal.GenWithStack(msg)
 				return
+			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
 			}
 		default:
 			// Nothing to do now.
