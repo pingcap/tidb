@@ -143,6 +143,13 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
+<<<<<<< HEAD
+=======
+	// ErrWrongPartitionName returns for wrong partition name.
+	ErrWrongPartitionName = dbterror.ClassDDL.NewStd(mysql.ErrWrongPartitionName)
+	// ErrWrongUsage returns for wrong ddl syntax usage.
+	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
+>>>>>>> f5eb1e9fe... ddl: Added check for partition name ending with space (#31785)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = dbterror.ClassDDL.NewStd(mysql.ErrInvalidGroupFuncUse)
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
