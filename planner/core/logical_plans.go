@@ -75,9 +75,15 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoin returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
