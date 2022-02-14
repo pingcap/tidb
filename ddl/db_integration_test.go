@@ -2859,3 +2859,26 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	err = tk.ExecToErr("select * from temp")
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
+
+func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database invalidPartitionNames")
+	defer tk.MustExec("drop database invalidPartitionNames")
+	tk.MustExec("USE invalidPartitionNames")
+
+	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
+	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+}
