@@ -224,7 +224,7 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 
 // IsFlashProp return true if this physical property is only allowed to generate flash related task
 func (p *PhysicalProperty) IsFlashProp() bool {
-	return p.TaskTp == CopTiFlashReadTaskType || p.TaskTp == MppTaskType
+	return p.TaskTp == MppTaskType
 }
 
 // GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.

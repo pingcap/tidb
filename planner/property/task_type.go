@@ -29,11 +29,6 @@ const (
 	// coprocessor layer.
 	CopDoubleReadTaskType
 
-	// CopTiFlashReadTaskType stands for flash coprocessor that read data locally,
-	// and only a part of the data is read in one cop task, if the current task type is
-	// CopTiFlashReadTaskType, all its children prop's task type is CopTiFlashReadTaskType
-	CopTiFlashReadTaskType
-
 	// MppTaskType stands for task that would run on Mpp nodes, currently meaning the tiflash node.
 	MppTaskType
 )
@@ -47,8 +42,6 @@ func (t TaskType) String() string {
 		return "copSingleReadTask"
 	case CopDoubleReadTaskType:
 		return "copDoubleReadTask"
-	case CopTiFlashReadTaskType:
-		return "copTiFlashReadTask"
 	case MppTaskType:
 		return "mppTask"
 	}
