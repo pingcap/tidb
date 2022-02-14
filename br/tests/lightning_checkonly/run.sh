@@ -29,11 +29,11 @@ check_contains "rate should be in range (0, 1]"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=-1,1000 > $out_file_name 2>&1 || true
 check_contains "rate should be in range (0, 1]"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=,1000 > $out_file_name 2>&1 || true
-check_contains "rate should be in range (0, 1]"
+check_contains "invalid check-only config"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1,-1000 > $out_file_name 2>&1 || true
 check_contains "rows should be greater than 0"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1, > $out_file_name 2>&1 || true
-check_contains "rows should be greater than 0"
+check_contains "invalid check-only config"
 
 echo ">>> check-only=normal"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only normal > $out_file_name
