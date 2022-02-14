@@ -19,8 +19,8 @@ local graphPanel = grafana.graphPanel;
 local prometheus = grafana.prometheus;
 local template = grafana.template;
 
-local myCluster = '${DS_TEST-CLUSTER}';
-local myDS = myCluster;
+local myCluster = 'DS_TEST-CLUSTER';
+local myDS = '${' + myCluster + '}';
 
 // A new dashboard
 local newDash = dashboard.new(
