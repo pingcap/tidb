@@ -750,15 +750,6 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			default:
 				// Nothing to do now.
 			}
-<<<<<<< HEAD
-=======
-		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
-			statsName := spec.Statistics.StatsName
-			if isIncorrectName(statsName) {
-				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
-				p.err = ErrInternal.GenWithStack(msg)
-				return
-			}
 		case ast.AlterTableAddPartitions:
 			for _, def := range spec.PartDefinitions {
 				pName := def.Name.String()
@@ -767,7 +758,6 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 					return
 				}
 			}
->>>>>>> f5eb1e9fe... ddl: Added check for partition name ending with space (#31785)
 		default:
 			// Nothing to do now.
 		}
