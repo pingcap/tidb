@@ -563,12 +563,12 @@ func SetSysVar(name string, value string) {
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	copy := make(map[string]*SysVar, len(sysVars))
+	m := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
 		tmp := *sv
-		copy[name] = &tmp
+		m[name] = &tmp
 	}
-	return copy
+	return m
 }
 
 func init() {

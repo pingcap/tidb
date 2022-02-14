@@ -240,10 +240,14 @@ func TestCacheTableSizeLimit(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 200; i++ {
 		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
-		if tk.HasPlan("select * from cache_t2", "UnionScan") {
+		if lastReadFromCache(tk) {
 			cached = true
 			break
 		}
