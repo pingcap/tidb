@@ -3206,3 +3206,46 @@ func (s *partitionTableSuite) TestLeftJoinForUpdate(c *C) {
 	tk1.MustExec("rollback")
 	checkOrder()
 }
+
+func (s *partitionTableSuite) TestIssue31024(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("create database TestIssue31024")
+	defer tk1.MustExec("drop database TestIssue31024")
+	tk1.MustExec("use TestIssue31024")
+	tk1.MustExec("create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))" +
+		" partition by range (to_days(c_datetime)) " +
+		"( partition p0 values less than (to_days('2020-02-01'))," +
+		" partition p1 values less than (to_days('2020-04-01'))," +
+		" partition p2 values less than (to_days('2020-06-01'))," +
+		" partition p3 values less than maxvalue)")
+	tk1.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk1.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3)")
+	tk1.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+	tk1.MustExec("SET GLOBAL tidb_txn_mode = 'pessimistic'")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use TestIssue31024")
+
+	ch := make(chan int, 10)
+	tk1.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select /*+ use_index_merge(t1) */ * from t1 join t2 on t1.c_datetime >= t2.c_datetime where t1.c1 < 10 or t1.c2 < 10 for update")
+
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 2
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	c.Assert(<-ch, Equals, 1)
+	c.Assert(<-ch, Equals, 2)
+
+	tk2.MustExec("rollback")
+}
