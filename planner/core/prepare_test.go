@@ -1575,9 +1575,35 @@ func (s *testPlanSerialSuite) TestParamMarker4FastPlan(c *C) {
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 
+	// test handle
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("create table t(pk int primary key)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
+	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
+
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	// Use the cached PointGet plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	// Use the cached PointGet plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test indexValues
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
 	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
