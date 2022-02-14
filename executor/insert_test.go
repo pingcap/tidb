@@ -347,7 +347,7 @@ func TestUpdateDuplicateKey(t *testing.T) {
 	tk.MustExec(`insert into c values(1,2,3);`)
 	tk.MustExec(`insert into c values(1,2,4);`)
 	_, err := tk.Exec(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`)
-	require.Equal(t, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'", err.Error())
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
 func TestInsertWrongValueForField(t *testing.T) {
@@ -1132,9 +1132,9 @@ func TestInsertFloatOverflow(t *testing.T) {
 	tk.MustExec(`drop table if exists t,t1;`)
 	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
 	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
-	require.Equal(t, "[types:1264]Out of range value for column 'col1' at row 1", err.Error())
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'col1' at row 1")
 	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
-	require.Equal(t, "[types:1264]Out of range value for column 'col2' at row 1", err.Error())
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'col2' at row 1")
 	_, err = tk.Exec("create table t1(id1 float,id2 float)")
 	require.NoError(t, err)
 	_, err = tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
@@ -1206,14 +1206,14 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 	tk.Session().GetSessionVars().AutoIncrementOffset = -2
 	_, err := tk.Exec(`insert into io(b) values (null),(null),(null)`)
 	require.Error(t, err)
-	require.Equal(t, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]", err.Error())
+	require.EqualError(t, err, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
 	tk.MustExec(`delete from io`)
 
 	tk.Session().GetSessionVars().AutoIncrementIncrement = 65536
 	tk.Session().GetSessionVars().AutoIncrementOffset = 65536
 	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
 	require.Error(t, err)
-	require.Equal(t, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]", err.Error())
+	require.EqualError(t, err, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
 func TestAutoRandomID(t *testing.T) {
@@ -1668,12 +1668,12 @@ func TestDuplicatedEntryErr(t *testing.T) {
 	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
 	tk.MustExec("insert into t1 values(1,'aaaaa');")
 	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'", err.Error())
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
 	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'", err.Error())
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
 	tk.MustExec("insert into t1 select 1, 'bb'")
 	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'", err.Error())
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
 }
 
 func TestBinaryLiteralInsertToEnum(t *testing.T) {
@@ -1824,7 +1824,7 @@ func TestIssue26762(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 date);")
 	_, err := tk.Exec("insert into t1 values('2020-02-31');")
-	require.Equal(t, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`, err.Error())
+	require.EqualError(t, err, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 
 	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
 	tk.MustExec("insert into t1 values('2020-02-31');")
@@ -1832,7 +1832,7 @@ func TestIssue26762(t *testing.T) {
 
 	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t1 values('2020-02-31');")
-	require.Equal(t, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`, err.Error())
+	require.EqualError(t, err, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
 
 func TestStringtoDecimal(t *testing.T) {
