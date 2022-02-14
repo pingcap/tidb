@@ -17,6 +17,7 @@ package placement
 import (
 	"encoding/hex"
 	"errors"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -24,6 +25,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testBundleSuite{})
 
