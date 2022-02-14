@@ -25,14 +25,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
+func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
 	return &ColumnInfo{
 		Schema:             "test",
 		Table:              "dual",
 		OrgTable:           "",
 		Name:               "a",
 		OrgName:            "a",
-		ColumnLength:       len,
+		ColumnLength:       cl,
 		Charset:            uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
 		Flag:               uint16(mysql.UnsignedFlag),
 		Decimal:            uint8(0),

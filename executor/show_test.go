@@ -1311,9 +1311,9 @@ func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
 }
 
 func TestAutoRandomBase(t *testing.T) {
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
