@@ -538,6 +538,9 @@ const (
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 
+	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
+	TiDBSuperReadOnly = "tidb_super_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -580,17 +583,12 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
-	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+	// TiDBTopSQLMaxTimeSeriesCount indicates the max number of statements been collected in each time series.
+	TiDBTopSQLMaxTimeSeriesCount = "tidb_top_sql_max_time_series_count"
 
-	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
-	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
+	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
 
-	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
-	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
-
-	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
-	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
@@ -617,6 +615,12 @@ const (
 
 	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
 	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
+
+	// TiDBEnableMutationChecker indicates whether to check data consistency for mutations
+	TiDBEnableMutationChecker = "tidb_enable_mutation_checker"
+	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps detecting and preventing data &
+	// index inconsistency problems.
+	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
 )
 
 // TiDB vars that have only global scope
@@ -774,6 +778,7 @@ const (
 	DefTiDBEnableClusteredIndex           = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                      = false
 	DefTiDBRestrictedReadOnly             = false
+	DefTiDBSuperReadOnly                  = false
 	DefTiDBShardAllocateStep              = math.MaxInt64
 	DefTiDBEnableTelemetry                = true
 	DefTiDBEnableParallelApply            = false
@@ -810,6 +815,8 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefTiDBEnableMutationChecker          = false
+	DefTiDBTxnAssertionLevel              = AssertionOffStr
 )
 
 // Process global variables.
@@ -837,6 +844,7 @@ var (
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                  = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)

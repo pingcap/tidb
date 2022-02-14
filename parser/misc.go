@@ -797,9 +797,10 @@ var tokenMap = map[string]int{
 	"WAIT":                     wait,
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
+// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
+// ADDDATE, SESSION_USER, SUBDATE, and SYSTEM_USER are exceptions because they are actually recognized as
+// identifiers even in `create table adddate (a int)`.
 var btFuncTokenMap = map[string]int{
-	"ADDDATE":               builtinAddDate,
 	"BIT_AND":               builtinBitAnd,
 	"BIT_OR":                builtinBitOr,
 	"BIT_XOR":               builtinBitXor,
@@ -818,17 +819,14 @@ var btFuncTokenMap = map[string]int{
 	"MIN":                   builtinMin,
 	"NOW":                   builtinNow,
 	"POSITION":              builtinPosition,
-	"SESSION_USER":          builtinUser,
 	"STD":                   builtinStddevPop,
 	"STDDEV":                builtinStddevPop,
 	"STDDEV_POP":            builtinStddevPop,
 	"STDDEV_SAMP":           builtinStddevSamp,
-	"SUBDATE":               builtinSubDate,
 	"SUBSTR":                builtinSubstring,
 	"SUBSTRING":             builtinSubstring,
 	"SUM":                   builtinSum,
 	"SYSDATE":               builtinSysDate,
-	"SYSTEM_USER":           builtinUser,
 	"TRANSLATE":             builtinTranslate,
 	"TRIM":                  builtinTrim,
 	"VARIANCE":              builtinVarPop,

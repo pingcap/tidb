@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -181,12 +182,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -242,12 +241,10 @@ func TestAnalyzeParameters(t *testing.T) {
 }
 
 func TestAnalyzeTooLongColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json)")
@@ -668,10 +665,9 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 }
 
 func TestExtractTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_extract_topn")
 	tk.MustExec("use test_extract_topn")
@@ -723,12 +719,10 @@ func TestExtractTopN(t *testing.T) {
 }
 
 func TestHashInTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
 
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
@@ -1012,10 +1006,8 @@ func TestAnalyzeIndex(t *testing.T) {
 }
 
 func TestAnalyzeIncremental(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1026,10 +1018,7 @@ func TestAnalyzeIncremental(t *testing.T) {
 
 func TestAnalyzeIncrementalStreaming(t *testing.T) {
 	t.Skip("unistore hasn't support streaming yet.")
-	store, clean := testkit.CreateMockStore(t)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1118,25 +1107,7 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	require.Equal(t, "[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL", err.Error())
 }
 
-func TestIssue27429(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table test.t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin)")
-	tk.MustExec("insert into test.t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def ');")
-
-	tk.MustQuery("select upper(group_concat(distinct value order by 1)) from test.t;").Check(testkit.Rows("ABC,DEF"))
-	tk.MustQuery("select upper(group_concat(distinct value)) from test.t;").Check(testkit.Rows("ABC,DEF"))
-}
-
 func TestIssue20874(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1303,7 +1274,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
@@ -1332,7 +1303,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, 2, len(col0.Buckets))
 
 	// manual analyze uses the table-level persisted options by merging the new options
-	tk.MustExec("analyze table t columns a,b with 0.9 samplerate, 3 buckets")
+	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1347,7 +1318,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0.9", rs.Rows()[0][2])
+	require.Equal(t, "1", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
@@ -1401,7 +1372,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1517,7 +1488,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p2")
 	is = dom.InfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
 	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
@@ -1610,7 +1581,7 @@ PARTITION BY RANGE ( a ) (
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1729,9 +1700,9 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("analyze table t1,t2 with 2 topn")
 	is := dom.InfoSchema()
 	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
 	tblStats1 := h.GetTableStats(tableInfo1)
@@ -1789,7 +1760,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
@@ -2583,4 +2554,61 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 			))
 		}(val)
 	}
+}
+
+func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// 1. switch off the tidb_enable_historical_stats, and there is no records in table `mysql.stats_history`
+	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	// 2. switch on the tidb_enable_historical_stats and do analyze
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("analyze table t with 2 topn")
+	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.GreaterOrEqual(t, num, 1)
+
+	// 3. dump current stats json
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+	jsOrigin, _ := json.Marshal(dumpJSONTable)
+
+	// 4. get the historical stats json
+	rows = tk.MustQuery(fmt.Sprintf("select * from mysql.stats_history where table_id = '%d' and create_time = ("+
+		"select create_time from mysql.stats_history where table_id = '%d' order by create_time desc limit 1) "+
+		"order by seq_no", tableInfo.Meta().ID, tableInfo.Meta().ID)).Rows()
+	num = len(rows)
+	require.GreaterOrEqual(t, num, 1)
+	data := make([][]byte, num)
+	for i, row := range rows {
+		data[i] = []byte(row[1].(string))
+	}
+	jsonTbl, err := handle.BlocksToJSONTable(data)
+	require.NoError(t, err)
+	jsCur, err := json.Marshal(jsonTbl)
+	require.NoError(t, err)
+	// 5. historical stats must be equal to the current stats
+	require.JSONEq(t, string(jsOrigin), string(jsCur))
 }

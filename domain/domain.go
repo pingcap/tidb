@@ -25,7 +25,6 @@ import (
 	"unsafe"
 
 	"github.com/ngaut/pools"
-	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
@@ -60,6 +59,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -86,7 +86,7 @@ type Domain struct {
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
-	statsUpdating        sync2.AtomicInt32
+	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
@@ -94,8 +94,8 @@ type Domain struct {
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
-	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
+	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
+	renewLeaseCh         chan func()      // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 }
@@ -704,7 +704,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	do.cancel()
+	if do.cancel != nil {
+		do.cancel()
+	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
@@ -836,9 +838,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			err := do.acquireServerID(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
-				do.isLostConnectionToPD.Set(0)
+				do.isLostConnectionToPD.Store(0)
 			}
 
 			do.wg.Add(1)
@@ -878,9 +880,9 @@ type sessionPool struct {
 	}
 }
 
-func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+func newSessionPool(capacity int, factory pools.Factory) *sessionPool {
 	return &sessionPool{
-		resources: make(chan pools.Resource, cap),
+		resources: make(chan pools.Resource, capacity),
 		factory:   factory,
 	}
 }
@@ -1249,15 +1251,15 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
 
 // StatsUpdating checks if the stats worker is updating.
 func (do *Domain) StatsUpdating() bool {
-	return do.statsUpdating.Get() > 0
+	return do.statsUpdating.Load() > 0
 }
 
 // SetStatsUpdating sets the value of stats updating.
 func (do *Domain) SetStatsUpdating(val bool) {
 	if val {
-		do.statsUpdating.Set(1)
+		do.statsUpdating.Store(1)
 	} else {
-		do.statsUpdating.Set(0)
+		do.statsUpdating.Store(0)
 	}
 }
 
@@ -1549,7 +1551,7 @@ func (do *Domain) ServerID() uint64 {
 
 // IsLostConnectionToPD indicates lost connection to PD or not.
 func (do *Domain) IsLostConnectionToPD() bool {
-	return do.isLostConnectionToPD.Get() != 0
+	return do.isLostConnectionToPD.Load() != 0
 }
 
 const (
@@ -1726,7 +1728,7 @@ func (do *Domain) serverIDKeeper() {
 
 	onConnectionToPDRestored := func() {
 		logutil.BgLogger().Info("restored connection to PD")
-		do.isLostConnectionToPD.Set(0)
+		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
 		if err := do.info.StoreServerInfo(context.Background()); err != nil {
@@ -1736,7 +1738,7 @@ func (do *Domain) serverIDKeeper() {
 
 	onConnectionToPDLost := func() {
 		logutil.BgLogger().Warn("lost connection to PD")
-		do.isLostConnectionToPD.Set(1)
+		do.isLostConnectionToPD.Store(1)
 
 		// Kill all connections when lost connection to PD,
 		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID,

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -292,8 +293,8 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
-	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
+	rows, _, err := exec.ExecRestrictedSQL(context.Background(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -321,12 +322,6 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	defer func() {
 		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
-	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
 
 	var snapshot uint64
 	txn, err := ctx.Txn(false)
@@ -340,16 +335,14 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		snapshot = ctx.GetSessionVars().SnapshotTS
 	}
 
-	tblCnt, err := getCount(exec, stmt, snapshot)
+	// Add `` for some names like `table name`.
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
-		if err != nil {
-			return 0, i, errors.Trace(err)
-		}
-		idxCnt, err := getCount(exec, stmt, snapshot)
+		idxCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
@@ -371,11 +364,39 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
+	}
+
+	ir := func() *consistency.Reporter {
+		return &consistency.Reporter{
+			HandleEncode: func(handle kv.Handle) kv.Key {
+				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
+			},
+			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				var matchingIdx table.Index
+				for _, v := range t.Indices() {
+					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
+						matchingIdx = v
+						break
+					}
+				}
+				if matchingIdx == nil {
+					return nil
+				}
+				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				if err != nil {
+					return nil
+				}
+				return k
+			},
+			Tbl:  t.Meta(),
+			Idx:  idx.Meta(),
+			Sctx: sessCtx,
+		}
 	}
 
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
@@ -396,16 +417,16 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
+			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
+			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
+			record := &consistency.RecordData{Handle: h1, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
 		return true, nil
@@ -485,8 +506,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 }
 
 var (
-	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
 	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
