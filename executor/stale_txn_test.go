@@ -1043,12 +1043,14 @@ func TestStaleReadPrepare(t *testing.T) {
 
 	// test prepared stale select in stale txn
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	//tk.MustExec("execute p1")
+	_, err := tk.Exec("execute p1")
+	require.Error(t, err)
 	tk.MustExec("commit")
 
 	// assert execute prepared statement should be error after set transaction read only as of
 	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	//tk.MustExec("execute p1")
+	_, err = tk.Exec("execute p1")
+	require.Error(t, err)
 }
 
 func TestStmtCtxStaleFlag(t *testing.T) {
