@@ -75,7 +75,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		failpoint.Enable("tikvclient/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
+		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone)))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
 		require.Equal(t, testcase.IsStaleness, tk.Session().GetSessionVars().TxnCtx.IsStaleness)
@@ -89,7 +89,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 		}
 		tk.MustExec("commit")
 	}
-	failpoint.Disable("tikvclient/injectTxnScope")
+	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
 }
 
 func TestSelectAsOf(t *testing.T) {
