@@ -352,11 +352,11 @@
       {
         "SQL": "EXPLAIN SELECT count(a) from t where d=1; -- 11.1. type not supported",
         "Plan": [
-          "HashAgg_9 1.00 root  funcs:count(test.t.a)->Column#6",
-          "└─Selection_19 8000.00 root  eq(test.t.d, 1)",
-          "  └─TableReader_22 10000.00 root  data:ExchangeSender_21",
-          "    └─ExchangeSender_21 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_10 1.00 root  funcs:count(test.t.a)->Column#6",
+          "└─Selection_17 8000.00 root  eq(test.t.d, 1)",
+          "  └─TableReader_20 10000.00 root  data:ExchangeSender_19",
+          "    └─ExchangeSender_19 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan_18 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'."
@@ -588,30 +588,30 @@
       {
         "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
         "Plan": [
-          "TableReader_49 8000.00 root  data:ExchangeSender_48",
-          "└─ExchangeSender_48 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_48 8000.00 root  data:ExchangeSender_47",
+          "└─ExchangeSender_47 8000.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 cop[tiflash]  test.t.a",
-          "    └─Selection_46 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_47 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_27(Build) 10000.00 cop[tiflash]  ",
-          "        │ └─ExchangeSender_26 10000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_24(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_45 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_46 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_26(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_25 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_23(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
         "Plan": [
-          "TableReader_49 8000.00 root  data:ExchangeSender_48",
-          "└─ExchangeSender_48 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_48 8000.00 root  data:ExchangeSender_47",
+          "└─ExchangeSender_47 8000.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 cop[tiflash]  test.t.a",
-          "    └─Selection_46 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_47 10000.00 cop[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_27(Build) 10000.00 cop[tiflash]  ",
-          "        │ └─ExchangeSender_26 10000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_24(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_45 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_46 10000.00 cop[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_26(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_25 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_23(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
