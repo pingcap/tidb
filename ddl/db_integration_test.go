@@ -3402,3 +3402,200 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("truncate table testt.t3")
 	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue29282(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue29828_t")
+	tk.MustExec("create table issue29828_t (id int)")
+	tk.MustExec("create temporary table issue29828_tmp(id int);")
+	tk.MustExec("insert into issue29828_tmp values(1)")
+	tk.MustExec("prepare stmt from 'insert into issue29828_t select * from issue29828_tmp';")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select *from issue29828_t").Check(testkit.Rows("1"))
+
+	tk.MustExec("create temporary table issue29828_tmp1(id int);")
+	tk.MustExec("insert into issue29828_tmp1 values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("prepare stmt1 from 'select * from issue29828_t for update union select * from issue29828_tmp1';")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	ch := make(chan struct{}, 1)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	go func() {
+		// This query should block.
+		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
+		ch <- struct{}{}
+		tk1.MustExec("rollback")
+	}()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Expected, query blocked, not finish within 100ms.
+		tk.MustExec("rollback")
+	case <-ch:
+		// Unexpected, test fail.
+		t.Fail()
+	}
+}
+
+// See https://github.com/pingcap/tidb/issues/29327
+func TestEnumDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+}
+
+func TestIssue29326(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("insert into t1 values(1)")
+	defer tk.MustExec("drop table t1")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t2 values(1)")
+	defer tk.MustExec("drop table t2")
+
+	tk.MustExec("drop view if exists v1")
+	defer tk.MustExec("drop view if exists v1")
+
+	tk.MustExec("create view v1 as select 1,1")
+	rs, err := tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "Name_exp_1", rs.Fields()[1].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 1, 2, 1, 2, 1, 2, 1, 2")
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 2 1 2 1 2 1 2"))
+	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "2", rs.Fields()[1].Column.Name.O)
+	require.Equal(t, "Name_exp_1", rs.Fields()[2].Column.Name.O)
+	require.Equal(t, "Name_exp_2", rs.Fields()[3].Column.Name.O)
+	require.Equal(t, "Name_exp_1_1", rs.Fields()[4].Column.Name.O)
+	require.Equal(t, "Name_exp_1_2", rs.Fields()[5].Column.Name.O)
+	require.Equal(t, "Name_exp_2_1", rs.Fields()[6].Column.Name.O)
+	require.Equal(t, "Name_exp_2_2", rs.Fields()[7].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 't', 't', 1 as t")
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("t t 1"))
+	require.Equal(t, "Name_exp_t", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "Name_exp_1_t", rs.Fields()[1].Column.Name.O)
+	require.Equal(t, "t", rs.Fields()[2].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, 1 union all select 1, 1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`1`, `Name_exp_1`) " +
+		"AS SELECT 1 AS `1`,1 AS `Name_exp_1` UNION ALL SELECT 1 AS `1`,1 AS `1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
+	require.Equal(t, "1", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "Name_exp_1", rs.Fields()[1].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 'id', id from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_id`, `id`) " +
+		"AS SELECT _UTF8MB4'id' AS `Name_exp_id`,`id` AS `id` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("id 1"))
+	require.Equal(t, "Name_exp_id", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "id", rs.Fields()[1].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, (select id from t1 where t1.id=t2.id) as '1' from t2")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_1`, `1`) " +
+		"AS SELECT 1 AS `Name_exp_1`,(SELECT `id` AS `id` FROM `test`.`t1` WHERE `t1`.`id`=`t2`.`id`) AS `1` FROM `test`.`t2` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.Equal(t, "Name_exp_1", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "1", rs.Fields()[1].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1 as 'abs(t1.id)', abs(t1.id) from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`abs(t1.id)`, `Name_exp_abs(t1.id)`) " +
+		"AS SELECT 1 AS `abs(t1.id)`,ABS(`t1`.`id`) AS `Name_exp_abs(t1.id)` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.Equal(t, "abs(t1.id)", rs.Fields()[0].Column.Name.O)
+	require.Equal(t, "Name_exp_abs(t1.id)", rs.Fields()[1].Column.Name.O)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as t,1 as t")
+	require.True(t, infoschema.ErrColumnExists.Equal(err))
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as id, id from t1")
+	require.True(t, infoschema.ErrColumnExists.Equal(err))
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select * from t1 left join t2 on t1.id=t2.id")
+	require.True(t, infoschema.ErrColumnExists.Equal(err))
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select t1.id, t2.id from t1,t2 where t1.id=t2.id")
+	require.True(t, infoschema.ErrColumnExists.Equal(err))
+}
+
+func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database invalidPartitionNames")
+	defer tk.MustExec("drop database invalidPartitionNames")
+	tk.MustExec("USE invalidPartitionNames")
+
+	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+
+	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
+	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
+	require.Error(t, err)
+	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+}
+>>>>>>> f5eb1e9fe... ddl: Added check for partition name ending with space (#31785)
