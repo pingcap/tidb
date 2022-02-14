@@ -707,7 +707,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
-		if x.HandleConstant.ParamMarker != nil {
+		if x.HandleConstant != nil {
 			val, err := x.HandleConstant.Eval(chunk.Row{})
 			if err != nil {
 				return err
@@ -716,7 +716,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			// The converted result must be same as original datum.
 			cmp, err := dVal.Compare(sc, &val, collate.GetCollator(x.handleFieldType.Collate))
 			if err != nil || cmp != 0 {
-				return errors.New("The parameter for point get can not use plan cache, because the parameter has changed after the covert.")
+				return errors.New("The parameter for point get can not use plan cache, because the parameter has changed after the covert")
 			}
 			iv, err := dVal.ToInt64(sc)
 			if err != nil {
@@ -726,7 +726,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			return nil
 		}
 		for i, param := range x.IndexConstants {
-			if param.ParamMarker != nil {
+			if param != nil {
 				val, err := param.Eval(chunk.Row{})
 				if err != nil {
 					return err
