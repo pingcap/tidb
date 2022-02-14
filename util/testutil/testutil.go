@@ -93,11 +93,11 @@ var DatumEquals check.Checker = &datumEqualsChecker{
 	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
 }
 
-func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
 	defer func() {
 		if v := recover(); v != nil {
 			result = false
-			error = fmt.Sprint(v)
+			errStr = fmt.Sprint(v)
 			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
 				zap.Reflect("r", v),
 				zap.Stack("stack trace"))
@@ -208,7 +208,7 @@ var HandleEquals = &handleEqualsChecker{
 	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
 }
 
-func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
 	if params[0] == nil && params[1] == nil {
 		return true, ""
 	}
