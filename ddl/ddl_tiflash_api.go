@@ -88,8 +88,8 @@ func NewPollTiFlashBackoffContext(MinTick, MaxTick TickType, Capacity int, Rate 
 	if MaxTick < MinTick {
 		return nil, fmt.Errorf("`MaxTick` should always be larger than `MinTick`")
 	}
-	if MinTick <= 1 {
-		return nil, fmt.Errorf("`MinTick` should always be larger than 1")
+	if MinTick < 1 {
+		return nil, fmt.Errorf("`MinTick` should not be less than 1")
 	}
 	if Capacity < 0 {
 		return nil, fmt.Errorf("negative `Capacity`")
@@ -116,24 +116,23 @@ type TiFlashManagementContext struct {
 }
 
 // Tick will first check increase Counter.
-func (b *PollTiFlashBackoffContext) Tick(ID int64) bool {
-	e, ok := b.Get(ID)
+func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool) {
+	e, ok := b.Put(ID)
 	if !ok {
-		return false
+		return false, false
 	}
 	growed := e.MaybeGrow(b)
 	e.Counter += 1
-	return growed
+	return growed, true
 }
 
-// Limit returns current limit
-func (e *PollTiFlashBackoffElement) Limit() int {
+func (e *PollTiFlashBackoffElement) limit() int {
 	return int(e.Threshold)
 }
 
 // NeedGrow returns if we need to grow
 func (e *PollTiFlashBackoffElement) NeedGrow() bool {
-	if e.Counter >= e.Limit() {
+	if e.Counter >= e.limit() {
 		return true
 	}
 	return false
@@ -175,13 +174,16 @@ func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, b
 }
 
 // Put will put table into backoff pool, if there are enough room, or returns false.
-func (b *PollTiFlashBackoffContext) Put(ID int64) bool {
-	_, ok := b.elements[ID]
-	if ok || b.Len() < b.Capacity {
+// Only exported for test.
+func (b *PollTiFlashBackoffContext) Put(ID int64) (*PollTiFlashBackoffElement, bool) {
+	e, ok := b.elements[ID]
+	if ok {
+		return e, true
+	} else if b.Len() < b.Capacity {
 		b.elements[ID] = NewPollTiFlashBackoffElement()
-		return true
+		return b.elements[ID], true
 	}
-	return false
+	return nil, false
 }
 
 // Len gets size of PollTiFlashBackoffContext.
