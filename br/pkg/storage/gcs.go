@@ -224,6 +224,11 @@ func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 }
 
+// Rename file name from oldFileName to newFileName.
+func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently gcs storage doesn't support Rename")
+}
+
 func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {

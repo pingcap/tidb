@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -285,14 +286,18 @@ func TestApplyDiff(t *testing.T) {
 func TestCheckpointMarshallUnmarshall(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "filecheckpoint")
-	fileChkp := NewFileCheckpointsDB(path)
+	ctx := context.Background()
+	fileChkp, err := NewFileCheckpointsDB(ctx, path)
+	require.NoError(t, err)
 	fileChkp.checkpoints.Checkpoints["a"] = &checkpointspb.TableCheckpointModel{
 		Status:  uint32(CheckpointStatusLoaded),
 		Engines: map[int32]*checkpointspb.EngineCheckpointModel{},
 	}
-	fileChkp.Close()
+	err = fileChkp.Close()
+	require.NoError(t, err)
 
-	fileChkp2 := NewFileCheckpointsDB(path)
+	fileChkp2, err := NewFileCheckpointsDB(ctx, path)
+	require.NoError(t, err)
 	// if not recover empty map explicitly, it will become nil
 	require.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
 }

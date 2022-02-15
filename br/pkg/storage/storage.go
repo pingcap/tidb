@@ -94,6 +94,8 @@ type ExternalStorage interface {
 
 	// Create opens a file writer by path. path is relative path to storage base path
 	Create(ctx context.Context, path string) (ExternalFileWriter, error)
+	// Rename file name from oldFileName to newFileName
+	Rename(ctx context.Context, oldFileName, newFileName string) error
 }
 
 // ExternalFileReader represents the streaming external file reader.

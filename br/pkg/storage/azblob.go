@@ -380,6 +380,10 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFil
 	return uploaderWriter, nil
 }
 
+func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently azure blob storage doesn't support Rename")
+}
+
 type azblobObjectReader struct {
 	blobClient azblob.BlockBlobClient
 

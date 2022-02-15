@@ -106,6 +106,11 @@ func (l *LocalStorage) Create(ctx context.Context, name string) (ExternalFileWri
 	return newFlushStorageWriter(buf, buf, file), nil
 }
 
+// Rename implements ExternalStorage interface.
+func (l *LocalStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	return os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName))
+}
+
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
 	if err != nil {
