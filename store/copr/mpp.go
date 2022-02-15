@@ -67,6 +67,24 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+	if req.KeyRangesForPartition != nil {
+		ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
+		bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+		rangess := make([]*KeyRanges, len(req.KeyRangesForPartition))
+		for i, ranges := range req.KeyRangesForPartition {
+			rangess[i] = NewKeyRanges(ranges)
+		}
+		tasks, err := buildBatchCopTasks(bo, c.store, rangess, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, req.PartitionIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		mppTasks := make([]kv.MPPTaskMeta, 0, len(tasks))
+		for _, copTask := range tasks {
+			mppTasks = append(mppTasks, copTask)
+		}
+		return mppTasks, nil
+	}
+
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
@@ -74,28 +92,6 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildBatchCopTasks(bo, c.store, []*KeyRanges{ranges}, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	mppTasks := make([]kv.MPPTaskMeta, 0, len(tasks))
-	for _, copTask := range tasks {
-		mppTasks = append(mppTasks, copTask)
-	}
-	return mppTasks, nil
-}
-
-// ConstructMPPTasksForPartition receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasksForPartition(ctx context.Context, req *kv.MPPBuildTaskRequestForPartition, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
-	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
-	if req.KeyRanges == nil {
-		return c.selectAllTiFlashStore(), nil
-	}
-	rangess := make([]*KeyRanges, len(req.KeyRanges))
-	for i, ranges := range req.KeyRanges {
-		rangess[i] = NewKeyRanges(ranges)
-	}
-	tasks, err := buildBatchCopTasks(bo, c.store, rangess, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, req.PartitionIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

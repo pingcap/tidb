@@ -380,8 +380,8 @@ func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Contex
 		allKVRanges = append(allKVRanges, kvRanges)
 	}
 
-	req := &kv.MPPBuildTaskRequestForPartition{KeyRanges: allKVRanges, PartitionIDs: allPartitionsIDs}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasksForPartition(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+	req := &kv.MPPBuildTasksRequest{KeyRangesForPartition: allKVRanges, PartitionIDs: allPartitionsIDs}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

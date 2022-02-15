@@ -304,18 +304,17 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 				results = append(results, result)
 			}
 			return distsql.NewSerialSelectResults(results), nil
-		} else {
-			// Use PartitionTable Scan
-			kvReq, err := e.buildKVForPartitionTableScan(ctx, ranges)
-			if err != nil {
-				return nil, err
-			}
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
-			if err != nil {
-				return nil, err
-			}
-			return distsql.NewSerialSelectResults([]distsql.SelectResult{result}), nil
 		}
+		// Use PartitionTable Scan
+		kvReq, err := e.buildKVForPartitionTableScan(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			return nil, err
+		}
+		return distsql.NewSerialSelectResults([]distsql.SelectResult{result}), nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)

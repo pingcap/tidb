@@ -88,8 +88,6 @@ type MPPClient interface {
 	// TODO:: This interface will be refined after we support more executors.
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
-	ConstructMPPTasksForPartition(context.Context, *MPPBuildTaskRequestForPartition, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
-
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
 }
@@ -99,10 +97,7 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
-}
 
-type MPPBuildTaskRequestForPartition struct {
-	KeyRanges    [][]KeyRange
-	PartitionIDs []int64
-	StartTS      uint64
+	KeyRangesForPartition [][]KeyRange
+	PartitionIDs          []int64
 }

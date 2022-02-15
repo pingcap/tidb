@@ -823,23 +823,22 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		}
 		ret, err := buildBatchCopTasks(bo, b.store, []*KeyRanges{NewKeyRanges(ranges)}, b.req.StoreType, nil, 0, false, 0, nil)
 		return ret, err
-	} else {
-		// Retry Partition Table Scan
-		var keyRanges = make([]*KeyRanges, len(batchTask.PartitionTableRegions))
-		var pid []int64
-		for _, trs := range batchTask.PartitionTableRegions {
-			pid = append(pid, trs.PhysicalTableId)
-			ranges := make([]kv.KeyRange, len(trs.Regions))
-			for _, ri := range batchTask.regionInfos {
-				ri.Ranges.Do(func(ran *kv.KeyRange) {
-					ranges = append(ranges, *ran)
-				})
-			}
-			keyRanges = append(keyRanges, NewKeyRanges(ranges))
-		}
-		ret, err := buildBatchCopTasks(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid)
-		return ret, err
 	}
+	// Retry Partition Table Scan
+	var keyRanges = make([]*KeyRanges, len(batchTask.PartitionTableRegions))
+	var pid []int64
+	for _, trs := range batchTask.PartitionTableRegions {
+		pid = append(pid, trs.PhysicalTableId)
+		ranges := make([]kv.KeyRange, len(trs.Regions))
+		for _, ri := range batchTask.regionInfos {
+			ri.Ranges.Do(func(ran *kv.KeyRange) {
+				ranges = append(ranges, *ran)
+			})
+		}
+		keyRanges = append(keyRanges, NewKeyRanges(ranges))
+	}
+	ret, err := buildBatchCopTasks(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid)
+	return ret, err
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
