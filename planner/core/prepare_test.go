@@ -1587,6 +1587,18 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test _tidb_rowid
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9);")
+	tk.MustExec(`prepare stmt from 'select * from t where _tidb_rowid = ?'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 8"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 7"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestIssue29565(t *testing.T) {
