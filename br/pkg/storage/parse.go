@@ -17,8 +17,9 @@ import (
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-	S3  S3BackendOptions  `json:"s3" toml:"s3"`
-	GCS GCSBackendOptions `json:"gcs" toml:"gcs"`
+	S3     S3BackendOptions     `json:"s3" toml:"s3"`
+	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
+	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
 }
 
 // ParseRawURL parse raw url to url object.
@@ -57,6 +58,10 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		local := &backuppb.Local{Path: u.Path}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Local{Local: local}}, nil
 
+	case "hdfs":
+		hdfs := &backuppb.HDFS{Remote: rawURL}
+		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Hdfs{Hdfs: hdfs}}, nil
+
 	case "noop":
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
@@ -91,6 +96,20 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Gcs{Gcs: gcs}}, nil
 
+	case "azure", "azblob":
+		if u.Host == "" {
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", rawURL)
+		}
+		prefix := strings.Trim(u.Path, "/")
+		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
+		if options == nil {
+			options = &BackendOptions{}
+		}
+		ExtractQueryParameters(u, &options.Azblob)
+		if err := options.Azblob.apply(azblob); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_AzureBlobStorage{AzureBlobStorage: azblob}}, nil
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)
 	}
@@ -166,6 +185,10 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Scheme = "gcs"
 		u.Host = b.Gcs.Bucket
 		u.Path = b.Gcs.Prefix
+	case *backuppb.StorageBackend_AzureBlobStorage:
+		u.Scheme = "azure"
+		u.Host = b.AzureBlobStorage.Bucket
+		u.Path = b.AzureBlobStorage.Prefix
 	}
 	return
 }

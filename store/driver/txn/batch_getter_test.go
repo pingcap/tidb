@@ -22,8 +22,6 @@ import (
 )
 
 func TestBufferBatchGetter(t *testing.T) {
-	t.Parallel()
-
 	snap := newMockStore()
 	ka := []byte("a")
 	kb := []byte("b")

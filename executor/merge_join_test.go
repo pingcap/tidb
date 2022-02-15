@@ -726,6 +726,10 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 	))
 }
 
+type testSuiteJoin3 struct {
+	*baseTestSuite
+}
+
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
@@ -847,7 +851,6 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 func (s *testSuiteJoin3) TestVectorizedShuffleMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
-	tk.MustExec("use test")
 	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {

@@ -118,14 +118,13 @@ var (
 	}
 
 	// defaultPDCfg find by https://github.com/tikv/pd/blob/master/conf/config.toml.
+	// only use for debug command.
 	defaultPDCfg = map[string]interface{}{
 		"max-merge-region-keys":       200000,
 		"max-merge-region-size":       20,
 		"leader-schedule-limit":       4,
 		"region-schedule-limit":       2048,
-		"max-snapshot-count":          3,
 		"enable-location-replacement": "true",
-		"max-pending-peer-count":      16,
 	}
 )
 
@@ -704,7 +703,9 @@ func (p *PdController) doRemoveSchedulersWith(
 // Close close the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
-	close(p.schedulerPauseCh)
+	if p.schedulerPauseCh != nil {
+		close(p.schedulerPauseCh)
+	}
 }
 
 // FetchPDVersion get pd version

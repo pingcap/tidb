@@ -15,10 +15,13 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
@@ -29,46 +32,59 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testExpressionSuite) TestGetTimeValue(c *C) {
+func TestGetTimeValue(t *testing.T) {
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue := v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-	sessionVars := ctx.GetSessionVars()
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	c.Assert(err, IsNil)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+	sessionVars := ctx.GetSessionVars()
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
+	require.NoError(t, err)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	c.Assert(err, IsNil)
+	require.Error(t, err, "Incorrect argument type to variable 'timestamp'")
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
+	// trigger the stmt context cache.
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
+	require.NoError(t, err)
+
+	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, v1, v2)
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tbl := []struct {
+	tbls := []struct {
 		Expr interface{}
 		Ret  interface{}
 	}{
@@ -82,16 +98,16 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
 	}
 
-	for i, t := range tbl {
-		comment := Commentf("expr: %d", i)
-		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
-		c.Assert(err, IsNil)
+	for i, tbl := range tbls {
+		comment := fmt.Sprintf("expr: %d", i)
+		v, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp)
+		require.NoError(t, err)
 
 		switch v.Kind() {
 		case types.KindMysqlTime:
-			c.Assert(v.GetMysqlTime().String(), DeepEquals, t.Ret, comment)
+			require.EqualValues(t, tbl.Ret, v.GetMysqlTime().String(), comment)
 		default:
-			c.Assert(v.GetValue(), DeepEquals, t.Ret, comment)
+			require.EqualValues(t, tbl.Ret, v.GetValue(), comment)
 		}
 	}
 
@@ -105,13 +121,13 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
 	}
 
-	for _, t := range errTbl {
-		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, types.MinFsp)
-		c.Assert(err, NotNil)
+	for _, tbl := range errTbl {
+		_, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp)
+		require.Error(t, err)
 	}
 }
 
-func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
+func TestIsCurrentTimestampExpr(t *testing.T) {
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -121,42 +137,44 @@ func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 	}
 
 	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), nil)
-	c.Assert(v, IsFalse)
+	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
-	c.Assert(v, IsTrue)
+	require.True(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
-	c.Assert(v, IsTrue)
+	require.True(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
-	c.Assert(v, IsFalse)
+	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
-	c.Assert(v, IsFalse)
+	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
-	c.Assert(v, IsFalse)
+	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
-	c.Assert(v, IsFalse)
+	require.False(t, v)
 }
 
-func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
+func TestCurrentTimestampTimeZone(t *testing.T) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 
 	err := variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = variable.SetSessionSystemVar(sessionVars, "time_zone", "+00:00")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+	require.NoError(t, err)
+	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 0, 20, 34, 0),
-		mysql.TypeTimestamp, types.DefaultFsp))
+		mysql.TypeTimestamp, types.DefaultFsp),
+		v.GetMysqlTime())
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
 	err = variable.SetSessionSystemVar(sessionVars, "time_zone", "+08:00")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+	require.NoError(t, err)
+	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 8, 20, 34, 0),
-		mysql.TypeTimestamp, types.DefaultFsp))
+		mysql.TypeTimestamp, types.DefaultFsp),
+		v.GetMysqlTime())
 }

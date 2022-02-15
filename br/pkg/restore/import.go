@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -166,6 +168,8 @@ func (ic *importClient) GetImportClient(
 		ctx,
 		addr,
 		opt,
+		grpc.WithBlock(),
+		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
@@ -261,6 +265,8 @@ func (importer *FileImporter) Import(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
+	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 ) error {
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
@@ -312,9 +318,9 @@ func (importer *FileImporter) Import(
 				for i, f := range remainFiles {
 					var downloadMeta *import_sstpb.SSTMeta
 					if importer.isRawKvMode {
-						downloadMeta, e = importer.downloadRawKVSST(ctx, info, f)
+						downloadMeta, e = importer.downloadRawKVSST(ctx, info, f, cipher, apiVersion)
 					} else {
-						downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules)
+						downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules, cipher)
 					}
 					failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
 						msg := val.(string)
@@ -451,6 +457,7 @@ func (importer *FileImporter) downloadSST(
 	regionInfo *RegionInfo,
 	file *backuppb.File,
 	rewriteRules *RewriteRules,
+	cipher *backuppb.CipherInfo,
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
@@ -470,28 +477,50 @@ func (importer *FileImporter) downloadSST(
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
 		RewriteRule:    rule,
+		CipherInfo:     cipher,
 	}
 	log.Debug("download SST",
 		logutil.SSTMeta(&sstMeta),
 		logutil.File(file),
 		logutil.Region(regionInfo.Region),
+		logutil.Leader(regionInfo.Leader),
 	)
-	var resp *import_sstpb.DownloadResponse
-	for _, peer := range regionInfo.Region.GetPeers() {
-		var err error
-		resp, err = importer.importClient.DownloadSST(ctx, peer.GetStoreId(), req)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resp.GetError() != nil {
-			return nil, errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
-		}
-		if resp.GetIsEmpty() {
-			return nil, errors.Trace(berrors.ErrKVRangeIsEmpty)
-		}
+
+	var atomicResp atomic.Value
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, p := range regionInfo.Region.GetPeers() {
+		peer := p
+		eg.Go(func() error {
+			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if resp.GetError() != nil {
+				return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+			}
+			if resp.GetIsEmpty() {
+				return errors.Trace(berrors.ErrKVRangeIsEmpty)
+			}
+
+			log.Debug("download from peer",
+				logutil.Region(regionInfo.Region),
+				logutil.Peer(peer),
+				logutil.Key("resp-range-start", resp.Range.Start),
+				logutil.Key("resp-range-end", resp.Range.Start),
+				zap.Bool("resp-isempty", resp.IsEmpty),
+				zap.Uint32("resp-crc32", resp.Crc32),
+			)
+			atomicResp.Store(resp)
+			return nil
+		})
 	}
-	sstMeta.Range.Start = truncateTS(resp.Range.GetStart())
-	sstMeta.Range.End = truncateTS(resp.Range.GetEnd())
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
+	sstMeta.Range.Start = truncateTS(downloadResp.Range.GetStart())
+	sstMeta.Range.End = truncateTS(downloadResp.Range.GetEnd())
 	return &sstMeta, nil
 }
 
@@ -499,6 +528,8 @@ func (importer *FileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *RegionInfo,
 	file *backuppb.File,
+	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
@@ -525,24 +556,39 @@ func (importer *FileImporter) downloadRawKVSST(
 		Name:           file.GetName(),
 		RewriteRule:    rule,
 		IsRawKv:        true,
+		CipherInfo:     cipher,
 	}
 	log.Debug("download SST", logutil.SSTMeta(&sstMeta), logutil.Region(regionInfo.Region))
-	var err error
-	var resp *import_sstpb.DownloadResponse
-	for _, peer := range regionInfo.Region.GetPeers() {
-		resp, err = importer.importClient.DownloadSST(ctx, peer.GetStoreId(), req)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resp.GetError() != nil {
-			return nil, errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
-		}
-		if resp.GetIsEmpty() {
-			return nil, errors.Trace(berrors.ErrKVRangeIsEmpty)
-		}
+
+	var atomicResp atomic.Value
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, p := range regionInfo.Region.GetPeers() {
+		peer := p
+		eg.Go(func() error {
+			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if resp.GetError() != nil {
+				return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
+			}
+			if resp.GetIsEmpty() {
+				return errors.Trace(berrors.ErrKVRangeIsEmpty)
+			}
+
+			atomicResp.Store(resp)
+			return nil
+		})
 	}
-	sstMeta.Range.Start = resp.Range.GetStart()
-	sstMeta.Range.End = resp.Range.GetEnd()
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
+	sstMeta.Range.Start = downloadResp.Range.GetStart()
+	sstMeta.Range.End = downloadResp.Range.GetEnd()
+	sstMeta.ApiVersion = apiVersion
 	return &sstMeta, nil
 }
 

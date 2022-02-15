@@ -19,41 +19,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 )
-
-type Charset int
-
-const (
-	Binary Charset = iota
-	UTF8MB4
-	GB18030
-	GBK
-)
-
-func (c Charset) String() string {
-	switch c {
-	case Binary:
-		return "binary"
-	case UTF8MB4:
-		return "utf8mb4"
-	case GB18030:
-		return "gb18030"
-	case GBK:
-		return "gbk"
-	default:
-		return "unknown_charset"
-	}
-}
 
 // CharsetConvertor is used to convert a character set to utf8mb4 encoding.
 // In Lightning, we mainly use it to do the GB18030/GBK -> UTF8MB4 conversion.
 type CharsetConvertor struct {
 	// sourceCharacterSet represents the charset that the data source uses.
-	sourceCharacterSet Charset
+	sourceCharacterSet config.Charset
 	// invalidCharReplacement is the default replacement character bytes for the invalid content, e.g "\ufffd".
 	invalidCharReplacement string
 
@@ -63,14 +39,10 @@ type CharsetConvertor struct {
 
 // NewCharsetConvertor creates a new CharsetConvertor.
 func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*CharsetConvertor, error) {
-	sourceCharacterSet, err := loadCharsetFromConfig(dataCharacterSet)
+	sourceCharacterSet, err := config.ParseCharset(dataCharacterSet)
 	if err != nil {
 		return nil, err
 	}
-	log.L().Warn(
-		"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
-		zap.String("source-character-set", sourceCharacterSet.String()),
-		zap.ByteString("invalid-char-replacement", []byte(dataInvalidCharReplace)))
 	cc := &CharsetConvertor{
 		sourceCharacterSet,
 		dataInvalidCharReplace,
@@ -87,29 +59,14 @@ func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*Char
 	return cc, nil
 }
 
-func loadCharsetFromConfig(dataCharacterSet string) (Charset, error) {
-	switch dataCharacterSet {
-	case "", "binary":
-		return Binary, nil
-	case "utf8mb4":
-		return UTF8MB4, nil
-	case "gb18030":
-		return GB18030, nil
-	case "gbk":
-		return GBK, nil
-	default:
-		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
-	}
-}
-
 func (cc *CharsetConvertor) initDecoder() error {
 	switch cc.sourceCharacterSet {
-	case Binary, UTF8MB4:
+	case config.Binary, config.UTF8MB4:
 		return nil
-	case GB18030:
+	case config.GB18030:
 		cc.decoder = simplifiedchinese.GB18030.NewDecoder()
 		return nil
-	case GBK:
+	case config.GBK:
 		cc.decoder = simplifiedchinese.GBK.NewDecoder()
 		return nil
 	}
@@ -118,19 +75,17 @@ func (cc *CharsetConvertor) initDecoder() error {
 
 func (cc *CharsetConvertor) initEncoder() error {
 	switch cc.sourceCharacterSet {
-	case Binary, UTF8MB4:
+	case config.Binary, config.UTF8MB4:
 		return nil
-	case GB18030:
+	case config.GB18030:
 		cc.encoder = simplifiedchinese.GB18030.NewEncoder()
 		return nil
-	case GBK:
+	case config.GBK:
 		cc.encoder = simplifiedchinese.GBK.NewEncoder()
 		return nil
 	}
 	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 }
-
-var utf8RuneErrorStr = string(utf8.RuneError)
 
 // Decode does the charset conversion work from sourceCharacterSet to utf8mb4.
 // It will return a string as the conversion result whose length may be less or greater
@@ -151,7 +106,7 @@ func (cc *CharsetConvertor) Decode(src string) (string, error) {
 func (cc *CharsetConvertor) precheck(src string) bool {
 	// No need to convert the charset encoding, just return the original data.
 	if len(src) == 0 || cc == nil ||
-		cc.sourceCharacterSet == Binary || cc.sourceCharacterSet == UTF8MB4 ||
+		cc.sourceCharacterSet == config.Binary || cc.sourceCharacterSet == config.UTF8MB4 ||
 		cc.decoder == nil || cc.encoder == nil {
 		return false
 	}

@@ -16,7 +16,7 @@ store = "unistore"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-socket = ""
+socket = "/tmp/tidb-{Port}.sock"
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
@@ -109,7 +109,7 @@ repair-table-list = []
 max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
-new_collations_enabled_on_first_bootstrap = false
+new_collations_enabled_on_first_bootstrap = true
 
 # Don't register information of this TiDB to etcd, so this instance of TiDB won't appear in the services like dashboard.
 # This option is useful when you want to embed TiDB into your service(i.e. use TiDB as a library).
@@ -205,7 +205,9 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
-# Automatic creation of TLS certificates
+# Automatic creation of TLS certificates.
+# Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
+# If this config is commented/missed, the value would be 'false' for the compatibility with TiDB versions that does not support it.
 auto-tls = true
 
 # Minium TLS version to use, e.g. "TLSv1.2"
@@ -290,7 +292,7 @@ distinct-agg-push-down = false
 # If using TiKV as the storage, the entry represents a key/value pair.
 # NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
 # this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
-# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
+# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 1099511627776(1T).
 txn-total-size-limit = 104857600
 
 # The limitation of the size in byte for each entry in one transaction.
@@ -302,9 +304,6 @@ committer-concurrency = 128
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
-
-# the interval duration between two memory profile into global tracker
-mem-profile-interval = "1m"
 
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
@@ -321,7 +320,7 @@ header-timeout = 5
 
 [prepared-plan-cache]
 enabled = false
-capacity = 100
+capacity = 1000
 memory-guard-ratio = 0.1
 
 [opentracing]
@@ -461,28 +460,11 @@ deadlock-history-capacity = 10
 # Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 deadlock-history-collect-retryable = false
 
-[stmt-summary]
-# enable statement summary.
-enable = true
-
-# enable statement summary for TiDB internal query, default is false.
-enable-internal-query = false
-
-# max number of statements kept in memory.
-max-stmt-count = 3000
-
-# max length of displayed normalized sql and sample sql.
-max-sql-length = 4096
-
-# the refresh interval of statement summary, it's counted in seconds.
-refresh-interval = 1800
-
-# the maximum history size of statement summary.
-history-size = 24
-
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

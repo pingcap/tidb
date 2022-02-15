@@ -111,7 +111,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -125,7 +125,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -453,6 +453,27 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
+
+	tk.MustExec("SET SESSION character_set_server='ascii'")
+	tk.MustExec("SET SESSION collation_server='ascii_bin'")
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
+	))
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test collate utf8mb4_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */",
+	))
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset utf8mb4;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -515,7 +536,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -543,7 +564,7 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -648,25 +669,6 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
 
-}
-
-func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
-	tk.MustExec(testSQL)
-
-	testSQL = `use test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-
-	testSQL = `drop database test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows(mysql.DefaultCharset))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(mysql.DefaultCollationName))
 }
 
 func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
@@ -1184,7 +1186,7 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1218,12 +1220,12 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '129'"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("128"))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
 }
 
-func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1465,6 +1467,10 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1542,6 +1548,11 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+	tk.MustExec("drop database if exists rename4")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1556,14 +1567,14 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("insert rename2.t2 values ()")
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename4.t4 values ()")
-	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "5001"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "5001"))
 	// Rename a table to another table in the same database.
 	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
 	tk.MustExec("insert rename2.t1 values ()")
-	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("insert rename4.t3 values ()")
-	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename4")
 

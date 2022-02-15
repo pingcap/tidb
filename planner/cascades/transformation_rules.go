@@ -442,7 +442,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
 		&plannercore.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
@@ -453,7 +453,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := plannercore.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
@@ -920,7 +920,7 @@ func (r *pushDownJoin) predicatePushDown(
 			leftCond = append(join.LeftConditions, derivedLeftJoinCond...)
 			join.LeftConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, leftPushCond...)
+			remainCond = append(remainCond, leftPushCond...) // nozero
 		} else {
 			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
 			// Only derive left where condition, because right where condition cannot be pushed down
@@ -931,7 +931,7 @@ func (r *pushDownJoin) predicatePushDown(
 			rightCond = append(join.RightConditions, derivedRightJoinCond...)
 			join.RightConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, rightPushCond...)
+			remainCond = append(remainCond, rightPushCond...) // nozero
 		}
 	default:
 		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -278,8 +279,6 @@ func (dagBuilder *dagBuilder) build() *tipb.DAGRequest {
 
 // see tikv/src/coprocessor/util.rs for more detail
 func TestIsPrefixNext(t *testing.T) {
-	t.Parallel()
-
 	require.True(t, isPrefixNext([]byte{}, []byte{0}))
 	require.True(t, isPrefixNext([]byte{0}, []byte{1}))
 	require.True(t, isPrefixNext([]byte{1}, []byte{2}))
@@ -294,8 +293,6 @@ func TestIsPrefixNext(t *testing.T) {
 }
 
 func TestPointGet(t *testing.T) {
-	t.Parallel()
-
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
@@ -339,17 +336,15 @@ func TestPointGet(t *testing.T) {
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
+	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
-	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
+	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }
 
 func TestClosureExecutor(t *testing.T) {
-	t.Parallel()
-
 	data := prepareTestTableData(t, keyNumber, tableID)
 	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
 	defer clean()
@@ -437,10 +432,8 @@ func (ts *testStore) commit(keys [][]byte, startTS, commitTS uint64) error {
 }
 
 func newTestStore(t *testing.T, dbPrefix string, logPrefix string) (*testStore, func()) {
-	dbPath, err := os.MkdirTemp("", dbPrefix)
-	require.NoError(t, err)
-	LogPath, err := os.MkdirTemp("", logPrefix)
-	require.NoError(t, err)
+	dbPath := t.TempDir()
+	LogPath := t.TempDir()
 	db, err := createTestDB(dbPath, LogPath)
 	require.NoError(t, err)
 	// Some raft store path problems could not be found using simple store in tests

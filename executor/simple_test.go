@@ -38,25 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite3) TestCharsetDatabase(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
-	tk.MustExec(testSQL)
-
-	testSQL = `create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
-	tk.MustExec(testSQL)
-
-	testSQL = `use cd_test_utf8;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_bin"))
-
-	testSQL = `use cd_test_latin1;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-}
-
 func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
@@ -387,7 +368,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(dropUserSQL)
 
 	// Test alter user.
-	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
@@ -399,6 +380,10 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
+	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
+	result.Check(testkit.Rows("auth_socket"))
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
@@ -496,6 +481,35 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(renameUserSQL)
 	querySQL = `select user,host from mysql.user where user = 'userD';`
 	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
+
+	createUserSQL = `create user foo@localhost identified with 'foobar';`
+	_, err = tk.Exec(createUserSQL)
+	c.Check(terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec(`create user joan;`)
+	tk.MustExec(`create user sally;`)
+	tk.MustExec(`create role engineering;`)
+	tk.MustExec(`create role consultants;`)
+	tk.MustExec(`create role qa;`)
+	tk.MustExec(`grant engineering to joan;`)
+	tk.MustExec(`grant engineering to sally;`)
+	tk.MustExec(`grant engineering, consultants to joan, sally;`)
+	tk.MustExec(`grant qa to consultants;`)
+	tk.MustExec("CREATE ROLE `engineering`@`US`;")
+	tk.MustExec("create role `engineering`@`INDIA`;")
+	_, err = tk.Exec("grant `engineering`@`US` TO `engineering`@`INDIA`;")
+	c.Check(err, IsNil)
+
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'india'").
+		Check(testkit.Rows("engineering india"))
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
+		Check(testkit.Rows("engineering us"))
+
+	tk.MustExec("drop role engineering@INDIA;")
+	tk.MustExec("drop role engineering@US;")
+
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'india'").Check(testkit.Rows())
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
@@ -510,6 +524,11 @@ func (s *testSuite3) TestSetPwd(c *C) {
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("password")))
+
+	tk.MustExec(`CREATE USER 'testpwdsock'@'localhost' IDENTIFIED WITH 'auth_socket';`)
+	tk.MustExec(`SET PASSWORD FOR 'testpwdsock'@'localhost' = 'password';`)
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Note 1699 SET PASSWORD has no significance for user 'testpwdsock'@'localhost' as authentication plugin does not support it."))
 
 	// set password
 	setPwdSQL := `SET PASSWORD = 'pwd'`
@@ -920,4 +939,53 @@ func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
+}
+
+func (s *testSuite3) TestShowGrantsAfterDropRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER u29473")
+	defer tk.MustExec("DROP USER IF EXISTS u29473")
+
+	tk.MustExec("CREATE ROLE r29473")
+	tk.MustExec("GRANT r29473 TO u29473")
+	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
+	tk.MustExec("SET ROLE r29473")
+	tk.MustExec("DROP ROLE r29473")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
+}
+
+func (s *testSuite3) TestDropRoleAfterRevoke(c *C) {
+	// issue 29781
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+
+	tk.MustExec("create role r1, r2, r3;")
+	defer tk.MustExec("drop role if exists r1, r2, r3;")
+	tk.MustExec("grant r1,r2,r3 to current_user();")
+	tk.MustExec("set role all;")
+	tk.MustExec("revoke r1, r3 from root;")
+	tk.MustExec("drop role r1;")
+}
+
+func (s *testSuiteWithCliBaseCharset) TestUserWithSetNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set names gbk;")
+
+	tk.MustExec("drop user if exists '\xd2\xbb'@'localhost';")
+	tk.MustExec("create user '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb';")
+
+	result := tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一")))
+
+	tk.MustExec("ALTER USER '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb\xd2\xbb';")
+	result = tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一一")))
+
+	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
+
+	tk.MustExec("drop user '\xd2\xbb';")
 }

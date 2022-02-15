@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testdata
@@ -147,6 +148,25 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
 		}
 	}
+	td.output[casesIdx].decodedOut = out
+}
+
+// GetTestCasesByName gets the test cases for a test function by its name.
+func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
+	casesIdx, ok := td.funcMap[caseName]
+	require.Truef(t, ok, "Case name: %s", caseName)
+	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
+
+	if Record() {
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	} else {
+		require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+	}
+
 	td.output[casesIdx].decodedOut = out
 }
 

@@ -17,17 +17,19 @@ package expression
 import (
 	"math"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestInetAton(c *C) {
+func TestInetAton(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		Input    interface{}
 		Expected interface{}
@@ -49,16 +51,17 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 
 	dtbl := tblToDtbl(tbl)
 	fc := funcs[ast.InetAton]
-	for _, t := range dtbl {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
-		c.Assert(err, IsNil)
+	for _, tt := range dtbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+		require.NoError(t, err)
+		trequire.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
-func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
+func TestIsIPv4(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     string
 		expect interface{}
@@ -78,46 +81,83 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 	fc := funcs[ast.IsIPv4]
 	for _, test := range tests {
 		ip := types.NewStringDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum(0), r)
 }
 
-func (s *testEvaluatorSuite) TestUUID(c *C) {
-	f, err := newFunctionForTest(s.ctx, ast.UUID)
-	c.Assert(err, IsNil)
+func TestIsUUID(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		uuid   string
+		expect interface{}
+	}{
+		{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
+		{"6CCD780C-BABA-1026-9564-5B8C656024DB", 1},
+		{"6ccd780cbaba102695645b8c656024db", 1},
+		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
+		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
+		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
+		// This is a bug in google/uuid#60
+		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
+		// This is a format google/uuid support, while mysql doesn't
+		{"urn:uuid:99a9ad03-5298-11ec-8f5c-00ff90147ac3", 1},
+	}
+
+	fc := funcs[ast.IsUUID]
+	for _, test := range tests {
+		uuid := types.NewStringDatum(test.uuid)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{uuid}))
+		require.NoError(t, err)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	r, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
+}
+
+func TestUUID(t *testing.T) {
+	ctx := createContext(t)
+	f, err := newFunctionForTest(ctx, ast.UUID)
+	require.NoError(t, err)
 	d, err := f.Eval(chunk.Row{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	parts := strings.Split(d.GetString(), "-")
-	c.Assert(len(parts), Equals, 5)
+	require.Equal(t, 5, len(parts))
 	for i, p := range parts {
 		switch i {
 		case 0:
-			c.Assert(len(p), Equals, 8)
+			require.Equal(t, 8, len(p))
 		case 1:
-			c.Assert(len(p), Equals, 4)
+			require.Equal(t, 4, len(p))
 		case 2:
-			c.Assert(len(p), Equals, 4)
+			require.Equal(t, 4, len(p))
 		case 3:
-			c.Assert(len(p), Equals, 4)
+			require.Equal(t, 4, len(p))
 		case 4:
-			c.Assert(len(p), Equals, 12)
+			require.Equal(t, 12, len(p))
 		}
 	}
-	_, err = funcs[ast.UUID].getFunction(s.ctx, s.datumsToConstants(nil))
-	c.Assert(err, IsNil)
+	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestAnyValue(c *C) {
+func TestAnyValue(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
 		ret interface{}
@@ -128,17 +168,18 @@ func (s *testEvaluatorSuite) TestAnyValue(c *C) {
 		{3.1415926, 3.1415926},
 		{"Hello, World", "Hello, World"},
 	}
-	for _, t := range tbl {
+	for _, tt := range tbl {
 		fc := funcs[ast.AnyValue]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
+func TestIsIPv6(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     string
 		expect interface{}
@@ -152,21 +193,22 @@ func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	fc := funcs[ast.IsIPv6]
 	for _, test := range tests {
 		ip := types.NewStringDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum(0), r)
 }
 
-func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
+func TestInetNtoa(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     int
 		expect interface{}
@@ -181,21 +223,22 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 	fc := funcs[ast.InetNtoa]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
 }
 
-func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
+func TestInet6NtoA(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
 		expect interface{}
@@ -218,21 +261,22 @@ func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
 	fc := funcs[ast.Inet6Ntoa]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
 }
 
-func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
+func TestInet6AtoN(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     string
 		expect interface{}
@@ -248,21 +292,22 @@ func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 	fc := funcs[ast.Inet6Aton]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
 }
 
-func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
+func TestIsIPv4Mapped(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
 		expect interface{}
@@ -276,21 +321,22 @@ func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
 	fc := funcs[ast.IsIPv4Mapped]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(int64(0)))
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum(int64(0)), r)
 }
 
-func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
+func TestIsIPv4Compat(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
 		expect interface{}
@@ -305,21 +351,22 @@ func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
 	fc := funcs[ast.IsIPv4Compat]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+	require.NoError(t, err)
+	trequire.DatumEqual(t, types.NewDatum(0), r)
 }
 
-func (s *testEvaluatorSuite) TestNameConst(c *C) {
+func TestNameConst(t *testing.T) {
+	ctx := createContext(t)
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	du := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}
@@ -330,38 +377,39 @@ func (s *testEvaluatorSuite) TestNameConst(c *C) {
 		asserts func(d types.Datum)
 	}{
 		{"test_int", 3, false, func(d types.Datum) {
-			c.Assert(d.GetInt64(), Equals, int64(3))
+			require.Equal(t, int64(3), d.GetInt64())
 		}},
 		{"test_float", 3.14159, false, func(d types.Datum) {
-			c.Assert(d.GetFloat64(), Equals, 3.14159)
+			require.Equal(t, 3.14159, d.GetFloat64())
 		}},
 		{"test_string", "TiDB", false, func(d types.Datum) {
-			c.Assert(d.GetString(), Equals, "TiDB")
+			require.Equal(t, "TiDB", d.GetString())
 		}},
 		{"test_null", nil, true, func(d types.Datum) {
-			c.Assert(d.Kind(), Equals, types.KindNull)
+			require.Equal(t, types.KindNull, d.Kind())
 		}},
 		{"test_decimal", dec, false, func(d types.Datum) {
-			c.Assert(d.GetMysqlDecimal().String(), Equals, dec.String())
+			require.Equal(t, dec.String(), d.GetMysqlDecimal().String())
 		}},
 		{"test_time", tm, false, func(d types.Datum) {
-			c.Assert(d.GetMysqlTime().String(), Equals, tm.String())
+			require.Equal(t, tm.String(), d.GetMysqlTime().String())
 		}},
 		{"test_duration", du, false, func(d types.Datum) {
-			c.Assert(d.GetMysqlDuration().String(), Equals, du.String())
+			require.Equal(t, du.String(), d.GetMysqlDuration().String())
 		}},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.NameConst, s.primitiveValsToConstants([]interface{}{t.colName, t.arg})...)
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.NameConst, primitiveValsToConstants(ctx, []interface{}{c.colName, c.arg})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		t.asserts(d)
+		require.NoError(t, err)
+		c.asserts(d)
 	}
 }
 
-func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
+func TestUUIDToBin(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
 		expect     interface{}
@@ -435,31 +483,32 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.UUIDToBin, s.primitiveValsToConstants(test.args)...)
-		c.Assert(err, IsNil)
+		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		f, err := newFunctionForTest(ctx, ast.UUIDToBin, primitiveValsToConstants(ctx, test.args)...)
+		require.NoError(t, err)
 
 		result, err := f.Eval(chunk.Row{})
 		if test.getError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else if test.getWarning {
-			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+			require.NoError(t, err)
+			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
+				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+				trequire.DatumEqual(t, types.NewDatum(test.expect), result)
 			}
 		}
 	}
 
-	_, err := funcs[ast.UUIDToBin].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.UUIDToBin].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
+func TestBinToUUID(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
 		expect     string
@@ -505,26 +554,26 @@ func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.BinToUUID, s.primitiveValsToConstants(test.args)...)
-		c.Assert(err, IsNil)
+		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		f, err := newFunctionForTest(ctx, ast.BinToUUID, primitiveValsToConstants(ctx, test.args)...)
+		require.NoError(t, err)
 
 		result, err := f.Eval(chunk.Row{})
 		if test.getError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else if test.getWarning {
-			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+			require.NoError(t, err)
+			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
+				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				c.Assert(result.GetString(), Equals, test.expect)
+				require.Equal(t, test.expect, result.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.BinToUUID].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.BinToUUID].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }

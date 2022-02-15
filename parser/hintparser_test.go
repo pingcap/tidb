@@ -14,7 +14,9 @@
 package parser_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -22,11 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
-var _ = Suite(&testHintParserSuite{})
-
-type testHintParserSuite struct{}
-
-func (s *testHintParserSuite) TestParseHint(c *C) {
+func TestParseHint(t *testing.T) {
 	testCases := []struct {
 		input  string
 		mode   mysql.SQLMode
@@ -35,7 +33,7 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 	}{
 		{
 			input: "",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "MEMORY_QUOTA(8 MB) MEMORY_QUOTA(6 GB)",
@@ -86,39 +84,39 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 		},
 		{
 			input: "QB_NAME(1)",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "QB_NAME('string literal')",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "QB_NAME(many identifiers)",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "QB_NAME(@qb1)",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "QB_NAME(b'10')",
 			errs: []string{
-				`.*Cannot use bit-value literal.*`,
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`Cannot use bit-value literal`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
 			input: "QB_NAME(x'1a')",
 			errs: []string{
-				`.*Cannot use hexadecimal literal.*`,
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`Cannot use hexadecimal literal`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
 			input: "JOIN_FIXED_ORDER() BKA()",
 			errs: []string{
-				`.*Optimizer hint JOIN_FIXED_ORDER is not supported.*`,
-				`.*Optimizer hint BKA is not supported.*`,
+				`Optimizer hint JOIN_FIXED_ORDER is not supported`,
+				`Optimizer hint BKA is not supported`,
 			},
 		},
 		{
@@ -298,36 +296,36 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 		},
 		{
 			input: "unknown_hint()",
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "set_var(timestamp = 1.5)",
 			errs: []string{
-				`.*Cannot use decimal number.*`,
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`Cannot use decimal number`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
 			input: "set_var(timestamp = _utf8mb4'1234')", // Optimizer hint doesn't recognize _charset'strings'.
-			errs:  []string{`.*Optimizer hint syntax error at line 1 .*`},
+			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
 			input: "set_var(timestamp = 9999999999999999999999999999999999999)",
 			errs: []string{
-				`.*integer value is out of range.*`,
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`integer value is out of range`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
 			input: "time_range('2020-02-20 12:12:12',456)",
 			errs: []string{
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
 			input: "time_range(456,'2020-02-20 12:12:12')",
 			errs: []string{
-				`.*Optimizer hint syntax error at line 1 .*`,
+				`Optimizer hint syntax error at line 1 `,
 			},
 		},
 		{
@@ -346,10 +344,11 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 
 	for _, tc := range testCases {
 		output, errs := parser.ParseHint("/*+"+tc.input+"*/", tc.mode, parser.Pos{Line: 1})
-		c.Assert(errs, HasLen, len(tc.errs), Commentf("input = %s,\n... errs = %q", tc.input, errs))
+		require.Lenf(t, errs, len(tc.errs), "input = %s,\n... errs = %q", tc.input, errs)
 		for i, err := range errs {
-			c.Assert(err, ErrorMatches, tc.errs[i], Commentf("input = %s, i = %d", tc.input, i))
+			require.Errorf(t, err, "input = %s, i = %d", tc.input, i)
+			require.Containsf(t, err.Error(), tc.errs[i], "input = %s, i = %d", tc.input, i)
 		}
-		c.Assert(output, DeepEquals, tc.output, Commentf("input = %s,\n... output = %q", tc.input, output))
+		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
 	}
 }

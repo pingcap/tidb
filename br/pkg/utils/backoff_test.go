@@ -4,35 +4,18 @@ package utils_test
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-var _ = Suite(&testBackofferSuite{})
-
-type testBackofferSuite struct {
-	mock *mock.Cluster
-}
-
-func (s *testBackofferSuite) SetUpSuite(c *C) {
-	var err error
-	s.mock, err = mock.NewCluster()
-	c.Assert(err, IsNil)
-}
-
-func (s *testBackofferSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
-
-func (s *testBackofferSuite) TestBackoffWithSuccess(c *C) {
+func TestBackoffWithSuccess(t *testing.T) {
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
@@ -47,11 +30,11 @@ func (s *testBackofferSuite) TestBackoffWithSuccess(c *C) {
 		}
 		return nil
 	}, backoffer)
-	c.Assert(counter, Equals, 3)
-	c.Assert(err, IsNil)
+	require.Equal(t, 3, counter)
+	require.NoError(t, err)
 }
 
-func (s *testBackofferSuite) TestBackoffWithFatalError(c *C) {
+func TestBackoffWithFatalError(t *testing.T) {
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
@@ -69,16 +52,16 @@ func (s *testBackofferSuite) TestBackoffWithFatalError(c *C) {
 		}
 		return nil
 	}, backoffer)
-	c.Assert(counter, Equals, 4)
-	c.Assert(multierr.Errors(err), DeepEquals, []error{
+	require.Equal(t, 4, counter)
+	require.Equal(t, []error{
 		gRPCError,
 		berrors.ErrKVEpochNotMatch,
 		berrors.ErrKVDownloadFailed,
 		berrors.ErrKVRangeIsEmpty,
-	})
+	}, multierr.Errors(err))
 }
 
-func (s *testBackofferSuite) TestBackoffWithFatalRawGRPCError(c *C) {
+func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 	var counter int
 	canceledError := status.Error(codes.Canceled, "context canceled")
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
@@ -86,21 +69,19 @@ func (s *testBackofferSuite) TestBackoffWithFatalRawGRPCError(c *C) {
 		defer func() { counter++ }()
 		return canceledError // nolint:wrapcheck
 	}, backoffer)
-	c.Assert(counter, Equals, 1)
-	c.Assert(multierr.Errors(err), DeepEquals, []error{
-		canceledError,
-	})
+	require.Equal(t, 1, counter)
+	require.Equal(t, []error{canceledError}, multierr.Errors(err))
 }
 
-func (s *testBackofferSuite) TestBackoffWithRetryableError(c *C) {
+func TestBackoffWithRetryableError(t *testing.T) {
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
 		return berrors.ErrKVEpochNotMatch
 	}, backoffer)
-	c.Assert(counter, Equals, 10)
-	c.Assert(multierr.Errors(err), DeepEquals, []error{
+	require.Equal(t, 10, counter)
+	require.Equal(t, []error{
 		berrors.ErrKVEpochNotMatch,
 		berrors.ErrKVEpochNotMatch,
 		berrors.ErrKVEpochNotMatch,
@@ -111,5 +92,70 @@ func (s *testBackofferSuite) TestBackoffWithRetryableError(c *C) {
 		berrors.ErrKVEpochNotMatch,
 		berrors.ErrKVEpochNotMatch,
 		berrors.ErrKVEpochNotMatch,
-	})
+	}, multierr.Errors(err))
+}
+
+func TestPdBackoffWithRetryableError(t *testing.T) {
+	var counter int
+	backoffer := utils.NewPDReqBackoffer()
+	gRPCError := status.Error(codes.Unavailable, "transport is closing")
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		return gRPCError
+	}, backoffer)
+	require.Equal(t, 16, counter)
+	require.Equal(t, []error{
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+	}, multierr.Errors(err))
+}
+
+func TestNewImportSSTBackofferWithSucess(t *testing.T) {
+	var counter int
+	backoffer := utils.NewImportSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 15 {
+			return nil
+		} else {
+			return berrors.ErrKVDownloadFailed
+		}
+	}, backoffer)
+	require.Equal(t, 16, counter)
+	require.NoError(t, err)
+}
+
+func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
+	var counter int
+	backoffer := utils.NewDownloadSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 3 {
+			return context.Canceled
+		} else {
+			return berrors.ErrKVIngestFailed
+		}
+
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.Equal(t, []error{
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		context.Canceled,
+	}, multierr.Errors(err))
 }

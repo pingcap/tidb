@@ -41,5 +41,6 @@ var (
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
 	// It needs to be public for tests.
-	ErrFunctionsNoopImpl = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
 )

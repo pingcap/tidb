@@ -43,7 +43,6 @@ import (
 )
 
 const (
-	SplitRetryTimes       = 8
 	retrySplitMaxWaitTime = 4 * time.Second
 )
 
@@ -56,6 +55,8 @@ var (
 	// the base exponential backoff time
 	// the variable is only changed in unit test for running test faster.
 	splitRegionBaseBackOffTime = time.Second
+	// the max retry times to split regions.
+	splitRetryTimes = 8
 )
 
 // TODO remove this file and use br internal functions
@@ -85,7 +86,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
 	skippedKeys := 0
-	for i := 0; i < SplitRetryTimes; i++ {
+	for i := 0; i < splitRetryTimes; i++ {
 		log.L().Info("split and scatter region",
 			logutil.Key("minKey", minKey),
 			logutil.Key("maxKey", maxKey),

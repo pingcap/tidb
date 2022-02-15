@@ -45,13 +45,13 @@ func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL, func
 }
 
 func TestAddLocalTemporaryTable(t *testing.T) {
-	t.Parallel()
-
 	sctx, ddl, clean := createTestSuite(t)
 	defer clean()
 
 	sessVars := sctx.GetSessionVars()
 
+	db1 := newMockSchema("db1")
+	db2 := newMockSchema("db2")
 	tbl1 := newMockTable("t1")
 	tbl2 := newMockTable("t2")
 
@@ -59,7 +59,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	require.Nil(t, sessVars.TemporaryTableData)
 
 	// insert t1
-	err := ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	err := ddl.CreateLocalTemporaryTable(db1, tbl1)
 	require.NoError(t, err)
 	require.NotNil(t, sessVars.LocalTemporaryTables)
 	require.NotNil(t, sessVars.TemporaryTableData)
@@ -69,7 +69,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	require.Equal(t, got.Meta(), tbl1)
 
 	// insert t2 with data
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
+	err = ddl.CreateLocalTemporaryTable(db1, tbl2)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), tbl2.ID)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t2"))
@@ -87,14 +87,14 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 
 	// insert dup table
 	tbl1x := newMockTable("t1")
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1x)
+	err = ddl.CreateLocalTemporaryTable(db1, tbl1x)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 
 	// insert should be success for same table name in different db
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db2"), tbl1x)
+	err = ddl.CreateLocalTemporaryTable(db2, tbl1x)
 	require.NoError(t, err)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db2"), model.NewCIStr("t1"))
 	require.Equal(t, int64(4), got.Meta().ID)
@@ -108,12 +108,11 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 }
 
 func TestRemoveLocalTemporaryTable(t *testing.T) {
-	t.Parallel()
-
 	sctx, ddl, clean := createTestSuite(t)
 	defer clean()
 
 	sessVars := sctx.GetSessionVars()
+	db1 := newMockSchema("db1")
 
 	// remove when empty
 	err := ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
@@ -121,7 +120,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 
 	// add one table
 	tbl1 := newMockTable("t1")
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	err = ddl.CreateLocalTemporaryTable(db1, tbl1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), tbl1.ID)
 	k := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
@@ -156,12 +155,11 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 }
 
 func TestTruncateLocalTemporaryTable(t *testing.T) {
-	t.Parallel()
-
 	sctx, ddl, clean := createTestSuite(t)
 	defer clean()
 
 	sessVars := sctx.GetSessionVars()
+	db1 := newMockSchema("db1")
 
 	// truncate when empty
 	err := ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
@@ -171,7 +169,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 
 	// add one table
 	tbl1 := newMockTable("t1")
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	err = ddl.CreateLocalTemporaryTable(db1, tbl1)
 	require.Equal(t, int64(1), tbl1.ID)
 	require.NoError(t, err)
 	k := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
@@ -194,7 +192,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 
 	// insert a new tbl
 	tbl2 := newMockTable("t2")
-	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
+	err = ddl.CreateLocalTemporaryTable(db1, tbl2)
 	require.Equal(t, int64(2), tbl2.ID)
 	require.NoError(t, err)
 	k2 := tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(1))
@@ -224,4 +222,8 @@ func newMockTable(tblName string) *model.TableInfo {
 
 	tblInfo := &model.TableInfo{Name: model.NewCIStr(tblName), Columns: []*model.ColumnInfo{c1, c2}, PKIsHandle: true}
 	return tblInfo
+}
+
+func newMockSchema(schemaName string) *model.DBInfo {
+	return &model.DBInfo{ID: 10, Name: model.NewCIStr(schemaName), State: model.StatePublic}
 }

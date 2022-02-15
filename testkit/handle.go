@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -29,8 +30,8 @@ import (
 // MustNewCommonHandle create a common handle with given values.
 func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ch, err := kv.NewCommonHandle(encoded)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	return ch
 }

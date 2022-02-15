@@ -116,6 +116,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 \N	\N	\N	\N	2000-03-03 00:00:00	2003-03-03 00:00:00	03:03:03	[1, 2, 3]
 4	4.4	0.40000	d	\N	\N	\N	\N
 `, outfile, c)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(4))
 
 	tk.MustExec(fmt.Sprintf("select * from t into outfile %q fields terminated by ',' enclosed by '\"' escaped by '#'", outfile))
 	cmpAndRm(`"1","1.1","0.10000","a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"
@@ -123,6 +124,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"
 "4","4.4","0.40000","d",#N,#N,#N,#N
 `, outfile, c)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(4))
 
 	tk.MustExec(fmt.Sprintf("select * from t into outfile %q fields terminated by ',' optionally enclosed by '\"' escaped by '#'", outfile))
 	cmpAndRm(`1,1.1,0.10000,"a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"
@@ -130,6 +132,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"
 4,4.4,0.40000,"d",#N,#N,#N,#N
 `, outfile, c)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(4))
 
 	tk.MustExec(fmt.Sprintf("select * from t into outfile %q fields terminated by ',' optionally enclosed by '\"' escaped by '#' lines terminated by '<<<\n'", outfile))
 	cmpAndRm(`1,1.1,0.10000,"a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"<<<
@@ -137,6 +140,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"<<<
 4,4.4,0.40000,"d",#N,#N,#N,#N<<<
 `, outfile, c)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(4))
 }
 
 func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {

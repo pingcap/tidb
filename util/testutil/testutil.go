@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testutil
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -86,15 +88,16 @@ type datumEqualsChecker struct {
 // the expected value.
 // For example:
 //     c.Assert(value, DatumEquals, NewDatum(42))
+// TODO: please use trequire.DatumEqual to replace this function to migrate to testify
 var DatumEquals check.Checker = &datumEqualsChecker{
 	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
 }
 
-func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
 	defer func() {
 		if v := recover(); v != nil {
 			result = false
-			error = fmt.Sprint(v)
+			errStr = fmt.Sprint(v)
 			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
 				zap.Reflect("r", v),
 				zap.Stack("stack trace"))
@@ -109,7 +112,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic("the second param should be datum")
 	}
 	sc := new(stmtctx.StatementContext)
-	res, err := paramFirst.CompareDatum(sc, &paramSecond)
+	res, err := paramFirst.Compare(sc, &paramSecond, collate.GetBinaryCollator())
 	if err != nil {
 		panic(err)
 	}
@@ -144,6 +147,15 @@ func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*c
 	if !chs.IsCommonHandle {
 		chs.IsCommonHandle = true
 		f(c)
+		chs.IsCommonHandle = false
+	}
+}
+
+// RerunWithCommonHandleEnabledWithoutCheck runs a test function with IsCommonHandle enabled but without check.
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabledWithoutCheck(f func()) {
+	if !chs.IsCommonHandle {
+		chs.IsCommonHandle = true
+		f()
 		chs.IsCommonHandle = false
 	}
 }
@@ -196,7 +208,7 @@ var HandleEquals = &handleEqualsChecker{
 	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
 }
 
-func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
 	if params[0] == nil && params[1] == nil {
 		return true, ""
 	}

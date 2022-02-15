@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // NewOne stands for a number 1.
@@ -345,7 +346,7 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
+	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx, &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}
@@ -389,10 +390,7 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 		terror.Log(err)
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
-	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
-	if err != nil {
-		terror.Log(err)
-	}
+	c.hashcode = codec.HashCode(c.hashcode, c.Value)
 	return c.hashcode
 }
 

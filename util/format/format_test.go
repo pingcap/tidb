@@ -31,8 +31,6 @@ func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect strin
 }
 
 func TestFormat(t *testing.T) {
-	t.Parallel()
-
 	str := "abc%d%%e%i\nx\ny\n%uz\n"
 	buf := &bytes.Buffer{}
 	f := IndentFormatter(buf, "\t")

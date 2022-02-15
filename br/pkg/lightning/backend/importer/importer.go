@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -226,12 +227,16 @@ func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUI
 	return errors.Trace(err)
 }
 
-func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (importer *importer) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 func (importer *importer) WriteRows(

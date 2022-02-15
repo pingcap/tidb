@@ -31,11 +31,11 @@ import (
 // leading and trailing whitespace.
 func Lookup(label string) (e encoding.Encoding, name string) {
 	label = strings.ToLower(strings.Trim(label, "\t\n\r\f "))
-	return lookup(Formatted(label))
+	return lookup(label)
 }
 
-func lookup(label EncodingLabel) (e encoding.Encoding, name string) {
-	enc := encodings[string(label)]
+func lookup(label string) (e encoding.Encoding, name string) {
+	enc := encodings[label]
 	return enc.e, enc.name
 }
 
@@ -261,40 +261,4 @@ var encodings = map[string]struct {
 	"utf-16":              {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"utf-16le":            {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"x-user-defined":      {charmap.XUserDefined, "x-user-defined"},
-}
-
-// FindNextCharacterLength is used in lexer.peek() to determine the next character length.
-func FindNextCharacterLength(label string) func([]byte) int {
-	if f, ok := encodingNextCharacterLength[label]; ok {
-		return f
-	}
-	return nil
-}
-
-var encodingNextCharacterLength = map[string]func([]byte) int{
-	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":   characterLengthGBK,
-	"utf-8": characterLengthUTF8,
-	"binary": func(bs []byte) int {
-		return 1
-	},
-}
-
-func characterLengthGBK(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-		return 1
-	}
-	return 2
-}
-
-func characterLengthUTF8(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return 1
-	} else if bs[0] < 0xe0 {
-		return 2
-	} else if bs[0] < 0xf0 {
-		return 3
-	}
-	return 4
 }

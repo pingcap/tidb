@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,8 +29,6 @@ import (
 )
 
 func TestGroupStringer(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
@@ -54,6 +53,7 @@ func TestGroupStringer(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	for i, sql := range input {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)

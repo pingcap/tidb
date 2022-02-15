@@ -19,11 +19,11 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func dateTimeFromString(s string) types.Time {
@@ -54,37 +54,37 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOtherCases)
+func TestVectorizedBuiltinOtherFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinOtherCases)
 }
 
 func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOtherCases)
 }
 
-func (s *testEvaluatorSuite) TestInDecimal(c *C) {
+func TestInDecimal(t *testing.T) {
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETDecimal)
 	col0 := &Column{RetType: ft, Index: 0}
 	col1 := &Column{RetType: ft, Index: 1}
 	inFunc, err := funcs[ast.In].getFunction(ctx, []Expression{col0, col1})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1024)
 	for i := 0; i < 1024; i++ {
 		d0 := new(types.MyDecimal)
 		d1 := new(types.MyDecimal)
 		v := fmt.Sprintf("%d.%d", rand.Intn(1000), rand.Int31())
-		c.Assert(d0.FromString([]byte(v)), IsNil)
+		require.Nil(t, d0.FromString([]byte(v)))
 		v += "00"
-		c.Assert(d1.FromString([]byte(v)), IsNil)
+		require.Nil(t, d1.FromString([]byte(v)))
 		input.Column(0).AppendMyDecimal(d0)
 		input.Column(1).AppendMyDecimal(d1)
-		c.Assert(input.Column(0).GetDecimal(i).GetDigitsFrac(), Not(Equals), input.Column(1).GetDecimal(i).GetDigitsFrac())
+		require.NotEqual(t, input.Column(0).GetDecimal(i).GetDigitsFrac(), input.Column(1).GetDecimal(i).GetDigitsFrac())
 	}
 	result := chunk.NewColumn(ft, 1024)
-	c.Assert(inFunc.vecEvalInt(input, result), IsNil)
+	require.Nil(t, inFunc.vecEvalInt(input, result))
 	for i := 0; i < 1024; i++ {
-		c.Assert(result.GetInt64(0), Equals, int64(1))
+		require.Equal(t, int64(1), result.GetInt64(0))
 	}
 }

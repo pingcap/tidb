@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -124,12 +126,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 		for _, warn := range warns {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
@@ -190,17 +196,22 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 
+	var (
+		normalizedSQL4PC, digest4PC string
+		selectStmtNode              ast.StmtNode
+	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
-		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		if err != nil || selectStmtNode == nil {
+			normalizedSQL4PC = ""
+			digest4PC = ""
 		}
 	}
 
@@ -218,7 +229,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := stmt.(*ast.SelectStmt); ok {
+	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
+	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
+	// Usually, p.Schema().Len() == 0 means no result. A special case is the 'do' statement, it looks like 'select' but discard the result.
+	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
@@ -235,6 +249,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		SQLDigest4PC:        digest4PC,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -314,7 +330,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
 			vars, id, prepared.SchemaVersion,
 		))
 	}
@@ -338,6 +354,11 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, false, false, err
 	}
+
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+	})
 
 	stmt := &ExecStmt{
 		GoCtx:       ctx,

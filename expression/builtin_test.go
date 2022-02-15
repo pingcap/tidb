@@ -17,33 +17,33 @@ package expression
 import (
 	"reflect"
 	"sync"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	concurrency := 10
-	wg.Add(concurrency)
 	var lock sync.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			di, erri := evalBuiltinFunc(f, chunk.Row{})
 			lock.Lock()
 			if err == nil {
 				d, err = di, erri
 			}
 			lock.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 	return
@@ -85,7 +85,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	return
 }
 
-// tblToDtbl is a util function for test.
+// tblToDtbl is a utility function for test.
 func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
 	tbl := make([]map[string][]types.Datum, l)
@@ -120,43 +120,45 @@ func makeDatums(i interface{}) []types.Datum {
 	return types.MakeDatums(i)
 }
 
-func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
+func TestIsNullFunc(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), v.GetInt64())
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
 }
 
-func (s *testEvaluatorSuite) TestLock(c *C) {
+func TestLock(t *testing.T) {
+	ctx := createContext(t)
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
-	c.Assert(err, IsNil)
+	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums(nil, 1)))
+	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
-	c.Assert(err, IsNil)
+	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), v.GetInt64())
 }
 
-func (s *testEvaluatorSuite) TestDisplayName(c *C) {
-	c.Assert(GetDisplayName(ast.EQ), Equals, "=")
-	c.Assert(GetDisplayName(ast.NullEQ), Equals, "<=>")
-	c.Assert(GetDisplayName(ast.IsTruthWithoutNull), Equals, "IS TRUE")
-	c.Assert(GetDisplayName("abs"), Equals, "abs")
-	c.Assert(GetDisplayName("other_unknown_func"), Equals, "other_unknown_func")
+func TestDisplayName(t *testing.T) {
+	require.Equal(t, "=", GetDisplayName(ast.EQ))
+	require.Equal(t, "<=>", GetDisplayName(ast.NullEQ))
+	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
+	require.Equal(t, "abs", GetDisplayName("abs"))
+	require.Equal(t, "other_unknown_func", GetDisplayName("other_unknown_func"))
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
@@ -185,3 +187,11 @@ var (
 	// MySQL varchar.
 	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
 )
+
+func getInt8Con() Expression {
+	return int8Con.Clone()
+}
+
+func getVarcharCon() Expression {
+	return varcharCon.Clone()
+}

@@ -15,92 +15,94 @@
 package handle_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testStatsSuite) TestDDLAfterLoad(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestDDLAfterLoad(t *testing.T) {
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("analyze table t")
-	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 	recordCount := 1000
 	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 
-	sc := new(stmtctx.StatementContext)
-	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
-	c.Assert(count, Equals, 0.0)
-	count = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
-	c.Assert(int(count), Equals, 333)
+	sctx := mock.NewContext()
+	count := statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
+	require.Equal(t, 0.0, count)
+	count = statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
+	require.Equal(t, 333, int(count))
 }
 
-func (s *testStatsSuite) TestDDLTable(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestDDLTable(t *testing.T) {
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
-	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("truncate table t1")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 }
 
-func (s *testStatsSuite) TestDDLHistogram(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	do := s.do
+func TestDDLHistogram(t *testing.T) {
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
 
 	testKit.MustExec("use test")
@@ -111,69 +113,69 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 
 	testKit.MustExec("alter table t add column c_null int")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	is := do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
-	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV, Equals, int64(0))
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, int64(2), statsTbl.Columns[tableInfo.Columns[2].ID].NullCount)
+	require.Equal(t, int64(0), statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV)
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	is = do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[3].ID)
-	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(2))
-	count, err = statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(1), tableInfo.Columns[3].ID)
-	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(0))
+	require.False(t, statsTbl.Pseudo)
+	sctx := mock.NewContext()
+	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
+	require.NoError(t, err)
+	require.Equal(t, float64(2), count)
+	count, err = statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(1), tableInfo.Columns[3].ID)
+	require.NoError(t, err)
+	require.Equal(t, float64(0), count)
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	is = do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// If we don't use original default value, we will get a pseudo table.
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("alter table t add column c5 varchar(15) DEFAULT '123'")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	is = do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	is = do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsFalse)
+	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")
@@ -185,9 +187,10 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	rs.Check(testkit.Rows("2"))
 }
 
-func (s *testStatsSuite) TestDDLPartition(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestDDLPartition(t *testing.T) {
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -199,66 +202,65 @@ PARTITION BY RANGE ( a ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 		testKit.MustExec(createTable)
-		do := s.do
 		is := do.InfoSchema()
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		c.Assert(err, IsNil)
-		c.Assert(h.Update(is), IsNil)
+		require.NoError(t, err)
+		require.Nil(t, h.Update(is))
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.Pseudo, IsFalse)
+			require.False(t, statsTbl.Pseudo)
 		}
 
 		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
 		testKit.MustExec("analyze table t")
 		testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		is = do.InfoSchema()
-		c.Assert(h.Update(is), IsNil)
+		require.Nil(t, h.Update(is))
 		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.Pseudo, IsFalse)
-			c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
+			require.False(t, statsTbl.Pseudo)
+			require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false))
 		}
 
 		addPartition := "alter table t add partition (partition p4 values less than (26))"
 		testKit.MustExec(addPartition)
-		is = s.do.InfoSchema()
+		is = do.InfoSchema()
 		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		c.Assert(err, IsNil)
-		c.Assert(h.Update(is), IsNil)
+		require.NoError(t, err)
+		require.Nil(t, h.Update(is))
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.Pseudo, IsFalse)
+			require.False(t, statsTbl.Pseudo)
 		}
 
 		truncatePartition := "alter table t truncate partition p4"
 		testKit.MustExec(truncatePartition)
-		is = s.do.InfoSchema()
+		is = do.InfoSchema()
 		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		c.Assert(err, IsNil)
-		c.Assert(h.Update(is), IsNil)
+		require.NoError(t, err)
+		require.Nil(t, h.Update(is))
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.Pseudo, IsFalse)
+			require.False(t, statsTbl.Pseudo)
 		}
 	})
 }

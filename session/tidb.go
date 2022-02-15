@@ -192,13 +192,13 @@ func DisableStats4Test() {
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
-	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
+	sessVars := ctx.GetSessionVars()
 	p := parser.New()
-	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
-	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	stmts, warns, err := p.Parse(src, charset, collation)
+	p.SetParserConfig(sessVars.BuildParserConfig())
+	p.SetSQLMode(sessVars.SQLMode)
+	stmts, warns, err := p.ParseSQL(src, sessVars.GetParseParams()...)
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		sessVars.StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
 		logutil.BgLogger().Warn("compiling",
@@ -319,7 +319,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
 		err := rs.Next(ctx, req)

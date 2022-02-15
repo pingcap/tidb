@@ -18,12 +18,12 @@ import (
 	"math"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
@@ -152,44 +152,44 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 		makeGivenValsOrDefaultGener(arg1s, types.ETInt)}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
+func TestVectorizedBuiltinOpFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinOpCases)
 }
 
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
 }
 
-func (s *testEvaluatorSuite) TestBuiltinUnaryMinusIntSig(c *C) {
+func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETInt)
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsFalse)
+	require.False(t, mysql.HasUnsignedFlag(col0.GetType().Flag))
 	input.AppendInt64(0, 233333)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(-233333))
+	require.Nil(t, f.vecEvalInt(input, result))
+	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendInt64(0, math.MinInt64)
-	c.Assert(f.vecEvalInt(input, result), NotNil)
+	require.NotNil(t, f.vecEvalInt(input, result))
 	input.Column(0).SetNull(0, true)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(result.IsNull(0), IsTrue)
+	require.NoError(t, f.vecEvalInt(input, result))
+	require.True(t, result.IsNull(0))
 
 	col0.GetType().Flag |= mysql.UnsignedFlag
-	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsTrue)
+	require.True(t, mysql.HasUnsignedFlag(col0.GetType().Flag))
 	input.Reset()
 	input.AppendUint64(0, 233333)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(-233333))
+	require.NoError(t, f.vecEvalInt(input, result))
+	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendUint64(0, -(math.MinInt64)+1)
-	c.Assert(f.vecEvalInt(input, result), NotNil)
+	require.NotNil(t, f.vecEvalInt(input, result))
 	input.Column(0).SetNull(0, true)
-	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(result.IsNull(0), IsTrue)
+	require.NoError(t, f.vecEvalInt(input, result))
+	require.True(t, result.IsNull(0))
 }

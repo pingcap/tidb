@@ -19,16 +19,11 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSQLDigestSuite{})
-
-type testSQLDigestSuite struct {
-}
-
-func (s *testSQLDigestSuite) TestNormalize(c *C) {
+func TestNormalize(t *testing.T) {
 	tests := []struct {
 		input  string
 		expect string
@@ -59,10 +54,10 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select * from `table`", "select * from `table`"},
 		{"select * from `30`", "select * from `30`"},
 		{"select * from `select`", "select * from `select`"},
+		{"select * from 🥳", "select * from `🥳`"},
 		// test syntax error, it will be checked by parser, but it should not make normalize dead loop.
 		{"select * from t ignore index(", "select * from `t` ignore index"},
 		{"select /*+ ", "select "},
-		{"select * from 🥳", "select * from"},
 		{"select 1 / 2", "select ? / ?"},
 		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},
@@ -72,15 +67,15 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 	for _, test := range tests {
 		normalized := parser.Normalize(test.input)
 		digest := parser.DigestNormalized(normalized)
-		c.Assert(normalized, Equals, test.expect)
+		require.Equal(t, test.expect, normalized)
 
 		normalized2, digest2 := parser.NormalizeDigest(test.input)
-		c.Assert(normalized2, Equals, normalized)
-		c.Assert(digest2.String(), Equals, digest.String(), Commentf("%+v", test))
+		require.Equal(t, normalized, normalized2)
+		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
 	}
 }
 
-func (s *testSQLDigestSuite) TestNormalizeDigest(c *C) {
+func TestNormalizeDigest(t *testing.T) {
 	tests := []struct {
 		sql        string
 		normalized string
@@ -90,17 +85,17 @@ func (s *testSQLDigestSuite) TestNormalizeDigest(c *C) {
 	}
 	for _, test := range tests {
 		normalized, digest := parser.NormalizeDigest(test.sql)
-		c.Assert(normalized, Equals, test.normalized)
-		c.Assert(digest.String(), Equals, test.digest)
+		require.Equal(t, test.normalized, normalized)
+		require.Equal(t, test.digest, digest.String())
 
 		normalized = parser.Normalize(test.sql)
 		digest = parser.DigestNormalized(normalized)
-		c.Assert(normalized, Equals, test.normalized)
-		c.Assert(digest.String(), Equals, test.digest)
+		require.Equal(t, test.normalized, normalized)
+		require.Equal(t, test.digest, digest.String())
 	}
 }
 
-func (s *testSQLDigestSuite) TestDigestHashEqForSimpleSQL(c *C) {
+func TestDigestHashEqForSimpleSQL(t *testing.T) {
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select * from b where id = '1'", "select * from b where id =2"},
 		{"select 2 from b, c where c.id > 1", "select 4 from b, c where c.id > 23"},
@@ -114,12 +109,12 @@ func (s *testSQLDigestSuite) TestDigestHashEqForSimpleSQL(c *C) {
 				d = dig.String()
 				continue
 			}
-			c.Assert(d, Equals, dig.String())
+			require.Equal(t, dig.String(), d)
 		}
 	}
 }
 
-func (s *testSQLDigestSuite) TestDigestHashNotEqForSimpleSQL(c *C) {
+func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select a from b where id = 1", "select * from d where bid =1"},
 	}
@@ -131,19 +126,19 @@ func (s *testSQLDigestSuite) TestDigestHashNotEqForSimpleSQL(c *C) {
 				d = dig.String()
 				continue
 			}
-			c.Assert(d, Not(Equals), dig.String())
+			require.NotEqual(t, dig.String(), d)
 		}
 	}
 }
 
-func (s *testSQLDigestSuite) TestGenDigest(c *C) {
+func TestGenDigest(t *testing.T) {
 	hash := genRandDigest("abc")
 	digest := parser.NewDigest(hash)
-	c.Assert(digest.String(), Equals, fmt.Sprintf("%x", hash))
-	c.Assert(digest.Bytes(), DeepEquals, hash)
+	require.Equal(t, fmt.Sprintf("%x", hash), digest.String())
+	require.Equal(t, hash, digest.Bytes())
 	digest = parser.NewDigest(nil)
-	c.Assert(digest.String(), Equals, "")
-	c.Assert(digest.Bytes(), IsNil)
+	require.Equal(t, "", digest.String())
+	require.Nil(t, digest.Bytes())
 }
 
 func genRandDigest(str string) []byte {

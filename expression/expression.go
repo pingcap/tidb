@@ -748,6 +748,9 @@ type Assignment struct {
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
 	ColName model.CIStr
 	Expr    Expression
+	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
+	// should be evaluated after the duplicate situation is detected in the executing procedure.
+	LazyErr error
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -938,6 +941,7 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
+// supported functions tracked by https://github.com/tikv/tikv/issues/5751
 func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	switch sf.FuncName.L {
 	case
@@ -948,6 +952,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
 
 		// arithmetical functions.
+		ast.PI, ast.Truncate,
 		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
 
 		// math functions.
@@ -955,15 +960,21 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
-		// ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
+		ast.Trim, ast.FromBase64, ast.ToBase64, /* ast.Upper,  ast.Lower, ast.InsertFunc */
+		ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
+		ast.FindInSet, ast.Repeat,
+		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
+		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
+		ast.Right, ast.Left,
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -972,10 +983,13 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
-		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
-		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
+		ast.DateFormat,                                               /* Date */
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month, /* ast.MonthName */
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
+		ast.Weekday, ast.WeekOfYear, ast.Year, /* ast.YearWeek */
+		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.LastDay,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -988,11 +1002,10 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
-
-	// A special case: Only push down Round by signature
 	case ast.Round:
 		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
 	case ast.Rand:
@@ -1031,18 +1044,29 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
-		ast.Date, ast.Year, ast.Month, ast.Day,
+		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format:
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.LTrim, ast.RTrim,
+		ast.Lpad, ast.Rpad,
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_InDuration,
+			tipb.ScalarFuncSig_CoalesceDuration,
+			tipb.ScalarFuncSig_IfNullDuration,
+			tipb.ScalarFuncSig_IfDuration,
+			tipb.ScalarFuncSig_CaseWhenDuration:
+			return false
+		}
 		return true
 	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex:
 		switch function.Function.PbCode() {
@@ -1063,8 +1087,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
 			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
 			return (sourceType.Tp == retType.Tp && mysql.HasUnsignedFlag(sourceType.Flag) == mysql.HasUnsignedFlag(retType.Flag)) || retType.Tp == mysql.TypeLonglong
-		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
-			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastTimeAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
+		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
+			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
 			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
 			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
@@ -1085,7 +1109,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
+		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt, tipb.ScalarFuncSig_SubDateStringReal:
 			return true
 		}
 	case ast.UnixTimestamp:
@@ -1120,6 +1144,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
 		return true
+	case ast.Sysdate:
+		return true
 	}
 	return false
 }
@@ -1145,6 +1171,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 				failpoint.Return(true)
 			}
 		}
+		failpoint.Return(false)
 	})
 
 	ret := false
@@ -1211,7 +1238,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			if storeType == kv.UnSpecified {
 				storageName = "storage layer"
 			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to " + storageName))
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now."))
 		}
 		return false
 	}
@@ -1237,19 +1264,14 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
-		case mysql.TypeDuration:
+		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+			if expr.GetType().Tp == mysql.TypeEnum && canEnumPush {
+				break
+			}
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
+				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().Tp) + "'."))
 			}
 			return false
-		case mysql.TypeEnum:
-			if !canEnumPush {
-				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
-				}
-				return false
-			}
-		default:
 		}
 	}
 	switch x := expr.(type) {
@@ -1375,6 +1397,16 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 				newCol := col.Clone()
 				newCol.(*Column).RetType = col.RetType.Clone()
 				args[0] = newCol
+			}
+			if col, ok := args[0].(*CorrelatedColumn); ok {
+				newCol := col.Clone()
+				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
+				args[0] = newCol
+			}
+			if args[0].GetType().Tp == mysql.TypeNewDecimal {
+				if newDecimal > mysql.MaxDecimalScale {
+					newDecimal = mysql.MaxDecimalScale
+				}
 			}
 			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
 		}

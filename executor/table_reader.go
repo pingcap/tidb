@@ -111,6 +111,10 @@ type TableReaderExecutor struct {
 
 	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
 	extraPIDColumnIndex offsetOptional
+
+	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
+	// Used by the temporary table, cached table.
+	dummy bool
 }
 
 // offsetOptional may be a positive integer, or invalid.
@@ -126,6 +130,11 @@ func (i offsetOptional) valid() bool {
 
 func (i offsetOptional) value() int {
 	return int(i - 1)
+}
+
+// Table implements the dataSourceExecutor interface.
+func (e *TableReaderExecutor) Table() table.Table {
+	return e.table
 }
 
 // Open initializes necessary variables for using this executor.
@@ -179,7 +188,8 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	// cached table and temporary table are similar
+	if e.dummy {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -217,7 +227,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -262,7 +272,7 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -313,7 +323,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
-	var kvReqs []*kv.Request
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {

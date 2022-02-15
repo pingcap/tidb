@@ -6,6 +6,7 @@ coverage.out
 *.iml
 *.swp
 *.log
+*.test.bin
 tags
 profile.coverprofile
 explain_test
@@ -20,3 +21,11 @@ vendor
 .DS_Store
 .vscode
 bench_daily.json
+coverage.txt
+var
+fix.sql
+export-20*/
+*-coverage.xml
+*-junit-report.xml
+# Files generated when testing
+out

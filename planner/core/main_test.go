@@ -24,14 +24,22 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
+var testDataMap = make(testdata.BookKeeper, 5)
+var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
+	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
+	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
+
+	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
@@ -48,4 +56,20 @@ func TestMain(m *testing.M) {
 
 func GetIntegrationPartitionSuiteData() testdata.TestData {
 	return testDataMap["integration_partition_suite"]
+}
+
+func GetPlanNormalizedSuiteData() testdata.TestData {
+	return testDataMap["plan_normalized_suite"]
+}
+
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
+}
+
+func GetOrderedResultModeSuiteData() testdata.TestData {
+	return testDataMap["ordered_result_mode_suite"]
+}
+
+func GetPointGetPlanData() testdata.TestData {
+	return testDataMap["point_get_plan"]
 }

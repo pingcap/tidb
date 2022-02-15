@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -35,10 +37,16 @@ import (
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper, 1)
+
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
+
+	flag.Parse()
+	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
+
 	SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -46,6 +54,7 @@ func TestMain(m *testing.M) {
 	})
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
+		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -59,9 +68,14 @@ func TestMain(m *testing.M) {
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
+		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetClusteredIndexSuiteData() testdata.TestData {
+	return testDataMap["clustered_index_suite"]
 }
 
 // TODO: remove once `session` tests migrated to testify
