@@ -764,6 +764,15 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	_, err = tk.Exec("select @@local.max_connections")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
+	// Test port
+	tk.MustExec("select @@port")
+	tk.MustExec("select @@global.port")
+	_, err = tk.Exec("select @@session.port")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'port' is a GLOBAL variable")
+	_, err = tk.Exec("select @@local.port")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'port' is a GLOBAL variable")
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
