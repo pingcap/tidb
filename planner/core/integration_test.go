@@ -5528,19 +5528,24 @@ func (s *testIntegrationSuite) TestIssue31240(c *C) {
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	tk.MustQuery("explain format = 'brief' select count(*) from t31240;").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
-		"└─TableReader 1.00 root  data:StreamAgg",
-		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"))
-
-	tk.MustExec("set @@tidb_isolation_read_engines=\"tiflash,tidb\";")
-
-	tk.MustQuery("explain format = 'brief' select count(*) from t31240;").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
-		"└─TableReader 1.00 root  data:StreamAgg",
-		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"))
-
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") {
+			tk.MustExec(tt)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 	tk.MustExec("drop table if exists t31240")
 }
