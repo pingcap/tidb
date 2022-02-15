@@ -194,7 +194,7 @@ func TestShowPlacementForDB(t *testing.T) {
 	defer tk.MustExec("drop database if exists db2")
 
 	err := tk.QueryToErr("show placement for database dbnoexist")
-	require.Equal(t, "[schema:1049]Unknown database 'dbnoexist'", err.Error())
+	require.EqualError(t, err, "[schema:1049]Unknown database 'dbnoexist'")
 
 	tk.MustQuery("show placement for database test").Check(testkit.Rows())
 	tk.MustQuery("show placement for database db2").Check(testkit.Rows(
