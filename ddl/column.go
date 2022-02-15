@@ -450,11 +450,20 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteOnly:
 		// write only -> delete only
 		setColumnsState(colInfos, model.StateDeleteOnly)
-		setIndicesState(idxInfos, model.StateDeleteOnly)
+		if len(idxInfos) > 0 {
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, idxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
@@ -468,17 +477,6 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		if len(idxInfos) > 0 {
-			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-			for _, idx := range tblInfo.Indices {
-				if !indexInfoContains(idx.ID, idxInfos) {
-					newIndices = append(newIndices, idx)
-				}
-			}
-			tblInfo.Indices = newIndices
-		}
-
-		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
@@ -491,7 +489,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
