@@ -82,6 +82,7 @@ func TestError(t *testing.T) {
 		ErrCartesianProductUnsupported,
 		ErrStmtNotFound,
 		ErrAmbiguous,
+		ErrKeyPart0,
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
