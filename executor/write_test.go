@@ -2331,11 +2331,7 @@ func (s *testSuite4) TestLoadDataEscape(c *C) {
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-<<<<<<< HEAD
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-=======
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
->>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)

@@ -376,11 +376,7 @@ func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-<<<<<<< HEAD
-func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
-=======
 func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
->>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -421,15 +417,8 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
-<<<<<<< HEAD
-		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			if !isInQuoter {
-				inQuoter = true
-			}
-=======
 		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
 			inQuoter = !inQuoter
->>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 			atFieldStart = false
 			continue
 		}
@@ -472,40 +461,6 @@ loop:
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
 func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
-<<<<<<< HEAD
-	startingLen := len(e.LinesInfo.Starting)
-	prevData, curData = e.getValidData(prevData, curData)
-	if prevData == nil && len(curData) < startingLen {
-		return nil, curData, false
-	}
-	inquotor := e.isInQuoter(prevData)
-	prevLen := len(prevData)
-	terminatedLen := len(e.LinesInfo.Terminated)
-	curStartIdx := 0
-	if prevLen < startingLen {
-		curStartIdx = startingLen - prevLen
-	}
-	endIdx := -1
-	if len(curData) >= curStartIdx {
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:], inquotor)
-		}
-	}
-	if endIdx == -1 {
-		// no terminated symbol
-		if len(prevData) == 0 {
-			return nil, curData, true
-		}
-
-		// terminated symbol in the middle of prevData and curData
-		curData = append(prevData, curData...)
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
-=======
 	if prevData != nil {
 		curData = append(prevData, curData...)
 	}
@@ -513,7 +468,6 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if startLen != 0 {
 		if len(curData) < startLen {
 			return nil, curData, false
->>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 		}
 		var ok bool
 		curData, ok = e.getValidData(curData)
@@ -525,11 +479,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
 	} else {
-<<<<<<< HEAD
-		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
-=======
 		endIdx = e.indexOfTerminator(curData[startLen:])
->>>>>>> 65365628b... executor: fix load data panic if the data is broken at escape character (#30868)
 	}
 
 	if endIdx == -1 {
