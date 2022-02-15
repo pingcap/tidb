@@ -1881,7 +1881,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	var mu sync.Mutex
 	collectedNotifyCh := make(chan struct{})
 	total := stmtstats.StatementStatsMap{}
-	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
+	mockCollector := newMockCollector(func(data stmtstats.StatementStatsMap) {
 		mu.Lock()
 		defer mu.Unlock()
 		total.Merge(data)
@@ -1889,7 +1889,8 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		case collectedNotifyCh <- struct{}{}:
 		default:
 		}
-	}))
+	})
+	stmtstats.RegisterCollector(mockCollector)
 
 	ts, cleanup := createTidbTestSuite(t)
 
@@ -1917,6 +1918,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	})
 
 	cleanFn := func() {
+		stmtstats.UnregisterCollector(mockCollector)
 		cleanup()
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
 		require.NoError(t, err)
@@ -2052,7 +2054,8 @@ func TestTopSQLStatementStats3(t *testing.T) {
 	cases := []string{
 		"select count(a+b) from stmtstats.t",
 		"select * from stmtstats.t where b is null",
-		//"update stmtstats.t set b = 1 limit 10",
+		"update stmtstats.t set b = 1 limit 10",
+		"delete from stmtstats.t limit 1",
 	}
 	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
