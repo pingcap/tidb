@@ -9422,4 +9422,3 @@ func (s *testSerialSuite) TestIssue29498(c *C) {
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
 }
-
