@@ -22,10 +22,10 @@ type lengthAndDecimal struct {
 // from CREATE TABLE when they are unspecified.
 var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeBit:        {1, 0},
-	TypeTiny:       {4, 0},
-	TypeShort:      {6, 0},
+	TypeTiny:       {3, 0},
+	TypeShort:      {5, 0},
 	TypeInt24:      {9, 0},
-	TypeLong:       {11, 0},
+	TypeLong:       {10, 0},
 	TypeLonglong:   {20, 0},
 	TypeDouble:     {22, -1},
 	TypeFloat:      {12, -1},
