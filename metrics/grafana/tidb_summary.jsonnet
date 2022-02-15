@@ -28,6 +28,12 @@ local newDash = dashboard.new(
   graphTooltip='shared_crosshair',
   refresh='30s',
   time_from='now-1h',
+).addInput(
+  name="DS_TEST-CLUSTER",
+  label="test-cluster",
+  type="datasource",
+  pluginId="prometheus",
+  pluginName="Prometheus"
 );
 
 // Default template for tidb-cloud
