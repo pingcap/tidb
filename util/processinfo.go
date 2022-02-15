@@ -263,13 +263,12 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 }
 
 const (
-	reservedLocalConns     = 200
-	reservedConnMinAnalyze = 1
-	reservedConnMaxAnalyze = 10
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
 )
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
 // TODO support IDs for concurrent auto-analyze
 func GetAutoAnalyzeProcID() uint64 {
-	return reservedConnMinAnalyze
+	return reservedConnAnalyze
 }
