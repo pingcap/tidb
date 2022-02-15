@@ -78,6 +78,7 @@ type tableRestoreSuiteBase struct {
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
+	web.EnableCurrentProgress()
 	// Produce a mock table info
 
 	p := parser.New()
