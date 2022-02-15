@@ -947,7 +947,6 @@ func TestAuthPlugin2(t *testing.T) {
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
