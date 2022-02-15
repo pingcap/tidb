@@ -133,10 +133,7 @@ func (e *PollTiFlashBackoffElement) limit() int {
 
 // NeedGrow returns if we need to grow
 func (e *PollTiFlashBackoffElement) NeedGrow() bool {
-	if e.Counter >= e.limit() {
-		return true
-	}
-	return false
+	return e.Counter >= e.limit()
 }
 
 func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {

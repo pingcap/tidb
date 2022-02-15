@@ -600,8 +600,8 @@ func TestSetPlacementRuleFail(t *testing.T) {
 func TestTiFlashBackoffer(t *testing.T) {
 	var maxTick ddl.TiFlashTick = 10
 	var rate ddl.TiFlashTick = 1.5
-	cap := 2
-	backoff, err := ddl.NewPollTiFlashBackoffContext(1, maxTick, cap, rate)
+	c := 2
+	backoff, err := ddl.NewPollTiFlashBackoffContext(1, maxTick, c, rate)
 	require.NoError(t, err)
 	mustGet := func(ID int64) *ddl.PollTiFlashBackoffElement {
 		e, ok := backoff.Get(ID)
