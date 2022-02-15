@@ -19,7 +19,8 @@ local graphPanel = grafana.graphPanel;
 local prometheus = grafana.prometheus;
 local template = grafana.template;
 
-local myDS = '${DS_TEST-CLUSTER}';
+local myNameFlag = 'DS_TEST-CLUSTER';
+local myDS = '${' + myNameFlag + '}';
 
 // A new dashboard
 local newDash = dashboard.new(
@@ -28,29 +29,31 @@ local newDash = dashboard.new(
   graphTooltip='shared_crosshair',
   refresh='30s',
   time_from='now-1h',
-).addInput(
-  name="DS_TEST-CLUSTER",
-  label="test-cluster",
-  type="datasource",
-  pluginId="prometheus",
-  pluginName="Prometheus"
-);
-
-// Default template for tidb-cloud
-local newTemp = template.new(
-  allValues=null,
-  current=null,
-  datasource=myDS,
-  hide='all',
-  includeAll=false,
-  label='tidb_cluster',
-  multi=false,
-  name='tidb_cluster',
-  query='label_values(pd_cluster_status, tidb_cluster)',
-  refresh='time',
-  regex='',
-  sort=1,
-  tagValuesQuery='',
+)
+.addInput(
+  name=myNameFlag,
+  label='test-cluster',
+  type='datasource',
+  pluginId='prometheus',
+  pluginName='Prometheus',
+)
+.addTemplate(
+  // Default template for tidb-cloud
+  template.new(
+    allValues=null,
+    current=null,
+    datasource=myDS,
+    hide='all',
+    includeAll=false,
+    label='tidb_cluster',
+    multi=false,
+    name='tidb_cluster',
+    query='label_values(pd_cluster_status, tidb_cluster)',
+    refresh='time',
+    regex='',
+    sort=1,
+    tagValuesQuery='',
+  )
 );
 
 // Server row and its panels
@@ -388,8 +391,6 @@ local maxTxnRetryP = graphPanel.new(
   )
 );
 
-local newDashWithTemp = newDash.addTemplate(newTemp);
-
 // Merge together.
 local panelW = 12;
 local panelH = 6;
@@ -401,7 +402,6 @@ local leftPanelPos = {x:0, y:0, w:panelW, h:panelH};
 local rightPanelPos = {x:panelW, y:0, w:panelW, h:panelH};
 
 newDash
-.addTemplate(newTemp)
 .addPanel(
   serverRow
   .addPanel(uptimeP, gridPos=leftPanelPos)

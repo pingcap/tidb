@@ -1,5 +1,14 @@
 {
-   "__inputs": [ ],
+   "__inputs": [
+      {
+         "description": "",
+         "label": "test-cluster",
+         "name": "DS_TEST-CLUSTER",
+         "pluginId": "prometheus",
+         "pluginName": "Prometheus",
+         "type": "datasource"
+      }
+   ],
    "__requires": [ ],
    "annotations": {
       "list": [ ]
