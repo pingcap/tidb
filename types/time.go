@@ -787,7 +787,7 @@ func isValidSeparator(c byte, prevParts int) bool {
 	}
 
 	// for https://github.com/pingcap/tidb/issues/32232
-	if prevParts == 2 && (c == 'T' || c == ' ' || c == 't' || c == 'n' || c == 'v' || c == 'f' || c == 'r') {
+	if prevParts == 2 && (c == 'T' || c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r') {
 		return true
 	}
 
