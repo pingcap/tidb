@@ -734,6 +734,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
+				dVal, err := val.ConvertTo(sc, x.ColsFieldType[i])
+				if err != nil {
+					return err
+				}
+				// The converted result must be same as original datum.
+				cmp, err := dVal.Compare(sc, &val, collate.GetCollator(x.ColsFieldType[i].Collate))
+				if err != nil || cmp != 0 {
+					return errors.New("The parameter for point get can not use plan cache, because the parameter has changed after the covert")
+				}
 				x.IndexValues[i] = val
 			}
 		}

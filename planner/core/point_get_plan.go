@@ -67,6 +67,7 @@ type PointGetPlan struct {
 	handleFieldType    *types.FieldType
 	IndexValues        []types.Datum
 	IndexConstants     []*expression.Constant
+	ColsFieldType      []*types.FieldType
 	IdxCols            []*expression.Column
 	IdxColLens         []int
 	AccessConditions   []expression.Expression
@@ -82,9 +83,10 @@ type PointGetPlan struct {
 }
 
 type nameValuePair struct {
-	colName string
-	value   types.Datum
-	con     *expression.Constant
+	colName      string
+	colFieldType *types.FieldType
+	value        types.Datum
+	con          *expression.Constant
 }
 
 // Schema implements the Plan interface.
@@ -952,7 +954,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 			p.IsTableDual = true
 			return p
 		}
-		idxValues, idxConstant := getIndexValues(idxInfo, pairs)
+		idxValues, idxConstant, colsFieldType := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
 		}
@@ -972,6 +974,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
+		p.ColsFieldType = colsFieldType
 		p.PartitionInfo = partitionInfo
 		if p.PartitionInfo != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
@@ -1236,7 +1239,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
 		if col == nil || // Handling the case when the column is _tidb_rowid.
 			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, con: con}), false
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
@@ -1244,7 +1247,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
-				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, con: con}), true
+				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
 			}
 			// Some scenarios cast to int with error, but we may use this value in point get.
 			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
@@ -1256,7 +1259,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, con: con}), false
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: dVal, con: con}), false
 	}
 	return nil, false
 }
@@ -1319,27 +1322,29 @@ func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair n
 	return handlePair, nil
 }
 
-func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*expression.Constant) {
+func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*expression.Constant, []*types.FieldType) {
 	idxValues := make([]types.Datum, 0, 4)
 	idxConstants := make([]*expression.Constant, 0, 4)
+	colsFieldType := make([]*types.FieldType, 0, 4)
 	if len(idxInfo.Columns) != len(pairs) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if idxInfo.HasPrefixIndex() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	for _, idxCol := range idxInfo.Columns {
 		i := findInPairs(idxCol.Name.L, pairs)
 		if i == -1 {
-			return nil, nil
+			return nil, nil, nil
 		}
 		idxValues = append(idxValues, pairs[i].value)
 		idxConstants = append(idxConstants, pairs[i].con)
+		colsFieldType = append(colsFieldType, pairs[i].colFieldType)
 	}
 	if len(idxValues) > 0 {
-		return idxValues, idxConstants
+		return idxValues, idxConstants, colsFieldType
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func findInPairs(colName string, pairs []nameValuePair) int {
