@@ -22,6 +22,7 @@ DB_NAME=incr
 
 for backend in importer local; do
   run_sql "DROP DATABASE IF EXISTS incr;"
+  run_sql "DROP DATABASE IF EXISTS lightning_metadata;"
   run_lightning --backend $backend
 
   # check metadata table is not exist
