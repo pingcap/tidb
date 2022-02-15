@@ -2480,12 +2480,12 @@
           "    └─HashJoin 12500.00 cop[tiflash]  inner join, equal:[eq(Column#13, Column#14) eq(Column#15, Column#16)]",
           "      ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#21, collate: binary], [name: Column#15, collate: binary]",
-          "      │   └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, Column#13, Column#15, cast(Column#13, decimal(34,8) BINARY)->Column#21",
+          "      │   └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, Column#13, Column#15, cast(Column#13, decimal(32,8) BINARY)->Column#21",
           "      │     └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, mul(test.t.c1, 3)->Column#13, plus(test.t.c1, 1)->Column#15",
           "      │       └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 10000.00 cop[tiflash]  ",
           "        └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#22, collate: binary], [name: Column#16, collate: binary]",
-          "          └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, Column#14, Column#16, cast(Column#14, decimal(34,8) BINARY)->Column#22",
+          "          └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, Column#14, Column#16, cast(Column#14, decimal(32,8) BINARY)->Column#22",
           "            └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, div(test.t.c3, 2)->Column#14, minus(test.t.c2, 10)->Column#16",
           "              └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
         ]
