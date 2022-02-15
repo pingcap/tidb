@@ -370,21 +370,25 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 	repertoire := exprs[0].Repertoire()
 	coercibility := exprs[0].Coercibility()
-	dstCharset, dstCollation, dstIsJSON := exprs[0].GetType().Charset, exprs[0].GetType().Collate, exprs[0].GetType().EvalType() == types.ETJson
+	dstCharset, dstCollation := exprs[0].GetType().Charset, exprs[0].GetType().Collate
+	if exprs[0].GetType().EvalType() == types.ETJson {
+		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+	}
 	unknownCS := false
 
 	// Aggregate arguments one by one, agg(a, b, c) := agg(agg(a, b), c).
 	for _, arg := range exprs[1:] {
+		argCharset, argCollation := arg.GetType().Charset, arg.GetType().Collate
+		// The collation of JSON is always utf8mb4_bin in builtin-func which is same as MySQL
+		// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
+		if arg.GetType().EvalType() == types.ETJson {
+			argCharset, argCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+		}
 		// If one of the arguments is binary charset, we allow it can be used with other charsets.
-		if dstCollation == charset.CollationBin || arg.GetType().Collate == charset.CollationBin {
-			if coercibility > arg.Coercibility() {
-				coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
-			} else if coercibility == arg.Coercibility() && arg.GetType().Collate == charset.CollationBin {
-				// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.
-				// The precedence of MySQL is `binary > json > other`
-				if arg.GetType().EvalType() != types.ETJson || dstCollation != charset.CollationBin {
-					coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
-				}
+		// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.
+		if dstCollation == charset.CollationBin || argCollation == charset.CollationBin {
+			if coercibility > arg.Coercibility() || (coercibility == arg.Coercibility() && argCollation == charset.CollationBin) {
+				coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 			}
 			repertoire |= arg.Repertoire()
 			continue
@@ -397,7 +401,7 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		//		4. constant value is allowed because we can eval and convert it directly.
 		// If we can not aggregate these two collations, we will get CoercibilityNone and wait for an explicit COLLATE clause, if
 		// there is no explicit COLLATE clause, we will get an error.
-		if dstCharset != arg.GetType().Charset {
+		if dstCharset != argCharset {
 			switch {
 			case coercibility < arg.Coercibility():
 				if arg.Repertoire() == ASCII || arg.Coercibility() >= CoercibilitySysconst || isUnicodeCollation(dstCharset) {
@@ -405,15 +409,15 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 					continue
 				}
 			case coercibility == arg.Coercibility():
-				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset)) || (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().Charset == charset.CharsetUTF8) {
+				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(argCharset)) || (dstCharset == charset.CharsetUTF8MB4 && argCharset == charset.CharsetUTF8) {
 					repertoire |= arg.Repertoire()
 					continue
-				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset)) || (arg.GetType().Charset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
-					coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
+				} else if (isUnicodeCollation(argCharset) && !isUnicodeCollation(dstCharset)) || (argCharset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 					repertoire |= arg.Repertoire()
 					continue
 				} else if repertoire == ASCII && arg.Repertoire() != ASCII {
-					coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 					repertoire |= arg.Repertoire()
 					continue
 				} else if repertoire != ASCII && arg.Repertoire() == ASCII {
@@ -421,8 +425,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 					continue
 				}
 			case coercibility > arg.Coercibility():
-				if repertoire == ASCII || coercibility >= CoercibilitySysconst || isUnicodeCollation(arg.GetType().Charset) {
-					coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
+				if repertoire == ASCII || coercibility >= CoercibilitySysconst || isUnicodeCollation(argCharset) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 					repertoire |= arg.Repertoire()
 					continue
 				}
@@ -430,24 +434,24 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 			// Cannot apply conversion.
 			repertoire |= arg.Repertoire()
-			coercibility, dstCharset, dstCollation, dstIsJSON = CoercibilityNone, charset.CharsetBin, charset.CollationBin, false
+			coercibility, dstCharset, dstCollation = CoercibilityNone, charset.CharsetBin, charset.CollationBin
 			unknownCS = true
 		} else {
 			// If charset is the same, use lower coercibility, if coercibility is the same and none of them are _bin,
 			// derive to CoercibilityNone and _bin collation.
 			switch {
 			case coercibility == arg.Coercibility():
-				if dstCollation == arg.GetType().Collate {
+				if dstCollation == argCollation {
 				} else if coercibility == CoercibilityExplicit {
 					return nil
 				} else if isBinCollation(dstCollation) {
-				} else if isBinCollation(arg.GetType().Collate) {
-					coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
+				} else if isBinCollation(argCollation) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 				} else {
-					coercibility, dstCollation, dstCharset, dstIsJSON = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset, arg.GetType().EvalType() == types.ETJson
+					coercibility, dstCharset, dstCollation = CoercibilityNone, argCharset, getBinCollation(argCharset)
 				}
 			case coercibility > arg.Coercibility():
-				coercibility, dstCharset, dstCollation, dstIsJSON = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate, arg.GetType().EvalType() == types.ETJson
+				coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 			}
 			repertoire |= arg.Repertoire()
 		}
@@ -455,12 +459,6 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 	if unknownCS && coercibility != CoercibilityExplicit {
 		return nil
-	}
-
-	// The collation of JSON is always utf8mb4_bin in builtin-func which is same as MySQL
-	// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
-	if dstIsJSON {
-		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
 	}
 
 	return &ExprCollation{
