@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -1139,30 +1140,42 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 
 // ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
 func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
-	ns, _, _ := reader.ReadLine()
-	n, err := strconv.ParseInt(string(ns), 10, 64)
+	b, err := ioutil.ReadAll(reader)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := int64(0); i < n; i++ {
-		rs, _, _ := reader.ReadLine()
-		srs := strings.Trim(string(rs), "\r\n\t")
-		splits := strings.Split(srs, " ")
-		for _, s := range splits {
-			// For (`table`, `store`), has region `r`
-			if s == "" {
-				continue
-			}
-			r, err := strconv.ParseInt(s, 10, 32)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if c, ok := (*regionReplica)[r]; ok {
-				(*regionReplica)[r] = c + 1
-			} else {
-				(*regionReplica)[r] = 1
-			}
+	s := string(b)
+	nsplit := strings.Split(s, "\n")
+	if len(nsplit) < 2 {
+		return errors.New("Error response in ComputeTiFlashStatus")
+	}
+	// The count
+	n, err := strconv.ParseInt(nsplit[0], 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The regions
+	srs := strings.Trim(nsplit[1], "\r\n\t")
+	splits := strings.Split(srs, " ")
+	realN := int64(0)
+	for _, s := range splits {
+		// For (`table`, `store`), has region `r`
+		if s == "" {
+			continue
 		}
+		realN += 1
+		r, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
+		} else {
+			(*regionReplica)[r] = 1
+		}
+	}
+	if n != 0 {
+		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
 	}
 	return nil
 }
