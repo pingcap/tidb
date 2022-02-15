@@ -2054,6 +2054,9 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 }
 
 func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+	if tableID == 0 || version == 0 {
+		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
+	}
 	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
 	if err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
@@ -2083,7 +2086,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		err = finishTransaction(ctx, exec, err)
 	}()
 
-	const sql = "INSERT INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
+	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
 	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version); err != nil {
 		return errors.Trace(err)
 	}
