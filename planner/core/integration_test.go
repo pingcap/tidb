@@ -1122,18 +1122,18 @@ func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_11 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
-		"└─TableReader_12 1.00 root  data:HashAgg_6",
-		"  └─HashAgg_6 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
-		"    └─TableFullScan_10 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
+		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_5 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
-		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
-		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"HashAgg 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
