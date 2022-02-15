@@ -1818,6 +1818,7 @@ var (
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
 
+// SysProcesses holds the sys processes infos
 type SysProcesses struct {
 	sync.RWMutex
 	procMap map[uint64]sessionctx.Context
@@ -1830,10 +1831,9 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 		defer s.Unlock()
 		if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
 			return errors.Errorf("The ID is in use: %v", id)
-		} else {
-			s.procMap[id] = proc
-			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
 		}
+		s.procMap[id] = proc
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
 		return nil
 	}
 	tracker.UnTrackFunc = func(id uint64) {
@@ -1847,20 +1847,22 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 	return tracker
 }
 
-func (d *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
-	d.sysProcesses.RLock()
-	defer d.sysProcesses.RUnlock()
-	copiedMap := make(map[uint64]sessionctx.Context, len(d.sysProcesses.procMap))
-	for id, proc := range d.sysProcesses.procMap {
+// GetSysProcesses gets all of sys processes
+func (do *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
+	do.sysProcesses.RLock()
+	defer do.sysProcesses.RUnlock()
+	copiedMap := make(map[uint64]sessionctx.Context, len(do.sysProcesses.procMap))
+	for id, proc := range do.sysProcesses.procMap {
 		copiedMap[id] = proc
 	}
 	return copiedMap
 }
 
-func (d *Domain) KillSysProcess(id uint64) {
-	d.sysProcesses.Lock()
-	defer d.sysProcesses.Unlock()
-	if proc, ok := d.sysProcesses.procMap[id]; ok {
+// KillSysProcess kills sys process with specified ID
+func (do *Domain) KillSysProcess(id uint64) {
+	do.sysProcesses.Lock()
+	defer do.sysProcesses.Unlock()
+	if proc, ok := do.sysProcesses.procMap[id]; ok {
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
 	}
 }

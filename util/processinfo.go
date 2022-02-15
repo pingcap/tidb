@@ -191,12 +191,14 @@ type GlobalConnID struct {
 	ServerIDGetter func() uint64
 }
 
+// NewGlobalConnID creates GlobalConnID with serverID
 func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
-	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: ReservedLocalConns}
+	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
 }
 
+// NewGlobalConnIDWithGetter creates GlobalConnID with serverIDGetter
 func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
-	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: ReservedLocalConns}
+	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
 }
 
 const (
@@ -261,7 +263,13 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 }
 
 const (
-	ReservedLocalConns     = 200
-	ReservedConnMinAnalyze = 1
-	ReservedConnMaxAnalyze = 10
+	reservedLocalConns     = 200
+	reservedConnMinAnalyze = 1
+	reservedConnMaxAnalyze = 10
 )
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO support IDs for concurrent auto-analyze
+func GetAutoAnalyzeProcID() uint64 {
+	return reservedConnMinAnalyze
+}

@@ -207,6 +207,7 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 	return nil
 }
 
+// SysProcTracker is used to track background sys processes
 type SysProcTracker struct {
 	TrackFunc   func(id uint64, proc Context) error
 	UnTrackFunc func(id uint64)
