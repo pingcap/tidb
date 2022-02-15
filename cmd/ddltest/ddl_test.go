@@ -1019,6 +1019,30 @@ func TestSimpleUpdate(t *testing.T) {
 	})
 }
 
+func TestAddColumn(t *testing.T) {
+	// Related Issue: https://github.com/pingcap/tidb/issues/31968
+	mockStore, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, mockStore)
+
+	tk.MustExec("SET timestamp = 1000")
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 ( c3 INT )")
+	tk.MustExec("INSERT INTO t1 VALUES (1)")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c2 DATETIME(6) DEFAULT NOW(6) ON UPDATE NOW(6) FIRST")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c1 DATETIME(6) DEFAULT NOW(6) FIRST")
+	rows := tk.MustQuery("select * from t1").Sort().Rows()
+	require.Len(t, rows, 1, "Result should has only 1 row")
+	row := rows[0]
+	if c1, ok := row[0].(string); ok {
+		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
+	}
+	if c2, ok := row[1].(string); ok {
+		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
+	}
+}
+
 func TestSimpleDelete(t *testing.T) {
 	s := createDDLSuite(t)
 	defer s.teardown(t)
