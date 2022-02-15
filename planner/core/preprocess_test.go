@@ -16,14 +16,12 @@ package core_test
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
@@ -32,54 +30,25 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testValidatorSuite{})
-
-type testValidatorSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	ctx   sessionctx.Context
-	is    infoschema.InfoSchema
-}
-
-func (s *testValidatorSuite) SetUpTest(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-
-	s.ctx = s.se.(sessionctx.Context)
-
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-}
-
-func (s *testValidatorSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
-	stmts, err1 := session.Parse(s.ctx, sql)
-	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
-	c.Assert(stmts, HasLen, 1)
+func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql string, inPrepare bool, terr error) {
+	stmts, err := session.Parse(ctx, sql)
+	require.NoErrorf(t, err, "sql: %s", sql)
+	require.Len(t, stmts, 1)
 	stmt := stmts[0]
 	var opts []core.PreprocessOpt
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err := core.Preprocess(s.ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))...)
-	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
+	err = core.Preprocess(ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
-func (s *testValidatorSuite) TestValidator(c *C) {
+func TestValidator(t *testing.T) {
 	tests := []struct {
 		sql       string
 		inPrepare bool
@@ -304,42 +273,52 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	_, err := s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
+	_, err = se.Execute(context.Background(), "use test")
+	require.NoError(t, err)
+
+	ctx := se.(sessionctx.Context)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	for _, tt := range tests {
-		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
+		runSQL(t, ctx, is, tt.sql, tt.inPrepare, tt.err)
 	}
 }
 
-func (s *testValidatorSuite) TestForeignKey(c *C) {
-	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
-	c.Assert(err, IsNil)
+func TestForeignKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
-	_, err = s.se.Execute(context.Background(), "create table test.t2(d int)")
-	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
+	require.NoError(t, err)
 
-	_, err = s.se.Execute(context.Background(), "create database test2")
-	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table test.t2(d int)")
+	require.NoError(t, err)
 
-	_, err = s.se.Execute(context.Background(), "create table test2.t(e int)")
-	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create database test2")
+	require.NoError(t, err)
 
-	s.is = s.dom.InfoSchema()
+	_, err = se.Execute(context.Background(), "create table test2.t(e int)")
+	require.NoError(t, err)
 
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
+	ctx := se.(sessionctx.Context)
+	is := dom.InfoSchema()
+	runSQL(t, ctx, is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
 
-	_, err = s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	require.NoError(t, err)
 
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+	runSQL(t, ctx, is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
+	runSQL(t, ctx, is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }
 
-func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
-	ctx := context.Background()
-	execSQLList := []string{
+func TestDropGlobalTempTable(t *testing.T) {
+	sqlList := []string{
 		"use test",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
@@ -348,39 +327,56 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 		"create database test2",
 		"create global temporary table test2.temp2(id int) on commit delete rows;",
 	}
-	for _, execSQL := range execSQLList {
-		_, err := s.se.Execute(ctx, execSQL)
-		c.Assert(err, IsNil)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	for _, sql := range sqlList {
+		_, err := se.Execute(context.Background(), sql)
+		require.NoError(t, err)
 	}
-	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
-	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp", false, nil)
-	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
-	s.runSQL(c, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
-	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
+
+	is := se.GetInfoSchema().(infoschema.InfoSchema)
+	ctx := se.(sessionctx.Context)
+	runSQL(t, ctx, is, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table temp", false, nil)
+	runSQL(t, ctx, is, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table test.temp1", false, nil)
+	runSQL(t, ctx, is, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table temp, temp1", false, nil)
+	runSQL(t, ctx, is, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, ctx, is, "drop global temporary table test2.temp2, temp1", false, nil)
 }
 
-func (s *testValidatorSuite) TestErrKeyPart0(c *C) {
-	_, err := s.se.Execute(context.Background(), "create database TestErrKeyPart")
-	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop database TestErrKeyPart")
-	_, err = s.se.Execute(context.Background(), "use TestErrKeyPart")
-	c.Assert(err, IsNil)
+func TestErrKeyPart0(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
-	_, err = s.se.Execute(context.Background(), "CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
-	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'a' length cannot be 0")
+	_, err = se.Execute(context.Background(), "create database TestErrKeyPart")
+	require.NoError(t, err)
+	defer func() {
+		_, err = se.Execute(context.Background(), "drop database TestErrKeyPart")
+		require.NoError(t, err)
+	}()
 
-	_, err = s.se.Execute(context.Background(), "create table t (a int, b varchar(255), key (b(0)))")
-	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'b' length cannot be 0")
+	_, err = se.Execute(context.Background(), "use TestErrKeyPart")
+	require.NoError(t, err)
 
-	_, err = s.se.Execute(context.Background(), "create table t (a int, b varchar(255))")
-	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	require.EqualError(t, err, "[planner:1391]Key part 'a' length cannot be 0")
 
-	_, err = s.se.Execute(context.Background(), "alter table t add index (b(0))")
-	c.Assert(err, ErrorMatches, ".planner:1391.Key part 'b' length cannot be 0")
+	_, err = se.Execute(context.Background(), "create table t (a int, b varchar(255), key (b(0)))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+
+	_, err = se.Execute(context.Background(), "create table t (a int, b varchar(255))")
+	require.NoError(t, err)
+
+	_, err = se.Execute(context.Background(), "alter table t add index (b(0))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
 }
