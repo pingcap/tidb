@@ -90,7 +90,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	// enable top sql will be translated to enable_resource_metering
 	items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
 	require.NoError(t, err)
-	require.Equal(t, len(items), 1)
+	require.Len(t, items, 1)
 	require.Equal(t, items[0].Name, "/global/config/enable_resource_metering")
 	require.Equal(t, items[0].Value, "true")
 }
