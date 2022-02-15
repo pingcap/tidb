@@ -745,7 +745,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	err := worker.makeJobs(rc.dbMetas, getTableFunc)
 	logTask.End(zap.ErrorLevel, err)
 	if err != nil {
-		return common.NormalizeOrWrapErr(common.ErrCreateSchema, err, "", "")
+		return err
 	}
 
 	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
@@ -769,7 +769,7 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	// Load new checkpoints
 	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
 	if err != nil {
-		return errors.Trace(err)
+		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
 	failpoint.Inject("InitializeCheckpointExit", func() {
 		log.L().Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
@@ -1446,7 +1446,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
-				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -1833,7 +1833,10 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
-	return errors.Annotate(err, "clean checkpoints")
+	if err != nil {
+		return common.ErrCleanCheckpoint.Wrap(err).GenWithStackByArgs()
+	}
+	return nil
 }
 
 func (rc *Controller) isLocalBackend() bool {
@@ -1872,7 +1875,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	// source is in order as row key to decide how to sort local data.
 	source, err := rc.estimateSourceData(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
 	if rc.isLocalBackend() {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
@@ -2362,7 +2365,7 @@ func (cr *chunkRestore) encodeLoop(
 				reachEOF = true
 				break outLoop
 			default:
-				err = errors.Annotatef(err, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				return
 			}
 			readDur += time.Since(readDurStart)
@@ -2376,7 +2379,7 @@ func (cr *chunkRestore) encodeLoop(
 			if encodeErr != nil {
 				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
-				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				hasIgnoredEncodeErr = true
 			}
 			cr.parser.RecycleRow(lastRow)

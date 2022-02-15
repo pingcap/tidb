@@ -177,6 +177,7 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 		DBMetas: rc.dbMetas,
 	}
 	if err := rc.backend.CheckRequirements(ctx, checkCtx); err != nil {
+		err = common.NormalizeError(err)
 		passed = false
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
 	}
