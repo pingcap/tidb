@@ -314,7 +314,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	})
 	failpoint.Inject("mockHighLoadForOptimize", func() {
 		sqlPrefixes := []string{"select"}
-		topsql.MockHighLoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes)
+		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes)
 	})
 
 	// build logical plan

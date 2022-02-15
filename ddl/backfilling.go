@@ -312,7 +312,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		failpoint.Inject("mockHighLoadForAddIndex", func() {
 			sqlPrefixes := []string{"alter"}
-			topsql.MockHighLoad(job.Query, sqlPrefixes)
+			topsql.MockHighCPULoad(job.Query, sqlPrefixes)
 		})
 
 		// Dynamic change batch size.

@@ -1624,50 +1624,10 @@ func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	// Prepare stmt stats.
-	stmtstats.SetupAggregator()
-	defer stmtstats.CloseAggregator()
+	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	defer cleanFn()
 
-	// Register stmt stats collector.
-	var mu sync.Mutex
-	total := stmtstats.StatementStatsMap{}
-	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
-		mu.Lock()
-		defer mu.Unlock()
-		total.Merge(data)
-	}))
-
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
-
-	db, err := sql.Open("mysql", ts.getDSN())
-	require.NoError(t, err)
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
-	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
-		require.NoError(t, err)
-	}()
-
-	dbt := testkit.NewDBTestKit(t, db)
-	dbt.MustExec("drop database if exists stmtstats")
-	dbt.MustExec("create database stmtstats")
-	dbt.MustExec("use stmtstats;")
-	dbt.MustExec("create table t (a int, b int, unique index idx(a));")
-	dbt.MustExec("create table t2 (a int, b int, unique index idx(a));")
-	dbt.MustExec("create table t3 (a int, b int, unique index idx(a));")
-
-	// Enable TopSQL
-	topsqlstate.EnableTopSQL()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
-
-	const ExecCountPerSQL = 3
+	const ExecCountPerSQL = 2
 
 	// Test for CRUD.
 	cases1 := []string{
@@ -1878,7 +1838,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
 			require.Equal(t, uint64(ExecCountPerSQL), item.DurationCount, sqlStr)
 			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
-			require.True(t, item.SumDurationNs < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
+			require.True(t, item.SumDurationNs < uint64(time.Millisecond*300*ExecCountPerSQL), sqlStr)
 			if strings.HasPrefix(sqlStr, "set global") {
 				// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
 				continue
@@ -1892,6 +1852,167 @@ func TestTopSQLStatementStats(t *testing.T) {
 	}
 	require.Equal(t, len(sqlDigests), found)
 	require.Equal(t, 20, found)
+}
+
+func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, func()) {
+	// Prepare stmt stats.
+	stmtstats.SetupAggregator()
+
+	// Register stmt stats collector.
+	var mu sync.Mutex
+	total := stmtstats.StatementStatsMap{}
+	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
+		mu.Lock()
+		defer mu.Unlock()
+		total.Merge(data)
+	}))
+
+	ts, cleanup := createTidbTestSuite(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("drop database if exists stmtstats")
+	dbt.MustExec("create database stmtstats")
+	dbt.MustExec("use stmtstats;")
+	dbt.MustExec("create table t (a int, b int, unique index idx(a));")
+	dbt.MustExec("create table t2 (a int, b int, unique index idx(a));")
+	dbt.MustExec("create table t3 (a int, b int, unique index idx(a));")
+
+	// Enable TopSQL
+	topsqlstate.EnableTopSQL()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock-agent"
+	})
+
+	cleanFn := func() {
+		cleanup()
+		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		require.NoError(t, err)
+		stmtstats.CloseAggregator()
+
+	}
+	return ts, total, cleanFn
+}
+
+func TestTopSQLStatementStats2(t *testing.T) {
+	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	defer cleanFn()
+
+	const ExecCountPerSQL = 3
+	sqlDigests := map[stmtstats.BinaryDigest]string{}
+
+	// Test case for other statements
+	cases4 := []struct {
+		sql     string
+		plan    string
+		isQuery bool
+	}{
+		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
+		{"analyze table t", "", false},
+		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
+		{"trace select sum(b*a), sum(a+b) from t", "", true},
+		{"set global tidb_stmt_summary_history_size=5;", "", false},
+	}
+	executeCaseFn := func(execFn func(db *sql.DB)) {
+		db, err := sql.Open("mysql", ts.getDSN())
+		require.NoError(t, err)
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("use stmtstats;")
+		require.NoError(t, err)
+
+		for n := 0; n < ExecCountPerSQL; n++ {
+			execFn(db)
+		}
+		err = db.Close()
+		require.NoError(t, err)
+	}
+	execFn := func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		for _, ca := range cases4 {
+			if ca.isQuery {
+				mustQuery(t, dbt, ca.sql)
+			} else {
+				dbt.MustExec(ca.sql)
+			}
+		}
+	}
+	for _, ca := range cases4 {
+		_, digest := parser.NormalizeDigest(ca.sql)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.sql
+	}
+	executeCaseFn(execFn)
+
+	// Test case for multi-statement.
+	cases5 := []string{
+		"delete from t limit 1;",
+		"update t set b=1 where b is null limit 1;",
+		"select sum(a+b*2) from t;",
+	}
+	multiStatement5 := strings.Join(cases5, "")
+	// Test case for multi-statement, but first statements execute failed
+	cases6 := []string{
+		"delete from t6_not_exist;",
+		"update t set a=1 where a is null limit 1;",
+	}
+	multiStatement6 := strings.Join(cases6, "")
+	// Test case for multi-statement, the first statements execute success but the second statement execute failed.
+	cases7 := []string{
+		"update t set a=1 where a <0 limit 1;",
+		"delete from t7_not_exist;",
+	}
+	// Test case for DDL.
+	cases8 := []string{
+		"create table if not exists t10 (a int, b int)",
+		"alter table t drop index if exists idx_b",
+		"alter table t add index idx_b (b)",
+	}
+	multiStatement7 := strings.Join(cases7, "")
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
+		dbt.MustExec(multiStatement5)
+
+		_, err := db.Exec(multiStatement6)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1146: Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
+
+		_, err = db.Exec(multiStatement7)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1146: Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
+
+		for _, ca := range cases8 {
+			dbt.MustExec(ca)
+		}
+	}
+	executeCaseFn(execFn)
+	sqlStrs := append([]string{}, cases5...)
+	sqlStrs = append(sqlStrs, cases7[0])
+	sqlStrs = append([]string{}, cases8...)
+	for _, sqlStr := range sqlStrs {
+		_, digest := parser.NormalizeDigest(sqlStr)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+	}
+
+	// Wait for collect.
+	time.Sleep(2 * time.Second)
+
+	foundMap := map[stmtstats.BinaryDigest]string{}
+	for digest, item := range total {
+		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
+			require.True(t, item.SumDurationNs > 1, sqlStr)
+			foundMap[digest.SQLDigest] = sqlStr
+		}
+	}
+	require.Equal(t, len(sqlDigests), len(foundMap), fmt.Sprintf("%v !=\n %v", sqlDigests, foundMap))
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn func(db *sql.DB)) {
