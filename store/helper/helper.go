@@ -1174,7 +1174,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			(*regionReplica)[r] = 1
 		}
 	}
-	if n != 0 {
+	if n != realN {
 		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
 	}
 	return nil
