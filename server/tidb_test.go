@@ -2015,6 +2015,73 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	require.Equal(t, len(sqlDigests), len(foundMap), fmt.Sprintf("%v !=\n %v", sqlDigests, foundMap))
 }
 
+func TestTopSQLStatementStats3(t *testing.T) {
+	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	defer cleanFn()
+
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2500)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext")
+	}()
+
+	cases := []string{
+		"select count(a+b) from t",
+		"select * from t where b is null",
+		"update t set b = 1 limit 10",
+	}
+	var wg sync.WaitGroup
+	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	for _, sqlStr := range cases {
+		wg.Add(1)
+		go func(sqlStr string) {
+			defer wg.Done()
+			db, err := sql.Open("mysql", ts.getDSN())
+			require.NoError(t, err)
+			dbt := testkit.NewDBTestKit(t, db)
+			dbt.MustExec("use stmtstats;")
+			require.NoError(t, err)
+			if strings.HasPrefix(sqlStr, "select") {
+				mustQuery(t, dbt, sqlStr)
+			} else {
+				dbt.MustExec(sqlStr)
+			}
+			err = db.Close()
+			require.NoError(t, err)
+		}(sqlStr)
+		_, digest := parser.NormalizeDigest(sqlStr)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+	}
+	// Wait for collect.
+	time.Sleep(time.Second + time.Millisecond*500)
+
+	foundMap := map[stmtstats.BinaryDigest]string{}
+	for digest, item := range total {
+		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+			// since the SQL doesn't execute finish, the ExecCount should be recorded,
+			// but the DurationCount and SumDurationNs should be 0.
+			require.Equal(t, uint64(1), item.ExecCount, sqlStr)
+			require.Equal(t, uint64(0), item.DurationCount, sqlStr)
+			require.Equal(t, uint64(0), item.SumDurationNs, sqlStr)
+			foundMap[digest.SQLDigest] = sqlStr
+		}
+	}
+
+	// wait sql execute finish.
+	wg.Wait()
+	// Wait for collect.
+	time.Sleep(time.Second + time.Millisecond*500)
+
+	for digest, item := range total {
+		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+			require.Equal(t, uint64(1), item.ExecCount, sqlStr)
+			require.Equal(t, uint64(1), item.DurationCount, sqlStr)
+			require.Less(t, uint64(0), item.SumDurationNs, sqlStr)
+			foundMap[digest.SQLDigest] = sqlStr
+		}
+	}
+}
+
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn func(db *sql.DB)) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err, "Error connecting")
