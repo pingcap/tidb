@@ -1520,6 +1520,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		"delete from t_not_exist;",
 	}
 	multiStatement7 := strings.Join(cases7, "")
+	// Test case for statement with wrong syntax.
+	wrongSyntaxSQL := "select * froms t"
 
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1533,6 +1535,9 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+
+		_, err = db.Exec(wrongSyntaxSQL)
+		require.NotNil(t, err)
 	}
 	check = func() {
 		for _, sqlStr := range cases5 {
@@ -1546,6 +1551,9 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		}
 
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
+
+		stats := mc.GetSQLStatsBySQL(wrongSyntaxSQL, false)
+		require.Equal(t, 0, len(stats), wrongSyntaxSQL)
 	}
 	ts.testCase(t, mc, execFn, check)
 
