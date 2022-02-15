@@ -185,7 +185,6 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExe
 func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chunks []tipb.Chunk, err error) {
 	err = exec.open()
 	defer func() {
-		// fmt.Println("exec.stop")
 		err := exec.stop()
 		if err != nil {
 			panic(err)
@@ -200,7 +199,6 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chun
 	fields := exec.getFieldTypes()
 	for {
 		chk, err = exec.next()
-		// fmt.Println("mppExecute", chk.NumRows(), err)
 		if err != nil || chk == nil || chk.NumRows() == 0 {
 			return
 		}
