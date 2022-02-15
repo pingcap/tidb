@@ -28,7 +28,6 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	c.Assert(IsRetryableError(&net.DNSError{IsTimeout: true}), IsTrue)
 
 	// MySQL Errors
-<<<<<<< HEAD
 	c.Assert(IsRetryableError(&mysql.MySQLError{}), IsFalse)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}), IsTrue)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}), IsTrue)
@@ -38,21 +37,10 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}), IsTrue)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}), IsTrue)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}), IsTrue)
-=======
-	require.False(t, IsRetryableError(&mysql.MySQLError{}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}))
-	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}))
->>>>>>> 0649ee84a... lightning: add more retryable error type (#31484)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}), IsTrue)
 
 	// gRPC Errors
 	c.Assert(IsRetryableError(status.Error(codes.Canceled, "")), IsFalse)
