@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -43,8 +42,6 @@ func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func createSampleStore(t *testing.T) (store kv.Storage, tk *testkit.TestKit, clean func()) {
-	var cluster testutils.Cluster
-	var dom *domain.Domain
 	var err error
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -53,14 +50,13 @@ func createSampleStore(t *testing.T) (store kv.Storage, tk *testkit.TestKit, cle
 		store, err = mockstore.NewMockStore(
 			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
-				cluster = c
 			}),
 		)
 		require.NoError(t, err)
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
-	dom, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	dom.SetStatsUpdating(true)
 
