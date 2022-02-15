@@ -48,9 +48,8 @@ type Builder struct {
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
 	store kv.Storage
-	// TODO: renewLeaseCh is only used to pass data between table and domain
-	renewLeaseCh chan func()
-	factory      func() (pools.Resource, error)
+
+	factory func() (pools.Resource, error)
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -694,7 +693,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 			return nil, errors.Trace(err)
 		}
 
-		err = t.Init(b.renewLeaseCh, tmp.(sqlexec.SQLExecutor))
+		err = t.Init(tmp.(sqlexec.SQLExecutor))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -738,7 +737,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Resource, error)) *Builder {
+func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -747,9 +746,8 @@ func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Res
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
-		dirtyDB:      make(map[string]bool),
-		renewLeaseCh: renewCh,
-		factory:      factory,
+		dirtyDB: make(map[string]bool),
+		factory: factory,
 	}
 }
 
