@@ -786,8 +786,8 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	// add c == '\n' is for https://github.com/pingcap/tidb/issues/32232
-	if prevParts == 2 && (c == ' ' || c == 'T' || c == '\n') {
+	// unicode.IsSpace(rune(c) for https://github.com/pingcap/tidb/issues/32232
+	if prevParts == 2 && (c == 'T' || unicode.IsSpace(rune(c))) {
 		return true
 	}
 
