@@ -52,10 +52,6 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
-	// Fixed prefix length for scalable sequence
-	ScalableSequencePrefixLength = 4
-	// Max digits for Int64
-	MaxInt64Digits = 19
 )
 
 // RunWithRetry will run the f with backoff and retry.

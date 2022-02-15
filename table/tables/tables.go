@@ -1686,7 +1686,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 func AppendScalablePrefix(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
 	maxDigits := seq.meta.MaxDigits
 	if seq.meta.Extend {
-		maxDigits = maxDigits + util.ScalableSequencePrefixLength
+		maxDigits = maxDigits + model.ScalableSequencePrefixLength
 	}
 	flag := int64(1)
 	if nextVal < 0 {
@@ -1713,7 +1713,7 @@ func NoScaleSequenceValue(seq *sequenceCommon, nextVal int64) int64 {
 	if seq.meta.Scale {
 		maxDigits := seq.meta.MaxDigits
 		if seq.meta.Extend {
-			maxDigits = maxDigits + util.ScalableSequencePrefixLength
+			maxDigits = maxDigits + model.ScalableSequencePrefixLength
 		}
 		flag := int64(1)
 		if nextVal < 0 {

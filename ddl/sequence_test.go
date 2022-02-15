@@ -242,6 +242,23 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	tk.MustExec("create sequence seq comment=\"ccc\"")
 	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB COMMENT='ccc'"))
 
+	// Test show sequence with scale.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 999999999999999 increment by 1 cache 1000 nocycle scale noextend ENGINE=InnoDB"))
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale extend maxvalue 999999999999999")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 999999999999999 increment by 1 cache 1000 nocycle scale extend ENGINE=InnoDB"))
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale maxvalue 9999")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale increment by -1 minvalue -9999")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale extend")
+	c.Assert(err, NotNil)
+
 	// Test show create sequence with a normal table.
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create table seq (a int)")
@@ -396,6 +413,43 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	err = tk.QueryToErr("select nextval(seq)")
 	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
+	// test baseic function with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	// test negative increment with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale increment by -1")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-3"))
+	// test runs out with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle scale extend")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("6"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start = 999999999999997 scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("7"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("8"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+
+	// test cycle with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start = 999999999999997 scale cycle")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("7"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("8"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
+
 	// test negative-growth sequence
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = -2 start = 3 minvalue -5 maxvalue = 12 cycle")
@@ -443,6 +497,20 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
 	// the next value will not be base on next value.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
+
+	// test setval with scale
+	// test sequence setval function.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	// set value to a used value, will get NULL.
+	tk.MustQuery("select setval(seq, 2)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	// set value to a unused value, will get itself.
+	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
+	// the next value will not be base on next value.
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("6"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment 3 maxvalue 11")
@@ -1080,15 +1148,15 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale noextend")
 	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
-	tk.MustQuery("select nextval(seq)%1000000").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("1"))
 	tk.MustExec("drop sequence if exists seq")
 
-	// test sequence scale noextend.
+	// test sequence scale extend.
 	tk.MustExec("create sequence seq")
 	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale extend")
 	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
-	tk.MustQuery("select nextval(seq)%1000000").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("0"))
 
 }

@@ -771,6 +771,10 @@ const (
 	DefaultPositiveSequenceMaxValue   = int64(9223372036854775806)
 	DefaultNegativeSequenceMaxValue   = int64(-1)
 	DefaultNegativeSequenceMinValue   = int64(-9223372036854775807)
+	// Fixed prefix length for scalable sequence
+	ScalableSequencePrefixLength = 4
+	// Max digits for Int64
+	MaxInt64Digits = 19
 )
 
 // SequenceInfo provide meta data describing a DB sequence.
