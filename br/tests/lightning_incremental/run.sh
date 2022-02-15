@@ -24,6 +24,10 @@ for backend in importer local; do
   run_sql "DROP DATABASE IF EXISTS incr;"
   run_lightning --backend $backend
 
+  # check metadata table is not exist
+  run_sql "SHOW DATABASES like 'lightning_metadata';"
+  check_not_contains "Database: lightning_metadata"
+
   for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
     run_sql "SELECT count(*) from incr.$tbl"
     check_contains "count(*): 3"
@@ -50,6 +54,10 @@ for backend in importer local; do
 
   # incrementally import all data in data1
   run_lightning --backend $backend -d "tests/$TEST_NAME/data1"
+
+  # check metadata table is not exist
+  run_sql "SHOW DATABASES like 'lightning_metadata';"
+  check_not_contains "Database: lightning_metadata"
 
   for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
     run_sql "SELECT count(*) from incr.$tbl"
