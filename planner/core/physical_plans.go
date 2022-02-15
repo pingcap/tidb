@@ -108,7 +108,7 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
-// GetTableScans exports the tableScan that contained in tablePlan.
+// GetTableScans exports the tableScan that contained in tablePlans.
 func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
 	tableScans := make([]*PhysicalTableScan, 0, 1)
 	for _, tablePlan := range p.TablePlans {
@@ -118,6 +118,15 @@ func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
 		}
 	}
 	return tableScans
+}
+
+// GetTableScan exports the tableScan that contained in tablePlans and return error when the count of table scan != 1.
+func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
+	tableScans := p.GetTableScans()
+	if len(tableScans) != 1 {
+		return nil, errors.New("the count of table scan != 1")
+	}
+	return tableScans[0], nil
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
