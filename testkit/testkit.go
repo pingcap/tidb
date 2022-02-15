@@ -63,6 +63,17 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit.
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		require: require.New(t),
+		assert:  assert.New(t),
+		t:       t,
+		store:   store,
+		session: se,
+	}
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
