@@ -318,7 +318,8 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
 			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
-			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
+			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);"+
+			"CREATE TABLE `T4` (`f` BIGINT PRIMARY KEY);",
 		"", "")
 	c.Assert(err, IsNil)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
@@ -342,6 +343,10 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 				{
 					DB:   "db",
 					Name: "t2",
+				},
+				{
+					DB:   "db",
+					Name: "t4",
 				},
 			},
 		},
@@ -368,13 +373,23 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 					Name: "t2",
 					Core: tableInfos[1],
 				},
+				"t4": {
+					ID:   103,
+					DB:   "db",
+					Name: "t4",
+					Core: tableInfos[3],
+				},
 			},
 		},
 	})
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
+<<<<<<< HEAD
 	c.Assert(tableCntAfter-tableCntBefore, Equals, 2.0)
+=======
+	require.Equal(t, 3.0, tableCntAfter-tableCntBefore)
+>>>>>>> 167228a26... lightning: fix panic when table name in source file and target cluster is different (#31808)
 }
 
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
