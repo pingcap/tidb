@@ -49,6 +49,21 @@ type Rule struct {
 	Constraints Constraints  `json:"label_constraints,omitempty"`
 }
 
+// TiFlashRule extends Rule with other necessary fields.
+type TiFlashRule struct {
+	GroupID        string       `json:"group_id"`
+	ID             string       `json:"id"`
+	Index          int          `json:"index,omitempty"`
+	Override       bool         `json:"override,omitempty"`
+	StartKeyHex    string       `json:"start_key"`
+	EndKeyHex      string       `json:"end_key"`
+	Role           PeerRoleType `json:"role"`
+	Count          int          `json:"count"`
+	Constraints    Constraints  `json:"label_constraints,omitempty"`
+	LocationLabels []string     `json:"location_labels,omitempty"`
+	IsolationLevel string       `json:"isolation_level,omitempty"`
+}
+
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
 func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {

@@ -595,6 +595,9 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 				continue
 			}
 		}
+		if expr.GetArgs()[0].GetType().EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType().Collate) // refine the string like what we did in builder.buildFromBinOp
+		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
 		dt.Copy(&endValue)

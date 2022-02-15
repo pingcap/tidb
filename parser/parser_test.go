@@ -2195,6 +2195,111 @@ func TestIdentifier(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestBuiltinFuncAsIdentifier(t *testing.T) {
+	whitespaceFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"BIT_AND", "`c1`"},
+		{"BIT_OR", "`c1`"},
+		{"BIT_XOR", "`c1`"},
+		{"CAST", "1 AS FLOAT"},
+		{"COUNT", "1"},
+		{"CURDATE", ""},
+		{"CURTIME", ""},
+		{"DATE_ADD", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"DATE_SUB", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"EXTRACT", "SECOND FROM _UTF8MB4'2011-11-11 10:10:10'"},
+		{"GROUP_CONCAT", "`c2`, `c1` SEPARATOR ','"},
+		{"MAX", "`c1`"},
+		{"MID", "_UTF8MB4'Sakila', -5, 3"},
+		{"MIN", "`c1`"},
+		{"NOW", ""},
+		{"POSITION", "_UTF8MB4'bar' IN _UTF8MB4'foobarbar'"},
+		{"STDDEV_POP", "`c1`"},
+		{"STDDEV_SAMP", "`c1`"},
+		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
+		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
+		{"SUM", "`c1`"},
+		{"SYSDATE", ""},
+		{"TRIM", "_UTF8MB4' foo '"},
+		{"VAR_POP", "`c1`"},
+		{"VAR_SAMP", "`c1`"},
+	}
+
+	testcases := make([]testCase, 0, 3*len(whitespaceFuncs))
+	runTests := func(ignoreSpace bool) {
+		p := parser.New()
+		if ignoreSpace {
+			p.SetSQLMode(mysql.ModeIgnoreSpace)
+		}
+		for _, c := range testcases {
+			_, _, err := p.Parse(c.src, "", "")
+			if !c.ok {
+				require.Errorf(t, err, "source %v", c.src)
+				continue
+			}
+			require.NoErrorf(t, err, "source %v", c.src)
+			if c.ok && !ignoreSpace {
+				RunRestoreTest(t, c.src, c.restore, false)
+			}
+		}
+	}
+
+	for _, function := range whitespaceFuncs {
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// In MySQL, `select x ()` is recognized as a stored function.
+		// In TiDB, most of these functions are recognized as identifiers while some are builtin functions (such as COUNT, CURDATE)
+		// because the later ones are not added to the token map. We'd better not to modify it since it breaks compatibility.
+		// For example, `select CURDATE ()` reports an error in MySQL but it works well for TiDB.
+
+		// `x` is recognized as an identifier for `x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(false)
+
+	testcases = make([]testCase, 0, 4*len(whitespaceFuncs))
+	for _, function := range whitespaceFuncs {
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), false, ""})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(true)
+
+	normalFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"ADDDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SESSION_USER", ""},
+		{"SUBDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SYSTEM_USER", ""},
+	}
+
+	testcases = make([]testCase, 0, 4*len(normalFuncs))
+	for _, function := range normalFuncs {
+		// `x` is recognized as a function name for `select x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as a function name for `select x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as an identifier for `create table x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as an identifier for `create table x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+	}
+	runTests(false)
+	runTests(true)
+}
+
 func TestDDL(t *testing.T) {
 	table := []testCase{
 		{"CREATE", false, ""},
@@ -2335,111 +2440,128 @@ func TestDDL(t *testing.T) {
 
 		// for placement option
 		// 1. create table
-		{`create table t (c int) primary_region="us";`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us'"},
-		{`create table t (c int) regions="us,3";`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
+		{`create table t (c int) primary_region="us";`, false, ""},
+		{`create table t (c int) regions="us,3";`, false, ""},
 		{`create table t (c int) followers="us,3";`, false, ""},
-		{`create table t (c int) followers=3;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) followers=3;`, false, ""},
 		{`create table t (c int) followers=0;`, false, ""},
-		{`create table t (c int) voters="us,3";`, false, ""},
-		{`create table t (c int) voters=3;`, true, "CREATE TABLE `t` (`c` INT) VOTERS = 3"},
+		{`create table t (c int) voters=3;`, false, ""},
 		{`create table t (c int) learners="us,3";`, false, ""},
-		{`create table t (c int) learners=3;`, true, "CREATE TABLE `t` (`c` INT) LEARNERS = 3"},
-		{`create table t (c int) schedule="even";`, true, "CREATE TABLE `t` (`c` INT) SCHEDULE = 'even'"},
-		{`create table t (c int) constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) CONSTRAINTS = 'ww'"},
-		{`create table t (c int) leader_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) LEADER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) follower_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) voter_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) VOTER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) learner_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) LEARNER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) placement policy="ww";`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `ww`"},
-		{`create table t (c int) /*T![placement] primary_region="us" */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us'"},
-		{`create table t (c int) /*T![placement] regions="us,3" */;`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
+		{`create table t (c int) learners=3;`, false, ""},
+		{`create table t (c int) schedule="even";`, false, ""},
+		{`create table t (c int) constraints="ww";`, false, ""},
+		{`create table t (c int) leader_constraints="ww";`, false, ""},
+		{`create table t (c int) follower_constraints="ww";`, false, ""},
+		{`create table t (c int) voter_constraints="ww";`, false, ""},
+		{`create table t (c int) learner_constraints="ww";`, false, ""},
+		{`create table t (c int) /*T![placement] primary_region="us" */;`, false, ""},
+		{`create table t (c int) /*T![placement] regions="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
-		{`create table t (c int) /*T![placement] followers=3 */;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) /*T![placement] followers=3 */;`, false, ""},
 		{`create table t (c int) /*T![placement] followers=0 */;`, false, ""},
 		{`create table t (c int) /*T![placement] voters="us,3" */;`, false, ""},
-		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us' REGIONS = 'us,3'"},
+		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, false, ""},
+		{`create table t (c int) placement policy="ww";`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `ww`"},
 		{"create table t (c int) /*T![placement] placement policy=`x` */;", true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `x`"},
 		{`create table t (c int) /*T![placement] placement policy="y" */;`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `y`"},
 		// 2. alter table
-		{`alter table t primary_region="us";`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
-		{`alter table t regions="us,3";`, true, "ALTER TABLE `t` REGIONS = 'us,3'"},
-		{`alter table t followers=3;`, true, "ALTER TABLE `t` FOLLOWERS = 3"},
+		{`alter table t primary_region="us";`, false, ""},
+		{`alter table t regions="us,3";`, false, ""},
+		{`alter table t followers=3;`, false, ""},
 		{`alter table t followers=0;`, false, ""},
-		{`alter table t voters=3;`, true, "ALTER TABLE `t` VOTERS = 3"},
-		{`alter table t learners=3;`, true, "ALTER TABLE `t` LEARNERS = 3"},
-		{`alter table t schedule="even";`, true, "ALTER TABLE `t` SCHEDULE = 'even'"},
-		{`alter table t constraints="ww";`, true, "ALTER TABLE `t` CONSTRAINTS = 'ww'"},
-		{`alter table t leader_constraints="ww";`, true, "ALTER TABLE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter table t follower_constraints="ww";`, true, "ALTER TABLE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter table t voter_constraints="ww";`, true, "ALTER TABLE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter table t learner_constraints="ww";`, true, "ALTER TABLE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter table t voters=3;`, false, ""},
+		{`alter table t learners=3;`, false, ""},
+		{`alter table t schedule="even";`, false, ""},
+		{`alter table t constraints="ww";`, false, ""},
+		{`alter table t leader_constraints="ww";`, false, ""},
+		{`alter table t follower_constraints="ww";`, false, ""},
+		{`alter table t voter_constraints="ww";`, false, ""},
+		{`alter table t learner_constraints="ww";`, false, ""},
+		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
-		{`alter table t /*T![placement] primary_region="us" */;`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
+		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		// 3. create db
-		{`create database t primary_region="us";`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
-		{`create database t regions="us,3";`, true, "CREATE DATABASE `t` REGIONS = 'us,3'"},
-		{`create database t followers=3;`, true, "CREATE DATABASE `t` FOLLOWERS = 3"},
+		{`create database t primary_region="us";`, false, ""},
+		{`create database t regions="us,3";`, false, ""},
+		{`create database t followers=3;`, false, ""},
 		{`create database t followers=0;`, false, ""},
-		{`create database t voters=3;`, true, "CREATE DATABASE `t` VOTERS = 3"},
-		{`create database t learners=3;`, true, "CREATE DATABASE `t` LEARNERS = 3"},
-		{`create database t schedule="even";`, true, "CREATE DATABASE `t` SCHEDULE = 'even'"},
-		{`create database t constraints="ww";`, true, "CREATE DATABASE `t` CONSTRAINTS = 'ww'"},
-		{`create database t leader_constraints="ww";`, true, "CREATE DATABASE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`create database t follower_constraints="ww";`, true, "CREATE DATABASE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`create database t voter_constraints="ww";`, true, "CREATE DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`create database t learner_constraints="ww";`, true, "CREATE DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`create database t voters=3;`, false, ""},
+		{`create database t learners=3;`, false, ""},
+		{`create database t schedule="even";`, false, ""},
+		{`create database t constraints="ww";`, false, ""},
+		{`create database t leader_constraints="ww";`, false, ""},
+		{`create database t follower_constraints="ww";`, false, ""},
+		{`create database t voter_constraints="ww";`, false, ""},
+		{`create database t learner_constraints="ww";`, false, ""},
+		{`create database t /*T![placement] primary_region="us" */;`, false, ""},
 		{`create database t placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`create database t default placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
-		{`create database t /*T![placement] primary_region="us" */;`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
+		{`create database t /*T![placement] placement policy="ww" */;`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
 		// 4. alter db
-		{`alter database t primary_region="us";`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
-		{`alter database t regions="us,3";`, true, "ALTER DATABASE `t` REGIONS = 'us,3'"},
-		{`alter database t followers=3;`, true, "ALTER DATABASE `t` FOLLOWERS = 3"},
+		{`alter database t primary_region="us";`, false, ""},
+		{`alter database t regions="us,3";`, false, ""},
+		{`alter database t followers=3;`, false, ""},
 		{`alter database t followers=0;`, false, ""},
-		{`alter database t voters=3;`, true, "ALTER DATABASE `t` VOTERS = 3"},
-		{`alter database t learners=3;`, true, "ALTER DATABASE `t` LEARNERS = 3"},
-		{`alter database t schedule="even";`, true, "ALTER DATABASE `t` SCHEDULE = 'even'"},
-		{`alter database t constraints="ww";`, true, "ALTER DATABASE `t` CONSTRAINTS = 'ww'"},
-		{`alter database t leader_constraints="ww";`, true, "ALTER DATABASE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter database t follower_constraints="ww";`, true, "ALTER DATABASE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter database t voter_constraints="ww";`, true, "ALTER DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter database t learner_constraints="ww";`, true, "ALTER DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter database t voters=3;`, false, ""},
+		{`alter database t learners=3;`, false, ""},
+		{`alter database t schedule="even";`, false, ""},
+		{`alter database t constraints="ww";`, false, ""},
+		{`alter database t leader_constraints="ww";`, false, ""},
+		{`alter database t follower_constraints="ww";`, false, ""},
+		{`alter database t voter_constraints="ww";`, false, ""},
+		{`alter database t learner_constraints="ww";`, false, ""},
+		{`alter database t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter database t placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`alter database t default placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
-		{`alter database t /*T![placement] primary_region="us" */;`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`alter database t PLACEMENT POLICY='DEFAULT';`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY=DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY = DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY SET DEFAULT`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{"alter database t PLACEMENT POLICY=`DEFAULT`;", true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{`alter database t /*T![placement] PLACEMENT POLICY='DEFAULT' */;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		// 5. create partition
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PRIMARY_REGION = 'us')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) REGIONS = 'us,3')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) followers=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) FOLLOWERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voters=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) VOTERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learners=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEARNERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) schedule="even");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) SCHEDULE = 'even')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) leader_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEADER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) follower_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) FOLLOWER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voter_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) VOTER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learner_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEARNER_CONSTRAINTS = 'ww')"},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) followers=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voters=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learners=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) schedule="even");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) leader_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) follower_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voter_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) placement policy="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		// 6. alter partition
-		{`alter table m partition t primary_region="us";`, true, "ALTER TABLE `m` PARTITION `t` PRIMARY_REGION = 'us'"},
-		{`alter table m partition t regions="us,3";`, true, "ALTER TABLE `m` PARTITION `t` REGIONS = 'us,3'"},
-		{`alter table m partition t followers=3;`, true, "ALTER TABLE `m` PARTITION `t` FOLLOWERS = 3"},
-		{`alter table m partition t primary_region="us" followers=3;`, true, "ALTER TABLE `m` PARTITION `t` PRIMARY_REGION = 'us' FOLLOWERS = 3"},
-		{`alter table m partition t voters=3;`, true, "ALTER TABLE `m` PARTITION `t` VOTERS = 3"},
-		{`alter table m partition t learners=3;`, true, "ALTER TABLE `m` PARTITION `t` LEARNERS = 3"},
-		{`alter table m partition t schedule="even";`, true, "ALTER TABLE `m` PARTITION `t` SCHEDULE = 'even'"},
-		{`alter table m partition t constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` CONSTRAINTS = 'ww'"},
-		{`alter table m partition t leader_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t follower_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t voter_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t learner_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter table m partition t primary_region="us";`, false, ""},
+		{`alter table m partition t regions="us,3";`, false, ""},
+		{`alter table m partition t followers=3;`, false, ""},
+		{`alter table m partition t primary_region="us" followers=3;`, false, ""},
+		{`alter table m partition t voters=3;`, false, ""},
+		{`alter table m partition t learners=3;`, false, ""},
+		{`alter table m partition t schedule="even";`, false, ""},
+		{`alter table m partition t constraints="ww";`, false, ""},
+		{`alter table m partition t leader_constraints="ww";`, false, ""},
+		{`alter table m partition t follower_constraints="ww";`, false, ""},
+		{`alter table m partition t voter_constraints="ww";`, false, ""},
+		{`alter table m partition t learner_constraints="ww";`, false, ""},
 		{`alter table m partition t placement policy="ww";`, true, "ALTER TABLE `m` PARTITION `t` PLACEMENT POLICY = `ww`"},
-
+		{`alter table m partition t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `m` PARTITION `t` PLACEMENT POLICY = `ww`"},
+		// 7. add partition
+		{`alter table m add partition (partition p1 values less than (200) primary_region="us");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) regions="us,3");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) followers=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) voters=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) learners=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) schedule="even");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) leader_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) follower_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) voter_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) placement policy="ww");`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`alter table m add partition (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED,`First_Name` VARCHAR(30))"},
@@ -5093,6 +5215,14 @@ func TestDDLStatements(t *testing.T) {
 	createTableStr = `CREATE TABLE t (c_double double(10, 2))`
 	_, _, err = p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20))`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.EqualError(t, err, "line 1 column 70 near \"\"GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together ")
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20)) on commit preserve rows`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.NoError(t, err)
 }
 
 func TestAnalyze(t *testing.T) {
@@ -5874,7 +6004,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
@@ -6480,20 +6610,9 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 
 func TestCharsetIntroducer(t *testing.T) {
 	p := parser.New()
-	// `_gbk` is treated as an identifier.
-	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.NoError(t, err)
-
-	charset.AddCharset(&charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-		Desc:             "gbk",
-		Maxlen:           2,
-	})
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
-	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")

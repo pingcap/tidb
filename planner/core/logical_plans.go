@@ -75,9 +75,15 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoin returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -1261,6 +1267,8 @@ type ShowContents struct {
 type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.
@@ -1284,10 +1292,11 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag  uint64
-	HasLimit bool
-	LimitBeg uint64
-	LimitEnd uint64
+	optFlag   uint64
+	HasLimit  bool
+	LimitBeg  uint64
+	LimitEnd  uint64
+	IsInApply bool
 }
 
 // LogicalCTE is for CTE.

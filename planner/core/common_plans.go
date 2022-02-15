@@ -394,14 +394,14 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
 		return ""
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return ""
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -412,7 +412,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if globalHandle == nil {
 		return ""
 	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -427,20 +427,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	if prepared.UseCache {
-		// disable the cache if cache table in prepared statement
-		for _, vInfo := range preparedStmt.VisitInfos {
-			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
-			// if table does not exist, skip it, maybe it is a `create table` statement
-			if err != nil {
-				continue
-			}
-			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-				prepared.UseCache = false
-				break
-			}
-		}
-	}
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
@@ -449,6 +435,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -554,8 +541,11 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.SkipPlanCache {
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -584,6 +574,22 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containTableDual(child)
+	}
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
@@ -1410,7 +1416,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 		}
 		copStats := runtimeStatsColl.GetCopStats(explainID)
 		analyzeInfo += copStats.String()
-		actRows = fmt.Sprint(copStats.GetActRows())
+		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())

@@ -1389,6 +1389,8 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // PhysicalShowDDLJobs is for showing DDL job list.

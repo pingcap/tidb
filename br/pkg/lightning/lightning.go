@@ -789,11 +789,11 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
 	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
 		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:]) // nolint:gosec
+		engineID, err := strconv.Atoi(engine[index+1:])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
+		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID)) // #nosec G109
 		return ce, errors.Trace(err)
 	}
 

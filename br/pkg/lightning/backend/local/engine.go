@@ -33,7 +33,6 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -272,13 +271,6 @@ func (r rangeProperties) Encode() []byte {
 		idx += 8
 	}
 	return b
-}
-
-func (r rangeProperties) get(key []byte) rangeOffsets {
-	idx := sort.Search(len(r), func(i int) bool {
-		return bytes.Compare(r[i].Key, key) >= 0
-	})
-	return r[idx].rangeOffsets
 }
 
 type RangePropertiesCollector struct {
@@ -952,7 +944,7 @@ func (e *Engine) unfinishedRanges(ranges []Range) []Range {
 	return filterOverlapRange(ranges, e.finishedRanges.ranges)
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) pkgkv.Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey

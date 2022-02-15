@@ -91,7 +91,7 @@ type MPPClient interface {
 	ConstructMPPTasksForPartition(context.Context, *MPPBuildTaskRequestForPartition, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

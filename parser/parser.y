@@ -748,7 +748,6 @@ import (
 	reset                      "RESET"
 	regions                    "REGIONS"
 	region                     "REGION"
-	builtinAddDate
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
@@ -766,7 +765,6 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
@@ -1310,7 +1308,6 @@ import (
 	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
 	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
-	PlacementOption                        "Anonymous or direct placement option"
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
@@ -1565,10 +1562,6 @@ DirectPlacementOption:
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
 	}
-
-PlacementOption:
-	DirectPlacementOption
-|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -3039,7 +3032,7 @@ ColumnOption:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 
 		$$ = &ast.ColumnOption{
 			Tp:     ast.ColumnOptionGenerated,
@@ -3664,7 +3657,7 @@ DatabaseOption:
 			UintValue: placementOptions.UintValue,
 		}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.DatabaseOption{
@@ -3720,7 +3713,7 @@ CreateTableStmt:
 		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
 		stmt.Select = $11.(*ast.CreateTableStmt).Select
 		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
 				stmt.OnCommitDelete = $12.(bool)
@@ -3737,7 +3730,7 @@ CreateTableStmt:
 			TemporaryKeyword: $2.(ast.TemporaryKeyword),
 		}
 		if ($7 != nil && tmp.TemporaryKeyword != ast.TemporaryGlobal) || (tmp.TemporaryKeyword == ast.TemporaryGlobal && $7 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if tmp.TemporaryKeyword == ast.TemporaryGlobal {
 				tmp.OnCommitDelete = $7.(bool)
@@ -4033,7 +4026,7 @@ PartDefOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionNodegroup, UintValue: $3.(uint64)}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.TableOption{
@@ -4176,7 +4169,7 @@ CreateViewStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -4191,7 +4184,7 @@ CreateViewStmt:
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
 			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
@@ -4534,7 +4527,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$2.SetText(string(parser.src[startOffset:]))
+		$2.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
@@ -4544,7 +4537,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$5.SetText(string(parser.src[startOffset:]))
+		$5.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" TraceableStmt
 	{
@@ -4553,7 +4546,7 @@ TraceStmt:
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$3.SetText(string(parser.src[startOffset:]))
+		$3.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
 	{
@@ -4563,7 +4556,7 @@ TraceStmt:
 			TracePlanTarget: $5,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$6.SetText(string(parser.src[startOffset:]))
+		$6.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -5496,7 +5489,7 @@ FieldList:
 		last := fl[len(fl)-1]
 		if last.Expr != nil && last.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.src[last.Offset:lastEnd])
+			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
 		newField.Offset = parser.startOffset(&yyS[yypt])
@@ -6239,7 +6232,6 @@ ProcedureCall:
  *
  *  Insert Statements
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
 	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
@@ -6413,7 +6405,6 @@ OnDuplicateKeyUpdate:
  *  Replace Statements
  *  See https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
 	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
@@ -6762,7 +6753,7 @@ SimpleExpr:
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
 		expr := $2
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	'(' ExpressionList ',' Expression ')'
@@ -7242,8 +7233,8 @@ FunctionNameDateArith:
 |	builtinDateSub
 
 FunctionNameDateArithMultiForms:
-	builtinAddDate
-|	builtinSubDate
+	addDate
+|	subDate
 
 TrimDirection:
 	"BOTH"
@@ -8077,7 +8068,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -8092,7 +8083,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -8210,7 +8201,7 @@ SelectStmt:
 					lastEnd--
 				}
 			}
-			lastField.SetText(src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, src[lastField.Offset:lastEnd])
 		}
 		if $2 != nil {
 			st.Where = $2.(ast.ExprNode)
@@ -9152,14 +9143,14 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SetOprStmt ')'
 	{
 		rs := $2.(*ast.SetOprStmt)
 		src := parser.src
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SelectStmtWithClause ')'
@@ -9169,7 +9160,7 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SubSelect ')'
@@ -9187,11 +9178,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -11072,7 +11063,7 @@ StatementList:
 		if $1 != nil {
 			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -11082,7 +11073,7 @@ StatementList:
 		if $3 != nil {
 			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -12594,11 +12585,11 @@ CreateBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
@@ -12621,7 +12612,7 @@ DropBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -12635,11 +12626,11 @@ DropBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -13726,7 +13717,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -13742,7 +13733,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}

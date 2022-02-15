@@ -54,7 +54,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", false},
+		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
 	}
 
 	for _, tc := range testCases {
@@ -152,7 +152,8 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
-	seVar.CurrentDB = "test"
+	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)

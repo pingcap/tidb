@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -170,6 +171,8 @@ type mppIterator struct {
 	needTriggerFallback bool
 
 	mu sync.Mutex
+
+	enableCollectExecutionInfo bool
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -260,7 +263,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
-		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
+		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
@@ -517,18 +520,19 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:               c.store,
-		tasks:               dispatchReqs,
-		finishCh:            make(chan struct{}),
-		cancelFunc:          cancelFunc,
-		respChan:            make(chan *mppResponse, 4096),
-		startTs:             dispatchReqs[0].StartTs,
-		vars:                vars,
-		needTriggerFallback: needTriggerFallback,
+		store:                      c.store,
+		tasks:                      dispatchReqs,
+		finishCh:                   make(chan struct{}),
+		cancelFunc:                 cancelFunc,
+		respChan:                   make(chan *mppResponse, 4096),
+		startTs:                    startTs,
+		vars:                       vars,
+		needTriggerFallback:        needTriggerFallback,
+		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 	}
 	go iter.run(ctxChild)
 	return iter

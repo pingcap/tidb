@@ -1042,6 +1042,16 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryKey: x.PrimaryKey,
 			},
 		}
+	case *ErrAssertionFailed:
+		return &kvrpcpb.KeyError{
+			AssertionFailed: &kvrpcpb.AssertionFailed{
+				StartTs:          x.StartTS,
+				Key:              x.Key,
+				Assertion:        x.Assertion,
+				ExistingStartTs:  x.ExistingStartTS,
+				ExistingCommitTs: x.ExistingCommitTS,
+			},
+		}
 	default:
 		return &kvrpcpb.KeyError{
 			Abort: err.Error(),

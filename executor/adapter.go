@@ -677,7 +677,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout, len(keys))
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -966,6 +966,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+
+	if sessVars.StmtCtx.ReadFromTableCache {
+		metrics.ReadFromTableCacheCounter.Inc()
+	}
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
@@ -1306,19 +1310,27 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		stats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
+		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		execDuration := time.Since(vars.StartTime) + vars.DurationParse
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }
 

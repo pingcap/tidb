@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package restore_test
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
@@ -28,5 +31,23 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+
+	var err error
+	mc, err = mock.NewCluster()
+	if err != nil {
+		panic(err)
+	}
+	err = mc.Start()
+	if err != nil {
+		panic(err)
+	}
+	exitCode := m.Run()
+	mc.Stop()
+	if exitCode == 0 {
+		if err := goleak.Find(opts...); err != nil {
+			fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
+			exitCode = 1
+		}
+	}
+	os.Exit(exitCode)
 }

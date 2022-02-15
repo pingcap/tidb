@@ -398,13 +398,17 @@ a like 0xe4b880	b like 0xd2bb
 1	1
 1	1
 select a = 0xb6fe from t;
-Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+Error 3854: Cannot convert string '\xB6\xFE' from binary to utf8mb4
 select b = 0xe4ba8c from t;
-Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+Error 3854: Cannot convert string '\xE4\xBA\x8C' from binary to gbk
 select concat(a, 0xb6fe) from t;
-Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+Error 3854: Cannot convert string '\xB6\xFE' from binary to utf8mb4
 select concat(b, 0xe4ba8c) from t;
-Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+Error 3854: Cannot convert string '\xE4\xBA\x8C' from binary to gbk
+select concat(convert('a' using gbk), 0x3fff) from t;
+Error 3854: Cannot convert string '?\xFF' from binary to gbk
+select concat(convert('a' using gbk), 0x3fffffffffffffff) from t;
+Error 3854: Cannot convert string '?\xFF\xFF\xFF\xFF\xFF...' from binary to gbk
 set @@tidb_enable_vectorized_expression = false;
 select hex(concat(a, c)), hex(concat(b, c)) from t;
 hex(concat(a, c))	hex(concat(b, c))
@@ -497,13 +501,13 @@ a like 0xe4b880	b like 0xd2bb
 1	1
 1	1
 select a = 0xb6fe from t;
-Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+Error 3854: Cannot convert string '\xB6\xFE' from binary to utf8mb4
 select b = 0xe4ba8c from t;
-Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+Error 3854: Cannot convert string '\xE4\xBA\x8C' from binary to gbk
 select concat(a, 0xb6fe) from t;
-Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+Error 3854: Cannot convert string '\xB6\xFE' from binary to utf8mb4
 select concat(b, 0xe4ba8c) from t;
-Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+Error 3854: Cannot convert string '\xE4\xBA\x8C' from binary to gbk
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
@@ -535,3 +539,14 @@ select crc32(a), crc32(b), crc32(c) from t;
 crc32(a)	crc32(b)	crc32(c)
 1785250883	3461331449	4092198678
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB

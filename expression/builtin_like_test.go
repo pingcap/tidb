@@ -98,8 +98,6 @@ func TestRegexp(t *testing.T) {
 }
 
 func TestCILike(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	ctx := createContext(t)
 	tests := []struct {
 		input        string
