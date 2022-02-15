@@ -811,7 +811,6 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
-	t.Skip("skip race test")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
