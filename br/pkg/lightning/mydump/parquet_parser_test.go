@@ -3,7 +3,6 @@ package mydump
 import (
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -22,9 +21,7 @@ func TestParquetParser(t *testing.T) {
 		A int32  `parquet:"name=a_A, type=INT32"`
 	}
 
-	dir, err := os.MkdirTemp("", "parquet_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	// prepare data
 	name := "test123.parquet"
 	testPath := filepath.Join(dir, name)
@@ -95,9 +92,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		Decimal6 int32 `parquet:"name=decimal6, type=DECIMAL, scale=4, precision=4, basetype=INT32"`
 	}
 
-	dir, err := os.MkdirTemp("", "parquet_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	// prepare data
 	name := "test123.parquet"
 	testPath := filepath.Join(dir, name)

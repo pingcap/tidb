@@ -73,7 +73,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
@@ -112,14 +111,10 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
-var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
-var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
-var _ = SerialSuites(&testSuiteJoinSerial{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
@@ -325,14 +320,6 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show index in t").Rows()), Equals, 1)
 	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
 
-	tk.MustQuery("show charset").Check(testkit.Rows(
-		"ascii US ASCII ascii_bin 1",
-		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_bin 2",
-		"latin1 Latin1 latin1_bin 1",
-		"utf8 UTF-8 Unicode utf8_bin 3",
-		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-	))
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
@@ -3963,7 +3950,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[executor:8133]handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "[admin:8223]data inconsistency in table: t, index: c, handle: 3, index-values:\"handle: 3, values: [KindInt64 30 KindInt64 3]\" != record-values:\"\"")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -5733,54 +5720,9 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
-func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustQuery("show charset").Check(testkit.Rows(
-		"ascii US ASCII ascii_bin 1",
-		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_bin 2",
-		"latin1 Latin1 latin1_bin 1",
-		"utf8 UTF-8 Unicode utf8_bin 3",
-		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-	))
-	tk.MustQuery("show collation").Check(testkit.Rows(
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"ascii_bin ascii 65 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
-		"gbk_bin gbk 87 Yes Yes 1",
-	))
-	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
-}
-
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustQuery("show charset").Check(testkit.Rows(
-		"ascii US ASCII ascii_bin 1",
-		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
-		"latin1 Latin1 latin1_bin 1",
-		"utf8 UTF-8 Unicode utf8_bin 3",
-		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-	))
-	tk.MustQuery("show collation").Check(testkit.Rows(
-		"ascii_bin ascii 65 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"gbk_bin gbk 87  Yes 1",
-		"gbk_chinese_ci gbk 28 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
-		"utf8_general_ci utf8 33  Yes 1",
-		"utf8_unicode_ci utf8 192  Yes 1",
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
-		"utf8mb4_general_ci utf8mb4 45  Yes 1",
-		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
-	))
 
 	tk.MustExec("set names gbk;")
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
@@ -5823,8 +5765,6 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5850,8 +5790,6 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -9917,4 +9855,18 @@ func (s *testSerialSuite) TestFix31537(c *C) {
   PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
 );`)
 	tk.MustQuery(`trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;`)
+}
+
+func (s *testSerialSuite) TestEncodingSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `enum-set` (`set` SET(" +
+		"'x00','x01','x02','x03','x04','x05','x06','x07','x08','x09','x10','x11','x12','x13','x14','x15'," +
+		"'x16','x17','x18','x19','x20','x21','x22','x23','x24','x25','x26','x27','x28','x29','x30','x31'," +
+		"'x32','x33','x34','x35','x36','x37','x38','x39','x40','x41','x42','x43','x44','x45','x46','x47'," +
+		"'x48','x49','x50','x51','x52','x53','x54','x55','x56','x57','x58','x59','x60','x61','x62','x63'" +
+		")NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO `enum-set` VALUES\n(\"x00,x59\");")
+	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
+	tk.MustExec("admin check table `enum-set`")
 }

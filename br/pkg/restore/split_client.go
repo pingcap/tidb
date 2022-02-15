@@ -172,8 +172,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 
@@ -594,10 +596,10 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func checkRegionEpoch(new, old *RegionInfo) bool {
-	return new.Region.GetId() == old.Region.GetId() &&
-		new.Region.GetRegionEpoch().GetVersion() == old.Region.GetRegionEpoch().GetVersion() &&
-		new.Region.GetRegionEpoch().GetConfVer() == old.Region.GetRegionEpoch().GetConfVer()
+func checkRegionEpoch(_new, _old *RegionInfo) bool {
+	return _new.Region.GetId() == _old.Region.GetId() &&
+		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
+		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
 }
 
 // exponentialBackoffer trivially retry any errors it meets.

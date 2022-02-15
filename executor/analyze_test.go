@@ -1108,8 +1108,6 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 }
 
 func TestIssue20874(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1276,7 +1274,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
@@ -1305,7 +1303,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, 2, len(col0.Buckets))
 
 	// manual analyze uses the table-level persisted options by merging the new options
-	tk.MustExec("analyze table t columns a,b with 0.9 samplerate, 3 buckets")
+	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1320,7 +1318,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0.9", rs.Rows()[0][2])
+	require.Equal(t, "1", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
@@ -1374,7 +1372,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1490,7 +1488,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p2")
 	is = dom.InfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
 	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
@@ -1583,7 +1581,7 @@ PARTITION BY RANGE ( a ) (
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1702,9 +1700,9 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("analyze table t1,t2 with 2 topn")
 	is := dom.InfoSchema()
 	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
 	tblStats1 := h.GetTableStats(tableInfo1)
@@ -1762,7 +1760,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())

@@ -662,13 +662,17 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
-	if col.RetType.EvalType() != types.ETString {
+	switch col.RetType.EvalType() {
+	case types.ETJson:
+		return UNICODE
+	case types.ETString:
+		if col.RetType.Charset == charset.CharsetASCII {
+			return ASCII
+		}
+		return UNICODE
+	default:
 		return ASCII
 	}
-	if col.RetType.Charset == charset.CharsetASCII {
-		return ASCII
-	}
-	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.

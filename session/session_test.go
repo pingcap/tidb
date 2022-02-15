@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -4905,8 +4904,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5927,13 +5924,16 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 	tk.MustQuery("select * from ct1").Check(testkit.Rows())
 	tk.MustQuery("select * from ct2").Check(testkit.Rows())
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 50; i++ {
-		if tk.HasPlan("select * from ct1", "Union") {
-			if tk.HasPlan("select * from ct2", "Union") {
-				cached = true
-				break
-			}
+		tk.MustQuery("select * from ct1")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

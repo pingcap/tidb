@@ -25,12 +25,14 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
+	"golang.org/x/tools/cover"
 )
 
 func usage() bool {
@@ -263,11 +265,14 @@ func cmdRun(args ...string) bool {
 	}
 
 	shuffle(tasks)
+
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
+	fmt.Println("run all tasks takes", time.Since(start))
 
 	if junitfile != "" {
 		out := collectTestResults(works)
@@ -391,26 +396,137 @@ func collectCoverProfileFile() {
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
+	result := make(map[string]*cover.Profile)
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
+		collectOneCoverProfileFile(result, file)
+	}
 
-		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
-		if err != nil {
-			fmt.Println("open temp cover file error:", err)
+	w1 := bufio.NewWriter(w)
+	for _, prof := range result {
+		for _, block := range prof.Blocks {
+			fmt.Fprintf(w1, "%s:%d.%d,%d.%d %d %d\n",
+				prof.FileName,
+				block.StartLine,
+				block.StartCol,
+				block.EndLine,
+				block.EndCol,
+				block.NumStmt,
+				block.Count,
+			)
+		}
+		if err := w1.Flush(); err != nil {
+			fmt.Println("flush data to cover profile file error:", err)
 			os.Exit(-1)
 		}
-		defer f.Close()
+	}
+}
 
-		r := bufio.NewReader(f)
-		line, _, err := r.ReadLine()
-		if err != nil || string(line) != "mode: set" {
+func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
+	f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+	if err != nil {
+		fmt.Println("open temp cover file error:", err)
+		os.Exit(-1)
+	}
+	defer f.Close()
+
+	profs, err := cover.ParseProfilesFromReader(f)
+	if err != nil {
+		fmt.Println("parse cover profile file error:", err)
+		os.Exit(-1)
+	}
+	mergeProfile(result, profs)
+}
+
+func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
+	for _, prof := range profs {
+		sort.Sort(blocksByStart(prof.Blocks))
+		old, ok := m[prof.FileName]
+		if !ok {
+			m[prof.FileName] = prof
 			continue
 		}
 
-		io.Copy(w, r)
+		// Merge samples from the same location.
+		// The data has already been sorted.
+		tmp := old.Blocks[:0]
+		var i, j int
+		for i < len(old.Blocks) && j < len(prof.Blocks) {
+			v1 := old.Blocks[i]
+			v2 := prof.Blocks[j]
+
+			switch compareProfileBlock(v1, v2) {
+			case -1:
+				tmp = appendWithReduce(tmp, v1)
+				i++
+			case 1:
+				tmp = appendWithReduce(tmp, v2)
+				j++
+			default:
+				tmp = appendWithReduce(tmp, v1)
+				tmp = appendWithReduce(tmp, v2)
+				i++
+				j++
+			}
+		}
+		for ; i < len(old.Blocks); i++ {
+			tmp = appendWithReduce(tmp, old.Blocks[i])
+		}
+		for ; j < len(prof.Blocks); j++ {
+			tmp = appendWithReduce(tmp, prof.Blocks[j])
+		}
+
+		m[prof.FileName] = old
 	}
+}
+
+// appendWithReduce works like append(), but it merge the duplicated values.
+func appendWithReduce(input []cover.ProfileBlock, b cover.ProfileBlock) []cover.ProfileBlock {
+	if len(input) >= 1 {
+		last := &input[len(input)-1]
+		if b.StartLine == last.StartLine &&
+			b.StartCol == last.StartCol &&
+			b.EndLine == last.EndLine &&
+			b.EndCol == last.EndCol {
+			if b.NumStmt != last.NumStmt {
+				panic(fmt.Errorf("inconsistent NumStmt: changed from %d to %d", last.NumStmt, b.NumStmt))
+			}
+			// Merge the data with the last one of the slice.
+			last.Count |= b.Count
+			return input
+		}
+	}
+	return append(input, b)
+}
+
+type blocksByStart []cover.ProfileBlock
+
+func compareProfileBlock(x, y cover.ProfileBlock) int {
+	if x.StartLine < y.StartLine {
+		return -1
+	}
+	if x.StartLine > y.StartLine {
+		return 1
+	}
+
+	// Now x.StartLine == y.StartLine
+	if x.StartCol < y.StartCol {
+		return -1
+	}
+	if x.StartCol > y.StartCol {
+		return 1
+	}
+
+	return 0
+}
+
+func (b blocksByStart) Len() int      { return len(b) }
+func (b blocksByStart) Swap(i, j int) { b[i], b[j] = b[j], b[i] }
+func (b blocksByStart) Less(i, j int) bool {
+	bi, bj := b[i], b[j]
+	return bi.StartLine < bj.StartLine || bi.StartLine == bj.StartLine && bi.StartCol < bj.StartCol
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
@@ -485,8 +601,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	exe := "./" + testFileName(pkg)
-	cmd := n.testCommand(exe, fn, old)
+	cmd := n.testCommand(pkg, fn, old)
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	var buf bytes.Buffer
@@ -498,9 +613,9 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
-		res.d = time.Since(start)
-		res.Time = formatDurationAsSeconds(res.d)
 	}
+	res.d = time.Since(start)
+	res.Time = formatDurationAsSeconds(res.d)
 	return res
 }
 
@@ -549,7 +664,16 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-func (n *numa) testCommand(exe string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+	args := make([]string, 0, 10)
+	exe := "./" + testFileName(pkg)
+	if coverprofile != "" {
+		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
+		tmpFile := path.Join(coverFileTempDir, fileName)
+		args = append(args, "-test.coverprofile", tmpFile)
+	}
+	args = append(args, "-test.cpu", "1")
+	args = append(args, []string{"-test.timeout", "2m"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
@@ -590,23 +714,27 @@ func buildTestBinary(pkg string) error {
 
 // buildTestBinaryMulti is much faster than build the test packages one by one.
 func buildTestBinaryMulti(pkgs []string) error {
-       // go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
-       xprogPath := path.Join(workDir, "tools/bin/xprog")
-       packages := make([]string, 0, len(pkgs))
-       for _, pkg := range pkgs {
-               packages = append(packages, path.Join(modulePath, pkg))
-       }
+	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
+	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	packages := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		packages = append(packages, path.Join(modulePath, pkg))
+	}
 
-       var cmd *exec.Cmd
-	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
-       cmd.Args = append(cmd.Args, packages...)
-       cmd.Dir = workDir
-       cmd.Stdout = os.Stdout
-       cmd.Stderr = os.Stderr
-       if err := cmd.Run(); err != nil {
-               return withTrace(err)
-       }
-       return nil
+	var cmd *exec.Cmd
+	if coverprofile != "" {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
+	} else {
+		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+	}
+	cmd.Args = append(cmd.Args, packages...)
+	cmd.Dir = workDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -618,6 +746,7 @@ func testBinaryExist(pkg string) (bool, error) {
 	}
 	return true, withTrace(err)
 }
+
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
 	return file + ".test.bin"
@@ -690,6 +819,7 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
+	rand.Seed(time.Now().UnixNano())
 	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]

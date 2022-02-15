@@ -1628,19 +1628,19 @@ func buildTableInfo(
 	return
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
 			err = errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
 			return
 		}
-		var colLen int
-		colLen, err = getIndexColumnLength(col, idxCol.Length)
+		var l int
+		l, err = getIndexColumnLength(col, idxCol.Length)
 		if err != nil {
 			return
 		}
-		len += colLen
+		colLen += l
 	}
 	return
 }
@@ -2218,8 +2218,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(d.callHookOnChanged(err))
 	}
 
-	for j := range infos {
-		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
+	for j := range args {
+		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}
 	}
@@ -4643,10 +4643,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	col := table.FindCol(t.Cols(), colName.L)
-	if col == nil {
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	if oldCol == nil {
 		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
+	col := table.ToColumn(oldCol.Clone())
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
