@@ -4426,8 +4426,8 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone))
+		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone)))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		tk.Exec("begin")
 		res, err := tk.Exec(testcase.sql)
@@ -4449,7 +4449,7 @@ PARTITION BY RANGE (c) (
 		}
 		tk.Exec("commit")
 	}
-	failpoint.Disable("tikvclient/injectTxnScope")
+	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
