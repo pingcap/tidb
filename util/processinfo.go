@@ -191,6 +191,14 @@ type GlobalConnID struct {
 	ServerIDGetter func() uint64
 }
 
+func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: ReservedLocalConns}
+}
+
+func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: ReservedLocalConns}
+}
+
 const (
 	// MaxServerID is maximum serverID.
 	MaxServerID = 1<<22 - 1
@@ -253,6 +261,7 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 }
 
 const (
-	ReservedLocalConns        = 100
-	ReservedConnIDAutoAnalyze = 1
+	ReservedLocalConns     = 200
+	ReservedConnMinAnalyze = 1
+	ReservedConnMaxAnalyze = 10
 )

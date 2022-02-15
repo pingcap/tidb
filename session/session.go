@@ -1750,6 +1750,10 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	if execOption.TrackSysProcID > 0 {
+		execOption.TrackSysProc(execOption.TrackSysProcID, se)
+		defer execOption.UnTrackSysProc(execOption.TrackSysProcID)
+	}
 	defer clean()
 	return fn(ctx, se)
 }

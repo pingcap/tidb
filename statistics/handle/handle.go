@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -124,64 +123,29 @@ type Handle struct {
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 
-	// workingAutoAnalyze tracks working auto analyze process
-	workingAutoAnalyze sessionctx.Context
-}
-
-func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return fn(ctx, exec)
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
 }
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionUseCurSession)
-	})
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(
-	ctx context.Context,
-	statsVer int,
-	sql string,
-	trackFunc func(session sessionctx.Context),
-	deferFunc func(session sessionctx.Context),
-	params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
-		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
-			pruneMode := h.CurrentPruneMode()
-			if session, ok := exec.(sessionctx.Context); ok {
-				session.GetSessionVars().PartitionPruneMode.Store(string(pruneMode))
-			}
-		}
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		trackFunc(exec.(sessionctx.Context))
-		defer deferFunc(exec.(sessionctx.Context))
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionUseCurSession)
-	})
+func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, procTrackID uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	optFuncs := []sqlexec.OptionFuncAlias{
+		sqlexec.ExecOptionUseSessionPool,
+		execOptionForAnalyze[statsVer],
+		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.TrackFunc, h.sysProcTracker.UnTrackFunc),
+	}
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession)
-	})
+	optFuncs := []sqlexec.OptionFuncAlias{
+		sqlexec.ExecOptionUseSessionPool,
+		sqlexec.ExecOptionWithSnapshot(snapshot),
+	}
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }
 
 // Clear the statsCache, only for test.
@@ -219,13 +183,14 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*Handle, error) {
+func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		ddlEventCh:       make(chan *util.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
+		sysProcTracker:   tracker,
 	}
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
@@ -1416,9 +1381,9 @@ type statsReader struct {
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
 	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
+		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
-	return sr.ctx.ExecRestrictedSQL(ctx, nil, sql, args...)
+	return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
 
 func (sr *statsReader) isHistory() bool {
@@ -2002,22 +1967,4 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 		return false, errors.Trace(err)
 	}
 	return variable.TiDBOptOn(val), nil
-}
-
-func (h *Handle) GetProcesses() map[uint64]sessionctx.Context {
-	if h.workingAutoAnalyze != nil {
-		processes := make(map[uint64]sessionctx.Context, 1)
-		processes[tidbutil.ReservedConnIDAutoAnalyze] = h.workingAutoAnalyze
-		return processes
-	}
-	return map[uint64]sessionctx.Context{}
-}
-
-func (h *Handle) KillBgProcess(id uint64) {
-	switch id {
-	case tidbutil.ReservedConnIDAutoAnalyze:
-		if h.workingAutoAnalyze != nil {
-			atomic.StoreUint32(&h.workingAutoAnalyze.GetSessionVars().Killed, 1)
-		}
-	}
 }

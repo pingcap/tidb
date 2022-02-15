@@ -98,6 +98,12 @@ type Domain struct {
 	renewLeaseCh         chan func()      // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+
+	sysProcesses struct {
+		sync.RWMutex
+		procMap map[uint64]sessionctx.Context
+	}
+	sysProcTracker sessionctx.SysProcTracker
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -737,6 +743,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.sysProcesses = SysProcesses{procMap: make(map[uint64]sessionctx.Context)}
+	do.sysProcTracker = newSysProcTracker(do.sysProcesses)
 	return do
 }
 
@@ -1241,7 +1249,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, do.sysProcTracker)
 	if err != nil {
 		return err
 	}
@@ -1271,7 +1279,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, do.sysProcTracker)
 	if err != nil {
 		return err
 	}
@@ -1810,10 +1818,49 @@ var (
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
 
-func (d *Domain) GetProcesses() map[uint64]sessionctx.Context {
-	return d.StatsHandle().GetProcesses()
+type SysProcesses struct {
+	sync.RWMutex
+	procMap map[uint64]sessionctx.Context
 }
 
-func (d *Domain) KillBgProcess(id uint64) {
-	d.StatsHandle().KillBgProcess(id)
+func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
+	tracker := sessionctx.SysProcTracker{}
+	tracker.TrackFunc = func(id uint64, proc sessionctx.Context) error {
+		s.Lock()
+		defer s.Unlock()
+		if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+			return errors.Errorf("The ID is in use: %v", id)
+		} else {
+			s.procMap[id] = proc
+			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+		}
+		return nil
+	}
+	tracker.UnTrackFunc = func(id uint64) {
+		s.Lock()
+		defer s.Unlock()
+		if proc, ok := s.procMap[id]; ok {
+			delete(s.procMap, id)
+			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+		}
+	}
+	return tracker
+}
+
+func (d *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
+	d.sysProcesses.RLock()
+	defer d.sysProcesses.RUnlock()
+	copiedMap := make(map[uint64]sessionctx.Context, len(d.sysProcesses.procMap))
+	for id, proc := range d.sysProcesses.procMap {
+		copiedMap[id] = proc
+	}
+	return copiedMap
+}
+
+func (d *Domain) KillSysProcess(id uint64) {
+	d.sysProcesses.Lock()
+	defer d.sysProcesses.Unlock()
+	if proc, ok := d.sysProcesses.procMap[id]; ok {
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
 }

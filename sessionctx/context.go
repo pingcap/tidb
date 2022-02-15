@@ -206,3 +206,8 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 	}
 	return nil
 }
+
+type SysProcTracker struct {
+	TrackFunc   func(id uint64, proc Context) error
+	UnTrackFunc func(id uint64)
+}

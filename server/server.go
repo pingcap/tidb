@@ -164,11 +164,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-		LocalConnID:    util.ReservedLocalConns,
-	}
+	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -195,7 +191,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true, LocalConnID: util.ReservedLocalConns},
+		globalConnID:      util.NewGlobalConnID(0, true),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -623,7 +619,7 @@ func (s *Server) checkConnectionCount() error {
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients)+util.ReservedLocalConns)
+	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
@@ -632,7 +628,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 			rs[pi.ID] = pi
 		}
 	}
-	for connID, p := range s.dom.GetProcesses() {
+	for connID, p := range s.dom.GetSysProcesses() {
 		pi := p.(session.Session).ShowProcess()
 		pi.ID = connID
 		rs[connID] = pi
@@ -676,7 +672,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
 	if !ok {
-		s.dom.KillBgProcess(connectionID)
+		s.dom.KillSysProcess(connectionID)
 		return
 	}
 

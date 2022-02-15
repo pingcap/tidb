@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -54,10 +55,13 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning bool
-	SnapshotTS    uint64
-	AnalyzeVer    int
-	UseCurSession bool
+	IgnoreWarning  bool
+	SnapshotTS     uint64
+	AnalyzeVer     int
+	UseCurSession  bool
+	TrackSysProcID uint64
+	TrackSysProc   func(id uint64, ctx sessionctx.Context) error
+	UnTrackSysProc func(id uint64)
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -84,10 +88,25 @@ var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
 	option.UseCurSession = true
 }
 
+// ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
+// UseCurSession is false by default, sometimes we set it explicitly for readability
+var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
+	option.UseCurSession = false
+}
+
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.SnapshotTS = snapshot
+	}
+}
+
+// ExecOptionWithSysProcTrack tells ExecRestrictedStmt/SQL to track sys process.
+func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sessionctx.Context) error, untrack func(id uint64)) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.TrackSysProcID = procID
+		option.TrackSysProc = track
+		option.UnTrackSysProc = untrack
 	}
 }
 
