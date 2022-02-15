@@ -1624,11 +1624,10 @@ func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	const ExecCountPerSQL = 2
-
 	// Test for CRUD.
 	cases1 := []string{
 		"insert into t values (%d, sleep(0.1))",
@@ -1638,28 +1637,35 @@ func TestTopSQLStatementStats(t *testing.T) {
 		"delete from t where a = %d and sleep(0.1);",
 		"insert into t values (%d, sleep(0.1)) on duplicate key update b = b+1",
 	}
+	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
 	for i, ca := range cases1 {
 		sqlStr := fmt.Sprintf(ca, i)
 		_, digest := parser.NormalizeDigest(sqlStr)
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
-		db, err := sql.Open("mysql", ts.getDSN())
-		require.NoError(t, err)
-		dbt := testkit.NewDBTestKit(t, db)
-		dbt.MustExec("use stmtstats;")
-		for n := 0; n < ExecCountPerSQL; n++ {
-			sqlStr := fmt.Sprintf(ca, n)
-			if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
-				row := dbt.MustQuery(sqlStr)
-				err := row.Close()
-				require.NoError(t, err)
-			} else {
-				dbt.MustExec(sqlStr)
-			}
-		}
-		err = db.Close()
-		require.NoError(t, err)
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, ca := range cases1 {
+			db, err := sql.Open("mysql", ts.getDSN())
+			require.NoError(t, err)
+			dbt := testkit.NewDBTestKit(t, db)
+			dbt.MustExec("use stmtstats;")
+			for n := 0; n < ExecCountPerSQL; n++ {
+				sqlStr := fmt.Sprintf(ca, n)
+				if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
+					row := dbt.MustQuery(sqlStr)
+					err := row.Close()
+					require.NoError(t, err)
+				} else {
+					dbt.MustExec(sqlStr)
+				}
+			}
+			err = db.Close()
+			require.NoError(t, err)
+		}
+	}()
 
 	// Test for prepare stmt/execute stmt
 	cases2 := []struct {
@@ -1729,28 +1735,34 @@ func TestTopSQLStatementStats(t *testing.T) {
 	for _, ca := range cases2 {
 		_, digest := parser.NormalizeDigest(ca.execStmt)
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.execStmt
-		db, err := sql.Open("mysql", ts.getDSN())
-		require.NoError(t, err)
-		dbt := testkit.NewDBTestKit(t, db)
-		dbt.MustExec("use stmtstats;")
-		// prepare stmt
-		dbt.MustExec(ca.prepare)
-		for n := 0; n < ExecCountPerSQL; n++ {
-			setSQLs := ca.setSQLsGen(n)
-			for _, setSQL := range setSQLs {
-				dbt.MustExec(setSQL)
-			}
-			if strings.HasPrefix(strings.ToLower(ca.execStmt), "select") {
-				row := dbt.MustQuery(ca.execSQL)
-				err := row.Close()
-				require.NoError(t, err)
-			} else {
-				dbt.MustExec(ca.execSQL)
-			}
-		}
-		err = db.Close()
-		require.NoError(t, err)
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, ca := range cases2 {
+			db, err := sql.Open("mysql", ts.getDSN())
+			require.NoError(t, err)
+			dbt := testkit.NewDBTestKit(t, db)
+			dbt.MustExec("use stmtstats;")
+			// prepare stmt
+			dbt.MustExec(ca.prepare)
+			for n := 0; n < ExecCountPerSQL; n++ {
+				setSQLs := ca.setSQLsGen(n)
+				for _, setSQL := range setSQLs {
+					dbt.MustExec(setSQL)
+				}
+				if strings.HasPrefix(strings.ToLower(ca.execStmt), "select") {
+					row := dbt.MustQuery(ca.execSQL)
+					err := row.Close()
+					require.NoError(t, err)
+				} else {
+					dbt.MustExec(ca.execSQL)
+				}
+			}
+			err = db.Close()
+			require.NoError(t, err)
+		}
+	}()
 
 	// Test for prepare by db client prepare/exec interface.
 	cases3 := []struct {
@@ -1805,31 +1817,38 @@ func TestTopSQLStatementStats(t *testing.T) {
 	for _, ca := range cases3 {
 		_, digest := parser.NormalizeDigest(ca.prepare)
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.prepare
-		db, err := sql.Open("mysql", ts.getDSN())
-		require.NoError(t, err)
-		dbt := testkit.NewDBTestKit(t, db)
-		dbt.MustExec("use stmtstats;")
-		// prepare stmt
-		stmt, err := db.Prepare(ca.prepare)
-		require.NoError(t, err)
-		for n := 0; n < ExecCountPerSQL; n++ {
-			args := ca.argsGen(n)
-			if strings.HasPrefix(strings.ToLower(ca.prepare), "select") {
-				row, err := stmt.Query(args...)
-				require.NoError(t, err)
-				err = row.Close()
-				require.NoError(t, err)
-			} else {
-				_, err := stmt.Exec(args...)
-				require.NoError(t, err)
-			}
-		}
-		err = db.Close()
-		require.NoError(t, err)
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, ca := range cases3 {
+			db, err := sql.Open("mysql", ts.getDSN())
+			require.NoError(t, err)
+			dbt := testkit.NewDBTestKit(t, db)
+			dbt.MustExec("use stmtstats;")
+			// prepare stmt
+			stmt, err := db.Prepare(ca.prepare)
+			require.NoError(t, err)
+			for n := 0; n < ExecCountPerSQL; n++ {
+				args := ca.argsGen(n)
+				if strings.HasPrefix(strings.ToLower(ca.prepare), "select") {
+					row, err := stmt.Query(args...)
+					require.NoError(t, err)
+					err = row.Close()
+					require.NoError(t, err)
+				} else {
+					_, err := stmt.Exec(args...)
+					require.NoError(t, err)
+				}
+			}
+			err = db.Close()
+			require.NoError(t, err)
+		}
+	}()
 
+	wg.Wait()
 	// Wait for collect.
-	time.Sleep(2 * time.Second)
+	<-collectedNotifyCh
 
 	found := 0
 	for digest, item := range total {
@@ -1854,17 +1873,22 @@ func TestTopSQLStatementStats(t *testing.T) {
 	require.Equal(t, 20, found)
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, func()) {
+func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, chan struct{}, func()) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
 	// Register stmt stats collector.
 	var mu sync.Mutex
+	collectedNotifyCh := make(chan struct{})
 	total := stmtstats.StatementStatsMap{}
 	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
 		mu.Lock()
 		defer mu.Unlock()
 		total.Merge(data)
+		select {
+		case collectedNotifyCh <- struct{}{}:
+		default:
+		}
 	}))
 
 	ts, cleanup := createTidbTestSuite(t)
@@ -1899,11 +1923,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		stmtstats.CloseAggregator()
 
 	}
-	return ts, total, cleanFn
+	return ts, total, collectedNotifyCh, cleanFn
 }
 
 func TestTopSQLStatementStats2(t *testing.T) {
-	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	const ExecCountPerSQL = 3
@@ -2002,7 +2026,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	}
 
 	// Wait for collect.
-	time.Sleep(2 * time.Second)
+	<-collectedNotifyCh
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2016,30 +2040,29 @@ func TestTopSQLStatementStats2(t *testing.T) {
 }
 
 func TestTopSQLStatementStats3(t *testing.T) {
-	ts, total, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
-	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2500)")
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext")
 	}()
 
 	cases := []string{
-		"select count(a+b) from t",
-		"select * from t where b is null",
-		"update t set b = 1 limit 10",
+		"select count(a+b) from stmtstats.t",
+		"select * from stmtstats.t where b is null",
+		//"update stmtstats.t set b = 1 limit 10",
 	}
 	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
-	for _, sqlStr := range cases {
+	for _, ca := range cases {
 		wg.Add(1)
 		go func(sqlStr string) {
 			defer wg.Done()
 			db, err := sql.Open("mysql", ts.getDSN())
 			require.NoError(t, err)
 			dbt := testkit.NewDBTestKit(t, db)
-			dbt.MustExec("use stmtstats;")
 			require.NoError(t, err)
 			if strings.HasPrefix(sqlStr, "select") {
 				mustQuery(t, dbt, sqlStr)
@@ -2048,12 +2071,12 @@ func TestTopSQLStatementStats3(t *testing.T) {
 			}
 			err = db.Close()
 			require.NoError(t, err)
-		}(sqlStr)
-		_, digest := parser.NormalizeDigest(sqlStr)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+		}(ca)
+		_, digest := parser.NormalizeDigest(ca)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca
 	}
 	// Wait for collect.
-	time.Sleep(time.Second + time.Millisecond*500)
+	<-collectedNotifyCh
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2070,7 +2093,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 	// wait sql execute finish.
 	wg.Wait()
 	// Wait for collect.
-	time.Sleep(time.Second + time.Millisecond*500)
+	<-collectedNotifyCh
 
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {

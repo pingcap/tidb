@@ -137,6 +137,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
+		ms := v.(int)
+		time.Sleep(time.Millisecond * time.Duration(ms))
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -220,11 +224,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
-		ms := v.(int)
-		time.Sleep(time.Millisecond * time.Duration(ms))
-	})
-
 	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
