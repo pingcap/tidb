@@ -576,7 +576,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StatePublic:
 		// public -> write only
 		colInfo.State = model.StateWriteOnly
-		setIndicesState(idxInfos, model.StateDeleteReorganization)
+		setIndicesState(idxInfos, model.StateWriteOnly)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)

@@ -732,8 +732,8 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
-// TestDeleteOnlyForDropColumnWithIndexes test for delete data when a middle-state column with indexes in it.
-func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
+// TestSchemaChangeForDropColumnWithIndexes test for delete data when a middle-state column with indexes in it.
+func (s *testStateChangeSuite) TestSchemaChangeForDropColumnWithIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 3)
