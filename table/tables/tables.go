@@ -1676,52 +1676,23 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 	return s.base, s.end, s.round
 }
 
-// Fixed prefix length for scalable sequence
-const ScalableSequencePrefixLength = 4
-
-// IsScalableSequence is use to check if the scalble prefix neeed to be added
-// to be scalable sequence, two conditions needs to met:
-// 1. scalable flag is set
-// 2. length of min/max value exceeds 4
-// 3. TODO: better check the max digits when enabling scale attribute with create/alter sequence statement
-func IsScalableSequence(seq *sequenceCommon) bool {
-	if seq.meta.Scale && GetSequenceMaxDigits(seq) > ScalableSequencePrefixLength {
-		return true
-	}
-	return false
-}
-
-// GetSequenceMaxDigits return the max digits of the sequence
-// cache the result at model.SequenceInfo.MaxDigits
-func GetSequenceMaxDigits(seq *sequenceCommon) int {
-	if seq.meta.MaxDigits == 0 {
-		maxVal := math.Abs(float64(seq.meta.MaxValue))
-		if maxVal < math.Abs(float64(seq.meta.MinValue)) {
-			maxVal = math.Abs(float64(seq.meta.MinValue))
-		}
-		s := strconv.FormatUint(uint64(maxVal), 10)
-		seq.meta.MaxDigits = len(s)
-	}
-	return seq.meta.MaxDigits
-}
-
-// AppendScalablePrefix append the fixed 4 digits for the scalable sequence.
+// AppendScalablePrefix appends the fixed 4 digits for the scalable sequence, to solve the auto-increment sequence hot-spot contention
 // 1 || [connection id % 1000]
 // Using scalable sequences has some obvious implications:
 // 1. All sequence numbers are full size in terms of the number of digits used. If your application displays sequence numbers you may have some formatting issues you weren't expecting for a few years.
 // 2. When using NOEXTEND you are effectively reducing the maximum sequence number available, as 4 digits are "lost" because of the prefix.
-// 3. When you are using EXTEND you need to be able to cope with the "LENGTH(MAXVALUE)+4" digits, so variables and table columns need to be sized correctly.
-// Oracle provide similar funtionality since 18c. Oracle scalable sequence introdution: https://oracle-base.com/articles/18c/scalable-sequences-18c
+// 3. When you are using EXTEND you need to be able to cope with the "LENGTH(MAXVALUE)+4" digits, in GoLang, the len of max int64 is 19, the length of the maxvalue can not exceeding 15. so variables and table columns need to be sized correctly.
+// Oracle provided similar funtionality since 18c. Oracle scalable sequence intro: https://oracle-base.com/articles/18c/scalable-sequences-18c
 func AppendScalablePrefix(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
-	maxDigits := GetSequenceMaxDigits(seq)
+	maxDigits := seq.meta.MaxDigits
 	if seq.meta.Extend {
-		maxDigits = maxDigits + ScalableSequencePrefixLength
+		maxDigits = maxDigits + util.ScalableSequencePrefixLength
 	}
 	flag := int64(1)
 	if nextVal < 0 {
 		flag = -1
 	}
-	highPrefix := flag * int64(math.Pow(10, float64(maxDigits)))
+	highPrefix := flag * int64(math.Pow(10, float64(maxDigits-1)))
 	lowPrefix := flag * int64(connectionID%1000) * int64(math.Pow(10, float64(maxDigits-4)))
 	return highPrefix + lowPrefix + nextVal
 }
@@ -1729,7 +1700,7 @@ func AppendScalablePrefix(seq *sequenceCommon, connectionID uint64, nextVal int6
 // ScaleSequenceValue return the original nextval if the sequence is not scalable
 // otherwise, 4 digits prefix is added to the nextVal
 func ScaleSequenceValue(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
-	if IsScalableSequence(seq) {
+	if seq.meta.Scale {
 		return AppendScalablePrefix(seq, connectionID, nextVal)
 	} else {
 		return nextVal
@@ -1739,10 +1710,10 @@ func ScaleSequenceValue(seq *sequenceCommon, connectionID uint64, nextVal int64)
 // NoScaleSequenceValue return the original nextval if the sequence is not scalable
 // otherwise, 4 digits prefix is removed and the original nextVal is return
 func NoScaleSequenceValue(seq *sequenceCommon, nextVal int64) int64 {
-	if IsScalableSequence(seq) {
-		maxDigits := GetSequenceMaxDigits(seq)
+	if seq.meta.Scale {
+		maxDigits := seq.meta.MaxDigits
 		if seq.meta.Extend {
-			maxDigits = maxDigits + ScalableSequencePrefixLength
+			maxDigits = maxDigits + util.ScalableSequencePrefixLength
 		}
 		flag := int64(1)
 		if nextVal < 0 {
@@ -1757,11 +1728,11 @@ func NoScaleSequenceValue(seq *sequenceCommon, nextVal int64) int64 {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal, baseVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
-		return 0, 0, errors.New("sequenceCommon is nil")
+		return 0, errors.New("sequenceCommon is nil")
 	}
 	seq.mu.Lock()
 	defer seq.mu.Unlock()
@@ -1834,12 +1805,12 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 	// Sequence alloc in kv store error.
 	if err != nil {
 		if err == autoid.ErrAutoincReadFailed {
-			return 0, 0, table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)
+			return 0, table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)
 		}
-		return 0, 0, err
+		return 0, err
 	}
 	seq.base = NoScaleSequenceValue(seq, nextVal)
-	return nextVal, seq.base, nil
+	return nextVal, nil
 }
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.

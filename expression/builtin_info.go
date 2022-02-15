@@ -980,13 +980,13 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
-	nextVal, baseVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
+	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
 	if err != nil {
 		return 0, false, err
 	}
 	// update the sequenceState.
 
-	b.ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), baseVal)
+	b.ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
 	return nextVal, false, nil
 }
 

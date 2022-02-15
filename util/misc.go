@@ -52,6 +52,10 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
+	// Fixed prefix length for scalable sequence
+	ScalableSequencePrefixLength = 4
+	// Max digits for Int64
+	MaxInt64Digits = 19
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -443,7 +447,7 @@ var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (Sequen
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, int64, error)
+	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
 	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
