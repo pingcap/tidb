@@ -256,7 +256,7 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	Init(renewCh chan func(), exec sqlexec.SQLExecutor) error
+	Init(exec sqlexec.SQLExecutor) error
 
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer
