@@ -153,7 +153,7 @@ func TestShowPlacementPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t3")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
 
 	// before grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
@@ -313,7 +313,7 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table db2.t1")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
 
 	privs := []string{
 		"all privileges on db2.*",
@@ -406,7 +406,7 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t1")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
 
 	// before grant
 	err := tk1.ExecToErr("show placement for table test.t1")
