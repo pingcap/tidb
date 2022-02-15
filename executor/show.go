@@ -213,8 +213,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowBindings:
 		return e.fetchShowBind()
 	case ast.ShowAnalyzeStatus:
-		e.fetchShowAnalyzeStatus()
-		return nil
+		return e.fetchShowAnalyzeStatus()
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions()
 	case ast.ShowBuiltins:

@@ -1991,3 +1991,24 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 	}
 	return variable.TiDBOptOn(val), nil
 }
+
+// RecordAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
+	// TODO: do we need to pass ctx in?
+	ctx := context.Background()
+	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state) VALUES (%?, %?, %?, %?, %?)"
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending)
+	if err != nil {
+		return err
+	}
+	const getJobID = "SELECT LAST_INSERTED_ID()"
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
+	if err != nil {
+		return err
+	}
+	job.ID = rows[0].GetUint64(0)
+	return nil
+}

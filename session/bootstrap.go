@@ -390,16 +390,14 @@ const (
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
 		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		table_schema CHAR(64),
-		table_name CHAR(64),
-		partition_name CHAR(64),
-		job_info TEXT,
-		processed_rows BIGINT(64),
+		table_schema CHAR(64) NOT NULL DEFAULT '',
+		table_name CHAR(64) NOT NULL DEFAULT '',
+		partition_name CHAR(64) NOT NULL DEFAULT '',
+		job_info TEXT NOT NULL DEFAULT '',
+		processed_rows BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		start_time TIMESTAMP,
 		end_time TIMESTAMP,
-		state ENUM('PENDING', 'RUNNING', 'FINISHED', 'FAILED') NOT NULL,
-		tidb_address VARCHAR(32),
-		session_id BIGINT(64),
+		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
 		PRIMARY KEY (id) CLUSTERED,
 		KEY (update_time)
 	);`

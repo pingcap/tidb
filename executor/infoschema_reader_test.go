@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -527,7 +526,6 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 func (s *testInfoschemaTableSuite) TestMetricTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	statistics.ClearHistoryJobs()
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `METRICS_TABLES` where table_name='tidb_qps'").
@@ -546,7 +544,7 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 
 func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	statistics.ClearHistoryJobs()
+	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists analyze_test")
 	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
@@ -612,7 +610,6 @@ func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	}()
 
 	tk := testkit.NewTestKit(c, s.store)
-	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")

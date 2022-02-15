@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -97,7 +96,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		go e.analyzeWorker(taskCh, resultsCh, i == 0)
 	}
 	for _, task := range e.tasks {
-		statistics.AddNewAnalyzeJob(task.job)
+		addNewAnalyzeJob(e.ctx, task.job)
 	}
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -125,9 +124,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The meaning of value in map is some additional information needed to build global-level stats.
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, meetError bool) {
-		job.Finish(meetError)
+		finishAnalyzeJob(e.ctx, job, meetError)
 		if job != nil {
-			logutil.Logger(ctx).Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, job.State),
+			var state string
+			if meetError {
+				state = statistics.AnalyzeFailed
+			} else {
+				state = statistics.AnalyzeFinished
+			}
+			logutil.Logger(ctx).Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
 				zap.String("partition", job.PartitionName),
 				zap.String("job info", job.JobInfo),
 				zap.Time("start time", job.StartTime),
@@ -183,9 +188,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
-	}
-	for _, task := range e.tasks {
-		statistics.MoveToHistory(task.job)
 	}
 	if err != nil {
 		return err
@@ -350,7 +352,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		task.job.Start()
+		startAnalyzeJob(e.ctx, task.job)
 		switch task.taskType {
 		case colTask:
 			resultsCh <- analyzeColumnsPushdown(task.colExec)
@@ -511,7 +513,7 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func updateIndexResult(
-	ctx *stmtctx.StatementContext,
+	ctx sessionctx.Context,
 	resp *tipb.AnalyzeIndexResp,
 	job *statistics.AnalyzeJob,
 	hist *statistics.Histogram,
@@ -533,9 +535,9 @@ func updateIndexResult(
 	needCMS := cms != nil
 	respHist := statistics.HistogramFromProto(resp.Hist)
 	if job != nil {
-		job.Update(int64(respHist.TotalRowCount()))
+		updateAnalyzeJob(ctx, job, int64(respHist.TotalRowCount()))
 	}
-	hist, err = statistics.MergeHistograms(ctx, hist, respHist, numBuckets, statsVer)
+	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx, hist, respHist, numBuckets, statsVer)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -587,7 +589,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		hist, cms, fms, topn, err = updateIndexResult(e.ctx.GetSessionVars().StmtCtx, resp, e.job, hist, cms, fms, topn,
+		hist, cms, fms, topn, err = updateIndexResult(e.ctx, resp, e.job, hist, cms, fms, topn,
 			e.idxInfo, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -1103,7 +1105,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	for _, task := range tasks {
-		statistics.AddNewAnalyzeJob(task.job)
+		addNewAnalyzeJob(e.ctx, task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
 	e.subIndexWorkerWg.Add(statsConcurrncy)
@@ -1124,15 +1126,14 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 			break
 		}
 		if results.Err != nil {
-			results.Job.Finish(true)
+			finishAnalyzeJob(e.ctx, results.Job, true)
 			err = results.Err
 			if err == errAnalyzeWorkerPanic {
 				panicCnt++
 			}
 			continue
 		}
-		results.Job.Finish(false)
-		statistics.MoveToHistory(results.Job)
+		finishAnalyzeJob(e.ctx, results.Job, false)
 		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
@@ -1168,7 +1169,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 		if !ok {
 			break
 		}
-		task.job.Start()
+		startAnalyzeJob(e.ctx, task.job)
 		if task.taskType != idxTask {
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: errors.Errorf("incorrect analyze type"),
@@ -1293,7 +1294,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		}
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		subCollector.Base().FromProto(colResp.RowCollector)
-		e.job.Update(subCollector.Base().Count)
+		updateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		retCollector.MergeCollector(subCollector)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
@@ -1463,7 +1464,6 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if data == nil {
 			break
 		}
-		sc := e.ctx.GetSessionVars().StmtCtx
 		var colResp *tipb.AnalyzeColumnsResp
 		if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
 			resp := &tipb.AnalyzeMixedResp{}
@@ -1472,7 +1472,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 				return nil, nil, nil, nil, nil, err
 			}
 			colResp = resp.ColumnsResp
-			handleHist, handleCms, handleFms, handleTopn, err = updateIndexResult(sc, resp.IndexResp, nil, handleHist,
+			handleHist, handleCms, handleFms, handleTopn, err = updateIndexResult(e.ctx, resp.IndexResp, nil, handleHist,
 				handleCms, handleFms, handleTopn, e.commonHandle, int(e.opts[ast.AnalyzeOptNumBuckets]),
 				int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
 
@@ -1483,6 +1483,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			colResp = &tipb.AnalyzeColumnsResp{}
 			err = colResp.Unmarshal(data)
 		}
+		sc := e.ctx.GetSessionVars().StmtCtx
 		rowCount := int64(0)
 		if hasPkHist(e.handleCols) {
 			respHist := statistics.HistogramFromProto(colResp.PkHist)
@@ -1497,7 +1498,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
 		}
-		e.job.Update(rowCount)
+		updateAnalyzeJob(e.ctx, e.job, rowCount)
 	}
 	timeZone := e.ctx.GetSessionVars().Location()
 	if hasPkHist(e.handleCols) {
@@ -2278,5 +2279,76 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		StatsVer: statistics.Version1,
 		Count:    cnt,
 		Snapshot: colExec.snapshot,
+	}
+}
+
+// addNewAnalyzeJob records the new analyze job.
+func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+	if job == nil {
+		return
+	}
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	err := statsHandle.RecordAnalyzeJob(job)
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+}
+
+// startAnalyzeJob marks the state of the analyze job as running and sets the start time.
+func startAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+	if job == nil {
+		return
+	}
+	job.StartTime = time.Now()
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, job.ID)
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+}
+
+// updateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
+func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+	const maxDelta = 1000000
+	if job == nil {
+		return
+	}
+	var delta int64
+	job.Delta.Lock()
+	job.Delta.Count += rowCount
+	if job.Delta.Count > maxDelta {
+		delta = job.Delta.Count
+		job.Delta.Count = 0
+	}
+	job.Delta.Unlock()
+	if delta == 0 {
+		return
+	}
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, delta, job.ID)
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+}
+
+// finishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
+func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, meetError bool) {
+	if job == nil {
+		return
+	}
+	job.EndTime = time.Now()
+	var state string
+	if meetError {
+		state = statistics.AnalyzeFailed
+	} else {
+		state = statistics.AnalyzeFinished
+	}
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	const sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 }

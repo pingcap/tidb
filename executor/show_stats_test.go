@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -359,7 +358,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	statistics.ClearHistoryJobs()
+	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
@@ -378,7 +377,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.NotNil(t, result.Rows()[0][6])
 	require.Equal(t, "finished", result.Rows()[0][7])
 
-	statistics.ClearHistoryJobs()
+	tk.MustExec("delete from mysql.analyze_jobs")
 
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
