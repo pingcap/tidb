@@ -99,10 +99,7 @@ type Domain struct {
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
-	sysProcesses struct {
-		sync.RWMutex
-		procMap map[uint64]sessionctx.Context
-	}
+	sysProcesses   SysProcesses
 	sysProcTracker sessionctx.SysProcTracker
 }
 
@@ -743,7 +740,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.sysProcesses = SysProcesses{procMap: make(map[uint64]sessionctx.Context)}
+	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	do.sysProcTracker = newSysProcTracker(do.sysProcesses)
 	return do
 }
@@ -1825,15 +1822,15 @@ var (
 
 // SysProcesses holds the sys processes infos
 type SysProcesses struct {
-	sync.RWMutex
+	mu      *sync.RWMutex
 	procMap map[uint64]sessionctx.Context
 }
 
 func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 	tracker := sessionctx.SysProcTracker{}
 	tracker.TrackFunc = func(id uint64, proc sessionctx.Context) error {
-		s.Lock()
-		defer s.Unlock()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
 			return errors.Errorf("The ID is in use: %v", id)
 		}
@@ -1842,8 +1839,8 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 		return nil
 	}
 	tracker.UnTrackFunc = func(id uint64) {
-		s.Lock()
-		defer s.Unlock()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if proc, ok := s.procMap[id]; ok {
 			delete(s.procMap, id)
 			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
@@ -1854,8 +1851,8 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 
 // GetSysProcesses gets all of sys processes
 func (do *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
-	do.sysProcesses.RLock()
-	defer do.sysProcesses.RUnlock()
+	do.sysProcesses.mu.RLock()
+	defer do.sysProcesses.mu.RUnlock()
 	copiedMap := make(map[uint64]sessionctx.Context, len(do.sysProcesses.procMap))
 	for id, proc := range do.sysProcesses.procMap {
 		copiedMap[id] = proc
@@ -1865,8 +1862,8 @@ func (do *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
 
 // KillSysProcess kills sys process with specified ID
 func (do *Domain) KillSysProcess(id uint64) {
-	do.sysProcesses.Lock()
-	defer do.sysProcesses.Unlock()
+	do.sysProcesses.mu.Lock()
+	defer do.sysProcesses.mu.Unlock()
 	if proc, ok := do.sysProcesses.procMap[id]; ok {
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
 	}
