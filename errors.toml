@@ -506,6 +506,11 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1567"]
+error = '''
+Incorrect partition name
+'''
+
 ["ddl:1652"]
 error = '''
 Duplicate partition field name '%-.192s'

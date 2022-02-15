@@ -2695,3 +2695,74 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSerialSuite) TestCachedTable(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		c.Assert(store.Close(), IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a int, b int, index i_b(b))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("alter table t cache")
+
+	tk.MustExec("prepare tableScan from 'select * from t where a>=?'")
+	tk.MustExec("prepare indexScan from 'select b from t use index(i_b) where b>?'")
+	tk.MustExec("prepare indexLookup from 'select a from t use index(i_b) where b>? and b<?'")
+	tk.MustExec("prepare pointGet from 'select b from t use index(i_b) where b=?'")
+	tk.MustExec("set @a=1, @b=3")
+
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
+	var cacheLoaded bool
+	for i := 0; i < 50; i++ {
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+		if lastReadFromCache(tk) {
+			cacheLoaded = true
+			break
+		}
+	}
+	c.Assert(cacheLoaded, IsTrue)
+
+	// Cache the plan.
+	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("execute indexScan using @a").Check(testkit.Rows("2"))
+	tk.MustQuery("execute indexLookup using @a, @b").Check(testkit.Rows("2"))
+	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
+
+	// Table Scan
+	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
+	c.Assert(lastReadFromCache(tk), IsTrue)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Index Scan
+	tk.MustQuery("execute indexScan using @a").Check(testkit.Rows("2"))
+	c.Assert(lastReadFromCache(tk), IsTrue)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// IndexLookup
+	tk.MustQuery("execute indexLookup using @a, @b").Check(testkit.Rows("2"))
+	c.Assert(lastReadFromCache(tk), IsTrue)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// PointGet
+	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
+	c.Assert(lastReadFromCache(tk), IsTrue)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
