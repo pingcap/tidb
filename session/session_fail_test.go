@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -46,9 +47,6 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 }
 
 func TestGetTSFailDirtyState(t *testing.T) {
-	if *withTiKV {
-		return
-	}
 	store, clean := createStorage(t)
 	defer clean()
 
@@ -60,7 +58,11 @@ func TestGetTSFailDirtyState(t *testing.T) {
 		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
 	})
 	_, err := tk.Session().Execute(ctx, "select * from t")
-	require.Error(t, err)
+	if config.GetGlobalConfig().Store == "unistore" {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
 
 	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write
 	// affected by this fail flag.
