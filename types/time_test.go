@@ -1057,6 +1057,7 @@ func TestParseDateFormat(t *testing.T) {
 		{"T10:10:10", nil},
 		{"2011-11-11x", []string{"2011", "11", "11x"}},
 		{"xxx 10:10:10", nil},
+		{"2022-02-01\n16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
 	}
 
 	for _, tt := range tbl {
