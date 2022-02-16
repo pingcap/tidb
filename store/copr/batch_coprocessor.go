@@ -825,11 +825,11 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		return ret, err
 	}
 	// Retry Partition Table Scan
-	var keyRanges = make([]*KeyRanges, len(batchTask.PartitionTableRegions))
-	var pid []int64
+	keyRanges := make([]*KeyRanges, 0, len(batchTask.PartitionTableRegions))
+	pid := make([]int64, 0, len(batchTask.PartitionTableRegions))
 	for _, trs := range batchTask.PartitionTableRegions {
 		pid = append(pid, trs.PhysicalTableId)
-		ranges := make([]kv.KeyRange, len(trs.Regions))
+		ranges := make([]kv.KeyRange, 0, len(trs.Regions))
 		for _, ri := range batchTask.regionInfos {
 			ri.Ranges.Do(func(ran *kv.KeyRange) {
 				ranges = append(ranges, *ran)

@@ -366,8 +366,8 @@ func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Contex
 	sort.Slice(partitions, func(i, j int) bool {
 		return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
 	})
-	var allKVRanges [][]kv.KeyRange
-	var allPartitionsIDs []int64
+	allKVRanges := make([][]kv.KeyRange, 0, len(partitions))
+	allPartitionsIDs := make([]int64, 0, len(partitions))
 	// Get region info for each partition
 	for _, p := range partitions {
 		pid := p.GetPhysicalID()
