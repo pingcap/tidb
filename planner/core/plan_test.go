@@ -704,7 +704,7 @@ func TestCopPaging(t *testing.T) {
 			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
 			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
 			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false",))
+			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 }
 
