@@ -3852,16 +3852,21 @@ func TestDDLLastInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
-	//tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_txn_info, '$.sequence')")
-	tk.MustGetErrCode("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_txn_info, '$.sequence')", errno.ErrInvalidJSONText)
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')").Check(testkit.Rows("\"\" 0"))
 	tk.MustExec("create table t(a int)")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_txn_info, '$.sequence')").Check(testkit.Rows("'create table t(a int)' 1"))
+	firstSequence := 0
+	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')")
+	require.Equal(t, 1, len(res.Rows()))
+	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
+	var err error
+	firstSequence, err = strconv.Atoi(fmt.Sprintf("%v", res.Rows()[0][1]))
+	require.Nil(t, err)
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test;`)
 	tk.MustExec("create table t2(a int)")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_txn_info, '$.sequence')").Check(testkit.Rows("'create table t2(a int)' 2"))
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
 
-	tk.MustExec("drop table t1, t2")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_txn_info, '$.sequence')").Check(testkit.Rows("'drop table t1, t2' 3"))
+	tk.MustExec("drop table t, t2")
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
 }
