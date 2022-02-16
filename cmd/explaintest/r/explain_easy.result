@@ -695,7 +695,8 @@ insert into t values (1, 1);
 explain format = 'brief' update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t	handle:1
+└─Selection	1.00	root		eq(test.t.j, 1)
+  └─Point_Get	1.00	root	table:t	handle:1
 rollback;
 drop table if exists t;
 create table t(a int);

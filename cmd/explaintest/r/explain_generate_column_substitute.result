@@ -595,9 +595,10 @@ Sort	12487.50	root		test.t2.c_enum
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
   └─Projection(Probe)	10000.00	root		test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid
-    └─UnionScan	10000.00	root		not(isnull(minus(test.t2.c_int, 1)))
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─UnionScan	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+      └─Selection	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 c_enum
 orange
