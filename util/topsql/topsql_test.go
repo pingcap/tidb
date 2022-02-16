@@ -157,7 +157,7 @@ func TestTopSQLReporter(t *testing.T) {
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
-			require.Equal(t, len(req.PlanDigest), 0)
+			require.Len(t, req.PlanDigest, 0)
 			continue
 		}
 		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
@@ -320,7 +320,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(record.PlanDigest) == 0 {
-			require.Equal(t, len(record.PlanDigest), 0)
+			require.Len(t, record.PlanDigest, 0)
 			continue
 		}
 		normalizedPlan, exist := planMetas[string(record.PlanDigest)]
@@ -328,7 +328,7 @@ func TestTopSQLPubSub(t *testing.T) {
 		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
-	require.Equal(t, len(checkSQLPlanMap), 2)
+	require.Len(t, checkSQLPlanMap, 2)
 }
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {

@@ -588,34 +588,32 @@
       {
         "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
         "Plan": [
-          "Projection_7 8000.00 root  test.t.a",
-          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
-          "  └─MergeJoin_10 10000.00 root  left outer semi join, left key:test.t.a, right key:test.t.a",
-          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
-          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
-          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
-          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+          "TableReader_49 8000.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_8 8000.00 cop[tiflash]  test.t.a",
+          "    └─Selection_46 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 cop[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_27(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_26 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_24(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because join type `left outer semi join` is not supported now.",
-          "MPP mode may be blocked because join type `left outer semi join` is not supported now."
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+        "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
         "Plan": [
-          "Projection_7 8000.00 root  test.t.a",
-          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
-          "  └─MergeJoin_10 10000.00 root  anti left outer semi join, left key:test.t.a, right key:test.t.a",
-          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
-          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
-          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
-          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+          "TableReader_49 8000.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_8 8000.00 cop[tiflash]  test.t.a",
+          "    └─Selection_46 8000.00 cop[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 cop[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_27(Build) 10000.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_26 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_24(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now.",
-          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
