@@ -202,17 +202,6 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		tr.logger.Error("fail to restoreEngines because indexengine is nil")
 		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
 	}
-	// If there is an index engine only, it indicates no data needs to restore.
-	// So we can change status to imported directly and avoid opening engine.
-	if len(cp.Engines) == 1 {
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, indexEngineID, nil, checkpoints.CheckpointStatusImported); err != nil {
-			return errors.Trace(err)
-		}
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusIndexImported); err != nil {
-			return errors.Trace(err)
-		}
-		return nil
-	}
 
 	ctx, cancel := context.WithCancel(pCtx)
 	defer cancel()
@@ -684,10 +673,7 @@ func (tr *TableRestore) postProcess(
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
-	// there are no data in this table, no need to do post process
-	// this is important for tables that are just the dump table of views
-	// because at this stage, the table was already deleted and replaced by the related view
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+	if !rc.backend.ShouldPostProcess() {
 		return false, nil
 	}
 
