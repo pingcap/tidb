@@ -2010,7 +2010,7 @@ func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 	if err != nil {
 		return err
 	}
-	const getJobID = "SELECT LAST_INSERTED_ID()"
+	const getJobID = "SELECT LAST_INSERT_ID()"
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
 	if err != nil {
 		return err
