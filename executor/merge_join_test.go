@@ -281,11 +281,13 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
 	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
 }
-func TestMergeJoinInDisk(t *testing.T) {
 
+func TestMergeJoinInDisk(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
+		conf.TempStoragePath = t.TempDir()
 	})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"))
