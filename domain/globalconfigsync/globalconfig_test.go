@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/globalconfigsync"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -48,11 +49,9 @@ func TestGlobalConfigSyncer(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	client := store.(interface {
-		GetPDClient() pd.Client
-	}).GetPDClient()
+	client := store.(kv.StorageWithPD).GetPDClient()
 	syncer := globalconfigsync.NewGlobalConfigSyncer(client)
-	syncer.PushGlobalConfigItem(pd.GlobalConfigItem{Name: "a", Value: "b"})
+	syncer.Notify(pd.GlobalConfigItem{Name: "a", Value: "b"})
 	err = syncer.StoreGlobalConfig(context.Background(), <-syncer.NotifyCh)
 	require.NoError(t, err)
 	items, err := client.LoadGlobalConfig(context.Background(), []string{"a"})
@@ -83,9 +82,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	require.NoError(t, err)
 	_ = <-time.After(50 * time.Millisecond)
 	client :=
-		store.(interface {
-			GetPDClient() pd.Client
-		}).GetPDClient()
+		store.(kv.StorageWithPD).GetPDClient()
 	// enable top sql will be translated to enable_resource_metering
 	items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
 	require.Equal(t, len(items), 1)

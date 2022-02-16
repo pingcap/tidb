@@ -367,7 +367,7 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 // NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
 	if do.globalCfgSyncer != nil {
-		do.globalCfgSyncer.PushGlobalConfigItem(pd.GlobalConfigItem{Name: name, Value: value})
+		do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
 	}
 }
 
@@ -818,9 +818,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return err
 	}
 	// try cast do.store to kv.Storage
-	if store, ok := do.store.(interface {
-		GetPDClient() pd.Client
-	}); ok {
+	if store, ok := do.store.(kv.StorageWithPD); ok {
 		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(store.GetPDClient())
 	} else {
 		logutil.BgLogger().Warn("could not properly initialize GlobalConfigSyncer, due to store does not contain GetPDClient method")
