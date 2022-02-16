@@ -1829,13 +1829,20 @@ func TestPartitionPruningInTransaction(t *testing.T) {
 	tk.MustExec("create database test_pruning_transaction")
 	defer tk.MustExec(`drop database test_pruning_transaction`)
 	tk.MustExec("use test_pruning_transaction")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec(`begin`)
 	tk.MustPartitionByList(`select * from t`, []string{"p0", "p1", "p2"})
 	tk.MustPartitionByList(`select * from t where a > 3`, []string{"p1", "p2"}) // partition pruning can work in transactions
 	tk.MustPartitionByList(`select * from t where a > 7`, []string{"p2"})
 	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`begin`)
+	tk.MustPartition(`select * from t`, "all")
+	tk.MustPartition(`select * from t where a > 3`, "p1,p2") // partition pruning can work in transactions
+	tk.MustPartition(`select * from t where a > 7`, "p2")
+	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = default")
 }
 
 func TestIssue25253(t *testing.T) {
