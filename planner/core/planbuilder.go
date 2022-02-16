@@ -1239,19 +1239,23 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 		// their defaults values are filled in by storage
 		// and set by the partition's TableReaderExecutor physical table id.
 		// (static prune mode has a union of TableReader, one for each partition).
-		//setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		/*
+			if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				// static partition prune mode, create one TableReader per partition
+				// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
 
-		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			// static partition prune mode, create one TableReader per partition
-			// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
-			b.optFlag = b.optFlag | flagPartitionProcessor
-			// Skip sending the extraPhysTblIDCol to store, just fill it in anyway in
-			// table reader...
-			// WAS HERE, is it possible to avoid this call??!?
-			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
-		} else {
-			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
-		}
+				// Already set when creating DataSource in buildDataSource!
+				//b.optFlag = b.optFlag | flagPartitionProcessor
+
+				// Skip sending the extraPhysTblIDCol to store, just fill it in anyway in
+				// table reader...
+				// WAS HERE, is it possible to avoid this call??!?
+				// How is it done for UnionScan?
+				// If avoided there, maybe we could just set tblID2PhysTblIDCol[pid] to len(ds.TblCols)?
+				//setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+			}
+		*/
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,

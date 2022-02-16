@@ -245,6 +245,9 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			var checkKey kv.Key
 			if us.physTblIDIdx != nil {
 				tblID := row.GetInt64(*us.physTblIDIdx)
+				if tblID == 0 {
+					panic("UnionScanExec Physical Table ID == 0")
+				}
 				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
 			} else {
 				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)

@@ -3786,11 +3786,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // to construct the lock key, so this column is added to the chunk row.
 // Also needed for checking against the sessions transaction buffer
 func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
-	// Avoid adding multiple times
-	// TODO: Can sd.Columns be empty?
-	if len(ds.TblCols) == 0 {
-		panic("data source TblCols has zero length!?!")
-	}
+	// Avoid adding multiple times (should never happen!)
 	cols := ds.TblCols
 	for i := len(cols) - 1; i >= 0; i-- {
 		if cols[i].ID == model.ExtraPhysTblID {
@@ -4186,15 +4182,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
-	if len(ds.TblCols) == 0 {
-		panic("data source TblCols has zero length!?!")
-	}
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		if tableInfo.Partition != nil && b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// table partition prune mode == dynamic
 			// Single TableReader for all partitions, needs the PhysTblID from storage
 			us.ExtraPhysTblIDCol = ds.AddExtraPhysTblIDColumn()
@@ -4202,7 +4196,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 
-	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) and UnionScan (transaction buffer handling) are done when building SelectLock and UnionScan
+	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) is done when building SelectLock
 
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)

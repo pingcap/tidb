@@ -254,7 +254,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			if req.NumRows() > 0 {
 				if req.Column(e.partitionPhysTblIDOffset).GetInt64(0) == 0 {
 					fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
-					//panic("NOT Already filled in by engine?")
+					panic("NOT Already filled in by engine?")
 				}
 			}
 		}
