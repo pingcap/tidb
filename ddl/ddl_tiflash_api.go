@@ -62,8 +62,8 @@ type TiFlashManagementContext struct {
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
-	TotalSize                 atomicutil.Int64
-	BackoffSize               atomicutil.Int64
+	TotalSize                 atomicutil.Uint32
+	BackoffSize               atomicutil.Uint32
 }
 
 // NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
@@ -249,7 +249,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
-	var totalTableCount int64 = 0
+	var totalTableCount uint32 = 0
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.

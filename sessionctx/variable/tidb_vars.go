@@ -620,6 +620,9 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps detecting and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
+	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 )
 
 // TiDB vars that have only global scope
@@ -817,6 +820,7 @@ const (
 	DefTiDBStatsLoadPseudoTimeout         = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBBatchPendingTiFlashCount = 1000
 )
 
 // Process global variables.
