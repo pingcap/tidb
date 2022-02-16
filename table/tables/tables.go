@@ -1702,9 +1702,8 @@ func AppendScalablePrefix(seq *sequenceCommon, connectionID uint64, nextVal int6
 func ScaleSequenceValue(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
 	if seq.meta.Scale {
 		return AppendScalablePrefix(seq, connectionID, nextVal)
-	} else {
-		return nextVal
 	}
+	return nextVal
 }
 
 // NoScaleSequenceValue return the original nextval if the sequence is not scalable
@@ -1720,9 +1719,8 @@ func NoScaleSequenceValue(seq *sequenceCommon, nextVal int64) int64 {
 			flag = -1
 		}
 		return nextVal % (flag * int64(math.Pow(10, float64(maxDigits-4))))
-	} else {
-		return nextVal
 	}
+	return nextVal
 }
 
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
