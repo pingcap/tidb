@@ -753,7 +753,7 @@ func TestStringBuiltin(t *testing.T) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
-	// Charset 866 does not have a default collation configured currently, so this will return error.
+	// charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
 	require.Error(t, err, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
@@ -2580,7 +2580,7 @@ func TestColumnInfoModified(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.Tp)
+	require.Equal(t, mysql.TypeLong, col.GetType())
 }
 
 func TestIssues(t *testing.T) {
@@ -3709,7 +3709,7 @@ func TestDatetimeMicrosecond(t *testing.T) {
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 
-	// For Decimal
+	// For decimal
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
 		testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(

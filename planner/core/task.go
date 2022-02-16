@@ -614,29 +614,29 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	// all the string type are mapped to the same type in TiFlash, so
 	// do not need convert for string types
-	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
+	if types.IsString(tp.GetType()) && types.IsString(rtp.GetType()) {
 		return false
 	}
-	if tp.Tp != rtp.Tp {
+	if tp.GetType() != rtp.GetType() {
 		return true
 	}
-	if tp.Tp != mysql.TypeNewDecimal {
+	if tp.GetType() != mysql.TypeNewDecimal {
 		return false
 	}
-	if tp.Decimal != rtp.Decimal {
+	if tp.GetDecimal() != rtp.GetDecimal() {
 		return true
 	}
-	// for Decimal type, TiFlash have 4 different impl based on the required precision
-	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
+	// for decimal type, TiFlash have 4 different impl based on the required precision
+	if tp.GetFlen() >= 0 && tp.GetFlen() <= 9 && rtp.GetFlen() >= 0 && rtp.GetFlen() <= 9 {
 		return false
 	}
-	if tp.Flen > 9 && tp.Flen <= 18 && rtp.Flen > 9 && rtp.Flen <= 18 {
+	if tp.GetFlen() > 9 && tp.GetFlen() <= 18 && rtp.GetFlen() > 9 && rtp.GetFlen() <= 18 {
 		return false
 	}
-	if tp.Flen > 18 && tp.Flen <= 38 && rtp.Flen > 18 && rtp.Flen <= 38 {
+	if tp.GetFlen() > 18 && tp.GetFlen() <= 38 && rtp.GetFlen() > 18 && rtp.GetFlen() <= 38 {
 		return false
 	}
-	if tp.Flen > 38 && tp.Flen <= 65 && rtp.Flen > 38 && rtp.Flen <= 65 {
+	if tp.GetFlen() > 38 && tp.GetFlen() <= 65 && rtp.GetFlen() > 38 && rtp.GetFlen() <= 65 {
 		return false
 	}
 	return true
@@ -644,27 +644,27 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 
 func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
 	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
-	if commonType.Tp == mysql.TypeNewDecimal {
+	if commonType.GetType() == mysql.TypeNewDecimal {
 		lExtend := 0
 		rExtend := 0
-		cDec := rType.Decimal
-		if lType.Decimal < rType.Decimal {
-			lExtend = rType.Decimal - lType.Decimal
-		} else if lType.Decimal > rType.Decimal {
-			rExtend = lType.Decimal - rType.Decimal
-			cDec = lType.Decimal
+		cDec := rType.GetDecimal()
+		if lType.GetDecimal() < rType.GetDecimal() {
+			lExtend = rType.GetDecimal() - lType.GetDecimal()
+		} else if lType.GetDecimal() > rType.GetDecimal() {
+			rExtend = lType.GetDecimal() - rType.GetDecimal()
+			cDec = lType.GetDecimal()
 		}
-		lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
+		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
 		cLen := mathutil.Max(lLen, rLen)
 		cLen = mathutil.Min(65, cLen)
-		commonType.Decimal = cDec
-		commonType.Flen = cLen
+		commonType.SetDecimal(cDec)
+		commonType.SetFlen(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
-		if mysql.IsIntegerType(commonType.Tp) {
+		if mysql.IsIntegerType(commonType.GetType()) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
 			// so we need to promote the type to Int64
-			commonType.Tp = mysql.TypeLonglong
-			commonType.Flen = mysql.MaxIntWidth
+			commonType.SetType(mysql.TypeLonglong)
+			commonType.SetFlen(mysql.MaxIntWidth)
 		}
 	}
 	return commonType, needConvert(lType, commonType), needConvert(rType, commonType)
@@ -746,13 +746,13 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = lKey.Col.RetType.Flag
+			cType.SetFlag(lKey.Col.RetType.GetFlag())
 			lCast := expression.BuildCastFunction(p.ctx, lKey.Col, cType)
 			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = rKey.Col.RetType.Flag
+			cType.SetFlag(rKey.Col.RetType.GetFlag())
 			rCast := expression.BuildCastFunction(p.ctx, rKey.Col, cType)
 			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}
 		}
@@ -1775,7 +1775,9 @@ func BuildFinalModeAggregation(
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
 					ft := types.NewFieldType(mysql.TypeLonglong)
-					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+					ft.SetFlen(21)
+					ft.SetCharset(charset.CharsetBin)
+					ft.SetCollate(charset.CollationBin)
 					partial.Schema.Append(&expression.Column{
 						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 						RetType:  ft,
@@ -1786,8 +1788,9 @@ func BuildFinalModeAggregation(
 			}
 			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
 				ft := types.NewFieldType(mysql.TypeString)
-				ft.Charset, ft.Collate = charset.CharsetBin, charset.CollationBin
-				ft.Flag |= mysql.NotNullFlag
+				ft.SetCharset(charset.CharsetBin)
+				ft.SetCollate(charset.CollationBin)
+				ft.AddFlag(mysql.NotNullFlag)
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  ft,
@@ -2183,7 +2186,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
 				})
 			}
 		}
@@ -2481,7 +2484,7 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
 	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
 		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.Col.RetType.Tp) {
+			if types.IsString(col.Col.RetType.GetType()) {
 				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}
