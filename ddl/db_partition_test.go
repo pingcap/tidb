@@ -55,6 +55,25 @@ import (
 	"go.uber.org/zap"
 )
 
+var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
+
+type testIntegrationSuite1 struct{ *testIntegrationSuite }
+type testIntegrationSuite2 struct{ *testIntegrationSuite }
+
+func (s *testIntegrationSuite2) TearDownTest(c *C) {
+	tearDownIntegrationSuiteTest(s.testIntegrationSuite, c)
+}
+
+type testIntegrationSuite3 struct{ *testIntegrationSuite }
+type testIntegrationSuite4 struct{ *testIntegrationSuite }
+type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
+
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
