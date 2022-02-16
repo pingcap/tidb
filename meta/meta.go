@@ -140,6 +140,19 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	}
 }
 
+// InitMetaTable is to create tidb_ddl_job and tidb_ddl_reorg
+func InitMetaTable(store kv.Storage) error {
+	return kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := NewMeta(txn)
+		id, err := t.CreateMySQLSchema()
+		if err != nil {
+			return err
+		}
+		err = t.CreateDDLJobTable(id)
+		return err
+	})
+}
+
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
@@ -401,16 +414,19 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // CreateMySQLSchema create mysql schema
-func (m *Meta) CreateMySQLSchema() (bool, error) {
+func (m *Meta) CreateMySQLSchema() (int64, error) {
 	dbs, err := m.ListDatabases()
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if len(dbs) != 0 {
-		return false, nil
+		return 0, nil
 	}
 
-	id, _ := m.GenGlobalID()
+	id, err := m.GenGlobalID()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	db := model.DBInfo{
 		ID:      id,
 		Name:    model.NewCIStr("mysql"),
@@ -420,10 +436,10 @@ func (m *Meta) CreateMySQLSchema() (bool, error) {
 	}
 	data, err := json.Marshal(db)
 	if err != nil {
-		return false, errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
-	return true, m.txn.HSet(mDBs, m.dbKey(db.ID), data)
+	return db.ID, m.txn.HSet(mDBs, m.dbKey(db.ID), data)
 }
 
 // CreateDDLJobTable creates a table with tableInfo in database.

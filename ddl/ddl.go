@@ -95,7 +95,6 @@ var (
 	EnableSplitTableRegion = uint32(0)
 )
 
-// TODO(hawingrei): remove it after implementing the feature switch.
 // AllowConcurrentDDL works with Concurrent DDL feature.
 var AllowConcurrentDDL atomicutil.Bool = *atomicutil.NewBool(true)
 
@@ -503,9 +502,10 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 	if d.sessPool != nil {
+		d.sessPool.put(d.sessForAddDDL)
 		d.sessPool.close()
 	}
-
+	logutil.BgLogger().Info("[ddl] DDL closing")
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))

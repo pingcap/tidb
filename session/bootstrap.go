@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -415,9 +416,15 @@ func bootstrap(s Session) {
 				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
+
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			err = meta.InitMetaTable(s.GetStore())
+			if err != nil {
+				logutil.BgLogger().Fatal("check bootstrap error",
+					zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			logutil.BgLogger().Info("bootstrap successful",

@@ -64,7 +64,7 @@ type Manager interface {
 
 const (
 	// NewSessionDefaultRetryCnt is the default retry times when create new session.
-	NewSessionDefaultRetryCnt = 3
+	NewSessionDefaultRetryCnt = 5
 	// NewSessionRetryUnlimited is the unlimited retry times when create new session.
 	NewSessionRetryUnlimited = math.MaxInt64
 	keyOpDefaultTimeout      = 5 * time.Second
@@ -123,7 +123,7 @@ func (m *ownerManager) Cancel() {
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var ManagerSessionTTL = 60
+var ManagerSessionTTL = 120
 
 // setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
 func setManagerSessionTTL() error {

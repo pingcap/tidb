@@ -26,17 +26,14 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]model.Job, error) {
-	//sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
-	//defer func() {
-	//	sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
-	//}()
+func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningReorgJobMapMu.RLock()
 	for id := range d.runningReorgJobMap {
@@ -56,14 +53,17 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]model.Job, error) {
 	}
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-	rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = rs.Close()
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	jobs := make([]model.Job, 0, 5)
+	jobs := make([]*model.Job, 0, 5)
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
 		job := model.Job{}
@@ -80,7 +80,7 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]model.Job, error) {
 				}
 				if canRun {
 					log.Warn("get ddl job from table", zap.String("time", time.Since(ts).String()), zap.String("job", job.String()))
-					jobs = append(jobs, job)
+					jobs = append(jobs, &job)
 					break
 				}
 				runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(int(job.ID)))
@@ -90,7 +90,10 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]model.Job, error) {
 					return nil, err
 				}
 				rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-				rs.Close()
+				if err != nil {
+					return nil, err
+				}
+				err = rs.Close()
 				if err != nil {
 					return nil, err
 				}
@@ -105,7 +108,7 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]model.Job, error) {
 				}
 			}
 		} else {
-			jobs = append(jobs, job)
+			jobs = append(jobs, &job)
 		}
 	}
 	return jobs, nil
@@ -118,7 +121,10 @@ func (d *ddl) checkDropSchemaJobIsRunnable(sess sessionctx.Context, job *model.J
 		return false, err
 	}
 	rows, err := sqlexec.DrainRecordSet(d.ctx, rs, 8)
-	rs.Close()
+	if err != nil {
+		return false, err
+	}
+	err = rs.Close()
 	if err != nil {
 		return false, err
 	}
@@ -132,7 +138,10 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 		return false, err
 	}
 	rows, err := sqlexec.DrainRecordSet(d.ctx, rs, 8)
-	rs.Close()
+	if err != nil {
+		return false, err
+	}
+	err = rs.Close()
 	if err != nil {
 		return false, err
 	}
@@ -140,10 +149,6 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 }
 
 func (d *ddl) getOneReorgJob(sess sessionctx.Context) (*model.Job, error) {
-	//sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
-	//defer func() {
-	//	sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
-	//}()
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningReorgJobMapMu.RLock()
 	for id := range d.runningReorgJobMap {
@@ -162,7 +167,10 @@ func (d *ddl) getOneReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	}
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-	rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = rs.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +198,10 @@ func (d *ddl) getOneReorgJob(sess sessionctx.Context) (*model.Job, error) {
 			return nil, err
 		}
 		rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-		rs.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = rs.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -232,24 +243,23 @@ func (d *ddl) startDispatchLoop() {
 				if err != nil {
 					log.Warn("err", zap.Error(err))
 				}
-				if jobs != nil {
-					for _, jobb := range jobs {
-						job := jobb
-						d.runningReorgJobMapMu.Lock()
-						d.runningReorgJobMap[int(job.ID)] = struct{}{}
-						d.runningReorgJobMapMu.Unlock()
-						go func() {
-							defer func() {
-								d.runningReorgJobMapMu.Lock()
-								delete(d.runningReorgJobMap, int(job.ID))
-								d.runningReorgJobMapMu.Unlock()
-							}()
-							wk, _ := d.gwp.get()
-							wk.handleDDLJob(d.ddlCtx, &job, d.ddlJobCh)
-							d.gwp.put(wk)
+				var wg util.WaitGroupWrapper
+				for index, job := range jobs {
+					d.runningReorgJobMapMu.Lock()
+					d.runningReorgJobMap[int(job.ID)] = struct{}{}
+					d.runningReorgJobMapMu.Unlock()
+					wg.Run(func() {
+						defer func() {
+							d.runningReorgJobMapMu.Lock()
+							delete(d.runningReorgJobMap, int(jobs[index].ID))
+							d.runningReorgJobMapMu.Unlock()
 						}()
-					}
+						wk, _ := d.gwp.get()
+						wk.handleDDLJob(d.ddlCtx, jobs[index], d.ddlJobCh)
+						d.gwp.put(wk)
+					})
 				}
+				wg.Wait()
 				if jobs == nil {
 					sleep = true
 				}
@@ -262,23 +272,22 @@ func (d *ddl) startDispatchLoop() {
 				if err != nil {
 					log.Warn("err", zap.Error(err))
 				}
-				if jobs != nil {
-					for _, jobb := range jobs {
-						job := jobb
-						d.runningReorgJobMapMu.Lock()
-						d.runningReorgJobMap[int(job.ID)] = struct{}{}
-						d.runningReorgJobMapMu.Unlock()
-						go func() {
-							defer func() {
-								d.runningReorgJobMapMu.Lock()
-								delete(d.runningReorgJobMap, int(job.ID))
-								d.runningReorgJobMapMu.Unlock()
-							}()
-							wk, _ := d.gwp.get()
-							wk.handleDDLJob(d.ddlCtx, &job, d.ddlJobCh)
-							d.gwp.put(wk)
+
+				for _, jobb := range jobs {
+					job := jobb
+					d.runningReorgJobMapMu.Lock()
+					d.runningReorgJobMap[int(job.ID)] = struct{}{}
+					d.runningReorgJobMapMu.Unlock()
+					go func() {
+						defer func() {
+							d.runningReorgJobMapMu.Lock()
+							delete(d.runningReorgJobMap, int(job.ID))
+							d.runningReorgJobMapMu.Unlock()
 						}()
-					}
+						wk, _ := d.gwp.get()
+						wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh)
+						d.gwp.put(wk)
+					}()
 				}
 				job2, _ := d.getOneReorgJob(sess)
 				if job2 != nil {
@@ -306,26 +315,23 @@ func (d *ddl) startDispatchLoop() {
 				panic("notifyDDLJobByEtcdChGeneral in trouble")
 			}
 			jobs, _ := d.getSomeGeneralJob(sess)
-			if jobs != nil {
-				for _, jobb := range jobs {
-					job := jobb
-					d.runningReorgJobMapMu.Lock()
-					d.runningReorgJobMap[int(job.ID)] = struct{}{}
-					d.runningReorgJobMapMu.Unlock()
-					go func() {
-						defer func() {
-							d.runningReorgJobMapMu.Lock()
-							delete(d.runningReorgJobMap, int(job.ID))
-							d.runningReorgJobMapMu.Unlock()
-						}()
-						wk, _ := d.gwp.get()
-						// TODO(hawkingrei): refactor it
-						// 1、 panic: context canceled
-						// 2. sync: WaitGroup is reused before previous Wait has returned
-						wk.handleDDLJob(d.ddlCtx, &job, d.ddlJobCh)
-						d.gwp.put(wk)
+			for _, jobb := range jobs {
+				d.runningReorgJobMapMu.Lock()
+				d.runningReorgJobMap[int(jobb.ID)] = struct{}{}
+				d.runningReorgJobMapMu.Unlock()
+				go func(job *model.Job) {
+					defer func() {
+						d.runningReorgJobMapMu.Lock()
+						delete(d.runningReorgJobMap, int(job.ID))
+						d.runningReorgJobMapMu.Unlock()
 					}()
-				}
+					wk, _ := d.gwp.get()
+					// TODO(hawkingrei): refactor it
+					// 1、 panic: context canceled
+					// 2. sync: WaitGroup is reused before previous Wait has returned
+					wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh)
+					d.gwp.put(wk)
+				}(jobb)
 			}
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			log.Info("wwz notifyDDLJobByEtcdChReorg")
@@ -366,8 +372,8 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 		}
 		sql += fmt.Sprintf("(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
 	}
-	log.Warn("add ddl job to table", zap.String("sql", sql))
-	ts := time.Now()
+	//log.Warn("add ddl job to table", zap.String("sql", sql))
+	//ts := time.Now()
 	sess, err := d.sessPool.get()
 	if err != nil {
 		return err
@@ -377,7 +383,7 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 	if err != nil {
 		return err
 	}
-	log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
+	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
 	return nil
 }
 
@@ -386,9 +392,9 @@ func (d *ddl) addDDLJob(job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	ts := time.Now()
+	//ts := time.Now()
 	sql := fmt.Sprintf("insert into mysql.tidb_ddl_job values(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
-	log.Warn("add ddl job to table", zap.String("sql", sql))
+	//log.Warn("add ddl job to table", zap.String("sql", sql))
 
 	sess, err := d.sessPool.get()
 	if err != nil {
@@ -402,7 +408,7 @@ func (d *ddl) addDDLJob(job *model.Job) error {
 		log.Error("add ddl job to table", zap.Error(err))
 		return err
 	}
-	log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
+	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
 	return nil
 }
 
@@ -444,15 +450,22 @@ func (w *worker) UpdateDDLReorgStartHandleNew(job *model.Job, element *meta.Elem
 }
 
 func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element, newSess bool) error {
+	var err error
 	sess := w.sessForJob
 	if newSess {
 		sess, _ = w.sessPool.get()
 		defer w.sessPool.put(sess)
-		sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
-		defer sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
+		if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin"); err != nil {
+			log.Error("fail to begin", zap.Error(err))
+		}
+		defer func() {
+			if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit"); err != nil {
+				log.Error("fail to begin", zap.Error(err))
+			}
+		}()
 	}
 	sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-	_, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return err
 	}

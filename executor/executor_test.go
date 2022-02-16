@@ -358,7 +358,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(row.Len(), Equals, 6)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	ddlInfo, err := admin.GetDDLInfo(txn, nil)
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetInt64(0), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
