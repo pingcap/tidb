@@ -3788,6 +3788,9 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	// Avoid adding multiple times
 	// TODO: Can sd.Columns be empty?
+	if len(ds.TblCols) == 0 {
+		panic("data source TblCols has zero length!?!")
+	}
 	cols := ds.TblCols
 	for i := len(cols) - 1; i >= 0; i-- {
 		if cols[i].ID == model.ExtraPhysTblID {
@@ -4183,6 +4186,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
+	if len(ds.TblCols) == 0 {
+		panic("data source TblCols has zero length!?!")
+	}
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal {

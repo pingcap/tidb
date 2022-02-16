@@ -177,25 +177,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	columns := p.Columns
-	if p.isPartition {
-		// Still send the request, but do not require it to be filled in?
-		/*
-			// This is static prune mode, one DataSource/TableReader per partition
-			// if model.ExtraPhysTblID is included in columns, remove it, since it
-			// will be added in the TableReader instead!
-			for i := len(columns) - 1; i >= 0; i-- {
-				if columns[i].ID == model.ExtraPhysTblID {
-					columns = append(columns[:i], columns[i+1:]...)
-					break
-				}
-			}
-		*/
-		if p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			panic("p.isPartition should only be set in static prune mode!!!")
-		}
-	}
-	tsExec := tables.BuildTableScanFromInfos(p.Table, columns)
+	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
@@ -215,7 +197,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}
-	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, columns)
+	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 

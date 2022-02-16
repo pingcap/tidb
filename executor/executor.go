@@ -912,11 +912,16 @@ type SelectLockExec struct {
 	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
+	// The children may be a join of multiple tables, so we need a map.
 	tblID2Handle map[int64][]plannercore.HandleCols
 
-	// TODO: Do we even need to use a plannercore.HandleCols struct?
-	// tblID2PhyTblIDCol is used for partitioned tables
-	// the child executor need to return an extra column containing
+	// When SelectLock work on a partition table, we need the partition ID
+	// (Physical Table ID) instead of the 'logical' table ID to calculate
+	// the lock KV. In that case, the Physical Table ID is extracted
+	// from the row key in the store and as an extra column in the chunk row.
+
+	// tblID2PhyTblIDCol is used for partitioned tables.
+	// The child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)
 	// Used during building
 	tblID2PhysTblIDCol map[int64]*expression.Column
@@ -925,15 +930,16 @@ type SelectLockExec struct {
 	// Map from logic tableID to column index where the physical table id is stored
 	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
 	// storage and used for physical table id
-	// For static prune mode, model.ExtraPhysTblID is not sent to storage/Protobuf
-	// but filled in by the partitions TableReaderExecutor
+	// For static prune mode, model.ExtraPhysTblID is still sent to storage/Protobuf
+	// but could be filled in by the partitions TableReaderExecutor
+	// due to issues with chunk handling between the TableReaderExecutor and the
+	// SelectReader result.
 	tblID2PhysTblIDColIdx map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
 	if len(e.tblID2PhysTblIDCol) > 0 {
-		// This should be possible to do by going through the tblID2Handle and then see if the TableById gives a partitioned table or not, and then create the map for static prune? Maybe works for dynamic too?
 		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
 		if cols[0].ID == model.ExtraPhysTblID {
