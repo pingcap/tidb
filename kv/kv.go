@@ -312,7 +312,8 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
-	PIDs                   []int64
+	// For PartitionTableScan used by tiflash.
+	PartitionIDs           []int64
 	KeyRangesForPartitions [][]KeyRange
 
 	// Concurrency is 1, if it only sends the request to a single storage unit when

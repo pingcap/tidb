@@ -668,7 +668,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ranges := NewKeyRanges(req.KeyRanges)
 
 	keyRanges := []*KeyRanges{ranges}
-	if req.PIDs != nil {
+	if req.PartitionIDs != nil {
 		// For Partition Table Scan
 		keyRanges = keyRanges[:0]
 		for _, key := range req.KeyRangesForPartitions {
@@ -676,7 +676,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		}
 	}
 
-	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, req.PIDs)
+	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, req.PartitionIDs)
 	if err != nil {
 		return copErrorResponse{err}
 	}

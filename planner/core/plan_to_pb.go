@@ -177,7 +177,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsPartitionTableScan {
+	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop {
 		return p.toPBForPartitionForFlash(ctx)
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)

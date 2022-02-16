@@ -377,7 +377,7 @@ func (e *TableReaderExecutor) buildKVForPartitionTableScan(ctx context.Context, 
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetKeyRanges(e.kvRanges).SetPIDs(pids).SetKeyRangeForPartition(kvRangesForPartition)
+	reqBuilder := builder.SetKeyRanges(e.kvRanges).SetPartitionIDs(pids).SetKeyRangeForPartition(kvRangesForPartition)
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).

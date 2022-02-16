@@ -127,12 +127,13 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 	}
 }
 
-func SetMppForTableScan(curPlan PhysicalPlan) {
+// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
+func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	for {
 		chCnt := len(curPlan.Children())
 		if chCnt == 0 {
 			if ts, ok := curPlan.(*PhysicalTableScan); ok {
-				ts.IsPartitionTableScan = true
+				ts.IsMPPOrBatchCop = true
 			}
 			return
 		} else if chCnt == 1 {
@@ -142,7 +143,7 @@ func SetMppForTableScan(curPlan PhysicalPlan) {
 			if !ok {
 				return
 			}
-			SetMppForTableScan(join.children[join.globalChildIndex])
+			SetMppOrBatchCopForTableScan(join.children[join.globalChildIndex])
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -497,8 +498,8 @@ type PhysicalTableScan struct {
 
 	StoreType kv.StoreType
 
-	IsGlobalRead         bool
-	IsPartitionTableScan bool // Used for tiflash PartitionTableScan.
+	IsGlobalRead    bool
+	IsMPPOrBatchCop bool // Used for tiflash PartitionTableScan.
 
 	// The table scan may be a partition, rather than a real table.
 	// TODO: clean up this field. After we support dynamic partitioning, table scan

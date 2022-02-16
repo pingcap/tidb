@@ -3239,7 +3239,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
-		plannercore.SetMppForTableScan(v.GetTablePlan())
+		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
 	ret, err := buildNoRangeTableReader(b, v)
@@ -3285,8 +3285,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if v.StoreType == kv.TiFlash {
 		sctx.IsTiFlash.Store(true)
 		if v.BatchCop {
-			ts.IsPartitionTableScan = true
-			// Rebuild tipb::PartitionTableScan
+			ts.IsMPPOrBatchCop = true
+			// Rebuild PartitionTableScan Range
 			ret, err = buildNoRangeTableReader(b, v)
 			if err != nil {
 				b.err = err
