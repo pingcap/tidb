@@ -16,13 +16,14 @@ package variable
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -326,6 +327,31 @@ func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 	}
 }
 
+// AssertionLevel controls the assertion that will be performed during transactions.
+type AssertionLevel int
+
+const (
+	// AssertionLevelOff indicates no assertion should be performed.
+	AssertionLevelOff AssertionLevel = iota
+	// AssertionLevelFast indicates assertions that doesn't affect performance should be performed.
+	AssertionLevelFast
+	// AssertionLevelStrict indicates full assertions should be performed, even if the performance might be slowed down.
+	AssertionLevelStrict
+)
+
+func tidbOptAssertionLevel(opt string) AssertionLevel {
+	switch opt {
+	case AssertionStrictStr:
+		return AssertionLevelStrict
+	case AssertionFastStr:
+		return AssertionLevelFast
+	case AssertionOffStr:
+		return AssertionLevelOff
+	default:
+		return AssertionLevelOff
+	}
+}
+
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
@@ -334,7 +360,8 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt(opt string, defaultVal int) int {
+// TidbOptInt converts a string to an int
+func TidbOptInt(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil {
 		return defaultVal
@@ -342,7 +369,8 @@ func tidbOptInt(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt64(opt string, defaultVal int64) int64 {
+// TidbOptInt64 converts a string to an int64
+func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
 	if err != nil {
 		return defaultVal
@@ -400,6 +428,9 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotInfoschema = nil
 		return nil
 	}
+	if s.ReadStaleness != 0 {
+		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
+	}
 
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
 		s.SnapshotTS = tso
@@ -444,6 +475,9 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		s.ReadStaleness = 0
 		return nil
 	}
+	if s.SnapshotTS != 0 {
+		return fmt.Errorf("tidb_snapshot should be clear before setting tidb_read_staleness")
+	}
 	sValue, err := strconv.ParseInt(sVal, 10, 32)
 	if err != nil {
 		return err
@@ -455,30 +489,20 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	return nil
 }
 
-// serverGlobalVariable is used to handle variables that acts in server and global scope.
-type serverGlobalVariable struct {
-	sync.Mutex
-	serverVal string
-	globalVal string
+func collectAllowFuncName4ExpressionIndex() string {
+	str := make([]string, 0, len(GAFunction4ExpressionIndex))
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
 }
 
-// Set sets the value according to variable scope.
-func (v *serverGlobalVariable) Set(val string, isServer bool) {
-	v.Lock()
-	if isServer {
-		v.serverVal = val
-	} else {
-		v.globalVal = val
-	}
-	v.Unlock()
-}
-
-// GetVal gets the value.
-func (v *serverGlobalVariable) GetVal() string {
-	v.Lock()
-	defer v.Unlock()
-	if v.serverVal != "" {
-		return v.serverVal
-	}
-	return v.globalVal
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }

@@ -17,13 +17,13 @@ package expression
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
@@ -34,8 +34,6 @@ func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll s
 }
 
 func TestInferCollation(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		exprs []Expression
 		err   bool
@@ -253,6 +251,11 @@ func newColString(chs, coll string) *Column {
 	return column
 }
 
+func newColJSON() *Column {
+	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
+	return column
+}
+
 func newConstInt(coercibility Coercibility) *Constant {
 	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}, Value: types.NewDatum(1)}
 	constant.SetCoercibility(coercibility)
@@ -268,8 +271,6 @@ func newColInt(coercibility Coercibility) *Column {
 }
 
 func TestDeriveCollation(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	tests := []struct {
 		fcs    []string
@@ -511,7 +512,47 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
-				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In,
+				ast.ExportSet, ast.Elt, ast.MakeSet,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColJSON(),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColString(charset.CharsetGBK, charset.CollationGBKBin),
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColJSON(),
+				newColString(charset.CharsetBinary, charset.CharsetBinary),
+			},
+			[]types.EvalType{types.ETJson, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
 				newConstString("a", CoercibilityCoercible, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
@@ -534,6 +575,18 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote,
+			},
+			[]Expression{
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{
@@ -636,5 +689,52 @@ func TestDeriveCollation(t *testing.T) {
 				require.Equal(t, test.ec, ec, "Number: %d, function: %s", i, fc)
 			}
 		}
+	}
+}
+
+func TestCompareString(t *testing.T) {
+	require.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("ß", "s", "utf8_general_ci"))
+	require.NotEqual(t, 0, types.CompareString("ß", "ss", "utf8_general_ci"))
+
+	require.Equal(t, 0, types.CompareString("a", "A", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("À", "A", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_unicode_ci"))
+	require.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
+
+	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
+	require.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
+	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
+	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
+
+	ctx := mock.NewContext()
+	ft := types.NewFieldType(mysql.TypeVarString)
+	col1 := &Column{
+		RetType: ft,
+		Index:   0,
+	}
+	col2 := &Column{
+		RetType: ft,
+		Index:   1,
+	}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
+	chk.Column(0).AppendString("a")
+	chk.Column(1).AppendString("A")
+	chk.Column(0).AppendString("À")
+	chk.Column(1).AppendString("A")
+	chk.Column(0).AppendString("😜")
+	chk.Column(1).AppendString("😃")
+	chk.Column(0).AppendString("a ")
+	chk.Column(1).AppendString("a  ")
+	for i := 0; i < 4; i++ {
+		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, int64(0), v)
 	}
 }

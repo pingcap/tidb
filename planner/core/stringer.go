@@ -57,13 +57,13 @@ func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *LogicalProjection:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
-		for i := 0; i < x.ChildrenCount(); i++ {
-			strs, idxs = fdToString(x.GetChild(i), strs, idxs)
+		for _, child := range x.Children() {
+			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *LogicalAggregation:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
-		for i := 0; i < x.ChildrenCount(); i++ {
-			strs, idxs = fdToString(x.GetChild(i), strs, idxs)
+		for _, child := range x.Children() {
+			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *DataSource:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
@@ -161,8 +161,16 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *LogicalShow, *PhysicalShow:
+	case *LogicalShow:
 		str = "Show"
+		if pl := in.(*LogicalShow); pl.Extractor != nil {
+			str = str + "(" + pl.Extractor.explainInfo() + ")"
+		}
+	case *PhysicalShow:
+		str = "Show"
+		if pl := in.(*PhysicalShow); pl.Extractor != nil {
+			str = str + "(" + pl.Extractor.explainInfo() + ")"
+		}
 	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:

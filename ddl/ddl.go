@@ -46,9 +46,11 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
+	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -93,7 +95,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error
+	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) error
 	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
@@ -122,23 +124,14 @@ type DDL interface {
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
-	// If `tryRetainID` is true, this method will try to keep the database ID specified in
-	// the `info` rather than generating new ones. This is just a hint though, if the ID collides
-	// with an existing database a new ID will always be used.
-	//
 	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
 	// in-place. If you want to keep using `info`, please call Clone() first.
 	CreateSchemaWithInfo(
 		ctx sessionctx.Context,
 		info *model.DBInfo,
-		onExist OnExist,
-		tryRetainID bool) error
+		onExist OnExist) error
 
 	// CreateTableWithInfo creates a table, view or sequence given its table info.
-	//
-	// If `tryRetainID` is true, this method will try to keep the table ID specified in the `info`
-	// rather than generating new ones. This is just a hint though, if the ID collides with an
-	// existing table a new ID will always be used.
 	//
 	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
 	// in-place. If you want to keep using `info`, please call Clone() first.
@@ -146,8 +139,13 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist,
-		tryRetainID bool) error
+		onExist OnExist) error
+
+	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
+	BatchCreateTableWithInfo(ctx sessionctx.Context,
+		schema model.CIStr,
+		info []*model.TableInfo,
+		onExist OnExist) error
 
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
@@ -188,13 +186,14 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
-	wg         sync.WaitGroup // It's only used to deal with data race in restart_test.
+	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers     map[workerType]*worker
-	sessPool    *sessionPool
-	delRangeMgr delRangeManager
+	workers           map[workerType]*worker
+	sessPool          *sessionPool
+	delRangeMgr       delRangeManager
+	enableTiFlashPoll *atomicutil.Bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -229,6 +228,25 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
+// EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func EnableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll.Store(true)
+	}
+}
+
+// DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func DisableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll.Store(false)
+	}
+}
+
+// IsTiFlashPollEnabled reveals enableTiFlashPoll
+func (d *ddl) IsTiFlashPollEnabled() bool {
+	return d.enableTiFlashPoll.Load()
+}
+
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
@@ -252,10 +270,10 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
+		logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 	}
 }
 
@@ -311,10 +329,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:        ctx,
-		ddlCtx:     ddlCtx,
-		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
+	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
 }
@@ -345,7 +364,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -386,6 +404,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+
+	// Start some background routine to manage TiFlash replica.
+	d.wg.Run(d.PollTiFlashRoutine)
+
 	return nil
 }
 
@@ -504,15 +526,29 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
+// mayNeedReorg indicates that this job may need to reorganize the data.
+func mayNeedReorg(job *model.Job) bool {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return true
+	case model.ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
-	// If the workers don't run, we needn't to notify workers.
+	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
 		return
 	}
-
 	var worker *worker
-	jobTp := job.Type
-	if admin.MayNeedBackfill(jobTp) {
+	if mayNeedReorg(job) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
@@ -730,4 +766,40 @@ func init() {
 	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 		RunInGoTest = true
 	}
+}
+
+// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
+func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+	for _, job := range jobs {
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
+		}
+
+		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+				// then can't find the table from the snapshot info-schema. Should just ignore error here,
+				// see more in TestParallelDropSchemaAndDropTable.
+				continue
+			}
+			return false, err
+		}
+		if tbl == nil {
+			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+			// then can't find the table from the snapshot info-schema. Should just ignore error here,
+			// see more in TestParallelDropSchemaAndDropTable.
+			continue
+		}
+		finish, err := fn(job, tbl)
+		if err != nil || finish {
+			return finish, err
+		}
+	}
+	return false, nil
 }

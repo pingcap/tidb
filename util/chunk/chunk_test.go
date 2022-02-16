@@ -32,8 +32,6 @@ import (
 )
 
 func TestAppendRow(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
@@ -142,8 +140,6 @@ func TestAppendRow(t *testing.T) {
 }
 
 func TestAppendChunk(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -202,8 +198,6 @@ func TestAppendChunk(t *testing.T) {
 }
 
 func TestTruncateTo(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -339,13 +333,13 @@ func newChunk(elemLen ...int) *Chunk {
 	return chk
 }
 
-func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+func newChunkWithInitCap(capacity int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
+			chk.columns = append(chk.columns, newFixedLenColumn(l, capacity))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap))
+			chk.columns = append(chk.columns, newVarLenColumn(capacity))
 		}
 	}
 	return chk
@@ -397,8 +391,6 @@ var allTypes = []*types.FieldType{
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
-
 	chunk := NewChunkWithCapacity(allTypes, 32)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
@@ -485,8 +477,6 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCopyTo(t *testing.T) {
-	t.Parallel()
-
 	chunk := NewChunkWithCapacity(allTypes, 101)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
@@ -541,8 +531,6 @@ func TestCopyTo(t *testing.T) {
 }
 
 func TestGetDecimalDatum(t *testing.T) {
-	t.Parallel()
-
 	datum := types.NewDatum(1.01)
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.Flen = 4
@@ -559,8 +547,6 @@ func TestGetDecimalDatum(t *testing.T) {
 }
 
 func TestChunkMemoryUsage(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -617,8 +603,6 @@ func TestChunkMemoryUsage(t *testing.T) {
 }
 
 func TestSwapColumn(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
@@ -671,8 +655,6 @@ func TestSwapColumn(t *testing.T) {
 }
 
 func TestAppendSel(t *testing.T) {
-	t.Parallel()
-
 	tll := &types.FieldType{Tp: mysql.TypeLonglong}
 	chk := NewChunkWithCapacity([]*types.FieldType{tll}, 1024)
 	sel := make([]int, 0, 1024/2)
@@ -691,8 +673,6 @@ func TestAppendSel(t *testing.T) {
 }
 
 func TestMakeRefTo(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
@@ -713,8 +693,6 @@ func TestMakeRefTo(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 4)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDouble})
@@ -1013,8 +991,6 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 }
 
 func TestAppendRows(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)

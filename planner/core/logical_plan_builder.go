@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -1374,6 +1373,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
@@ -3198,7 +3198,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 				}}
 			colName.SetType(col.GetType())
 			field := &ast.SelectField{Expr: colName}
-			field.SetText(name.ColName.O)
+			field.SetText(nil, name.ColName.O)
 			resultList = append(resultList, field)
 		}
 	}
@@ -3878,7 +3878,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -4059,11 +4059,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	} else {
 		columns = tbl.Cols()
 	}
-	var statisticTable *statistics.Table
-	if _, ok := tbl.(table.PartitionedTable); !ok || b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
-	}
-
 	// extract the IndexMergeHint
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
@@ -4108,7 +4103,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
-		statisticTable:      statisticTable,
+		physicalTableID:     tableInfo.ID,
 		astIndexHints:       tn.IndexHints,
 		IndexHints:          b.TableHints().indexHintList,
 		indexMergeHints:     indexMergeHints,
@@ -4194,37 +4189,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
-	}
-	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
-		cachedTable := tbl.(table.CachedTable)
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
-		if cacheData != nil {
-			sessionVars.StmtCtx.ReadFromTableCache = true
-			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
-			us.SetChildren(ds)
-			result = us
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
-				startTS := txn.StartTS()
-				store := b.ctx.GetStore()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-						}
-					}()
-					err := cachedTable.UpdateLockForRead(store, startTS)
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
-				}()
-			}
-		}
 	}
 
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
@@ -4432,6 +4396,10 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TiFlashSystemTableExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
+		case infoschema.TableTiKVRegionPeers:
+			p.Extractor = &TikvRegionPeersExtractor{}
+		case infoschema.TableColumns:
+			p.Extractor = &ColumnsTableExtractor{}
 		}
 	}
 	return p, nil
@@ -4559,6 +4527,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
+	setIsInApplyForCTE(innerPlan)
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
@@ -4584,10 +4553,29 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 		return nil, err
 	}
 
+	setIsInApplyForCTE(innerPlan)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
+}
+
+// setIsInApplyForCTE indicates CTE is the in inner side of Apply,
+// the storage of cte needs to be reset for each outer row.
+// It's better to handle this in CTEExec.Close(), but cte storage is closed when SQL is finished.
+func setIsInApplyForCTE(p LogicalPlan) {
+	switch x := p.(type) {
+	case *LogicalCTE:
+		x.cte.IsInApply = true
+		setIsInApplyForCTE(x.cte.seedPartLogicalPlan)
+		if x.cte.recursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.cte.recursivePartLogicalPlan)
+		}
+	default:
+		for _, child := range p.Children() {
+			setIsInApplyForCTE(child)
+		}
+	}
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
@@ -4940,11 +4928,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
-		if extractDefaultExpr(assign.Expr) != nil {
-			modifyColumns[columnFullName] = true
-		} else {
-			modifyColumns[columnFullName] = false
-		}
+		modifyColumns[columnFullName] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -5082,9 +5066,25 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 	return nil
 }
 
-func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
+// IsDefaultExprSameColumn - DEFAULT or col = DEFAULT(col)
+func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
+	if expr, ok := node.(*ast.DefaultExpr); ok {
+		if expr.Name == nil {
+			// col = DEFAULT
+			return true
+		}
+		refIdx, err := expression.FindFieldName(names, expr.Name)
+		if refIdx == 0 && err == nil {
+			// col = DEFAULT(col)
+			return true
+		}
+	}
+	return false
+}
+
+func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(delete.TableHints, 0)
+	b.pushTableHints(ds.TableHints, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
@@ -5094,18 +5094,18 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
 
-	if delete.With != nil {
+	if ds.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, delete.With)
+		err := b.buildWith(ctx, ds.With)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -5113,14 +5113,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	oldLen := oldSchema.Len()
 
 	// For explicit column usage, should use the all-public columns.
-	if delete.Where != nil {
-		p, err = b.buildSelection(ctx, p, delete.Where, nil)
+	if ds.Where != nil {
+		p, err = b.buildSelection(ctx, p, ds.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !delete.IsMultiTable {
+		if !ds.IsMultiTable {
 			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
 				LockType: ast.SelectLockForUpdate,
 			})
@@ -5130,22 +5130,22 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	if delete.Order != nil {
-		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
+	if ds.Order != nil {
+		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if delete.Limit != nil {
-		p, err = b.buildLimit(p, delete.Limit)
+	if ds.Limit != nil {
+		p, err = b.buildLimit(p, ds.Limit)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// If the delete is non-qualified it does not require Select Priv
-	if delete.Where == nil && delete.Order == nil {
+	if ds.Where == nil && ds.Order == nil {
 		b.popVisitInfo()
 	}
 	var authErr error
@@ -5173,7 +5173,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	del := Delete{
-		IsMultiTable: delete.IsMultiTable,
+		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
@@ -5188,12 +5188,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	// Collect visitInfo.
-	if delete.Tables != nil {
+	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
 		tbInfoList := make(map[string]*ast.TableName)
-		collectTableName(delete.TableRefs.TableRefs, &updatableList, &tbInfoList)
-		for _, tn := range delete.Tables.Tables {
+		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		for _, tn := range ds.Tables.Tables {
 			var canUpdate, foundMatch = false, false
 			name := tn.Name.L
 			if tn.Schema.L == "" {
@@ -5233,7 +5233,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	} else {
 		// Delete from a, b, c, d.
 		var tableList []*ast.TableName
-		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
+		tableList = extractTableList(ds.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
 			if isCTE(v) {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
@@ -5259,8 +5259,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		// Table ID may not be unique for deleting multiple tables, for statements like
 		// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 		// by its alias instead of ID.
-		tblID2TableName := make(map[int64][]*ast.TableName, len(delete.Tables.Tables))
-		for _, tn := range delete.Tables.Tables {
+		tblID2TableName := make(map[int64][]*ast.TableName, len(ds.Tables.Tables))
+		for _, tn := range ds.Tables.Tables {
 			tblID2TableName[tn.TableInfo.ID] = append(tblID2TableName[tn.TableInfo.ID], tn)
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)

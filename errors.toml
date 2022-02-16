@@ -233,7 +233,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
 '''
 
 ["admin:8224"]
@@ -506,6 +506,16 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1567"]
+error = '''
+Incorrect partition name
+'''
+
+["ddl:1652"]
+error = '''
+Duplicate partition field name '%-.192s'
+'''
+
 ["ddl:1654"]
 error = '''
 Partition column values of incorrect type
@@ -698,7 +708,7 @@ Placement policy didn't meet the constraint, reason: %s
 
 ["ddl:8237"]
 error = '''
-Invalid attributes '%s': %s
+Invalid attributes: %s
 '''
 
 ["ddl:8240"]
@@ -724,6 +734,11 @@ Information schema is out of date: schema failed to update in 1 lease, please ma
 ["domain:8028"]
 error = '''
 Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
+'''
+
+["domain:8243"]
+error = '''
+HTTP request failed with status %s
 '''
 
 ["domain:9009"]
@@ -913,12 +928,12 @@ Export failed: %s
 
 ["executor:8133"]
 error = '''
-handle %#v, index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 '''
 
 ["executor:8134"]
 error = '''
-col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
 '''
 
 ["executor:8212"]
@@ -999,6 +1014,11 @@ Invalid JSON text: %-.192s
 ["json:3143"]
 error = '''
 Invalid JSON path expression %s.
+'''
+
+["json:3144"]
+error = '''
+Cannot create a JSON value from a string with CHARACTER SET '%s'.
 '''
 
 ["json:3149"]
@@ -1269,6 +1289,11 @@ View's SELECT refers to a temporary table '%-.192s'
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
+["planner:1391"]
+error = '''
+Key part '%-.192s' length cannot be 0
 '''
 
 ["planner:1462"]
@@ -1801,6 +1826,21 @@ error = '''
 column %s can't be in none state
 '''
 
+["table:8138"]
+error = '''
+writing inconsistent data in table: %s, expected-values:{%s} != record-values:{%s}
+'''
+
+["table:8139"]
+error = '''
+writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v
+'''
+
+["table:8140"]
+error = '''
+writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}
+'''
+
 ["tikv:1105"]
 error = '''
 Unknown error
@@ -1819,6 +1859,11 @@ Query execution was interrupted
 ["tikv:3572"]
 error = '''
 Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
+'''
+
+["tikv:8141"]
+error = '''
+assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v
 '''
 
 ["tikv:8229"]

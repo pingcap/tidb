@@ -24,13 +24,18 @@ import (
 	"syscall"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"golang.org/x/sys/unix"
 )
 
 // GetStorageSize gets storage's capacity and available size
 func GetStorageSize(dir string) (size StorageSize, err error) {
-	var stat unix.Statfs_t
+	failpoint.Inject("GetStorageSize", func(val failpoint.Value) {
+		injectedSize := val.(int)
+		failpoint.Return(StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil)
+	})
 
+	var stat unix.Statfs_t
 	err = unix.Statfs(dir, &stat)
 	if err != nil {
 		return size, errors.Annotatef(err, "cannot get disk capacity at %s", dir)
@@ -52,7 +57,7 @@ func GetStorageSize(dir string) (size StorageSize, err error) {
 	}
 
 	// Available blocks * size per block = available space in bytes
-	size.Available = uint64(stat.Bavail) * bSize
+	size.Available = stat.Bavail * bSize
 	size.Capacity = stat.Blocks * bSize
 
 	return

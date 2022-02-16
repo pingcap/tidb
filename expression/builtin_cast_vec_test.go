@@ -110,7 +110,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 
 type dateTimeGenerWithFsp struct {
 	defaultGener
-	fsp int8
+	fsp int
 }
 
 func (g *dateTimeGenerWithFsp) gen() interface{} {
@@ -158,8 +158,6 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 }
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
-	t.Parallel()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
 	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
 	if err != nil {
@@ -202,8 +200,6 @@ func genCastRealAsTime() *chunk.Chunk {
 
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
-	t.Parallel()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
 	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
 	if err != nil {

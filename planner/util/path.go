@@ -151,35 +151,21 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 
 // OnlyPointRange checks whether each range is a point(no interval range exists).
 func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
-	noIntervalRange := true
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPoint(sctx) {
-				noIntervalRange = false
-				break
+			if !ran.IsPointNullable(sctx) {
+				return false
 			}
 		}
-		return noIntervalRange
+		return true
 	}
-	haveNullVal := false
 	for _, ran := range path.Ranges {
 		// Not point or the not full matched.
-		if !ran.IsPoint(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRange = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
+		if !ran.IsPointNonNullable(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
+			return false
 		}
 	}
-	return noIntervalRange && !haveNullVal
+	return true
 }
 
 // Col2Len maps expression.Column.UniqueID to column length

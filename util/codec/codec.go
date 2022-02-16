@@ -116,9 +116,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				err = sc.HandleOverflow(err, err)
 			}
 		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable)
 		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
@@ -1120,7 +1120,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.Decimal)}
+		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -1144,7 +1144,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
+		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)
@@ -1154,7 +1154,7 @@ func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldTy
 func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) error {
 	switch ft.Tp {
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, ft.Decimal)
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {

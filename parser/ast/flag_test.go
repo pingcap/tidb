@@ -22,7 +22,6 @@ import (
 )
 
 func TestHasAggFlag(t *testing.T) {
-	t.Parallel()
 	expr := &ast.BetweenExpr{}
 	flagTests := []struct {
 		flag   uint64
@@ -39,7 +38,6 @@ func TestHasAggFlag(t *testing.T) {
 }
 
 func TestFlag(t *testing.T) {
-	t.Parallel()
 	flagTests := []struct {
 		expr string
 		flag uint64

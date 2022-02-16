@@ -228,6 +228,21 @@ func extractEquivalenceColumns(result [][]Expression, expr Expression) [][]Expre
 	return result
 }
 
+// extractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
+func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *CorrelatedColumn:
+		result = append(result, &v.Column)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsAndCorColumns(result, arg)
+		}
+	}
+	return result
+}
+
 // ExtractConstantEqColumnsOrScalar detects the constant equal relationship from CNF exprs.
 func ExtractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, exprs []Expression) []Expression {
 	// exprs are CNF expressions, EQ condition only make sense in the top level of every expr.
@@ -317,6 +332,14 @@ func extractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expressio
 			return result
 		}
 		// For Non-EQ function, we don't have to traverse down.
+	}
+	return result
+}
+
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
+func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
+	for _, expr := range list {
+		result = extractColumnsAndCorColumns(result, expr)
 	}
 	return result
 }
@@ -668,6 +691,41 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
 	return newExpr
+}
+
+// ContainOuterNot checks if there is an outer `not`.
+func ContainOuterNot(expr Expression) bool {
+	return containOuterNot(expr, false)
+}
+
+// containOuterNot checks if there is an outer `not`.
+// Input `not` means whether there is `not` outside `expr`
+//
+// eg.
+//    not(0+(t.a == 1 and t.b == 2)) returns true
+//    not(t.a) and not(t.b) returns false
+func containOuterNot(expr Expression, not bool) bool {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return containOuterNot(f.GetArgs()[0], true)
+		case ast.IsTruthWithNull, ast.IsNull:
+			return containOuterNot(f.GetArgs()[0], not)
+		default:
+			if not {
+				return true
+			}
+			hasNot := false
+			for _, expr := range f.GetArgs() {
+				hasNot = hasNot || containOuterNot(expr, not)
+				if hasNot {
+					return hasNot
+				}
+			}
+			return hasNot
+		}
+	}
+	return false
 }
 
 // Contains tests if `exprs` contains `e`.
@@ -1277,11 +1335,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParams(ctx, stmt, inValues...)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmtNode)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}

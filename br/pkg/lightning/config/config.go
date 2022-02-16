@@ -70,7 +70,6 @@ const (
 	ErrorOnDup = "error"
 
 	defaultDistSQLScanConcurrency     = 15
-	distSQLScanConcurrencyPerStore    = 4
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
@@ -88,20 +87,16 @@ const (
 	//
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
-	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize              = 512 * units.MiB
-	defaultLocalWriterMemCacheSize         = 128 * units.MiB
-
-	maxRetryTimes           = 4
-	defaultRetryBackoffTime = 100 * time.Millisecond
-	pdStores                = "/pd/api/v1/stores"
+	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
+	defaultEngineMemCacheSize      = 512 * units.MiB
+	defaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -342,6 +337,10 @@ type MaxError struct {
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case int64:
+		// ignore val that is smaller than 0
+		if val < 0 {
+			val = 0
+		}
 		cfg.Syntax.Store(0)
 		cfg.Charset.Store(math.MaxInt64)
 		cfg.Type.Store(val)
@@ -510,8 +509,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
-	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
-	// This could provide users a more flexable usage to configure different files with
+	// unescape the schema/table name only used in lightning's internal logic now.
+	Unescape bool `json:"-" toml:"-" yaml:"-"`
+	// TODO: DataCharacterSet here can override the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexible usage to configure different files with
 	// different data charsets.
 	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
@@ -527,6 +528,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -552,25 +554,35 @@ type Security struct {
 	KeyPath  string `toml:"key-path" json:"key-path"`
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
+
+	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
+	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
+	TLSConfigName string `toml:"-" json:"-"`
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
-	switch {
-	case err != nil:
+	if err != nil {
 		return errors.Trace(err)
-	case tlsConfig != nil:
+	}
+	if tlsConfig != nil {
 		// error happens only when the key coincides with the built-in names.
-		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
-	default:
-		gomysql.DeregisterTLSConfig("cluster")
+		_ = gomysql.RegisterTLSConfig(sec.TLSConfigName, tlsConfig)
 	}
 	return nil
+}
+
+// DeregisterMySQL deregisters the TLS config with security.TLSConfigName
+func (sec *Security) DeregisterMySQL() {
+	if sec == nil || len(sec.CAPath) == 0 {
+		return
+	}
+	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
 }
 
 // A duration which can be deserialized from a TOML string.
@@ -940,9 +952,7 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 
 	switch {
 	case os.IsNotExist(err):
-		// the sorted-kv-dir does not exist, meaning we will create it automatically.
-		// so we extract the storage size from its parent directory.
-		storageSizeDir = filepath.Dir(storageSizeDir)
+		return nil
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
 			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
@@ -1013,6 +1023,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	if cfg.TiDB.Port <= 0 {
 		return errors.New("invalid `tidb.port` setting")
 	}
+
 	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
 		return errors.New("invalid `tidb.pd-addr` setting")
 	}
@@ -1124,7 +1135,10 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 	switch cfg.TiDB.TLS {
 	case "":
 		if len(cfg.TiDB.Security.CAPath) > 0 {
-			cfg.TiDB.TLS = "cluster"
+			if cfg.TiDB.Security.TLSConfigName == "" {
+				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+			}
+			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
 			cfg.TiDB.TLS = "false"
 		}

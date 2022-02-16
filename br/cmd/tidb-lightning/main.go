@@ -23,8 +23,10 @@ import (
 	"syscall"
 
 	"github.com/pingcap/tidb/br/pkg/lightning"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"go.uber.org/zap"
 )
 
@@ -77,6 +79,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
 		return
 	}
+	if len(globalCfg.App.StatusAddr) > 0 {
+		web.EnableCurrentProgress()
+	}
 
 	err = func() error {
 		if globalCfg.App.ServerMode {
@@ -89,12 +94,21 @@ func main() {
 		return app.RunOnce(context.Background(), cfg, nil)
 	}()
 
+	finished := true
+	if common.IsContextCanceledError(err) {
+		err = nil
+		finished = false
+	}
 	if err != nil {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
-		logger.Info("tidb lightning exit")
-		fmt.Fprintln(os.Stdout, "tidb lightning exit")
+		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
+		exitMsg := "tidb lightning exit successfully"
+		if !finished {
+			exitMsg = "tidb lightning canceled"
+		}
+		fmt.Fprintln(os.Stdout, exitMsg)
 	}
 
 	// call Sync() with log to stdout may return error in some case, so just skip it

@@ -34,14 +34,9 @@ import (
 )
 
 func TestInferType(t *testing.T) {
-	t.Parallel()
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err = store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	s := InferTypeSuite{}
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -829,6 +824,8 @@ func (s *InferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"ifnull(null, null)", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, 0},
 		{"ifnull(c_double_d, c_timestamp_d)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 22, types.UnspecifiedLength},
 		{"ifnull(c_json, c_decimal)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, math.MaxUint32, types.UnspecifiedLength},
+		{"ifnull(c_time, c_date)", mysql.TypeDatetime, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeWidthNoFsp + 3 + 1, 3},
+		{"ifnull(c_time_d, c_date)", mysql.TypeDatetime, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeWidthNoFsp, 0},
 		{"if(c_int_d, c_decimal, c_int_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
 		{"if(c_int_d, c_char, c_int_d)", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"if(c_int_d, c_binary, c_int_d)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
@@ -843,6 +840,8 @@ func (s *InferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"case when c_int_d > 1 then c_double_d else c_bchar end", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"case when c_int_d > 2 then c_double_d when c_int_d < 1 then c_decimal else c_double_d end", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
 		{"case when c_double_d > 2 then c_decimal else 1 end", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
+		{"case when c_time is not null then c_time else c_date end", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp + 3 + 1, 3},
+		{"case when c_time_d is not null then c_time_d else c_date end", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, 0},
 		{"case when null then null else null end", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, types.UnspecifiedLength},
 	}
 }
@@ -1224,7 +1223,7 @@ func (s *InferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 		{"bit_count(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"bit_count(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 
-		{`@varname`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxFieldVarCharLength, int(types.UnspecifiedFsp)},
+		{`@varname`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxFieldVarCharLength, types.UnspecifiedFsp},
 	}
 }
 
@@ -1804,9 +1803,9 @@ func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"quarter(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"quarter(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 
-		{"current_time()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 8, int(types.MinFsp)},
-		{"current_time(0)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 8, int(types.MinFsp)},
-		{"current_time(6)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 15, int(types.MaxFsp)},
+		{"current_time()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.MinFsp},
+		{"current_time(0)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.MinFsp},
+		{"current_time(6)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 15, types.MaxFsp},
 
 		{"sec_to_time(c_int_d      )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"sec_to_time(c_bigint_d   )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
@@ -1848,11 +1847,11 @@ func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"time_to_sec(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"time_to_sec(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 
-		{"str_to_date(c_varchar, '%Y:%m:%d')", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, int(types.MinFsp)},
-		{"str_to_date(c_varchar, '%Y:%m:%d %H:%i:%s')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, int(types.MinFsp)},
-		{"str_to_date(c_varchar, '%Y:%m:%d %H:%i:%s.%f')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, int(types.MaxFsp)},
-		{"str_to_date(c_varchar, '%H:%i:%s')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, int(types.MinFsp)},
-		{"str_to_date(c_varchar, '%H:%i:%s.%f')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, int(types.MaxFsp)},
+		{"str_to_date(c_varchar, '%Y:%m:%d')", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"str_to_date(c_varchar, '%Y:%m:%d %H:%i:%s')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"str_to_date(c_varchar, '%Y:%m:%d %H:%i:%s.%f')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"str_to_date(c_varchar, '%H:%i:%s')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"str_to_date(c_varchar, '%H:%i:%s.%f')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
 
 		{"period_add(c_int_d      , c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"period_add(c_bigint_d   , c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
@@ -1897,7 +1896,7 @@ func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 
 		{"get_format(DATE, 'USA')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 17, types.UnspecifiedLength},
 
-		{"convert_tz(c_time_d, c_text_d, c_text_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, int(types.MaxFsp)},
+		{"convert_tz(c_time_d, c_text_d, c_text_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
 		{"convert_tz('2004-01-01 12:00:00.123', c_text_d, c_text_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
 
 		{"from_unixtime(20170101.999)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 23, 3},
@@ -1907,6 +1906,17 @@ func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 
 		{"extract(day from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"extract(hour from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+
+		{"date_add('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.UnspecifiedLength},
+		{"date_sub('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.UnspecifiedLength},
+		{"date_add(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"date_sub(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"date_add(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"date_sub(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"date_add(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"date_sub(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"date_add(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"date_sub(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 	}
 }
 

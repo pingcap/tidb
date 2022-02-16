@@ -43,12 +43,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	. "github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -58,6 +59,95 @@ var _ = SerialSuites(&testSerialSuite{})
 
 // TODO(tangenta): Move all the parallel tests out of this file.
 var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
+
+type testIntegrationSuite7 struct{ *testIntegrationSuite }
+
+type testIntegrationSuite struct {
+	lease   time.Duration
+	cluster testutils.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	ctx     sessionctx.Context
+}
+
+func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
+	var err error
+	s.lease = 50 * time.Millisecond
+	ddl.SetWaitTimeWhenErrorOccurred(0)
+
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
+	)
+	c.Assert(err, IsNil)
+	session.SetSchemaLease(s.lease)
+	session.DisableStats4Test()
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	s.ctx = se.(sessionctx.Context)
+	_, err = se.Execute(context.Background(), "create database test_db")
+	c.Assert(err, IsNil)
+}
+
+func tearDownIntegrationSuiteTest(s *testIntegrationSuite, c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
+func tearDownIntegrationSuite(s *testIntegrationSuite, c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testIntegrationSuite) SetUpSuite(c *C) {
+	setupIntegrationSuite(s, c)
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	tearDownIntegrationSuite(s, c)
+}
+
+type testMaxTableRowIDContext struct {
+	c   *C
+	d   ddl.DDL
+	tbl table.Table
+}
+
+func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
+	return &testMaxTableRowIDContext{
+		c:   c,
+		d:   d,
+		tbl: tbl,
+	}
+}
+
+func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
+	c := ctx.c
+	d := ctx.d
+	tbl := ctx.tbl
+	curVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
+	c.Assert(err, IsNil)
+	return maxHandle, emptyTable
+}
+
+func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
+	c := ctx.c
+	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
+	c.Assert(emptyTable, Equals, expectEmpty)
+	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
+}
 
 type testSerialSuite struct {
 	CommonHandleSuite
@@ -530,17 +620,13 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
-	c.Assert(err, IsNil)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
-	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
+	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
 
@@ -707,20 +793,13 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
 	defer tk.MustExec("drop placement policy p1")
-	tk.MustExec("drop table if exists placement_table1, placement_table1")
+	tk.MustExec("drop table if exists placement_table1")
 	tk.MustExec("create table placement_table1(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists placement_table1")
-	tk.MustExec("create table placement_table2(id int) LEADER_CONSTRAINTS='[+region=hz]' FOLLOWERS=3")
-	defer tk.MustExec("drop table if exists placement_table2")
 
 	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create global temporary table g_tmp_placement2 like placement_table2 on commit delete rows")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-
 	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
-	_, err = tk.Exec("create temporary table l_tmp_placement2 like placement_table2")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
 }
 
@@ -1532,9 +1611,6 @@ func (s *testSerialSuite) TestAutoRandomWithPreSplitRegion(c *C) {
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1568,8 +1644,6 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 }
 
 func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1652,6 +1726,7 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
 	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t2(a int auto_increment, unique key (a) invisible);", errno.ErrPKIndexCantBeInvisible)
 	// Column `a` become implicit primary key after DDL statement on itself
 	tk.MustExec("create table t2(a int not null)")
 	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)

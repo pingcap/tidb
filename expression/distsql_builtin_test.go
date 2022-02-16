@@ -31,7 +31,6 @@ import (
 )
 
 func TestPBToExpr(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
@@ -86,7 +85,6 @@ func TestPBToExpr(t *testing.T) {
 
 // TestEval test expr.Eval().
 func TestEval(t *testing.T) {
-	t.Parallel()
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
 	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
@@ -794,6 +792,61 @@ func TestEval(t *testing.T) {
 	}
 }
 
+func TestPBToExprWithNewCollation(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+
+	cases := []struct {
+		name    string
+		expName string
+		id      int32
+		pbID    int32
+	}{
+		{"utf8_general_ci", "utf8_general_ci", 33, 33},
+		{"UTF8MB4_BIN", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_bin", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_general_ci", "utf8mb4_general_ci", 45, 45},
+		{"", "utf8mb4_bin", 46, 46},
+		{"some_error_collation", "utf8mb4_bin", 46, 46},
+		{"utf8_unicode_ci", "utf8_unicode_ci", 192, 192},
+		{"utf8mb4_unicode_ci", "utf8mb4_unicode_ci", 224, 224},
+		{"utf8mb4_zh_pinyin_tidb_as_cs", "utf8mb4_zh_pinyin_tidb_as_cs", 2048, 2048},
+	}
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		require.Equal(t, cs.pbID, expr.FieldType.Collate)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+		cons, ok := e.(*Constant)
+		require.True(t, ok)
+		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		require.Equal(t, -cs.pbID, expr.FieldType.Collate)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+		cons, ok := e.(*Constant)
+		require.True(t, ok)
+		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+}
+
 func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
@@ -868,7 +921,7 @@ func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Flen:    int32(ft.Flen),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Collate: collate.CollationToProto(ft.Collate),
 		Elems:   ft.Elems,
 	}
 }
@@ -910,7 +963,7 @@ func newIntFieldType() *types.FieldType {
 func newDurFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeDuration,
-		Decimal: int(types.DefaultFsp),
+		Decimal: types.DefaultFsp,
 	}
 }
 
