@@ -979,7 +979,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	touchedTableIDs := make(map[int64]bool)
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -998,7 +997,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
 					}
-					touchedTableIDs[physTblID] = true
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
@@ -1012,7 +1010,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
-	for id := range touchedTableIDs {
+	for id := range e.tblID2Handle {
 		e.updateDeltaForTableID(id)
 	}
 
