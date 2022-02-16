@@ -1151,6 +1151,9 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	}
 	// The regions
 	regions, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
 	regions = strings.Trim(regions, "\r\n\t")
 	splits := strings.Split(regions, " ")
 	realN := int64(0)
