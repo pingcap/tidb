@@ -596,7 +596,13 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-func (s *tiflashDDLTestSuite) TestAlterDatabaseFail(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterDatabaseFail(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
+	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
 }
