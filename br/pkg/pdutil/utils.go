@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/tikv/pd/pkg/codec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // UndoFunc is a 'undo' operation of some undoable command.

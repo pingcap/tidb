@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/tikv/pd/pkg/codec"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
