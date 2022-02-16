@@ -332,6 +332,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 				// dynamic prune mode!
 				// if there is a model.ExtraPhysTblID column, send it in the protobuf schema!
 				columns = append(columns, model.NewExtraPhysTblIDColInfo())
+			} else {
+				panic("p.isPartition is set, should we not forward the request for ExtraPhysTblID?!!")
 			}
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())

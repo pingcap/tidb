@@ -63,6 +63,7 @@ type UnionScanExec struct {
 	collators  []collate.Collator
 
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
+	// used with dynamic prune mode
 	physTblIDIdx *int
 }
 
@@ -90,12 +91,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 
-	for i := range us.columns {
+	for i := len(us.columns) - 1; i >= 0; i-- {
 		if us.columns[i].ID == model.ExtraPhysTblID {
 			if us.physTblIDIdx == nil {
 				us.physTblIDIdx = new(int)
 			}
 			*us.physTblIDIdx = i
+			break
 		}
 	}
 	mb := txn.GetMemBuffer()
@@ -245,9 +247,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			var checkKey kv.Key
 			if us.physTblIDIdx != nil {
 				tblID := row.GetInt64(*us.physTblIDIdx)
-				if tblID == 0 {
-					panic("UnionScanExec Physical Table ID == 0")
-				}
 				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
 			} else {
 				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)

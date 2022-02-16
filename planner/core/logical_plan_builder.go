@@ -4191,7 +4191,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// table partition prune mode == dynamic
 			// Single TableReader for all partitions, needs the PhysTblID from storage
-			us.ExtraPhysTblIDCol = ds.AddExtraPhysTblIDColumn()
+			_ = ds.AddExtraPhysTblIDColumn()
 		}
 		result = us
 	}

@@ -536,9 +536,6 @@ type LogicalUnionScan struct {
 
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
-
-	// If partitioned table, this column is used for the Physical Table ID
-	ExtraPhysTblIDCol *expression.Column
 }
 
 // DataSource represents a tableScan without condition push down.

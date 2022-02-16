@@ -977,11 +977,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					if err != nil {
 						return err
 					}
-					// TODO: Change so the ExtraPhysTblID is set for both static and dynamic
-					// filter it out in ToPB for both index and table reads if 'isPartition'
-					// Add it in the table reader, if 'isPartition'?
-					// Then it is just to read both here and in UnionScan, as committed
-					// So the only change to commit is to filter it out?
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)

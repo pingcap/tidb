@@ -1233,29 +1233,10 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 		// even worse: SelectLock have to know the `pid` to construct the lock key.
 		// To solve the problem, an extra `pid` column is added to the schema, and the
 		// DataSource need to return the `pid` information in the chunk row.
-		// For dynamic prune mode, it is filled in from the tableID in the key by storage
-		// For static prune mode it is still  sent to storage, but it does not need to be
-		// filled in (similar to virtualColumns, which is filled in by TiDB, but still
-		// their defaults values are filled in by storage
-		// and set by the partition's TableReaderExecutor physical table id.
-		// (static prune mode has a union of TableReader, one for each partition).
+		// For dynamic prune mode, it is filled in from the tableID in the key by storage.
+		// For static prune mode it is also filled in from the tableID in the key by storage.
+		// since it would otherwise be lost in the PartitionUnion executor.
 		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
-		/*
-			if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				// static partition prune mode, create one TableReader per partition
-				// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
-
-				// Already set when creating DataSource in buildDataSource!
-				//b.optFlag = b.optFlag | flagPartitionProcessor
-
-				// Skip sending the extraPhysTblIDCol to store, just fill it in anyway in
-				// table reader...
-				// WAS HERE, is it possible to avoid this call??!?
-				// How is it done for UnionScan?
-				// If avoided there, maybe we could just set tblID2PhysTblIDCol[pid] to len(ds.TblCols)?
-				//setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
-			}
-		*/
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,
