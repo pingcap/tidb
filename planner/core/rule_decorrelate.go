@@ -154,7 +154,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				return s.optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
-			if colSet := expression.ExtractColumnSet(proj.Exprs); colSet.IsEmpty() && apply.JoinType == LeftOuterJoin {
+			allConst := true
+			for _, expr := range proj.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+					allConst = false
+					break
+				}
+			}
+			if allConst && apply.JoinType == LeftOuterJoin {
 				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
 				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
 				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
