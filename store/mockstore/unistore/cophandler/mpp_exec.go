@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -118,6 +119,7 @@ type tableScanExec struct {
 	chk    *chunk.Chunk
 	result chan scanResult
 	done   chan struct{}
+	wg     util.WaitGroupWrapper
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
@@ -166,7 +168,7 @@ func (e *tableScanExec) open() error {
 	e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	e.result = make(chan scanResult, 1)
 	e.done = make(chan struct{})
-	go func() {
+	e.wg.Run(func() {
 		// close the channel when done scanning, so that next() will got nil chunk
 		defer close(e.result)
 		for i, ran := range e.kvRanges {
@@ -195,7 +197,7 @@ func (e *tableScanExec) open() error {
 			}
 			return
 		}
-	}()
+	})
 
 	return nil
 }
@@ -214,6 +216,7 @@ func (e *tableScanExec) stop() error {
 	if e.done != nil {
 		close(e.done)
 	}
+	e.wg.Wait()
 	return nil
 }
 
