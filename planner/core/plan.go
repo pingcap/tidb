@@ -293,6 +293,9 @@ type LogicalPlan interface {
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
 
+	// Get all the children.
+	Children() []LogicalPlan
+
 	// GetChild gets the i-th child.
 	GetChild(int) LogicalPlan
 
