@@ -2769,19 +2769,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	_ = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		ok, err := t.CreateMySQLSchema()
-		if err != nil {
-			return err
-		}
-		id := 3
-		if ok {
-			id = 1
-		}
-		err = t.CreateDDLJobTable(int64(id))
-		return err
-	})
+	meta.InitMetaTable(store)
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)

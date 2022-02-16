@@ -365,7 +365,7 @@ func TestMeta(t *testing.T) {
 		TableID:    2,
 		OldTableID: 3,
 	}
-	err = m.SetSchemaDiff(schemaDiff)
+	err = m.SetSchemaDiff(store)
 	require.NoError(t, err)
 	readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
 	require.NoError(t, err)
