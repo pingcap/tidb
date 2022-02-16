@@ -851,5 +851,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	SysdateIsNow                          = atomic.NewBool(DefSysdateIsNow)
+	GlobalSysdateIsNow                    = atomic.NewBool(DefSysdateIsNow)
 )
