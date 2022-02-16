@@ -450,6 +450,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, bind.UpdateTime)
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
+		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
 		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
