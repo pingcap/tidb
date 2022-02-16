@@ -1122,18 +1122,18 @@ func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_11 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
-		"└─TableReader_12 1.00 root  data:HashAgg_6",
-		"  └─HashAgg_6 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
-		"    └─TableFullScan_10 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
+		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_5 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
-		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
-		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"HashAgg 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -5536,4 +5536,39 @@ func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
 	c.Assert(readFromCacheNoPanic, IsTrue)
 
 	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestIssue31240(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31240(a int, b int);")
+	tk.MustExec("set @@tidb_allow_mpp = 0")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") {
+			tk.MustExec(tt)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+	tk.MustExec("drop table if exists t31240")
 }
