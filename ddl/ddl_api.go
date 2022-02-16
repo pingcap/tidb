@@ -274,14 +274,15 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 
 func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption) error {
 	hasSetTiFlashReplica := false
-	if len(specs) > 1 {
-		for _, spec := range specs {
-			if spec.Tp == ast.DatabaseSetTiFlashReplica {
-				if hasSetTiFlashReplica {
-					return errRunMultiSchemaChanges
-				}
-				hasSetTiFlashReplica = true
+	if len(specs) == 1 {
+		return nil
+	}
+	for _, spec := range specs {
+		if spec.Tp == ast.DatabaseSetTiFlashReplica {
+			if hasSetTiFlashReplica {
+				return errRunMultiSchemaChanges
 			}
+			hasSetTiFlashReplica = true
 		}
 	}
 	return nil
