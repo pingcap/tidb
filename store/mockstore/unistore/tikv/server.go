@@ -583,6 +583,13 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 			ctx.finish()
 		}
 	}()
+	if req.TableRegions != nil {
+		// Support PartitionTableScan for BatchCop
+		req.Regions = req.Regions[:]
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
 	for _, ri := range req.Regions {
 		cop := coprocessor.Request{
 			Tp:      kv.ReqTypeDAG,

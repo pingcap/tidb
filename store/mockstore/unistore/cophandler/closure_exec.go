@@ -198,7 +198,8 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 func isScanNode(executor *tipb.Executor) bool {
 	switch executor.Tp {
 	case tipb.ExecType_TypeTableScan,
-		tipb.ExecType_TypeIndexScan:
+		tipb.ExecType_TypeIndexScan,
+		tipb.ExecType_TypePartitionTableScan:
 		return true
 	default:
 		return false
@@ -262,6 +263,13 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
 		}
 		e.scanType = IndexScan
+	case tipb.ExecType_TypePartitionTableScan:
+		dagCtx.setColumnInfo(scanExec.PartitionTableScan.Columns)
+		dagCtx.primaryCols = scanExec.PartitionTableScan.PrimaryColumnIds
+		tblScan := scanExec.PartitionTableScan
+		e.unique = true
+		e.scanCtx.desc = tblScan.Desc
+		e.scanType = TableScan
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", scanExec.Tp))
 	}
