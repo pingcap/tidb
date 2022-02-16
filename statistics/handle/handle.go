@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 	"sort"
 	"strconv"
 	"sync"
@@ -1993,14 +1994,19 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 }
 
 // RecordAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob) error {
+func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	address := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
 	// TODO: do we need to pass ctx in?
 	ctx := context.Background()
-	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state) VALUES (%?, %?, %?, %?, %?)"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending)
+	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
+	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
 	if err != nil {
 		return err
 	}

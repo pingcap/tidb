@@ -398,6 +398,8 @@ const (
 		start_time TIMESTAMP,
 		end_time TIMESTAMP,
 		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
+		instance CHAR(64) NOT NULL comment 'address of the TiDB instance on which analyze are executed',
+		process_id BIGINT(64) UNSIGNED,
 		PRIMARY KEY (id) CLUSTERED,
 		KEY (update_time)
 	);`

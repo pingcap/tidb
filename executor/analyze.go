@@ -2287,8 +2287,14 @@ func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil {
 		return
 	}
+	var procID uint64
+	if ctx.GetSessionVars().InRestrictedSQL {
+		// TODO: set auto analyze procID
+	} else {
+		procID = ctx.GetSessionVars().ConnectionID
+	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	err := statsHandle.RecordAnalyzeJob(job)
+	err := statsHandle.RecordAnalyzeJob(job, procID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
