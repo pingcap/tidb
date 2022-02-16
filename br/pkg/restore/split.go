@@ -96,8 +96,8 @@ func (rs *RegionSplitter) Split(
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
-	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
-	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
+	minKey := codec.EncodeBytes(sortedRanges[0].StartKey, nil)
+	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey, nil)
 	interval := SplitRetryInterval
 	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
@@ -131,7 +131,7 @@ SplitRegions:
 						log.Error("split regions no valid key",
 							logutil.Key("startKey", region.Region.StartKey),
 							logutil.Key("endKey", region.Region.EndKey),
-							logutil.Key("key", codec.EncodeBytes(key)),
+							logutil.Key("key", codec.EncodeBytes(key, nil)),
 							rtree.ZapRanges(ranges))
 					}
 					return errors.Trace(errSplit)
@@ -523,7 +523,7 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
 	if len(splitKey) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes(splitKey)
+	splitKey = codec.EncodeBytes(nil, splitKey)
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
