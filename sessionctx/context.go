@@ -143,6 +143,8 @@ type Context interface {
 	GetBuiltinFunctionUsage() map[string]uint32
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
+	// ShowProcess returns ProcessInfo running in current Context
+	ShowProcess() *util.ProcessInfo
 }
 
 type basicCtxType int

@@ -1835,6 +1835,7 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 			return errors.Errorf("The ID is in use: %v", id)
 		}
 		s.procMap[id] = proc
+		proc.GetSessionVars().ConnectionID = id
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
 		return nil
 	}
@@ -1843,21 +1844,25 @@ func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
 		defer s.mu.Unlock()
 		if proc, ok := s.procMap[id]; ok {
 			delete(s.procMap, id)
+			proc.GetSessionVars().ConnectionID = 0
 			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
 		}
 	}
 	return tracker
 }
 
-// GetSysProcesses gets all of sys processes
-func (do *Domain) GetSysProcesses() map[uint64]sessionctx.Context {
+// GetSysProcessList gets list of system ProcessInfo
+func (do *Domain) GetSysProcessList() map[uint64]*util.ProcessInfo {
 	do.sysProcesses.mu.RLock()
 	defer do.sysProcesses.mu.RUnlock()
-	copiedMap := make(map[uint64]sessionctx.Context, len(do.sysProcesses.procMap))
-	for id, proc := range do.sysProcesses.procMap {
-		copiedMap[id] = proc
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, proc := range do.sysProcesses.procMap {
+		// if session is still tracked in this map, it's not returned to sysSessionPool yet
+		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
+			rs[connID] = pi
+		}
 	}
-	return copiedMap
+	return rs
 }
 
 // KillSysProcess kills sys process with specified ID
