@@ -1666,19 +1666,19 @@ func buildTableInfo(
 	return
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
 			err = errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
 			return
 		}
-		var colLen int
-		colLen, err = getIndexColumnLength(col, idxCol.Length)
+		var l int
+		l, err = getIndexColumnLength(col, idxCol.Length)
 		if err != nil {
 			return
 		}
-		len += colLen
+		colLen += l
 	}
 	return
 }
@@ -4681,10 +4681,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
-	col := table.FindCol(t.Cols(), colName.L)
-	if col == nil {
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	if oldCol == nil {
 		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
+	col := table.ToColumn(oldCol.Clone())
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
@@ -5272,7 +5273,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
@@ -5281,7 +5282,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
