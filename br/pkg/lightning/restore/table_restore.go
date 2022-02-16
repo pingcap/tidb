@@ -645,10 +645,7 @@ func (tr *TableRestore) postProcess(
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
-	// there are no data in this table, no need to do post process
-	// this is important for tables that are just the dump table of views
-	// because at this stage, the table was already deleted and replaced by the related view
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+	if !rc.backend.ShouldPostProcess() {
 		return false, nil
 	}
 
