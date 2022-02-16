@@ -283,7 +283,8 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
-	defer config.RestoreFunc()()
+	restore := config.RestoreFunc()
+	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 		conf.OOMAction = config.OOMActionLog
