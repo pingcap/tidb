@@ -440,8 +440,32 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
+	err = writeDDLSequenceInfo(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func writeDDLSequenceInfo(t *meta.Meta, job *model.Job) error {
+	it, err := t.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	lastJob, err := it.GetLastJobs(1, nil)
+	if err != nil {
+		return err
+	}
+	if len(lastJob) > 0 && lastJob[0].Sequence > 0 {
+		job.Sequence = lastJob[0].Sequence + 1
+	} else {
+		job.Sequence, err = t.GetHistoryDDLCount()
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {

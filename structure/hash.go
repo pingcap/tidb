@@ -166,6 +166,17 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
+// HGetLen gets all the fields and values in a hash.
+func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
+	hashLen := 0
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		hashLen++
+		return nil
+	})
+
+	return uint64(hashLen), errors.Trace(err)
+}
+
 // HGetLastN gets latest N fields and values in hash.
 func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)

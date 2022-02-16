@@ -653,6 +653,9 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 				}
 			}
 
+			ctx.GetSessionVars().LastDDLInfo.Query = historyJob.Query
+			ctx.GetSessionVars().LastDDLInfo.Sequence = historyJob.Sequence
+
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
