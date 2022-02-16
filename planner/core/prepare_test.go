@@ -1944,6 +1944,8 @@ func (s *testPrepareSerialSuite) TestIssue28246(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
