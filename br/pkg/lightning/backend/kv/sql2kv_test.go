@@ -596,7 +596,7 @@ func BenchmarkSQL2KV(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, "", 0)
 		require.NoError(b, err)
-		len := reflect.ValueOf(rows).Elem().Field(0).Len()
-		require.Equal(b, len, 2)
+		l := reflect.ValueOf(rows).Elem().Field(0).Len()
+		require.Equal(b, l, 2)
 	}
 }
