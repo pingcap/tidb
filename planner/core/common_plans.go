@@ -481,16 +481,11 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-<<<<<<< HEAD
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
-=======
 	// We only cache the tableDual plan when the number of vars are zero.
 	if containTableDual(p) && varsNum > 0 {
-		stmtCtx.SkipPlanCache = true
+		stmtCtx.MaybeOverOptimized4PlanCache = true
 	}
-	if prepared.UseCache && !stmtCtx.SkipPlanCache {
->>>>>>> 80527cbbc... planner: do not cache the tableDual plan (#31290)
+	if prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
