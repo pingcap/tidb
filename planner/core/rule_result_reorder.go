@@ -47,7 +47,7 @@ func (rs *resultReorder) optimize(ctx context.Context, lp LogicalPlan, opt *logi
 
 func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
-		return rs.completeSort(lp.GetChild(0))
+		return rs.completeSort(lp.Children()[0])
 	} else if sort, ok := lp.(*LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
 		if handleCol := rs.extractHandleCol(sort.Children()[0]); handleCol != nil {
@@ -72,7 +72,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 
 func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	if rs.isInputOrderKeeper(lp) {
-		lp.SetChildren(rs.injectSort(lp.GetChild(0)))
+		lp.SetChildren(rs.injectSort(lp.Children()[0]))
 		return lp
 	}
 
@@ -103,7 +103,7 @@ func (rs *resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
-		handleCol := rs.extractHandleCol(lp.GetChild(0))
+		handleCol := rs.extractHandleCol(lp.Children()[0])
 		if x.Schema().Contains(handleCol) {
 			// some Projection Operator might be inlined, so check the column again here
 			return handleCol

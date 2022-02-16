@@ -64,7 +64,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := p.GetChild(0)
+	child := p.children[0]
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 
 	for i := len(used) - 1; i >= 0; i-- {
@@ -80,14 +80,14 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := p.GetChild(0)
+	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	return child.PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := la.GetChild(0)
+	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
 	allFirstRow := true
@@ -159,7 +159,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	// the last rule. So we specially handle this case here.
 	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
 		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.GetChild(0)
+			childOfChild := childProjection.children[0]
 			la.SetChildren(childOfChild)
 		}
 	}
@@ -194,7 +194,7 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := ls.GetChild(0)
+	child := ls.children[0]
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
@@ -205,7 +205,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := lt.GetChild(0)
+	child := lt.children[0]
 	var cols []*expression.Column
 	lt.ByItems, cols = pruneByItems(lt.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
@@ -235,7 +235,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 
 	if hasBeenUsed {
 		// keep the schema of LogicalUnionAll same as its children's
-		used := expression.GetUsedList(p.GetChild(0).Schema().Columns, p.schema)
+		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
@@ -255,7 +255,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 				proj.SetSchema(schema)
 
 				proj.SetChildren(child)
-				p.SetChild(i, proj)
+				p.children[i] = proj
 			}
 		}
 	}
@@ -269,7 +269,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
-	return p.GetChild(0).PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -367,8 +367,8 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, otherCond := range p.OtherConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
 	}
-	lChild := p.GetChild(0)
-	rChild := p.GetChild(1)
+	lChild := p.children[0]
+	rChild := p.children[1]
 	for _, col := range parentUsedCols {
 		if lChild.Schema().Contains(col) {
 			leftCols = append(leftCols, col)
@@ -387,17 +387,17 @@ func (p *LogicalJoin) mergeSchema() {
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
 
-	err := p.GetChild(0).PruneColumns(leftCols)
+	err := p.children[0].PruneColumns(leftCols)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.GetChild(0))
+	addConstOneForEmptyProjection(p.children[0])
 
-	err = p.GetChild(1).PruneColumns(rightCols)
+	err = p.children[1].PruneColumns(rightCols)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.GetChild(1))
+	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -412,22 +412,22 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
 
-	err := la.GetChild(1).PruneColumns(rightCols)
+	err := la.children[1].PruneColumns(rightCols)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.GetChild(1))
+	addConstOneForEmptyProjection(la.children[1])
 
-	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.GetChild(1), la.GetChild(0).Schema())
+	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 
-	err = la.GetChild(0).PruneColumns(leftCols)
+	err = la.children[0].PruneColumns(leftCols)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.GetChild(0))
+	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -451,7 +451,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 			}
 		}
 	}
-	return p.GetChild(0).PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -473,12 +473,12 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 	}
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
-	err := p.GetChild(0).PruneColumns(parentUsedCols)
+	err := p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return err
 	}
 
-	p.SetSchema(p.GetChild(0).Schema().Clone())
+	p.SetSchema(p.children[0].Schema().Clone())
 	p.Schema().Append(windowColumns...)
 	return nil
 }
@@ -506,7 +506,7 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
-	if err := p.GetChild(0).PruneColumns(parentUsedCols); err != nil {
+	if err := p.children[0].PruneColumns(parentUsedCols); err != nil {
 		return err
 	}
 	p.schema = nil

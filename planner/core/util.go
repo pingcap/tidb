@@ -215,7 +215,7 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 }
 
 func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
-	leftSchema := join.GetChild(0).Schema()
+	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
 		return leftSchema.Clone()
@@ -224,7 +224,7 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	newSchema := expression.MergeSchema(leftSchema, join.GetChild(1).Schema())
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
 		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {

@@ -116,11 +116,10 @@ func GetStats4Test(p LogicalPlan) *property.StatsInfo {
 }
 
 func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	childStats := make([]*property.StatsInfo, p.ChildrenCount())
-	childSchema := make([]*expression.Schema, p.ChildrenCount())
+	childStats := make([]*property.StatsInfo, len(p.children))
+	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
-	for i := 0; i < p.ChildrenCount(); i++ {
-		child := p.GetChild(i)
+	for i, child := range p.children {
 		childProfile, err := child.recursiveDeriveStats(cumColGroups)
 		if err != nil {
 			return nil, err

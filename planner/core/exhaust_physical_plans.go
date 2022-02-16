@@ -402,7 +402,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	if prop.ExpectedCnt < p.stats.RowCount {
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
-		chReqProps[1-innerIdx].ExpectedCnt = p.GetChild(1-innerIdx).statsInfo().RowCount * expCntScale
+		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
 	}
 	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
@@ -445,7 +445,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems}
 	if prop.ExpectedCnt < p.stats.RowCount {
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.GetChild(outerIdx).statsInfo().RowCount * expCntScale
+		chReqProps[outerIdx].ExpectedCnt = p.children[outerIdx].statsInfo().RowCount * expCntScale
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
@@ -661,7 +661,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) (joins []PhysicalPlan) {
-	outerChild, innerChild := p.GetChild(outerIdx), p.GetChild(1-outerIdx)
+	outerChild, innerChild := p.children[outerIdx], p.children[1-outerIdx]
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -1755,11 +1755,11 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		return checkChildFitBC(p.GetChild(1))
+		return checkChildFitBC(p.children[1])
 	} else if p.JoinType == RightOuterJoin {
-		return checkChildFitBC(p.GetChild(0))
+		return checkChildFitBC(p.children[0])
 	}
-	return checkChildFitBC(p.GetChild(0)) || checkChildFitBC(p.GetChild(1))
+	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
@@ -1807,7 +1807,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		return joins, true, nil
 	}
 
-	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.GetChild(0).statsInfo(), p.GetChild(1).statsInfo())
+	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins, true, nil
 	}
@@ -1910,7 +1910,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	// It indicates which side is the build side.
 	preferredBuildIndex := 0
 	if p.JoinType == InnerJoin {
-		if p.GetChild(0).statsInfo().Count() > p.GetChild(1).statsInfo().Count() {
+		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -1926,7 +1926,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if p.JoinType == LeftOuterJoin {
 				preferredBuildIndex = 1
 			}
-		} else if p.GetChild(0).statsInfo().Count() > p.GetChild(1).statsInfo().Count() {
+		} else if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	}
@@ -1937,7 +1937,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.stats.RowCount {
 			expCntScale := prop.ExpectedCnt / p.stats.RowCount
-			expCnt = p.GetChild(1-preferredBuildIndex).statsInfo().RowCount * expCntScale
+			expCnt = p.children[1-preferredBuildIndex].statsInfo().RowCount * expCntScale
 		}
 		if prop.MPPPartitionTp == property.HashType {
 			lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -2014,8 +2014,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	}
 
 	// Disable broadcast join on partition table for TiFlash.
-	for i := 0; i < p.ChildrenCount(); i++ {
-		child := p.GetChild(i)
+	for _, child := range p.children {
 		if ds, isDataSource := child.(*DataSource); isDataSource {
 			if ds.tableInfo.GetPartitionInfo() != nil {
 				return nil
@@ -2057,7 +2056,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 	}
 
 	preferredBuildIndex := 0
-	if p.GetChild(0).statsInfo().Count() > p.GetChild(1).statsInfo().Count() {
+	if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 		preferredBuildIndex = 1
 	}
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -2083,7 +2082,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 	}
 	if prop.ExpectedCnt < p.stats.RowCount {
 		expCntScale := prop.ExpectedCnt / p.stats.RowCount
-		childrenReqProps[1-baseJoin.InnerChildIdx].ExpectedCnt = p.GetChild(1-baseJoin.InnerChildIdx).statsInfo().RowCount * expCntScale
+		childrenReqProps[1-baseJoin.InnerChildIdx].ExpectedCnt = p.children[1-baseJoin.InnerChildIdx].statsInfo().RowCount * expCntScale
 	}
 
 	join := PhysicalHashJoin{
@@ -2241,12 +2240,12 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 }
 
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if !prop.AllColsFromSchema(la.GetChild(0).Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	disableAggPushDownToCop(la.GetChild(0))
+	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
@@ -2281,8 +2280,8 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 }
 
 func disableAggPushDownToCop(p LogicalPlan) {
-	for i := 0; i < p.ChildrenCount(); i++ {
-		disableAggPushDownToCop(p.GetChild(i))
+	for _, child := range p.Children() {
+		disableAggPushDownToCop(child)
 	}
 	if agg, ok := p.(*LogicalAggregation); ok {
 		agg.noCopPushDown = true
@@ -2325,8 +2324,7 @@ func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 
 func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bool) bool {
 	ret := true
-	for i := 0; i < p.ChildrenCount(); i++ {
-		ch := p.GetChild(i)
+	for _, ch := range p.children {
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
@@ -2755,8 +2753,8 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		return nil, true, nil
 	}
 	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCopImpl(kv.TiFlash, true)
-	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
+	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
+	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
@@ -2772,8 +2770,8 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
-		chReqProps = make([]*property.PhysicalProperty, 0, p.ChildrenCount())
-		for i := 0; i < p.ChildrenCount(); i++ {
+		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
+		for range p.children {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,

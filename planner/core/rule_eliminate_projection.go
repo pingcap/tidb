@@ -163,8 +163,8 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	} else if _, isWindow := p.(*LogicalWindow); isWindow {
 		childFlag = true
 	}
-	for i := 0; i < p.ChildrenCount(); i++ {
-		p.SetChild(i, pe.eliminate(p.GetChild(i), replace, childFlag, opt))
+	for i, child := range p.Children() {
+		p.Children()[i] = pe.eliminate(child, replace, childFlag, opt)
 	}
 
 	switch x := p.(type) {
@@ -179,7 +179,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	p.replaceExprColumns(replace)
 	if isProj {
-		if child, ok := p.GetChild(0).(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
 				foldedExpr := expression.FoldConstant(proj.Exprs[i])
@@ -187,7 +187,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 				foldedExpr.GetType().Flag = (foldedExpr.GetType().Flag & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().Flag & mysql.NotNullFlag)
 				proj.Exprs[i] = foldedExpr
 			}
-			p.SetChild(0, child.GetChild(0))
+			p.Children()[0] = child.Children()[0]
 			appendDupProjEliminateTraceStep(proj, child, opt)
 		}
 	}
@@ -200,7 +200,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
 	appendProjEliminateTraceStep(proj, opt)
-	return p.GetChild(0)
+	return p.Children()[0]
 }
 
 // ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.

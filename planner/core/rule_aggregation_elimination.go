@@ -56,7 +56,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.GetChild(0).Schema().Keys {
+	for _, key := range agg.children[0].Schema().Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -66,7 +66,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
-			proj.SetChildren(agg.GetChild(0))
+			proj.SetChildren(agg.children[0])
 			appendAggregationEliminateTraceStep(agg, uniqueKey, opt)
 			return proj
 		}
@@ -93,14 +93,14 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
-				for _, key := range agg.GetChild(0).Schema().Keys {
+				for _, key := range agg.children[0].Schema().Keys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
-				for _, key := range agg.GetChild(0).Schema().UniqueKeys {
+				for _, key := range agg.children[0].Schema().UniqueKeys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
@@ -203,9 +203,9 @@ func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetT
 }
 
 func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	newChildren := make([]LogicalPlan, 0, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
-		newChild, err := a.optimize(ctx, p.GetChild(i), opt)
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChild, err := a.optimize(ctx, child, opt)
 		if err != nil {
 			return nil, err
 		}

@@ -96,7 +96,7 @@ func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggF
 // columns both from left and right children, the whole aggregation is forbidden to push down.
 func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
-	leftChild := join.GetChild(0)
+	leftChild := join.children[0]
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithJoin(aggFunc) {
 			return false, nil, nil
@@ -120,7 +120,7 @@ func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 // WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3". As you see, all the columns appearing in join-conditions should be
 // treated as group by columns in join subquery.
 func (a *aggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join *LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
-	leftChild := join.GetChild(0)
+	leftChild := join.children[0]
 	ctx := agg.ctx
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -212,12 +212,12 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
 	join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
-	child := join.GetChild(childIdx)
+	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
 	}
 	// If the join is multiway-join, we forbid pushing down.
-	if _, ok := child.(*LogicalJoin); ok {
+	if _, ok := join.children[childIdx].(*LogicalJoin); ok {
 		return child, nil
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
@@ -252,7 +252,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 func (a *aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.ctx, agg.GetChild(0).Schema())
+		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.ctx, agg.children[0].Schema())
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -407,7 +407,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 		if proj != nil {
 			p = proj
 		} else {
-			child := agg.GetChild(0)
+			child := agg.children[0]
 			// For example, we can optimize 'select sum(a.id) from t as a,t as b where a.id = b.id;' as
 			// 'select sum(agg) from (select sum(id) as agg,id from t group by id) as a, t as b where a.id = b.id;'
 			// by pushing down sum aggregation functions.
@@ -419,7 +419,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
 					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
 					if rightInvalid {
-						rChild = join.GetChild(1)
+						rChild = join.children[1]
 					} else {
 						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
@@ -427,7 +427,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						}
 					}
 					if leftInvalid {
-						lChild = join.GetChild(0)
+						lChild = join.children[0]
 					} else {
 						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
@@ -476,7 +476,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					for i, aggFunc := range agg.AggFuncs {
 						aggFunc.Args = newAggFuncsArgs[i]
 					}
-					projChild := proj.GetChild(0)
+					projChild := proj.children[0]
 					agg.SetChildren(projChild)
 					// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
 					// And then push the new 'Aggregation' below the 'Union All' .
@@ -498,9 +498,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 			}
 		}
 	}
-	newChildren := make([]LogicalPlan, 0, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
-		newChild, err := a.aggPushDown(p.GetChild(i), opt)
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChild, err := a.aggPushDown(child, opt)
 		if err != nil {
 			return nil, err
 		}

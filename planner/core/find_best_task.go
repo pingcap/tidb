@@ -173,8 +173,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planC
 // rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
 func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64) error {
 	// The taskMap of children nodes should be rolled back first.
-	for i := 0; i < p.ChildrenCount(); i++ {
-		child := p.GetChild(i)
+	for _, child := range p.children {
 		child.rollBackTaskMap(TS)
 	}
 
@@ -184,8 +183,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 		multAll *= x
 	}
 	*childTasks = (*childTasks)[:0]
-	for j := 0; j < p.ChildrenCount(); j++ {
-		child := p.GetChild(j)
+	for j, child := range p.children {
 		multAll /= childCnts[j]
 		curClock = PlanCounterTp((planCounter-1)/multAll + 1)
 		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
@@ -207,8 +205,8 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
-	childTasks := make([]task, 0, p.ChildrenCount())
-	childCnts := make([]int64, p.ChildrenCount())
+	childTasks := make([]task, 0, len(p.children))
+	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
 		// Find best child tasks firstly.
@@ -217,8 +215,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		curCntPlan = 1
 		TimeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
-		for j := 0; j < p.ChildrenCount(); j++ {
-			child := p.GetChild(j)
+		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
 			childCnts[j] = cnt
 			if err != nil {
@@ -232,7 +229,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != p.ChildrenCount() {
+		if len(childTasks) != len(p.children) {
 			continue
 		}
 

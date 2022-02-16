@@ -231,9 +231,9 @@ func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation)
 // Convert2GroupExpr converts a logical plan to a GroupExpr.
 func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	e := NewGroupExpr(node)
-	e.Children = make([]*Group, 0, node.ChildrenCount())
-	for i := 0; i < node.ChildrenCount(); i++ {
-		childGroup := Convert2Group(node.GetChild(i))
+	e.Children = make([]*Group, 0, len(node.Children()))
+	for _, child := range node.Children() {
+		childGroup := Convert2Group(child)
 		e.Children = append(e.Children, childGroup)
 	}
 	return e

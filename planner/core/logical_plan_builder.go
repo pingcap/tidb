@@ -417,7 +417,7 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	return p.ExtractOnCondition(conditions, p.GetChild(0).Schema(), p.GetChild(1).Schema(), deriveLeft, deriveRight)
+	return p.ExtractOnCondition(conditions, p.children[0].Schema(), p.children[1].Schema(), deriveLeft, deriveRight)
 }
 
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
@@ -546,10 +546,10 @@ func (p *LogicalJoin) getPreferredBCJLocalIndex() (hasPrefer bool, prefer int) {
 	if p.hintInfo == nil {
 		return
 	}
-	if p.hintInfo.ifPreferAsLocalInBCJoin(p.GetChild(0), p.blockOffset) {
+	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[0], p.blockOffset) {
 		return true, 0
 	}
-	if p.hintInfo.ifPreferAsLocalInBCJoin(p.GetChild(1), p.blockOffset) {
+	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[1], p.blockOffset) {
 		return true, 1
 	}
 	return false, 0
@@ -560,8 +560,8 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.GetChild(0), p.blockOffset)
-	rhsAlias := extractTableAlias(p.GetChild(1), p.blockOffset)
+	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 	}
@@ -1224,7 +1224,7 @@ func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p LogicalPlan,
 func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *types.FieldName) {
 	switch x := p.(type) {
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
-		return findColFromNaturalUsingJoin(p.GetChild(0), col)
+		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *LogicalJoin:
 		if x.fullSchema != nil {
 			idx := x.fullSchema.ColumnIndex(col)
@@ -1382,18 +1382,17 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
-	unionCols := make([]*expression.Column, 0, u.GetChild(0).Schema().Len())
-	names := make([]*types.FieldName, 0, u.GetChild(0).Schema().Len())
+	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
+	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
 	// Infer union result types by its children's schema.
-	for i, col := range u.GetChild(0).Schema().Columns {
+	for i, col := range u.children[0].Schema().Columns {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
 		tmpExprs = append(tmpExprs, col)
 		resultTp := col.RetType
-		for j := 1; j < u.ChildrenCount(); j++ {
-			child := u.GetChild(j)
-			tmpExprs = append(tmpExprs, child.Schema().Columns[i])
-			childTp := child.Schema().Columns[i].RetType
+		for j := 1; j < len(u.children); j++ {
+			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
+			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 		collation, err := expression.CheckAndDeriveCollationFromExprs(b.ctx, "UNION", resultTp.EvalType(), tmpExprs...)
@@ -1401,7 +1400,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			return collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")
 		}
 		resultTp.Charset, resultTp.Collate = collation.Charset, collation.Collation
-		names = append(names, &types.FieldName{ColName: u.GetChild(0).OutputNames()[i].ColName})
+		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -1411,8 +1410,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	u.names = names
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
-	for childID := 0; childID < u.ChildrenCount(); childID++ {
-		child := u.GetChild(childID)
+	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
@@ -1431,7 +1429,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			proj.schema.Columns[i].RetType = expr.GetType()
 		}
 		proj.SetChildren(child)
-		u.SetChild(childID, proj)
+		u.children[childID] = proj
 	}
 	return nil
 }
@@ -1694,7 +1692,7 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) 
 		return nil, nil
 	}
 	u := LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
-	u.SetChildren(subPlan...)
+	u.children = subPlan
 	err := b.buildProjection4Union(ctx, u)
 	return u, err
 }
@@ -2014,7 +2012,7 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		// retrieve the `t2.a` from the underlying join.
 		switch x := p.(type) {
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
-			return a.resolveFromPlan(v, p.GetChild(0))
+			return a.resolveFromPlan(v, p.Children()[0])
 		case *LogicalJoin:
 			if len(x.fullNames) != 0 {
 				idx, err = expression.FindFieldName(x.fullNames, v.Name)
@@ -6437,7 +6435,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			if err != nil {
 				return err
 			}
-			limit.SetChildren(nil)
+			limit.SetChildren(limit.Children()[:0]...)
 			cInfo.limitLP = limit
 		}
 		return nil

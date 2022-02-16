@@ -837,13 +837,13 @@ out:
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *LogicalProjection, *LogicalSort:
-			p = p.GetChild(0)
+			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = LogicalTableDual{RowCount: 1}.Init(er.sctx, er.b.getSelectOffset())
 				break out
 			}
-			p = p.GetChild(0)
+			p = p.Children()[0]
 		default:
 			break out
 		}
@@ -1866,7 +1866,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
-		return findFieldNameFromNaturalUsingJoin(p.GetChild(0), v)
+		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
 		if x.fullSchema != nil {
 			idx, err := expression.FindFieldName(x.fullNames, v)

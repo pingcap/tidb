@@ -95,18 +95,18 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 			switch v := lp.(type) {
 			case *core.LogicalAggregation:
 				agg = v
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			case *core.LogicalJoin:
 				join = v
-				lp = lp.GetChild(0)
-				stack = append(stack, v.GetChild(1))
+				lp = v.Children()[0]
+				stack = append(stack, v.Children()[1])
 			case *core.LogicalApply:
-				lp = lp.GetChild(0)
-				stack = append(stack, v.GetChild(1))
+				lp = lp.Children()[0]
+				stack = append(stack, v.Children()[1])
 			case *core.LogicalUnionAll:
-				lp = lp.GetChild(0)
-				for i := 1; i < v.ChildrenCount(); i++ {
-					stack = append(stack, v.GetChild(i))
+				lp = lp.Children()[0]
+				for i := 1; i < len(v.Children()); i++ {
+					stack = append(stack, v.Children()[i])
 				}
 			case *core.DataSource:
 				if len(stack) == 0 {
@@ -116,7 +116,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 					stack = stack[1:]
 				}
 			default:
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			}
 		}
 		aggInput := ""

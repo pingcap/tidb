@@ -33,8 +33,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		return []LogicalPlan{p}, nil, nil
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.GetChild(0))
-	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.GetChild(1))
+	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
 
 	group = append(group, lhsGroup...)
 	group = append(group, rhsGroup...)
@@ -112,9 +112,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 		return p, nil
 	}
-	newChildren := make([]LogicalPlan, 0, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
-		newChild, err := s.optimizeRecursive(ctx, p.GetChild(i))
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChild, err := s.optimizeRecursive(ctx, child)
 		if err != nil {
 			return nil, err
 		}
@@ -134,8 +134,8 @@ type baseSingleGroupJoinOrderSolver struct {
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
 	cost := groupNode.statsInfo().RowCount
-	for i := 0; i < groupNode.ChildrenCount(); i++ {
-		cost += s.baseNodeCumCost(groupNode.GetChild(i))
+	for _, child := range groupNode.Children() {
+		cost += s.baseNodeCumCost(child)
 	}
 	return cost
 }

@@ -32,12 +32,12 @@ func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logic
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
 func buildKeyInfo(lp LogicalPlan) {
-	for i := 0; i < lp.ChildrenCount(); i++ {
-		buildKeyInfo(lp.GetChild(i))
+	for _, child := range lp.Children() {
+		buildKeyInfo(child)
 	}
-	childSchema := make([]*expression.Schema, lp.ChildrenCount())
-	for i := 0; i < lp.ChildrenCount(); i++ {
-		childSchema[i] = lp.GetChild(i).Schema()
+	childSchema := make([]*expression.Schema, len(lp.Children()))
+	for i, child := range lp.Children() {
+		childSchema[i] = child.Schema()
 	}
 	lp.BuildKeyInfo(lp.Schema(), childSchema)
 }

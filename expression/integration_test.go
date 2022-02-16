@@ -4975,7 +4975,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).GetChild(0).(*plannercore.LogicalSelection)
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx, cond)

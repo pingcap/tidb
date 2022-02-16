@@ -34,25 +34,25 @@ func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOp
 
 func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int) {
 	if len(conditions) == 0 {
-		p.SetChild(chIdx, child)
+		p.Children()[chIdx] = child
 		return
 	}
 	conditions = expression.PropagateConstant(p.SCtx(), conditions)
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
-		p.SetChild(chIdx, dual)
+		p.Children()[chIdx] = dual
 		return
 	}
 
 	conditions = DeleteTrueExprs(p, conditions)
 	if len(conditions) == 0 {
-		p.SetChild(chIdx, child)
+		p.Children()[chIdx] = child
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.SelectBlockOffset())
 	selection.SetChildren(child)
-	p.SetChild(chIdx, selection)
+	p.Children()[chIdx] = selection
 }
 
 // PredicatePushDown implements LogicalPlan interface.
@@ -86,11 +86,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	var child LogicalPlan
 	var retConditions []expression.Expression
 	if p.buildByHaving {
-		retConditions, child = p.GetChild(0).PredicatePushDown(predicates)
+		retConditions, child = p.children[0].PredicatePushDown(predicates)
 		retConditions = append(retConditions, p.Conditions...)
 	} else {
 		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-		retConditions, child = p.GetChild(0).PredicatePushDown(append(canBePushDown, predicates...))
+		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
 		retConditions = append(retConditions, canNotBePushDown...)
 	}
 	if len(retConditions) > 0 {
@@ -107,7 +107,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	retainedPredicates, _ := p.GetChild(0).PredicatePushDown(predicates)
+	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
@@ -147,7 +147,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
 		_, derivedRightJoinCond := DeriveOtherConditions(
-			p, p.GetChild(0).Schema(), p.GetChild(1).Schema(), false, true)
+			p, p.children[0].Schema(), p.children[1].Schema(), false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
 		p.RightConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -165,7 +165,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		rightCond = rightPushCond
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
 		derivedLeftJoinCond, _ := DeriveOtherConditions(
-			p, p.GetChild(0).Schema(), p.GetChild(1).Schema(), true, false)
+			p, p.children[0].Schema(), p.children[1].Schema(), true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -212,8 +212,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	}
 	leftCond = expression.RemoveDupExprs(p.ctx, leftCond)
 	rightCond = expression.RemoveDupExprs(p.ctx, rightCond)
-	leftRet, lCh := p.GetChild(0).PredicatePushDown(leftCond)
-	rightRet, rCh := p.GetChild(1).PredicatePushDown(rightCond)
+	leftRet, lCh := p.children[0].PredicatePushDown(leftCond)
+	rightRet, rCh := p.children[1].PredicatePushDown(rightCond)
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
@@ -223,7 +223,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.
 func (p *LogicalJoin) updateEQCond() {
-	lChild, rChild := p.GetChild(0), p.GetChild(1)
+	lChild, rChild := p.children[0], p.children[1]
 	var lKeys, rKeys []expression.Expression
 	for i := len(p.OtherConditions) - 1; i >= 0; i-- {
 		need2Remove := false
@@ -300,7 +300,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
-	child := p.GetChild(idx)
+	child := p.children[idx]
 	proj, ok := child.(*LogicalProjection)
 	if ok {
 		return proj
@@ -311,7 +311,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	}
 	proj.SetSchema(child.Schema().Clone())
 	proj.SetChildren(child)
-	p.SetChild(idx, proj)
+	p.children[idx] = proj
 	return proj
 }
 
@@ -321,8 +321,8 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		return
 	}
 
-	innerTable := p.GetChild(0)
-	outerTable := p.GetChild(1)
+	innerTable := p.children[0]
+	outerTable := p.children[1]
 	if p.JoinType == LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
@@ -403,8 +403,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	for i := 0; i < p.ChildrenCount(); i++ {
-		proj := p.GetChild(i)
+	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
 		retCond, newChild := proj.PredicatePushDown(newExprs)
@@ -578,8 +577,8 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 
 // outerJoinPropConst propagates constant equal and column equal conditions over outer join.
 func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
-	outerTable := p.GetChild(0)
-	innerTable := p.GetChild(1)
+	outerTable := p.children[0]
+	innerTable := p.children[1]
 	if p.JoinType == RightOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}

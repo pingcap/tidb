@@ -91,7 +91,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			case *DataSource:
 				ds = v
 			default:
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			}
 		}
 		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)

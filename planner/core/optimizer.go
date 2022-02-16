@@ -515,8 +515,8 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
-	for i := 0; i < p.ChildrenCount(); i++ {
-		if existsCartesianProduct(p.GetChild(i)) {
+	for _, child := range p.Children() {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}

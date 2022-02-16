@@ -22,9 +22,9 @@ import (
 // preparePossibleProperties traverses the plan tree by a post-order method,
 // recursively calls LogicalPlan PreparePossibleProperties interface.
 func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
-	childrenProperties := make([][][]*expression.Column, 0, lp.ChildrenCount())
-	for i := 0; i < lp.ChildrenCount(); i++ {
-		childrenProperties = append(childrenProperties, preparePossibleProperties(lp.GetChild(i)))
+	childrenProperties := make([][][]*expression.Column, 0, len(lp.Children()))
+	for _, child := range lp.Children() {
+		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
 	}
 	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
 }

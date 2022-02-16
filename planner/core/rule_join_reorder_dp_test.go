@@ -165,7 +165,7 @@ func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPl
 func (s *testJoinReorderDPSuite) planToString(plan LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
-		return fmt.Sprintf("MockJoin{%v, %v}", s.planToString(x.GetChild(0)), s.planToString(x.GetChild(1)))
+		return fmt.Sprintf("MockJoin{%v, %v}", s.planToString(x.children[0]), s.planToString(x.children[1]))
 	case *DataSource:
 		return x.TableAsName.L
 	}

@@ -113,7 +113,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	// Plan tree should be: DataSource -> Selection -> Projection
 	proj, ok := logic1.(*plannercore.LogicalProjection)
 	require.True(t, ok)
-	sel, ok := logic1.GetChild(0).(*plannercore.LogicalSelection)
+	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
 	require.True(t, ok)
 	group1 := Convert2Group(logic1)
 	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)

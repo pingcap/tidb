@@ -134,7 +134,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
-	ds, ok := logic.GetChild(0).GetChild(0).(*plannercore.DataSource)
+	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
 	require.True(t, ok)
 
 	var columnF, columnA *expression.Column
@@ -148,7 +148,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NotNil(t, columnF)
 	require.NotNil(t, columnA)
 
-	agg, ok := logic.GetChild(0).(*plannercore.LogicalAggregation)
+	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)

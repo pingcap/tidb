@@ -92,12 +92,13 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		p.SetChildren(ds)
 		return p, nil
 	default:
-		for i := 0; i < p.ChildrenCount(); i++ {
-			newChild, err := s.rewriteDataSource(p.GetChild(i))
+		children := lp.Children()
+		for i, child := range children {
+			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
 				return nil, err
 			}
-			p.SetChild(i, newChild)
+			children[i] = newChild
 		}
 	}
 

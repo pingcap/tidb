@@ -296,12 +296,6 @@ type LogicalPlan interface {
 	// Get all the children.
 	Children() []LogicalPlan
 
-	// GetChild gets the i-th child.
-	GetChild(int) LogicalPlan
-
-	// ChildrenCount returns the number of the children
-	ChildrenCount() int
-
 	// SetChildren sets the children for the plan.
 	SetChildren(...LogicalPlan)
 
@@ -555,9 +549,9 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	childMaxOneRow := make([]bool, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
-		childMaxOneRow[i] = p.GetChild(i).MaxOneRow()
+	childMaxOneRow := make([]bool, len(p.children))
+	for i := range p.children {
+		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
 	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
 }
@@ -714,16 +708,6 @@ func (p *basePhysicalPlan) Children() []PhysicalPlan {
 // SetChildren implements LogicalPlan SetChildren interface.
 func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
 	p.children = children
-}
-
-// ChildrenCount returns the number of the children.
-func (p *baseLogicalPlan) ChildrenCount() int {
-	return len(p.children)
-}
-
-// GetChild returns the i-th child of the curren plan.
-func (p *baseLogicalPlan) GetChild(i int) LogicalPlan {
-	return p.children[i]
 }
 
 // SetChildren implements PhysicalPlan SetChildren interface.

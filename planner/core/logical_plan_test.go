@@ -107,8 +107,8 @@ func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	c.Assert(err, IsNil)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).GetChild(0).(*LogicalJoin).GetChild(1).GetChild(1).(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).GetChild(0).(*LogicalJoin).GetChild(1).GetChild(1).(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
 	c.Assert(schemaNullFlag, Equals, exprNullFlag)
 }
 
@@ -134,11 +134,11 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
 		c.Assert(ok, IsTrue, comment)
-		join, ok := proj.GetChild(0).(*LogicalJoin)
+		join, ok := proj.children[0].(*LogicalJoin)
 		c.Assert(ok, IsTrue, comment)
-		leftPlan, ok := join.GetChild(0).(*DataSource)
+		leftPlan, ok := join.children[0].(*DataSource)
 		c.Assert(ok, IsTrue, comment)
-		rightPlan, ok := join.GetChild(1).(*DataSource)
+		rightPlan, ok := join.children[1].(*DataSource)
 		c.Assert(ok, IsTrue, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
@@ -173,18 +173,18 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
 		c.Assert(ok, IsTrue, comment)
-		selection, ok := proj.GetChild(0).(*LogicalSelection)
+		selection, ok := proj.children[0].(*LogicalSelection)
 		c.Assert(ok, IsTrue, comment)
 		selCond := fmt.Sprintf("%s", selection.Conditions)
 		s.testData.OnRecord(func() {
 			output[i].Sel = selCond
 		})
 		c.Assert(selCond, Equals, output[i].Sel, comment)
-		join, ok := selection.GetChild(0).(*LogicalJoin)
+		join, ok := selection.children[0].(*LogicalJoin)
 		c.Assert(ok, IsTrue, comment)
-		leftPlan, ok := join.GetChild(0).(*DataSource)
+		leftPlan, ok := join.children[0].(*DataSource)
 		c.Assert(ok, IsTrue, comment)
-		rightPlan, ok := join.GetChild(1).(*DataSource)
+		rightPlan, ok := join.children[1].(*DataSource)
 		c.Assert(ok, IsTrue, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
@@ -221,9 +221,9 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			output[i].Best = planString
 		})
 		c.Assert(planString, Equals, output[i].Best, comment)
-		join, ok := p.(LogicalPlan).GetChild(0).(*LogicalJoin)
+		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		if !ok {
-			join, ok = p.(LogicalPlan).GetChild(0).GetChild(0).(*LogicalJoin)
+			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			c.Assert(ok, IsTrue, comment)
 		}
 		s.testData.OnRecord(func() {
@@ -257,7 +257,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.best, comment)
-		join, _ := p.(LogicalPlan).GetChild(0).(*LogicalJoin)
+		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
@@ -287,7 +287,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 			output[i].Plan = ToString(p)
 		})
 		c.Assert(ToString(p), Equals, output[i].Plan, comment)
-		join := p.(LogicalPlan).GetChild(0).(*LogicalJoin)
+		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
 		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
@@ -309,7 +309,7 @@ func (s *testPlanSuite) TestExtraPKNotNullFlag(c *C) {
 	c.Assert(err, IsNil, comment)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 	c.Assert(err, IsNil, comment)
-	ds := p.(*LogicalProjection).GetChild(0).(*LogicalAggregation).GetChild(0).(*DataSource)
+	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
 	c.Assert(ds.Columns[2].Name.L, Equals, "_tidb_rowid")
 	c.Assert(ds.Columns[2].Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
 	c.Assert(ds.schema.Columns[2].RetType.Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
@@ -392,9 +392,9 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	c.Assert(err, IsNil, comment)
 	proj, ok := p.(*LogicalProjection)
 	c.Assert(ok, IsTrue, comment)
-	join, ok := proj.GetChild(0).(*LogicalJoin)
+	join, ok := proj.children[0].(*LogicalJoin)
 	c.Assert(ok, IsTrue, comment)
-	leftPlan, ok := join.GetChild(0).(*LogicalSelection)
+	leftPlan, ok := join.children[0].(*LogicalSelection)
 	c.Assert(ok, IsTrue, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
@@ -690,8 +690,8 @@ func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]s
 			c.Assert(col.String(), Equals, colList[i], comment)
 		}
 	}
-	for i := 0; i < p.ChildrenCount(); i++ {
-		s.checkDataSourceCols(p.GetChild(i), c, ans, comment)
+	for _, child := range p.Children() {
+		s.checkDataSourceCols(child, c, ans, comment)
 	}
 }
 
@@ -709,10 +709,10 @@ func (s *testPlanSuite) checkOrderByItems(p LogicalPlan, c *C, colList *[]string
 			c.Assert(s, Equals, (*colList)[i], comment)
 		}
 	}
-	childrenCount := p.ChildrenCount()
-	c.Assert(childrenCount, LessEqual, 1, Commentf("For %v Expected <= 1 Child", comment))
-	for i := 0; i < childrenCount; i++ {
-		s.checkOrderByItems(p.GetChild(i), c, colList, comment)
+	children := p.Children()
+	c.Assert(len(children), LessEqual, 1, Commentf("For %v Expected <= 1 Child", comment))
+	for _, child := range children {
+		s.checkOrderByItems(child, c, colList, comment)
 	}
 }
 
@@ -927,8 +927,8 @@ func (s *testPlanSuite) checkUniqueKeys(p LogicalPlan, c *C, ans map[int][][]str
 	s.testData.OnRecord(func() {
 		ans[p.ID()] = keyList
 	})
-	for i := 0; i < p.ChildrenCount(); i++ {
-		s.checkUniqueKeys(p.GetChild(i), c, ans, sql)
+	for _, child := range p.Children() {
+		s.checkUniqueKeys(child, c, ans, sql)
 	}
 }
 
@@ -1824,7 +1824,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				ds = v
 			case *LogicalSort:
 				byItems = v.ByItems
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			case *LogicalProjection:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
@@ -1835,9 +1835,9 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 					}
 				}
 				byItems = newItems
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			default:
-				lp = lp.GetChild(0)
+				lp = lp.Children()[0]
 			}
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))

@@ -59,7 +59,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
-		return a.checkColCanUseIndex(p.GetChild(0), col, conditions)
+		return a.checkColCanUseIndex(p.children[0], col, conditions)
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
@@ -105,7 +105,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
 		sel := LogicalSelection{Conditions: newConditions}.Init(p.ctx, p.blockOffset)
-		sel.SetChildren(a.cloneSubPlans(p.GetChild(0)))
+		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
@@ -139,7 +139,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 		if !ok {
 			return nil, false
 		}
-		if !a.checkColCanUseIndex(agg.GetChild(0), col, make([]expression.Expression, 0)) {
+		if !a.checkColCanUseIndex(agg.children[0], col, make([]expression.Expression, 0)) {
 			return nil, false
 		}
 	}
@@ -147,7 +147,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
-		newAgg.SetChildren(a.cloneSubPlans(agg.GetChild(0)))
+		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}); err != nil {
 			return nil, false
@@ -197,9 +197,9 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
-	newChildren := make([]LogicalPlan, 0, p.ChildrenCount())
-	for i := 0; i < p.ChildrenCount(); i++ {
-		newChildren = append(newChildren, a.eliminateMaxMin(p.GetChild(i)))
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChildren = append(newChildren, a.eliminateMaxMin(child))
 	}
 	p.SetChildren(newChildren...)
 	if agg, ok := p.(*LogicalAggregation); ok {

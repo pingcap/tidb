@@ -205,8 +205,8 @@ func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset in
 		tableNames[0] = alias
 		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
 	}
-	for i := 0; i < p.ChildrenCount(); i++ {
-		if info.ifPreferAsLocalInBCJoin(p.GetChild(i), blockOffset) {
+	for _, c := range p.Children() {
+		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
 			return true
 		}
 	}
@@ -1257,8 +1257,8 @@ func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
 		return nil
 	default:
 		var err error
-		for i := 0; i < p.ChildrenCount(); i++ {
-			err = addExtraPIDColumnToDataSource(p.GetChild(i), info)
+		for _, child := range p.Children() {
+			err = addExtraPIDColumnToDataSource(child, info)
 			if err != nil {
 				return err
 			}

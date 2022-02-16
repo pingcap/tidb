@@ -354,7 +354,7 @@ create table t(
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).GetChild(0).(*plannercore.LogicalSelection)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
