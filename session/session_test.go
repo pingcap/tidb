@@ -6009,34 +6009,9 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test01 (
-	id int(11) DEFAULT NULL,
-		emdt date DEFAULT NULL,
-		KEY dt_ind (emdt)
-	)`)
 	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
-	rows := [][]interface{}{
-		{
-			"TableReader_7", "root", "data:Selection_6",
-		},
-		{
-			"└─Selection_6", "cop[tikv]", "ge(test.test01.emdt, sysdate())",
-		},
-		{
-			"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo",
-		},
-	}
-	tk.MustQuery("explain select * from test.test01 where emdt >=sysdate();").
-		CheckAt([]int{0, 2, 4}, rows)
-
-	now := time.Now()
 	tk.MustExec("set @@sysdate_is_now=true")
 	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSysdate", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/expression/injectSysdate")
-	rows[1][2] = fmt.Sprintf("ge(test.test01.emdt, %s)", now.Format("2006-01-02 15:04:05"))
-	tk.MustQuery("explain select * from test.test01 where emdt >=sysdate();").
-		CheckAt([]int{0, 2, 4}, rows)
 }
