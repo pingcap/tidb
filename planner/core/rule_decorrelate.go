@@ -165,7 +165,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
 				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
 				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
-				// We disable the docorrelation directly for now.
+				// We disable the decorrelation directly for now.
 				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
 				goto NoOptimize
 			}
