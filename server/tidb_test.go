@@ -1579,7 +1579,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 
 	// Test case for DDL execute failed but should still have CPU data.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"))
-	dbt.MustExec(fmt.Sprintf("insert into t values (%v,%v), (%v, %v);", 2000, 2000, 2001, 2000))
+	dbt.MustExec(fmt.Sprintf("insert into t values (%v,%v), (%v, %v);", 2000, 1, 2001, 1))
 	addIndexStr := "alter table t add unique index idx_b (b)"
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1594,6 +1594,21 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex"))
+
+	// Test case for execute failed cause by storage error.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/handleTaskOnceError", `return(true)`))
+	execFailedQuery := "select * from t where a*b < 1000"
+	execFn = func(db *sql.DB) {
+		_, err = db.Query(execFailedQuery)
+		require.NotNil(t, err)
+		require.Equal(t, "Error 1105: mock handleTaskOnce error", err.Error())
+	}
+	check = func() {
+		mc.WaitCollectCnt(1)
+		checkFn(execFailedQuery, "")
+	}
+	ts.testCase(t, mc, execFn, check)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/handleTaskOnceError"))
 }
 
 func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
