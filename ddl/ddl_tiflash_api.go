@@ -62,15 +62,17 @@ type TiFlashTick float64
 // PollTiFlashBackoffElement records backoff for each TiFlash Table.
 // When `Counter` reached `Threshold`, `Threshold` shall grow.
 type PollTiFlashBackoffElement struct {
-	Counter   int
-	Threshold TiFlashTick
+	Counter      int
+	Threshold    TiFlashTick
+	TotalCounter int
 }
 
 // NewPollTiFlashBackoffElement initialize backoff element for a TiFlash table.
 func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
 	return &PollTiFlashBackoffElement{
-		Counter:   0,
-		Threshold: PollTiFlashBackoffMinTick,
+		Counter:      0,
+		Threshold:    PollTiFlashBackoffMinTick,
+		TotalCounter: 0,
 	}
 }
 
@@ -117,14 +119,15 @@ type TiFlashManagementContext struct {
 }
 
 // Tick will first check increase Counter.
-func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool) {
+func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
 	e, ok := b.Get(ID)
 	if !ok {
-		return false, false
+		return false, false, 0
 	}
 	growed := e.MaybeGrow(b)
 	e.Counter += 1
-	return growed, true
+	e.TotalCounter += 1
+	return growed, true, e.TotalCounter
 }
 
 func (e *PollTiFlashBackoffElement) limit() int {
@@ -396,7 +399,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
-			growed, inqueue := pollTiFlashContext.Backoff.Tick(tb.ID)
+			growed, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
 			if inqueue && !growed {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
 				continue

@@ -611,21 +611,25 @@ func TestTiFlashBackoffer(t *testing.T) {
 	mustNotGrow := func(ID int64) {
 		e := mustGet(ID)
 		ori := e.Threshold
+		oriTotal := e.TotalCounter
 		c := e.Counter
-		growed, ok := backoff.Tick(ID)
+		growed, ok, total := backoff.Tick(ID)
 		require.True(t, ok)
 		require.False(t, growed)
 		require.Equal(t, ori, e.Threshold)
 		require.Equal(t, c+1, e.Counter)
+		require.Equal(t, oriTotal+1, total)
 	}
 	mustGrow := func(ID int64) {
 		e := mustGet(ID)
 		ori := e.Threshold
-		growed, ok := backoff.Tick(ID)
+		oriTotal := e.TotalCounter
+		growed, ok, total := backoff.Tick(ID)
 		require.True(t, ok)
 		require.True(t, growed)
 		require.Equal(t, e.Threshold, rate*ori)
 		require.Equal(t, 1, e.Counter)
+		require.Equal(t, oriTotal+1, total)
 	}
 	// Test grow
 	_, ok := backoff.Put(1)
@@ -639,6 +643,7 @@ func TestTiFlashBackoffer(t *testing.T) {
 	mustNotGrow(1) // 1;3.375 -> 2;3.375
 	mustNotGrow(1) // 2;3.375 -> 3;3.375
 	mustGrow(1)    // 3;3.375 -> 0;5.0625
+	require.Equal(t, 8, mustGet(1).TotalCounter)
 
 	// Test converge
 	backoff.Put(2)
@@ -646,6 +651,7 @@ func TestTiFlashBackoffer(t *testing.T) {
 		backoff.Tick(2)
 	}
 	require.Equal(t, maxTick, mustGet(2).Threshold)
+	require.Equal(t, 20, mustGet(2).TotalCounter)
 
 	// Test context
 	_, ok = backoff.Put(3)
@@ -686,8 +692,8 @@ func TestTiFlashBackoff(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
-		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
 	}()
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
@@ -699,8 +705,8 @@ func TestTiFlashBackoff(t *testing.T) {
 	require.NotNil(t, tb)
 	require.False(t, tb.Meta().TiFlashReplica.Available)
 
-	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
-	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
 
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
