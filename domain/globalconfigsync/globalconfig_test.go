@@ -55,6 +55,7 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	err = syncer.StoreGlobalConfig(context.Background(), <-syncer.NotifyCh)
 	require.NoError(t, err)
 	items, err := client.LoadGlobalConfig(context.Background(), []string{"a"})
+	require.NoError(t, err)
 	require.Equal(t, len(items), 1)
 	require.Equal(t, items[0].Name, "/global/config/a")
 	require.Equal(t, items[0].Value, "b")
@@ -80,12 +81,13 @@ func TestStoreGlobalConfig(t *testing.T) {
 
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
 	require.NoError(t, err)
-	_ = <-time.After(50 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 	client :=
 		store.(kv.StorageWithPD).GetPDClient()
 	// enable top sql will be translated to enable_resource_metering
 	items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
-	require.Equal(t, len(items), 1)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
 	require.Equal(t, items[0].Name, "/global/config/enable_resource_metering")
 	require.Equal(t, items[0].Value, "true")
 }
