@@ -118,6 +118,11 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialAccess  []bool
 }
 
+// Table implements the dataSourceExecutor interface.
+func (e *IndexMergeReaderExecutor) Table() table.Table {
+	return e.table
+}
+
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
@@ -296,9 +301,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 
 				var builder distsql.RequestBuilder
-				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-					builder.SetIsolationLevel(kv.RC)
-				}
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).

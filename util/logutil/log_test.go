@@ -106,12 +106,12 @@ func TestGrpcLoggerCreation(t *testing.T) {
 	_, p, err := initGRPCLogger(conf)
 	// assert after init grpc logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, p.Level.Level(), zap.ErrorLevel)
 	os.Setenv("GRPC_DEBUG", "1")
 	defer os.Unsetenv("GRPC_DEBUG")
 	_, newP, err := initGRPCLogger(conf)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
 }
 
@@ -121,7 +121,7 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 	_, prop, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	// slow query logger doesn't use the level of the global log config, and the
 	// level should be less than WarnLevel which is used by it to log slow query.
 	require.NotEqual(t, conf.Level, prop.Level.String())
