@@ -925,24 +925,32 @@ type SelectLockExec struct {
 	tblID2PhysTblIDCol map[int64]*expression.Column
 
 	// Used during execution
+	// Map from logic tableID to column index where the physical table id is stored
+	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
+	// storage and used for physical table id
+	// For static prune mode, model.ExtraPhysTblID is not sent to storage/Protobuf
+	// but filled in by the partitions TableReaderExecutor
 	tblID2PhysTblIDColIdx map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open()")
 	if len(e.partitionedTable) > 0 {
 		// This should be possible to do by going through the tblID2Handle and then see if the TableById gives a partitioned table or not, and then create the map for static prune? Maybe works for dynamic too?
 		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
+		if cols[0].ID == model.ExtraPhysTblID {
+			panic("model.ExtraPhysTblID should never be the first/only ID?!?")
+		}
 		for i := len(cols) - 1; i > 0; i-- {
 			if cols[i].ID == model.ExtraPhysTblID {
-				logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open()", zap.Int("i", i), zap.Int64("UniqueID", cols[i].UniqueID))
 				found := false
 				for tblID, col := range e.tblID2PhysTblIDCol {
 					if cols[i].UniqueID == col.UniqueID {
-						logutil.Logger(ctx).Info("MJONSS: SelectLocExec::Open() Found in e.tblID2PhysTblIDCol", zap.Int("schema col index", cols[i].Index), zap.Int("PhysTblIDCol index", col.Index))
 						found = true
+						if _, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
+							panic("Multiple model.ExtraPhysTblID set for the same table!")
+						}
 						e.tblID2PhysTblIDColIdx[tblID] = i
 						break
 					}
@@ -951,9 +959,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 					panic("PhysTblIDCol not find in map?!?")
 				}
 			}
-		}
-		if cols[0].ID == model.ExtraPhysTblID {
-			panic("Should never be the only ID?!?")
 		}
 	}
 	return e.baseExecutor.Open(ctx)
@@ -968,7 +973,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
 	if len(e.tblID2Handle) == 0 || (!plannercore.IsSelectForUpdateLockType(e.Lock.LockType)) {
-		logutil.Logger(ctx).Info("MJONSS: SelectLocExec No handle or lock!!!")
+		panic("MJONSS: SelectLocExec No handle or lock!!!")
 		return nil
 	}
 
@@ -977,18 +982,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
-				logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", tblID))
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
+					// TODO: Change so the ExtraPhysTblID is set for both static and dynamic
+					// filter it out in ToPB for both index and table reads if 'isPartition'
+					// Add it in the table reader, if 'isPartition'?
+					// Then it is just to read both here and in UnionScan, as committed
+					// So the only change to commit is to filter it out?
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
-						logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int("physTblColIdx", physTblColIdx), zap.Int64("tableID from row", physTblID))
 					}
-					//logutil.Logger(ctx).Info("MJONSS: SelectLocExec", zap.Int64("tableID", physTblID), zap.Int64("handle", handle.IntValue()))
 					touchedTableIDs[physTblID] = true
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}

@@ -238,10 +238,21 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 	// SelectLock and transaction buffer needs Physical Table ID for its full key
 	// For partitioned tables under static prune mode (one TableReaderExecutor per partition),
-	// it needs to be added by TiDB, otherwise it is added by storate (column id ExtraPhysTblID)
+	// it needs to be added by TiDB here, otherwise it is added by storage (column id ExtraPhysTblID)
 	if e.partitionPhysTblIDOffset != 0 {
 		physicalID := getPhysicalTableID(e.table)
-		fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
+		if e.table.Meta().ID != physicalID {
+			// Static prune mode, one TableReaderExecutor for each partition
+			// and physical table id is not same as 'logical' table partition id
+			if e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				panic("table ID != physical table id in TableReaderExecutor in dynamic prune mode!!!")
+			}
+			fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
+		} else {
+			if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				panic("table ID == physical table id in TableReaderExecutor in static prune mode!!!")
+			}
+		}
 	}
 
 	return nil

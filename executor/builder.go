@@ -3129,25 +3129,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
-	var partitionPhysTblIDOffset int
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
-		if ts.Table.ID == physicalTableID {
-			// TODO: Remove after some testing...
-			panic("isPartition is set but still physicalTableID is set to logical table id!!!")
-		}
-		// NOTE for mjonss: TODO, add a comment about Global Indexes, that it is only used for index data, and also stores the Physical Table ID, so never any need to fill it in
-		// Only time to fill the Physical Table ID is under static pruning mode when ExtraPhysTblID has been requested!
-		for i, col := range v.Schema().Columns {
-			if col.ID == model.ExtraPhysTblID {
-				if i == 0 {
-					panic("ExtraPhysTblID in offset 0!!!")
-				}
-				partitionPhysTblIDOffset = i
-				break
-			}
-		}
 	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -3170,8 +3154,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
 		batchCop:         v.BatchCop,
-		// default 0
-		partitionPhysTblIDOffset: partitionPhysTblIDOffset,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
@@ -3196,7 +3178,19 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		}
 	}
 
-	for i := range v.Schema().Columns {
+	cols := v.Schema().Columns
+	for i := range cols {
+		if isPartition && cols[i].ID == model.ExtraPhysTblID {
+			// Static partition prune mode, still request it from the deqReq output...
+			if ts.Table.ID == physicalTableID {
+				// TODO: Remove after some testing...
+				panic("isPartition is set but still physicalTableID is set to logical table id!!!")
+			}
+			if i == 0 {
+				panic("ExtraPhysTblID in offset 0!!!")
+			}
+			e.partitionPhysTblIDOffset = i
+		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 

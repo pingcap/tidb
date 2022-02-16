@@ -2984,8 +2984,8 @@ partition p2 values less than (11))`)
 	}
 
 	partitionModes := []string{
-		"'dynamic-only'",
-		"'static-only'",
+		"'dynamic'",
+		"'static'",
 	}
 	testCases := []func(){
 		optimisticTableReader,

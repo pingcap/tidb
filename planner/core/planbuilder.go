@@ -1228,20 +1228,21 @@ func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	tblID2PhysTblIDCol := make(map[int64]*expression.Column)
 	if len(b.partitionedTable) > 0 {
-		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			// If a chunk row is read from a partitioned table, which partition the row
-			// comes from is unknown. With the existence of Join, the situation could be
-			// even worse: SelectLock have to know the `pid` to construct the lock key.
-			// To solve the problem, an extra `pid` column is add to the schema, and the
-			// DataSource need to return the `pid` information in the chunk row.
-			// table partition prune mode == dynamic (Single TableReader, needs the PhysTblID from storage)
-			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		// If a chunk row is read from a partitioned table, which partition the row
+		// comes from is unknown. With the existence of Join, the situation could be
+		// even worse: SelectLock have to know the `pid` to construct the lock key.
+		// To solve the problem, an extra `pid` column is added to the schema, and the
+		// DataSource need to return the `pid` information in the chunk row.
+		// For dynamic prune mode, it is filled in from the tableID in the key by storage
+		// For static prune mode it is still  sent to storage, but it does not need to be
+		// filled in (similar to virtualColumns, which is filled in by TiDB, but still
+		// their defaults values are filled in by storage
+		// and set by the partition's TableReaderExecutor physical table id.
+		// (static prune mode has a union of TableReader, one for each partition).
+		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
 
-		} else {
-			// Do this for static mode as well, but fill it in by the TableReader instead?
-			// TODO: filter it out when sending to coprocessor and add it in TableReader!
-			setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
-			// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			// static partition prune mode, create one TableReader per partition
 			// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
 			b.optFlag = b.optFlag | flagPartitionProcessor
 		}
