@@ -628,8 +628,7 @@ func TestTiFlashBackoffer(t *testing.T) {
 		require.Equal(t, 1, e.Counter)
 	}
 	// Test grow
-	z, ok := backoff.Put(1)
-	fmt.Printf("zzz %v\n", z)
+	_, ok := backoff.Put(1)
 	require.True(t, ok)
 	require.False(t, mustGet(1).NeedGrow())
 	mustNotGrow(1) // 0;1 -> 1;1
@@ -654,7 +653,8 @@ func TestTiFlashBackoffer(t *testing.T) {
 	_, ok = backoff.Tick(3)
 	require.False(t, ok)
 
-	backoff.Remove(1)
+	require.True(t, backoff.Remove(1))
+	require.False(t, backoff.Remove(1))
 	require.Equal(t, 1, backoff.Len())
 
 	// Test error context

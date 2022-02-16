@@ -160,8 +160,10 @@ func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool
 }
 
 // Remove will reset table from backoff
-func (b *PollTiFlashBackoffContext) Remove(ID int64) {
+func (b *PollTiFlashBackoffContext) Remove(ID int64) bool {
+	_, ok := b.elements[ID]
 	delete(b.elements, ID)
+	return ok
 }
 
 // Get returns pointer to inner PollTiFlashBackoffElement.
