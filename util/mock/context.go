@@ -103,6 +103,7 @@ func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	return nil, errors.Errorf("Not Supported.")
 }
 
+// ShowProcess implements sessionctx.Context ShowProcess interface.
 func (c *Context) ShowProcess() *util.ProcessInfo {
 	return &util.ProcessInfo{}
 }
