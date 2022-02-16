@@ -1859,43 +1859,6 @@ func (s *testPrepareSerialSuite) TestIssue28246(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
-<<<<<<< HEAD
-=======
-func (s *testPrepareSerialSuite) TestIssue29805(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		dom.Close()
-		err = store.Close()
-		c.Assert(err, IsNil)
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	c.Assert(err, IsNil)
-
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_clustered_index=on;")
-	tk.MustExec("drop table if exists PK_TCOLLATION10197;")
-	tk.MustExec("CREATE TABLE `PK_TCOLLATION10197` (`COL1` char(1) NOT NULL, PRIMARY KEY (`COL1`(1)) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("insert into PK_TCOLLATION10197 values('龺');")
-	tk.MustExec("set @a='畻', @b='龺';")
-	tk.MustExec(`prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';`)
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tk.MustExec(`prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';`)
-	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("0"))
-
-	tk.MustQuery("select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > '龺';").Check(testkit.Rows("0"))
-}
-
 func (s *testPrepareSerialSuite) TestIssue29993(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -2007,7 +1970,6 @@ func (s *testPrepareSerialSuite) TestIssue30100(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
->>>>>>> 78c653e29... planner: rebuild range when the range is empty (#30003)
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
