@@ -639,13 +639,11 @@ func RunStreamRestore(
 
 	client.InitClients(u, false)
 
-	currentTs, err := streamMgr.getTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if cfg.RestoreTS == 0 {
-		cfg.RestoreTS = currentTs
+		cfg.RestoreTS, err = streamMgr.getTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
@@ -671,13 +669,17 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// perform restore kv files
-	if err := client.RestoreKVFiles(ctx, rewriteRules, datas); err != nil {
+	if err := client.RestoreKVFiles(ctx, rewriteRules, dFiles); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := client.RestoreMetaKVFiles(ctx, mFiles, &fullBackupTables); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -691,7 +693,11 @@ func RunStreamRestore(
 	return nil
 }
 
-func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
+func initFullBackupTables(
+	ctx context.Context,
+	fullBackupStorage string,
+	cfg *StreamConfig,
+) (map[int64]*metautil.Table, error) {
 	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -712,24 +718,29 @@ func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *St
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tables := make(map[string]*metautil.Table)
+
+	tables := make(map[int64]*metautil.Table)
 	for _, db := range databases {
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
 		}
+
+		if !cfg.TableFilter.MatchSchema(dbName) {
+			continue
+		}
+
 		for _, table := range db.Tables {
 			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
-			tables[utils.UniqueID(dbName, table.Info.Name.String())] = table
+			tables[table.Info.ID] = table
 		}
 	}
 	return tables, nil
-
 }
 
-func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
+func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
 	rules := make(map[int64]*restore.RewriteRules)
 	for _, t := range tables {

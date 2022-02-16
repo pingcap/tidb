@@ -618,8 +618,8 @@ func (importer *FileImporter) downloadSST(
 	}
 
 	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
-	sstMeta.Range.Start = truncateTS(downloadResp.Range.GetStart())
-	sstMeta.Range.End = truncateTS(downloadResp.Range.GetEnd())
+	sstMeta.Range.Start = TruncateTS(downloadResp.Range.GetStart())
+	sstMeta.Range.End = TruncateTS(downloadResp.Range.GetEnd())
 	return &sstMeta, nil
 }
 

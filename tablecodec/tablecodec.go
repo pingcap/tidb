@@ -194,6 +194,15 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 	return datumValues, nil
 }
 
+func EncodeMetaKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	ek = codec.EncodeBytes(ek, field)
+	return ek
+}
+
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64

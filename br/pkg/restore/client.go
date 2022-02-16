@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
@@ -41,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -384,6 +387,17 @@ func (rc *Client) GetTableSchema(
 		return nil, errors.Trace(err)
 	}
 	return table.Meta(), nil
+}
+
+// GetDBSchema gets the schema of a db from TiDB cluster
+func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, error) {
+	info := dom.InfoSchema()
+	dbInfo, exist := info.SchemaByName(dbName)
+	if !exist {
+		log.Warn("schema not exist", zap.String("dbName", dbName.String()))
+		return nil, errors.Annotatef(berrors.ErrRestoreSchemaNotExists, "%v not exist", dbName.String())
+	}
+	return dbInfo, nil
 }
 
 // CreateDatabase creates a database.
@@ -1359,18 +1373,29 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 }
 
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Metadata, restoreTS uint64) ([]*backuppb.DataFileInfo, error) {
-	streamBackupDataFiles := make([]*backuppb.DataFileInfo, 0)
+func (rc *Client) ReadStreamDataFiles(
+	ctx context.Context,
+	metas []*backuppb.Metadata,
+	restoreTS uint64,
+) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
+	dFiles := make([]*backuppb.DataFileInfo, 0)
+	mFiles := make([]*backuppb.DataFileInfo, 0)
+
 	for _, m := range metas {
 		for _, d := range m.Files {
 			if d.MinTs > restoreTS {
 				continue
 			}
-			streamBackupDataFiles = append(streamBackupDataFiles, d)
+
+			if d.IsMeta {
+				mFiles = append(mFiles, d)
+			} else {
+				dFiles = append(dFiles, d)
+			}
 			log.Debug("backup stream collect data file", zap.String("file", d.Path))
 		}
 	}
-	return streamBackupDataFiles, nil
+	return dFiles, mFiles, nil
 }
 
 // FixIndex tries to fix a single index.
@@ -1410,7 +1435,11 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
-func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRules, files []*backuppb.DataFileInfo) error {
+func (rc *Client) RestoreKVFiles(
+	ctx context.Context,
+	rules map[int64]*RewriteRules,
+	files []*backuppb.DataFileInfo,
+) error {
 	var err error
 	start := time.Now()
 	defer func() {
@@ -1458,6 +1487,100 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			zap.Error(err),
 		)
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *Client) initRewriteRuleForDDL(tables *map[int64]*metautil.Table) (*stream.Schemas, error) {
+	schemaChange := stream.Schemas{
+		OldDBs:     make(map[int64]*model.DBInfo),
+		OldTables:  make(map[int64]*model.TableInfo),
+		NewSchemas: make(map[string]*stream.DbInfo, 0),
+	}
+
+	for _, t := range *tables {
+		schemaChange.OldDBs[t.DB.ID] = t.DB
+		schemaChange.OldTables[t.Info.ID] = t.Info
+
+		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), t.DB.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), t.DB.Name, t.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		db, exist := schemaChange.NewSchemas[newDBInfo.Name.String()]
+		if !exist {
+			addDB := stream.DbInfo{
+				DbInfo: newDBInfo,
+				Tables: make(map[string]*model.TableInfo),
+			}
+
+			addDB.Tables[newTableInfo.Name.String()] = newTableInfo
+			schemaChange.NewSchemas[newDBInfo.Name.String()] = &addDB
+		} else {
+			db.Tables[newTableInfo.Name.String()] = newTableInfo
+		}
+	}
+	return &schemaChange, nil
+}
+
+func (rc *Client) RestoreMetaKVFiles(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+	tables *map[int64]*metautil.Table,
+) error {
+	pdAddrs := make([]string, 0)
+	pdAddrs = append(pdAddrs, rc.GetPDClient().GetLeaderAddr())
+	rawkvClient, err := rawkv.NewClient(ctx, pdAddrs, config.DefaultConfig().Security)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schemasReplace, err := rc.initRewriteRuleForDDL(tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, f := range files {
+		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+func (rc *Client) RestoreMetaKVFile(
+	ctx context.Context,
+	rawKVClient *rawkv.Client,
+	file *backuppb.DataFileInfo,
+	schemas *stream.Schemas,
+) error {
+	buff, err := rc.storage.ReadFile(ctx, file.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	iter := stream.NewEventIterator(buff)
+	for iter.Valid() {
+		orignalEntry := kv.Entry{
+			Key:   iter.Key(),
+			Value: iter.Value(),
+		}
+		newEntry, err := stream.RewriteKvEntry(&orignalEntry, file.Cf, schemas)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// to do...
+		// use BatchPut instead of put
+		if err := rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

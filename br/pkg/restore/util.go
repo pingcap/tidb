@@ -106,10 +106,10 @@ func GetSSTMetaFromFile(
 ) import_sstpb.SSTMeta {
 	// Get the column family of the file by the file name.
 	var cfName string
-	if strings.Contains(file.GetName(), defaultCFName) {
-		cfName = defaultCFName
-	} else if strings.Contains(file.GetName(), writeCFName) {
-		cfName = writeCFName
+	if strings.Contains(file.GetName(), DefaultCFName) {
+		cfName = DefaultCFName
+	} else if strings.Contains(file.GetName(), WriteCFName) {
+		cfName = WriteCFName
 	}
 	// Find the overlapped part between the file and the region.
 	// Here we rewrites the keys to compare with the keys of the region.
@@ -360,7 +360,14 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func truncateTS(key []byte) []byte {
+func GetTS(key []byte) []byte {
+	if len(key) < 8 {
+		return nil
+	}
+	return key[len(key)-8:]
+}
+
+func TruncateTS(key []byte) []byte {
 	if len(key) == 0 {
 		return nil
 	}

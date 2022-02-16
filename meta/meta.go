@@ -108,6 +108,8 @@ var (
 	ErrTableNotExists = dbterror.ClassMeta.NewStd(mysql.ErrNoSuchTable)
 	// ErrDDLReorgElementNotExist is the error for reorg element not exists.
 	ErrDDLReorgElementNotExist = dbterror.ClassMeta.NewStd(errno.ErrDDLReorgElementNotExist)
+	// ErrInvalidString is the error for invalid string to parse
+	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
 // Meta is for handling meta information in a transaction.
@@ -180,7 +182,30 @@ func (m *Meta) policyKey(policyID int64) []byte {
 }
 
 func (m *Meta) dbKey(dbID int64) []byte {
+	return DBkey(dbID)
+}
+
+func DBkey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+}
+
+func ParseDBKey(dbkey []byte) (int64, error) {
+	if !IsDBkey(dbkey) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse dbkey")
+	}
+
+	var prefix string
+	var dbID int64
+	_, err := fmt.Sscanf(string(dbkey), "%s:%d", &prefix, &dbID)
+	if err != nil {
+		return 0, err
+	}
+
+	return dbID, nil
+}
+
+func IsDBkey(dbkey []byte) bool {
+	return strings.HasPrefix(string(dbkey), mDBPrefix+":")
 }
 
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
@@ -196,7 +221,26 @@ func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
 }
 
 func (m *Meta) tableKey(tableID int64) []byte {
+	return TableKey(tableID)
+}
+
+func TableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+}
+
+func ParseTableKey(tableKey []byte) (int64, error) {
+	var prefix string
+	var tableID int64
+	_, err := fmt.Sscanf(string(tableKey), "%s:%d", prefix, tableID)
+	if err != nil {
+		return 0, err
+	}
+
+	if prefix != mTableIDPrefix {
+		return 0, ErrInvalidString.GenWithStack("fail to parse tableKey")
+	}
+
+	return tableID, nil
 }
 
 func (m *Meta) sequenceKey(sequenceID int64) []byte {
