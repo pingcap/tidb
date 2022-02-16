@@ -3177,8 +3177,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		}
 	}
 
-	cols := v.Schema().Columns
-	for i := range cols {
+	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
