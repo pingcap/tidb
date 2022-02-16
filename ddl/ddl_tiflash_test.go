@@ -656,7 +656,7 @@ func TestTiFlashBackoffer(t *testing.T) {
 	// Test context
 	_, ok = backoff.Put(3)
 	require.False(t, ok)
-	_, ok = backoff.Tick(3)
+	_, ok, _ = backoff.Tick(3)
 	require.False(t, ok)
 
 	require.True(t, backoff.Remove(1))
