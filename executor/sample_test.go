@@ -108,7 +108,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	require.Equal(t, 4, len(rows))
+	require.Len(t, rows, 4)
 	tk.MustQuery("select a from t tablesample regions() order by a limit 1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
@@ -117,7 +117,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
-	require.Equal(t, 16, len(rows))
+	require.Len(t, rows, 16)
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("4"))
 	tk.MustExec("drop table t2;")
 }
@@ -133,8 +133,8 @@ func TestTableSampleNoSplitTable(t *testing.T) {
 	tk.MustExec("insert into t2 values(1);")
 	rows := tk.MustQuery("select * from t1 tablesample regions();").Rows()
 	rows2 := tk.MustQuery("select * from t2 tablesample regions();").Rows()
-	require.Equal(t, 0, len(rows))
-	require.Equal(t, 1, len(rows2))
+	require.Len(t, rows, 0)
+	require.Len(t, rows2, 1)
 }
 
 func TestTableSamplePlan(t *testing.T) {
@@ -145,7 +145,7 @@ func TestTableSamplePlan(t *testing.T) {
 	tk.MustExec("split table t between (0) and (100000) regions 4;")
 	tk.MustExec("insert into t(a) values (1), (2), (3);")
 	rows := tk.MustQuery("explain analyze select a from t tablesample regions();").Rows()
-	require.Equal(t, 2, len(rows))
+	require.Len(t, rows, 2)
 	tableSample := fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*TableSample.*", tableSample)
 }
@@ -213,14 +213,14 @@ func TestTableSampleWithPartition(t *testing.T) {
 	tk.MustExec("create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;")
 	tk.MustExec("insert into t values (1, '1'), (2, '2'), (3, '3');")
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	require.Equal(t, 2, len(rows))
+	require.Len(t, rows, 2)
 
 	tk.MustExec("delete from t;")
 	tk.MustExec("insert into t values (1, '1');")
 	rows = tk.MustQuery("select * from t partition (p0) tablesample regions();").Rows()
-	require.Equal(t, 0, len(rows))
+	require.Len(t, rows, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
-	require.Equal(t, 1, len(rows))
+	require.Len(t, rows, 1)
 
 	// Test https://github.com/pingcap/tidb/issues/27349.
 	tk.MustExec("drop table if exists t;")
@@ -310,5 +310,5 @@ func TestMaxChunkSize(t *testing.T) {
 	}
 	tk.Session().GetSessionVars().MaxChunkSize = 1
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	require.Equal(t, 4, len(rows))
+	require.Len(t, rows, 4)
 }
