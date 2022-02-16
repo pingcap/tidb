@@ -942,24 +942,13 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	if len(e.tblID2PhysTblIDCol) > 0 {
 		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
-		if cols[0].ID == model.ExtraPhysTblID {
-			panic("model.ExtraPhysTblID should never be the first/only ID?!?")
-		}
 		for i := len(cols) - 1; i > 0; i-- {
 			if cols[i].ID == model.ExtraPhysTblID {
-				found := false
 				for tblID, col := range e.tblID2PhysTblIDCol {
 					if cols[i].UniqueID == col.UniqueID {
-						found = true
-						if _, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
-							panic("Multiple model.ExtraPhysTblID set for the same table!")
-						}
 						e.tblID2PhysTblIDColIdx[tblID] = i
 						break
 					}
-				}
-				if !found {
-					panic("PhysTblIDCol not find in map?!?")
 				}
 			}
 		}

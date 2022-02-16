@@ -244,9 +244,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if e.table.Meta().ID != physicalID {
 			// Static prune mode, one TableReaderExecutor for each partition
 			// and physical table id is not same as 'logical' table partition id
-			if e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				panic("table ID != physical table id in TableReaderExecutor in dynamic prune mode!!!")
-			}
+
 			// After some tries it is very hard to not include a column to the be
 			// sent to the store but only filled in here.
 			// See how VirtalColumnValues is done, their defaults are still set in
@@ -258,10 +256,6 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 					fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
 					//panic("NOT Already filled in by engine?")
 				}
-			}
-		} else {
-			if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				panic("table ID == physical table id in TableReaderExecutor in static prune mode!!!")
 			}
 		}
 	}

@@ -3180,14 +3180,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	cols := v.Schema().Columns
 	for i := range cols {
 		if isPartition && cols[i].ID == model.ExtraPhysTblID {
-			// Static partition prune mode, still request it from the deqReq output...
-			if ts.Table.ID == physicalTableID {
-				// TODO: Remove after some testing...
-				panic("isPartition is set but still physicalTableID is set to logical table id!!!")
-			}
-			if i == 0 {
-				panic("ExtraPhysTblID in offset 0!!!")
-			}
 			e.partitionPhysTblIDOffset = i
 		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
