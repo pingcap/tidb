@@ -2710,6 +2710,9 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where datediff(d,d)").
 		CheckAt([]int{0, 3, 6}, rows)
 
+	rows[1][2] = "gt(test.t.d, sysdate())"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
