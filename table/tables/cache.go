@@ -120,6 +120,7 @@ func (c *cachedTable) Init(exec sqlexec.SQLExecutor) error {
 	if !ok {
 		return errors.New("Need sqlExec rather than sqlexec.SQLExecutor")
 	}
+	raw.ExecuteInternal(context.Background(), "set @@session.tidb_retry_limit = 0")
 	c.handle = NewStateRemote(raw)
 	return nil
 }
