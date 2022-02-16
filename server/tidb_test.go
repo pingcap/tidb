@@ -1561,10 +1561,12 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize", "return"))
 	selectSQL := "select sum(a+b), count(distinct b) from t where a+b >0"
 	updateSQL := "update t set a=a+100 where a > 10000000"
+	selectInPlanSQL := "select * from t where exists (select 1 from t1 where t1.a = 1);"
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
 		mustQuery(t, dbt, selectSQL)
 		dbt.MustExec(updateSQL)
+		mustQuery(t, dbt, selectInPlanSQL)
 	}
 	check = func() {
 		mc.WaitCollectCnt(2)
@@ -1573,6 +1575,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		selectCPUTime := mc.GetSQLCPUTimeBySQL(selectSQL)
 		updateCPUTime := mc.GetSQLCPUTimeBySQL(updateSQL)
 		require.Less(t, updateCPUTime, selectCPUTime)
+		checkFn(selectInPlanSQL, "")
 	}
 	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize"))
@@ -1969,6 +1972,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
+		{"select * from stmtstats.t where exists (select 1 from stmtstats.t2 where t2.a = 1);", ".*TableReader.*", true},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		db, err := sql.Open("mysql", ts.getDSN())
