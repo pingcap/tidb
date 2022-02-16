@@ -1676,6 +1676,53 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 	return s.base, s.end, s.round
 }
 
+// AppendScalablePrefix appends the fixed 4 digits for the scalable sequence, to solve the auto-increment sequence hot-spot contention
+// 1 || [connection id % 1000]
+// Using scalable sequences has some obvious implications:
+// 1. All sequence numbers are full size in terms of the number of digits used. If your application displays sequence numbers you may have some formatting issues you weren't expecting for a few years.
+// 2. When using NOEXTEND you are effectively reducing the maximum sequence number available, as 4 digits are "lost" because of the prefix.
+// 3. When you are using EXTEND you need to be able to cope with the "LENGTH(MAXVALUE)+4" digits, in GoLang, the len of max int64 is 19, the length of the maxvalue can not exceeding 15. so variables and table columns need to be sized correctly.
+// Oracle provided similar funtionality since 18c. Oracle scalable sequence intro: https://oracle-base.com/articles/18c/scalable-sequences-18c
+func AppendScalablePrefix(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
+	maxDigits := seq.meta.MaxDigits
+	if seq.meta.Extend {
+		maxDigits = maxDigits + model.ScalableSequencePrefixLength
+	}
+	flag := int64(1)
+	if nextVal < 0 {
+		flag = -1
+	}
+	highPrefix := flag * int64(math.Pow(10, float64(maxDigits-1)))
+	lowPrefix := flag * int64(connectionID%1000) * int64(math.Pow(10, float64(maxDigits-4)))
+	return highPrefix + lowPrefix + nextVal
+}
+
+// ScaleSequenceValue return the original nextval if the sequence is not scalable
+// otherwise, 4 digits prefix is added to the nextVal
+func ScaleSequenceValue(seq *sequenceCommon, connectionID uint64, nextVal int64) int64 {
+	if seq.meta.Scale {
+		return AppendScalablePrefix(seq, connectionID, nextVal)
+	}
+	return nextVal
+}
+
+// NoScaleSequenceValue return the original nextval if the sequence is not scalable
+// otherwise, 4 digits prefix is removed and the original nextVal is return
+func NoScaleSequenceValue(seq *sequenceCommon, nextVal int64) int64 {
+	if seq.meta.Scale {
+		maxDigits := seq.meta.MaxDigits
+		if seq.meta.Extend {
+			maxDigits = maxDigits + model.ScalableSequencePrefixLength
+		}
+		flag := int64(1)
+		if nextVal < 0 {
+			flag = -1
+		}
+		return nextVal % (flag * int64(math.Pow(10, float64(maxDigits-4))))
+	}
+	return nextVal
+}
+
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
@@ -1687,6 +1734,8 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 	}
 	seq.mu.Lock()
 	defer seq.mu.Unlock()
+
+	ConnectionID := ctx.(sessionctx.Context).GetSessionVars().ConnectionID
 
 	err = func() error {
 		// Check if need to update the cache batch from storage.
@@ -1713,6 +1762,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			}
 		}
 		if !updateCache {
+			nextVal = ScaleSequenceValue(seq, ConnectionID, nextVal)
 			return nil
 		}
 		// Update batch alloc from kv storage.
@@ -1747,6 +1797,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 		if !ok {
 			return errors.New("can't find the first value in sequence cache")
 		}
+		nextVal = ScaleSequenceValue(seq, ConnectionID, nextVal)
 		return nil
 	}()
 	// Sequence alloc in kv store error.
@@ -1756,7 +1807,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 		}
 		return 0, err
 	}
-	seq.base = nextVal
+	seq.base = NoScaleSequenceValue(seq, nextVal)
 	return nextVal, nil
 }
 

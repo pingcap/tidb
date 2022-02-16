@@ -985,6 +985,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, err
 	}
 	// update the sequenceState.
+
 	b.ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
 	return nextVal, false, nil
 }

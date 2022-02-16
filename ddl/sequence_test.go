@@ -207,40 +207,57 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	// Grant the myuser the access to sequence seq in database test.
 	tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
 
-	tk1.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk1.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	// Test show sequence detail.
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq start 10")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 10 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 10 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq minvalue 0")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 0 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 0 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq maxvalue 100")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 100 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 100 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = -2")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with -1 minvalue -9223372036854775807 maxvalue -1 increment by -2 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with -1 minvalue -9223372036854775807 maxvalue -1 increment by -2 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq nocache")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq cycle")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq comment=\"ccc\"")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB COMMENT='ccc'"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle noscale noextend ENGINE=InnoDB COMMENT='ccc'"))
+
+	// Test show sequence with scale.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 999999999999999 increment by 1 cache 1000 nocycle scale noextend ENGINE=InnoDB"))
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale extend maxvalue 999999999999999")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 999999999999999 increment by 1 cache 1000 nocycle scale extend ENGINE=InnoDB"))
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale maxvalue 9999")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale increment by -1 minvalue -9999")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop sequence if exists seq")
+	_, err = tk.Exec("create sequence seq scale extend")
+	c.Assert(err, NotNil)
 
 	// Test show create sequence with a normal table.
 	tk.MustExec("drop sequence if exists seq")
@@ -340,6 +357,18 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("13"))
 
+	// test sequence scale noextend.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start with 1 maxvalue 999999 scale noextend")
+	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("1"))
+
+	// test sequence scale noextend.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start with 1 maxvalue 999999 scale extend")
+	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("0"))
+
 	// minvalue should be specified lower than start (negative here), default 1 when increment > 0.
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq minvalue -5 start = -2 increment = 5")
@@ -383,6 +412,43 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
 	err = tk.QueryToErr("select nextval(seq)")
 	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+
+	// test baseic function with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	// test negative increment with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale increment by -1")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-2"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("-3"))
+	// test runs out with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle scale extend")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("6"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start = 999999999999997 scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("7"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("8"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+
+	// test cycle with scale
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment = 1 start = 999999999999997 scale cycle")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("7"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("8"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("9"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
 
 	// test negative-growth sequence
 	tk.MustExec("drop sequence if exists seq")
@@ -431,6 +497,20 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
 	// the next value will not be base on next value.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
+
+	// test setval with scale
+	// test sequence setval function.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq scale")
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	// set value to a used value, will get NULL.
+	tk.MustQuery("select setval(seq, 2)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("3"))
+	// set value to a unused value, will get itself.
+	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
+	// the next value will not be base on next value.
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("6"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment 3 maxvalue 11")
@@ -1015,7 +1095,7 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("alter sequence seq increment by 2 start with 2")
 	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` " +
-		"start with 2 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB"))
+		"start with 2 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
@@ -1025,7 +1105,7 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	// Alter sequence will invalidate the sequence cache in memory.
 	tk.MustExec("alter sequence seq increment by 2")
 	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` " +
-		"start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB"))
+		"start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle noscale noextend ENGINE=InnoDB"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1001"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1003"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1005"))
@@ -1063,6 +1143,22 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3005"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3009"))
 	tk.MustExec("drop sequence if exists seq")
+
+	// test sequence scale noextend.
+	tk.MustExec("create sequence seq")
+	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale noextend")
+	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("1"))
+	tk.MustExec("drop sequence if exists seq")
+
+	// test sequence scale extend.
+	tk.MustExec("create sequence seq")
+	tk.MustExec("alter sequence seq increment = 1 start with 1 maxvalue 999999 scale extend")
+	tk.MustQuery("select nextval(seq)>1").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)%10").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)<999999").Check(testkit.Rows("0"))
+
 }
 
 func (s *testSequenceSuite) TestAlterSequencePrivilege(c *C) {
@@ -1098,13 +1194,13 @@ func TestDdl_AlterSequenceIssue31265(t *testing.T) {
 	tk := testkit2.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create sequence seq cache=1 nocache")
-	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("create sequence cache_to_nocache_seq;")
 	tk.MustExec("alter sequence cache_to_nocache_seq nocache;")
-	tk.MustQuery("show create sequence cache_to_nocache_seq;").Check(testkit.Rows("cache_to_nocache_seq CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence cache_to_nocache_seq;").Check(testkit.Rows("cache_to_nocache_seq CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle noscale noextend ENGINE=InnoDB"))
 
 	tk.MustExec("create sequence nocache_to_cache_seq nocache;")
 	tk.MustExec("alter sequence nocache_to_cache_seq cache 10;")
-	tk.MustQuery("show create sequence nocache_to_cache_seq;").Check(testkit.Rows("nocache_to_cache_seq CREATE SEQUENCE `nocache_to_cache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 10 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create sequence nocache_to_cache_seq;").Check(testkit.Rows("nocache_to_cache_seq CREATE SEQUENCE `nocache_to_cache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 10 nocycle noscale noextend ENGINE=InnoDB"))
 }

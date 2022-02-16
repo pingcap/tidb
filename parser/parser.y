@@ -392,6 +392,7 @@ import (
 	execute               "EXECUTE"
 	expansion             "EXPANSION"
 	expire                "EXPIRE"
+	extend                "EXTEND"
 	extended              "EXTENDED"
 	faultsSym             "FAULTS"
 	fields                "FIELDS"
@@ -469,10 +470,12 @@ import (
 	nocache               "NOCACHE"
 	nocycle               "NOCYCLE"
 	nodegroup             "NODEGROUP"
+	noextend              "NOEXTEND"
 	nomaxvalue            "NOMAXVALUE"
 	nominvalue            "NOMINVALUE"
 	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
+	noscale               "NOSCALE"
 	nowait                "NOWAIT"
 	nvarcharType          "NVARCHAR"
 	nulls                 "NULLS"
@@ -537,6 +540,7 @@ import (
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
 	san                   "SAN"
+	scale                 "SCALE"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -6002,6 +6006,10 @@ UnReservedKeyword:
 |	"CACHE"
 |	"CYCLE"
 |	"NOCYCLE"
+|	"SCALE"
+|	"NOSCALE"
+|	"EXTEND"
+|	"NOEXTEND"
 |	"SEQUENCE"
 |	"MAX_MINUTES"
 |	"MAX_IDXNUM"
@@ -13410,6 +13418,8 @@ AlterPolicyStmt:
  *	[ START [ WITH | = ] start ]
  *	[ CACHE [=] cache | NOCACHE | NO CACHE]
  *	[ CYCLE | NOCYCLE | NO CYCLE]
+ *	[ SCALE | NOSCALE | NO SCALE]
+ *	[ EXTEND | NOEXTEND | NO EXTEND]
  *	[table_options]
  ********************************************************************************************/
 CreateSequenceStmt:
@@ -13504,6 +13514,30 @@ SequenceOption:
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceNoCycle}
 	}
+|	"SCALE"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceScale}
+	}
+|	"NOSCALE"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceNoScale}
+	}
+|	"NO" "SCALE"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceNoScale}
+	}
+|	"EXTEND"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceExtend}
+	}
+|	"NOEXTEND"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceNoExtend}
+	}
+|	"NO" "EXTEND"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceNoExtend}
+	}
 
 SignedNum:
 	Int64Num
@@ -13546,6 +13580,8 @@ DropSequenceStmt:
  *	[ START [ WITH | = ] start ]
  *	[ CACHE [=] cache | NOCACHE | NO CACHE]
  *	[ CYCLE | NOCYCLE | NO CYCLE]
+ *	[ SCALE | NOSCALE | NO SCALE]
+ *	[ EXTEND | NOEXTEND | NO EXTEND]
  *	[ RESTART [WITH | = ] restart ]
  ********************************************************************************************/
 AlterSequenceStmt:

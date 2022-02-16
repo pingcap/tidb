@@ -113,6 +113,14 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cycle = true
 		case ast.SequenceNoCycle:
 			sequenceInfo.Cycle = false
+		case ast.SequenceScale:
+			sequenceInfo.Scale = true
+		case ast.SequenceNoScale:
+			sequenceInfo.Scale = false
+		case ast.SequenceExtend:
+			sequenceInfo.Extend = true
+		case ast.SequenceNoExtend:
+			sequenceInfo.Extend = false
 		}
 	}
 	// Fill the default value, min/max/start should be adjusted with the sign of sequenceInfo.Increment.
@@ -139,6 +147,31 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 			}
 		}
 	}
+	adjustScaleSequence(sequenceInfo)
+}
+
+// Scalable Sequence appends the fixed 4 digits for the scalable sequence, to solve the auto-increment sequence hot-spot contention
+// 1 || [connection id % 1000]
+// Using scalable sequences has some obvious implications:
+// 1. All sequence numbers are full size in terms of the number of digits used. If your application displays sequence numbers you may have some formatting issues you weren't expecting for a few years.
+// 2. When using NOEXTEND you are effectively reducing the maximum sequence number available, as 4 digits are "lost" because of the prefix. Need to reset the Min/Max Value if it excceeds math.Pow10(15)
+// 3. When you are using EXTEND you need to be able to cope with the "LENGTH(MAXVALUE)+4" digits, in GoLang, the len of max int64 is 19, the length of the maxvalue can not exceeding 15. so variables and table columns need to be sized correctly.
+// Oracle provided similar funtionality since 18c. Oracle scalable sequence intro: https://oracle-base.com/articles/18c/scalable-sequences-18c
+func adjustScaleSequence(sequenceInfo *model.SequenceInfo) {
+	if sequenceInfo.Scale {
+		maxVal := math2.Abs(sequenceInfo.MaxValue)
+		if maxVal < math2.Abs(sequenceInfo.MinValue) {
+			maxVal = math2.Abs(sequenceInfo.MinValue)
+		}
+		sequenceInfo.MaxDigits = math2.StrLenOfInt64Fast(maxVal)
+		if !sequenceInfo.Extend {
+			if sequenceInfo.Increment > 0 && sequenceInfo.MaxValue >= int64(math.Pow10(model.MaxInt64Digits-model.ScalableSequencePrefixLength)) {
+				sequenceInfo.MaxValue = int64(math.Pow10(model.MaxInt64Digits-model.ScalableSequencePrefixLength)) - 1
+			} else if sequenceInfo.Increment < 0 && sequenceInfo.MinValue <= int64(-1)*int64(math.Pow10(model.MaxInt64Digits-model.ScalableSequencePrefixLength)) {
+				sequenceInfo.MinValue = int64(-1) * int64(math.Pow10(model.MaxInt64Digits-model.ScalableSequencePrefixLength)-1)
+			}
+		}
+	}
 }
 
 func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
@@ -151,6 +184,21 @@ func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 	if seqInfo.Cache && seqInfo.CacheValue <= 0 {
 		// Cache value should be bigger than 0.
 		return false
+	}
+
+	// For scalable sequence, need to make sure the min/max value is properly set:
+	// noextend: max(len(minValue), len(maxValue)) > ScalableSequencePrefixLength
+	// extend: max(len(minValue), len(maxValue)) < MaxInt64Digits - ScalableSequencePrefixLength
+	if seqInfo.Scale {
+		if seqInfo.Extend {
+			if seqInfo.MaxDigits > model.MaxInt64Digits-model.ScalableSequencePrefixLength {
+				return false
+			}
+		} else {
+			if seqInfo.MaxDigits <= model.ScalableSequencePrefixLength {
+				return false
+			}
+		}
 	}
 	maxIncrement = math2.Abs(seqInfo.Increment)
 
@@ -166,6 +214,9 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 	sequenceInfo := &model.SequenceInfo{
 		Cache:      model.DefaultSequenceCacheBool,
 		Cycle:      model.DefaultSequenceCycleBool,
+		Scale:      model.DefaultSequenceScaleBool,
+		Extend:     model.DefaultSequenceExtendBool,
+		MaxDigits:  0,
 		CacheValue: model.DefaultSequenceCacheValue,
 		Increment:  model.DefaultSequenceIncrementValue,
 	}
@@ -215,6 +266,14 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			oldSequence.Cycle = true
 		case ast.SequenceNoCycle:
 			oldSequence.Cycle = false
+		case ast.SequenceScale:
+			oldSequence.Scale = true
+		case ast.SequenceNoScale:
+			oldSequence.Scale = false
+		case ast.SequenceExtend:
+			oldSequence.Extend = true
+		case ast.SequenceNoExtend:
+			oldSequence.Extend = false
 		case ast.SequenceRestart:
 			restartFlag = true
 		case ast.SequenceRestartWith:
@@ -222,6 +281,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			restartValue = op.IntValue
 		}
 	}
+	adjustScaleSequence(oldSequence)
 	if !validateSequenceOptions(oldSequence) {
 		return false, 0, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}

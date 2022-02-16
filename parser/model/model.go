@@ -760,6 +760,8 @@ type ViewInfo struct {
 const (
 	DefaultSequenceCacheBool          = true
 	DefaultSequenceCycleBool          = false
+	DefaultSequenceScaleBool          = false
+	DefaultSequenceExtendBool         = false
 	DefaultSequenceOrderBool          = false
 	DefaultSequenceCacheValue         = int64(1000)
 	DefaultSequenceIncrementValue     = int64(1)
@@ -769,6 +771,10 @@ const (
 	DefaultPositiveSequenceMaxValue   = int64(9223372036854775806)
 	DefaultNegativeSequenceMaxValue   = int64(-1)
 	DefaultNegativeSequenceMinValue   = int64(-9223372036854775807)
+	// Fixed prefix length for scalable sequence
+	ScalableSequencePrefixLength = 4
+	// Max digits for Int64
+	MaxInt64Digits = 19
 )
 
 // SequenceInfo provide meta data describing a DB sequence.
@@ -776,6 +782,9 @@ type SequenceInfo struct {
 	Start      int64  `json:"sequence_start"`
 	Cache      bool   `json:"sequence_cache"`
 	Cycle      bool   `json:"sequence_cycle"`
+	Scale      bool   `json:"sequence_scale"`
+	Extend     bool   `json:"sequence_extend"`
+	MaxDigits  int    `json:"sequence_max_digits"`
 	MinValue   int64  `json:"sequence_min_value"`
 	MaxValue   int64  `json:"sequence_max_value"`
 	Increment  int64  `json:"sequence_increment"`

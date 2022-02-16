@@ -1131,6 +1131,16 @@ func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *mode
 	} else {
 		buf.WriteString("nocycle ")
 	}
+	if sequenceInfo.Scale {
+		buf.WriteString("scale ")
+	} else {
+		buf.WriteString("noscale ")
+	}
+	if sequenceInfo.Extend {
+		buf.WriteString("extend ")
+	} else {
+		buf.WriteString("noextend ")
+	}
 	buf.WriteString("ENGINE=InnoDB")
 	if len(sequenceInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
