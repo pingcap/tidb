@@ -62,6 +62,8 @@ type TiFlashManagementContext struct {
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
+	TotalSize                 atomicutil.Int64
+	BackoffSize               atomicutil.Int64
 }
 
 // NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
@@ -247,6 +249,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
+	var totalTableCount int64 = 0
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
@@ -285,6 +288,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			})
 
 			if !avail {
+				totalTableCount += 1
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
 				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 				if err != nil {
@@ -303,6 +307,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		}
 	}
+	pollTiFlashContext.TotalSize.Store(totalTableCount)
 
 	return allReplicaReady, nil
 }
