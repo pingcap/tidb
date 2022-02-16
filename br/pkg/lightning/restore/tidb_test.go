@@ -386,11 +386,7 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-<<<<<<< HEAD
-	c.Assert(tableCntAfter-tableCntBefore, Equals, 2.0)
-=======
-	require.Equal(t, 3.0, tableCntAfter-tableCntBefore)
->>>>>>> 167228a26... lightning: fix panic when table name in source file and target cluster is different (#31808)
+	c.Assert(tableCntAfter-tableCntBefore, Equals, 3.0)
 }
 
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
