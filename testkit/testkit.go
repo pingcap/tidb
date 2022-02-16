@@ -63,6 +63,17 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit.
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		require: require.New(t),
+		assert:  assert.New(t),
+		t:       t,
+		store:   store,
+		session: se,
+	}
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
@@ -396,4 +407,9 @@ func TestGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	return tbl
+}
+
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.require.Equal(tk.Session().LastMessage(), msg)
 }

@@ -2690,6 +2690,26 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b,2)").
 		CheckAt([]int{0, 3, 6}, rows)
 
+	rows[1][2] = "date(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where date(d)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "week(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "yearweek(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where yearweek(d)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "to_seconds(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_seconds(d)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "datediff(test.t.d, test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where datediff(d,d)").
+		CheckAt([]int{0, 3, 6}, rows)
+
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
