@@ -1388,6 +1388,17 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
+		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableMutationChecker = TiDBOptOn(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnAssertionLevel, Value: DefTiDBTxnAssertionLevel, PossibleValues: []string{AssertionOffStr, AssertionFastStr, AssertionStrictStr}, Hidden: true, Type: TypeEnum, SetSession: func(s *SessionVars, val string) error {
+		s.AssertionLevel = tidbOptAssertionLevel(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

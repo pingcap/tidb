@@ -1694,7 +1694,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDecimal) (res types.Time, isNull bool, err error) {
-	// 0 <= unixTimeStamp <= INT32_MAX
+	// 0 <= unixTimeStamp <= 32536771199.999999
 	if unixTimeStamp.IsNegative() {
 		return res, true, nil
 	}
@@ -1702,7 +1702,9 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, err
 	}
-	if integralPart > int64(math.MaxInt32) {
+	// The max integralPart should not be larger than 32536771199.
+	// Refer to https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-28.html
+	if integralPart > 32536771199 {
 		return res, true, nil
 	}
 	// Split the integral part and fractional part of a decimal timestamp.

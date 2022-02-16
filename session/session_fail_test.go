@@ -16,16 +16,20 @@ package session_test
 
 import (
 	"context"
-	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSessionSerialSuite) TestFailStatementCommitInRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestFailStatementCommitInRetry(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("begin")
@@ -33,90 +37,109 @@ func (s *testSessionSerialSuite) TestFailStatementCommitInRetry(c *C) {
 	tk.MustExec("insert into t values (2),(3),(4),(5)")
 	tk.MustExec("insert into t values (6)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`))
 	_, err := tk.Exec("commit")
-	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError8942"), IsNil)
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError8942"))
 
 	tk.MustExec("insert into t values (6)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
 }
 
-func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestGetTSFailDirtyState(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("create table t (id int)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"))
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
 		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
 	})
-	_, err := tk.Se.Execute(ctx, "select * from t")
-	c.Assert(err, NotNil)
+	_, err := tk.Session().Execute(ctx, "select * from t")
+	if config.GetGlobalConfig().Store == "unistore" {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
 
 	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write
 	// affected by this fail flag.
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"))
 }
 
-func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
+func TestGetTSFailDirtyStateInretry(t *testing.T) {
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"), IsNil)
-		c.Assert(failpoint.Disable("tikvclient/mockGetTSErrorInRetry"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"))
+		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("create table t (id int)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`))
 	// This test will mock a PD timeout error, and recover then.
 	// Just make mockGetTSErrorInRetry return true once, and then return false.
-	c.Assert(failpoint.Enable("tikvclient/mockGetTSErrorInRetry",
-		`1*return(true)->return(false)`), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/mockGetTSErrorInRetry",
+		`1*return(true)->return(false)`))
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }
 
-func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
+func TestKillFlagInBackoff(t *testing.T) {
 	// This test checks the `killed` flag is passed down to the backoffer through
 	// session.KVVars.
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
-	tk.Se.GetSessionVars().Killed = 1
+	tk.Session().GetSessionVars().Killed = 1
 	rs, err := tk.Exec("select * from kill_backoff")
-	c.Assert(err, IsNil)
-	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Se, rs)
+	require.NoError(t, err)
+	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
 	// `interrupted` is returned when `Killed` is set.
-	c.Assert(strings.Contains(err.Error(), "Query execution was interrupted"), IsTrue)
+	require.Regexp(t, ".*Query execution was interrupted.*", err.Error())
 }
 
-func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
+func TestClusterTableSendError(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(1))
+	require.Regexp(t, ".*TiDB server timeout, address is.*", tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
 }
 
-func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestAutoCommitNeedNotLinearizability(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)`)
 
-	c.Assert(failpoint.Enable("tikvclient/getMinCommitTSFromTSO", `panic`), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/getMinCommitTSFromTSO", `panic`))
 	defer func() {
-		c.Assert(failpoint.Disable("tikvclient/getMinCommitTSFromTSO"), IsNil)
+		require.NoError(t, failpoint.Disable("tikvclient/getMinCommitTSFromTSO"))
 	}()
 
-	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
-	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"), IsNil)
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"))
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"))
 
 	// Auto-commit transactions don't need to get minCommitTS from TSO
 	tk.MustExec("INSERT INTO t1 VALUES (1)")
@@ -127,7 +150,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	func() {
 		defer func() {
 			err := recover()
-			c.Assert(err, NotNil)
+			require.NotNil(t, err)
 		}()
 		tk.MustExec("COMMIT")
 	}()
@@ -137,14 +160,14 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	func() {
 		defer func() {
 			err := recover()
-			c.Assert(err, NotNil)
+			require.NotNil(t, err)
 		}()
 		tk.MustExec("COMMIT")
 	}()
 
 	// Same for 1PC
 	tk.MustExec("set autocommit = 1")
-	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1"), IsNil)
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_enable_1pc", "1"))
 	tk.MustExec("INSERT INTO t1 VALUES (4)")
 
 	tk.MustExec("BEGIN")
@@ -152,7 +175,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	func() {
 		defer func() {
 			err := recover()
-			c.Assert(err, NotNil)
+			require.NotNil(t, err)
 		}()
 		tk.MustExec("COMMIT")
 	}()
@@ -162,7 +185,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	func() {
 		defer func() {
 			err := recover()
-			c.Assert(err, NotNil)
+			require.NotNil(t, err)
 		}()
 		tk.MustExec("COMMIT")
 	}()
