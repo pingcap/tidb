@@ -628,10 +628,12 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 			rs[pi.ID] = pi
 		}
 	}
-	for connID, p := range s.dom.GetSysProcesses() {
-		pi := p.(session.Session).ShowProcess()
-		pi.ID = connID
-		rs[connID] = pi
+	if s.dom != nil {
+		for connID, p := range s.dom.GetSysProcesses() {
+			pi := p.(session.Session).ShowProcess()
+			pi.ID = connID
+			rs[connID] = pi
+		}
 	}
 	return rs
 }
