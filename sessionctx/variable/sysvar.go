@@ -1375,6 +1375,19 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SysdateIsNow = TiDBOptOn(s)
+			return nil
+		},
+		GetGlobal: func(vars *SessionVars) (s string, err error) {
+			return strconv.FormatBool(GlobalSysdateIsNow.Load()), nil
+		},
+		SetGlobal: func(vars *SessionVars, s string) error {
+			GlobalSysdateIsNow.Store(TiDBOptOn(s))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
 		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
@@ -1695,4 +1708,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// SysdateIsNow is the name of the `sysdate_is_now` system variable
+	SysdateIsNow = "sysdate_is_now"
 )
