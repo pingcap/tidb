@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -108,10 +107,6 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
-
-	// partitionPhysTblIDOffset if Physical Table ID is not filled in by storage,
-	// add it to column on this offset (!= 0) Used for partitioned table with static pruning
-	partitionPhysTblIDOffset int
 
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -236,40 +231,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	// SelectLock and transaction buffer needs Physical Table ID for its full key
-	// For partitioned tables under static prune mode (one TableReaderExecutor per partition),
-	// it needs to be added by TiDB here, otherwise it is added by storage (column id ExtraPhysTblID)
-	if e.partitionPhysTblIDOffset != 0 {
-		physicalID := getPhysicalTableID(e.table)
-		if e.table.Meta().ID != physicalID {
-			// Static prune mode, one TableReaderExecutor for each partition
-			// and physical table id is not same as 'logical' table partition id
-
-			// After some tries it is very hard to not include a column to the be
-			// sent to the store but only filled in here.
-			// See how VirtalColumnValues is done, their defaults are still set in
-			// the store, and then updated here.
-			// For the Physical table id, it is as easy to fill it in, in the store.
-			// Only real cost is the extra bytes send over the network.
-			if req.NumRows() > 0 {
-				if req.Column(e.partitionPhysTblIDOffset).GetInt64(0) == 0 {
-					fillExtraPIDColumn(req, e.partitionPhysTblIDOffset, physicalID)
-					panic("NOT Already filled in by engine?")
-				}
-			}
-		}
-	}
-
 	return nil
-}
-
-func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
-	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
-	for i := 0; i < numRows; i++ {
-		pidColumn.AppendInt64(physicalID)
-	}
-	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.

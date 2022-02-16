@@ -3179,9 +3179,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 	cols := v.Schema().Columns
 	for i := range cols {
-		if isPartition && cols[i].ID == model.ExtraPhysTblID {
-			e.partitionPhysTblIDOffset = i
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
