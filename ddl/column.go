@@ -1878,9 +1878,10 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 			t, _ = expression.GetStmtTimestamp(ctx)
 		}
 		if col.Tp == mysql.TypeTimestamp {
-			t = t.UTC()
+			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.Tp, col.Decimal).String()
+		} else if col.Tp == mysql.TypeDatetime {
+			odValue = types.NewTime(types.FromGoTime(t), col.Tp, col.Decimal).String()
 		}
-		odValue = types.NewTime(types.FromGoTime(t), col.Tp, col.Decimal).String()
 	}
 	return odValue, nil
 }
