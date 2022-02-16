@@ -96,22 +96,22 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 // of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
 // we do not convert it because we can directly infer the scalar value.
 func (hg *Histogram) PreCalculateScalar() {
-	len := hg.Len()
-	if len == 0 {
+	l := hg.Len()
+	if l == 0 {
 		return
 	}
 	switch hg.GetLower(0).Kind() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		hg.scalars = make([]scalar, len)
-		for i := 0; i < len; i++ {
+		hg.scalars = make([]scalar, l)
+		for i := 0; i < l; i++ {
 			hg.scalars[i] = scalar{
 				lower: convertDatumToScalar(hg.GetLower(i), 0),
 				upper: convertDatumToScalar(hg.GetUpper(i), 0),
 			}
 		}
 	case types.KindBytes, types.KindString:
-		hg.scalars = make([]scalar, len)
-		for i := 0; i < len; i++ {
+		hg.scalars = make([]scalar, l)
+		for i := 0; i < l; i++ {
 			lower, upper := hg.GetLower(i), hg.GetUpper(i)
 			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
 			hg.scalars[i] = scalar{
