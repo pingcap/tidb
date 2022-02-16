@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
@@ -784,8 +783,8 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 
 			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 			require.NoError(t, err)
-			require.Equal(t, tt.exptCharset, Commentf(sql), tb.Meta().Columns[0].Charset)
-			require.Equal(t, tt.exptCollate, Commentf(sql), tb.Meta().Columns[0].Collate)
+			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].Charset, sql)
+			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].Collate, sql)
 		} else {
 			_, err := tk.Exec(sql)
 			require.Errorf(t, err, sql)
