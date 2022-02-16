@@ -281,6 +281,7 @@ func (importer *FileImporter) ImportKVFiles(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
 	rule *RewriteRules,
+	restoreTs uint64,
 ) error {
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
@@ -318,7 +319,7 @@ func (importer *FileImporter) ImportKVFiles(
 			info := regionInfo
 			// Try to download file.
 			errDownload := utils.WithRetry(ctx, func() error {
-				return importer.downloadAndApplyKVFile(ctx, file, rule, info)
+				return importer.downloadAndApplyKVFile(ctx, file, rule, info, restoreTs)
 			}, utils.NewDownloadSSTBackoffer())
 			if errDownload != nil {
 				for _, e := range multierr.Errors(errDownload) {
@@ -732,6 +733,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	file *backuppb.DataFileInfo,
 	rules *RewriteRules,
 	regionInfo *RegionInfo,
+	restoreTs uint64,
 ) error {
 	leader := regionInfo.Leader
 	if leader == nil {
@@ -748,10 +750,19 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
 	}
 
-	req := &import_sstpb.ApplyRequest{
+
+	meta := &import_sstpb.KVMeta{
 		Name:           file.Path,
-		StorageBackend: importer.backend,
 		Cf:             file.Cf,
+		// TODO fill the length
+		Length: 0,
+		IsDelete: file.Type == backuppb.FileType_Delete,
+		RestoreTs: restoreTs,
+	}
+
+	req := &import_sstpb.ApplyRequest{
+		Meta: meta,
+		StorageBackend: importer.backend,
 		RewriteRule:    rule,
 	}
 	log.Debug("apply kv file", logutil.Leader(leader))

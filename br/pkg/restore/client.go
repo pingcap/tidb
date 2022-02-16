@@ -100,6 +100,9 @@ type Client struct {
 	dom          *domain.Domain
 
 	batchDdlSize uint
+	// restoreTs is used for kv file restore.
+	// TiKV will filter the key space larger than this ts.
+	restoreTs   uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -191,6 +194,10 @@ func (rc *Client) Close() {
 		rc.db.Close()
 	}
 	log.Info("Restore client closed")
+}
+
+func (rc *Client) SetRestoreTs(ts uint64) {
+	rc.restoreTs = ts
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
@@ -1440,7 +1447,7 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			defer func() {
 				log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 			}()
-			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule)
+			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule, rc.restoreTs)
 		})
 	}
 
