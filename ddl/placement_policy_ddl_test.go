@@ -124,7 +124,7 @@ func (s *testDDLSuiteToVerify) TestPlacementPolicyInUse() {
 	t4.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t4)
 
-	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		nil,
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
