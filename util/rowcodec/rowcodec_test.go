@@ -891,9 +891,9 @@ var (
 			return d
 		}
 	}
-	withLen = func(len int) func(d types.Datum) types.Datum {
+	withLen = func(l int) func(d types.Datum) types.Datum {
 		return func(d types.Datum) types.Datum {
-			d.SetLength(len)
+			d.SetLength(l)
 			return d
 		}
 	}

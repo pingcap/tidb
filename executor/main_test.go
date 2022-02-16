@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -51,14 +50,12 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	tmpDir := config.GetGlobalConfig().TempStoragePath
-	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(tmpDir, 0755)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
