@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -1140,23 +1139,20 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 
 // ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
 func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
-	b, err := ioutil.ReadAll(reader)
+	ns, err := reader.ReadString('\n')
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s := string(b)
-	nsplit := strings.Split(s, "\n")
-	if len(nsplit) < 2 {
-		return errors.New("Error response in ComputeTiFlashStatus")
-	}
 	// The count
-	n, err := strconv.ParseInt(nsplit[0], 10, 64)
+	ns = strings.Trim(ns, "\r\n\t")
+	n, err := strconv.ParseInt(ns, 10, 64)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// The regions
-	srs := strings.Trim(nsplit[1], "\r\n\t")
-	splits := strings.Split(srs, " ")
+	regions, err := reader.ReadString('\n')
+	regions = strings.Trim(regions, "\r\n\t")
+	splits := strings.Split(regions, " ")
 	realN := int64(0)
 	for _, s := range splits {
 		// For (`table`, `store`), has region `r`
