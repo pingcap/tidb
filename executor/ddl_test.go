@@ -77,7 +77,7 @@ func TestInTxnExecDDLFail(t *testing.T) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	require.Equal(t, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'", err.Error())
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
@@ -123,7 +123,7 @@ func TestCreateTable(t *testing.T) {
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
-		require.Nil(t, err1)
+		require.NoError(t, err1)
 		if req.NumRows() == 0 {
 			break
 		}
@@ -137,7 +137,7 @@ func TestCreateTable(t *testing.T) {
 	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
-		require.Nil(t, err1)
+		require.NoError(t, err1)
 		if req.NumRows() == 0 {
 			break
 		}
@@ -145,7 +145,7 @@ func TestCreateTable(t *testing.T) {
 			require.Equal(t, "double", req.GetRow(0).GetString(1))
 		}
 	}
-	require.Nil(t, rs.Close())
+	require.NoError(t, rs.Close())
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
@@ -217,10 +217,10 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	require.Equal(t, "[schema:1050]Table 'test.view_t' already exists", err.Error())
+	require.EqualError(t, err, "[schema:1050]Table 'test.view_t' already exists")
 	// create view on nonexistent table
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	require.Equal(t, "[schema:1146]Table 'test.t1' doesn't exist", err.Error())
+	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
 	// simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -242,7 +242,7 @@ func TestCreateView(t *testing.T) {
 	// view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	require.Equal(t, "[schema:1050]Table 'test.v1' already exists", err.Error())
+	require.EqualError(t, err, "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
 	// view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
@@ -331,7 +331,7 @@ func TestIssue16250(t *testing.T) {
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create view view_issue16250 as select * from t")
 	_, err := tk.Exec("truncate table view_issue16250")
-	require.Equal(t, "[schema:1146]Table 'test.view_issue16250' doesn't exist", err.Error())
+	require.EqualError(t, err, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
 func TestIssue24771(t *testing.T) {
@@ -381,10 +381,10 @@ func TestTruncateSequence(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create sequence if not exists seq")
 	_, err := tk.Exec("truncate table seq")
-	require.Equal(t, "[schema:1146]Table 'test.seq' doesn't exist", err.Error())
+	require.EqualError(t, err, "[schema:1146]Table 'test.seq' doesn't exist")
 	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
 	_, err = tk.Exec("truncate table seq1")
-	require.Equal(t, "[schema:1146]Table 'test.seq1' doesn't exist", err.Error())
+	require.EqualError(t, err, "[schema:1146]Table 'test.seq1' doesn't exist")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
 }
@@ -435,7 +435,7 @@ func TestCreateViewWithOverlongColName(t *testing.T) {
 
 	tk.MustExec("drop view v ")
 	err := tk.ExecToErr("create view v(`" + strings.Repeat("b", 65) + "`) as select a from t;")
-	require.Equal(t, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long", err.Error())
+	require.EqualError(t, err, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
 }
 
 func TestCreateDropDatabase(t *testing.T) {
@@ -520,20 +520,19 @@ func TestCreateDropView(t *testing.T) {
 	tk.MustExec("create or replace view drop_test as select 1,2")
 
 	_, err := tk.Exec("drop table drop_test")
-	require.Equal(t, "[schema:1051]Unknown table 'test.drop_test'", err.Error())
+	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
 
-	_, err = tk.Exec("drop view if exists drop_test")
-	require.NoError(t, err)
+	tk.MustExec("drop view if exists drop_test")
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
-	require.Equal(t, "Drop tidb system table 'mysql.gc_delete_range' is forbidden", err.Error())
+	require.EqualError(t, err, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
 
 	_, err = tk.Exec("drop view drop_test")
-	require.Equal(t, "[schema:1051]Unknown table 'test.drop_test'", err.Error())
+	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
 
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
-	require.Equal(t, "[ddl:1347]'test.t_v' is not VIEW", err.Error())
+	require.EqualError(t, err, "[ddl:1347]'test.t_v' is not VIEW")
 
 	tk.MustExec("create table t_v1(a int, b int);")
 	tk.MustExec("create table t_v2(a int, b int);")
@@ -1481,38 +1480,38 @@ func TestCheckDefaultFsp(t *testing.T) {
 	tk.MustExec(`drop table if exists t;`)
 
 	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
 
 	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
 	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
 	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'ttt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'ttt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'ttt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tttt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
-	require.Equal(t, "[ddl:1067]Invalid default value for 'tttt'", err.Error())
+	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
 }
 
 func TestTimestampMinDefaultValue(t *testing.T) {
