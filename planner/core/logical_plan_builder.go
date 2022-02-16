@@ -5791,13 +5791,6 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 			newSpec.Frame = nil
 			updated = true
 		}
-		if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
-			useDefaultFrame, defaultFrame := aggregation.UseDefaultFrame(windowFuncName)
-			if useDefaultFrame {
-				newSpec.Frame = &defaultFrame
-				updated = true
-			}
-		}
 		if updated {
 			return &newSpec, true
 		}

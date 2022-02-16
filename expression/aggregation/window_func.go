@@ -71,22 +71,6 @@ var noFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncRowNumber:   {},
 }
 
-var useDefaultFrameWindowFuncs = map[string]ast.FrameClause{
-	ast.WindowFuncRowNumber: {
-		Type: ast.Rows,
-		Extent: ast.FrameExtent{
-			Start: ast.FrameBound{Type: ast.CurrentRow},
-			End:   ast.FrameBound{Type: ast.CurrentRow},
-		},
-	},
-}
-
-// UseDefaultFrame indicates if the window function has a provided frame that will override user's designation
-func UseDefaultFrame(name string) (bool, ast.FrameClause) {
-	frame, ok := useDefaultFrameWindowFuncs[strings.ToLower(name)]
-	return ok, frame
-}
-
 // NeedFrame checks if the function need frame specification.
 func NeedFrame(name string) bool {
 	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
