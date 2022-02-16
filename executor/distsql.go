@@ -196,11 +196,20 @@ type IndexReaderExecutor struct {
 	memTracker *memory.Tracker
 
 	selectResultHook // for testing
+
+	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
+	// Used by the temporary table, cached table.
+	dummy bool
+}
+
+// Table implements the dataSourceExecutor interface.
+func (e *IndexReaderExecutor) Table() table.Table {
+	return e.table
 }
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -214,7 +223,7 @@ func (e *IndexReaderExecutor) Close() (err error) {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		req.Reset()
 		return nil
 	}
@@ -284,7 +293,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// In a test case IndexReaderExecutor is mocked and e.table is nil.
 	// Avoid sending distsql request to TIKV.
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -382,6 +391,10 @@ type IndexLookUpExecutor struct {
 
 	// cancelFunc is called when close the executor
 	cancelFunc context.CancelFunc
+
+	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
+	// Used by the temporary table, cached table.
+	dummy bool
 }
 
 type getHandleType int8
@@ -395,6 +408,11 @@ const (
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
+}
+
+// Table implements the dataSourceExecutor interface.
+func (e *IndexLookUpExecutor) Table() table.Table {
+	return e.table
 }
 
 // Open implements the Executor Open interface.
@@ -413,7 +431,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -679,7 +697,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -707,7 +725,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		req.Reset()
 		return nil
 	}

@@ -1593,7 +1593,7 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("use rename3")
 	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
 	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t3", errno.ErrTableExists)
-	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t4", errno.ErrFileNotFound)
+	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t4", errno.ErrNoSuchTable)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
