@@ -15,7 +15,6 @@
 package executor_test
 
 import (
-	"flag"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -23,12 +22,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -41,37 +37,10 @@ func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	return tk
 }
 
-func createSampleStore(t *testing.T) (store kv.Storage, tk *testkit.TestKit, clean func()) {
-	var err error
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-
-	if useMockTikv {
-		store, err = mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-			}),
-		)
-		require.NoError(t, err)
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	dom.SetStatsUpdating(true)
-
-	tk = createSampleTestkit(t, store)
-	clean = func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}
-	return
-}
-
 func TestTableSampleBasic(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
@@ -101,8 +70,9 @@ func TestTableSampleBasic(t *testing.T) {
 }
 
 func TestTableSampleMultiRegions(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?);", i)
@@ -123,8 +93,9 @@ func TestTableSampleMultiRegions(t *testing.T) {
 }
 
 func TestTableSampleNoSplitTable(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
@@ -138,8 +109,9 @@ func TestTableSampleNoSplitTable(t *testing.T) {
 }
 
 func TestTableSamplePlan(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int default 10);")
 	tk.MustExec("split table t between (0) and (100000) regions 4;")
@@ -151,8 +123,9 @@ func TestTableSamplePlan(t *testing.T) {
 }
 
 func TestTableSampleSchema(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	// Clustered index
 	tk.MustExec("create table t (a varchar(255) primary key, b bigint);")
@@ -182,8 +155,9 @@ func TestTableSampleSchema(t *testing.T) {
 }
 
 func TestTableSampleInvalid(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255));")
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustExec("create view v as select * from t;")
@@ -197,8 +171,9 @@ func TestTableSampleInvalid(t *testing.T) {
 }
 
 func TestTableSampleWithTiDBRowID(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255));")
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustQuery("select _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1"))
@@ -208,8 +183,9 @@ func TestTableSampleWithTiDBRowID(t *testing.T) {
 }
 
 func TestTableSampleWithPartition(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;")
 	tk.MustExec("insert into t values (1, '1'), (2, '2'), (3, '3');")
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
@@ -235,8 +211,9 @@ func TestTableSampleWithPartition(t *testing.T) {
 }
 
 func TestTableSampleGeneratedColumns(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key, b int as (a + 1), c int as (b + 1), d int as (c + 1));")
 	tk.MustQuery("split table t between (0) and (10000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t(a) values (1), (2), (2999), (4999), (9999);")
@@ -251,8 +228,9 @@ func TestTableSampleGeneratedColumns(t *testing.T) {
 }
 
 func TestTableSampleUnionScanIgnorePendingKV(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key);")
 	tk.MustQuery("split table t between (0) and (40000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t values (1), (1000), (10002);")
@@ -270,8 +248,9 @@ func TestTableSampleUnionScanIgnorePendingKV(t *testing.T) {
 }
 
 func TestTableSampleTransactionConsistency(t *testing.T) {
-	store, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk2 := createSampleTestkit(t, store)
 
 	tk.MustExec("create table t (a int primary key);")
@@ -287,8 +266,9 @@ func TestTableSampleTransactionConsistency(t *testing.T) {
 }
 
 func TestTableSampleNotSupportedPlanWarning(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key, b int, c varchar(255));")
 	tk.MustQuery("split table t between (0) and (10000) regions 5;").Check(testkit.Rows("4 1"))
 	tk.MustExec("insert into t values (1000, 1, '1'), (1001, 1, '1'), (2100, 2, '2'), (4500, 3, '3');")
@@ -302,8 +282,9 @@ func TestTableSampleNotSupportedPlanWarning(t *testing.T) {
 }
 
 func TestMaxChunkSize(t *testing.T) {
-	_, tk, clean := createSampleStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?);", i)
