@@ -649,7 +649,9 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = currentTs
 	}
+
 	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+	client.SetRestoreTs(cfg.RestoreTS)
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
