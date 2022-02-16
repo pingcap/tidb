@@ -96,6 +96,8 @@ type ExternalStorage interface {
 	Create(ctx context.Context, path string) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+	// AtomicWriteFile like WriteFile, but it is atomic.
+	AtomicWriteFile(ctx context.Context, name string, data []byte) error
 }
 
 // ExternalFileReader represents the streaming external file reader.

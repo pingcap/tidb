@@ -226,7 +226,22 @@ func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 
 // Rename file name from oldFileName to newFileName.
 func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
-	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently gcs storage doesn't support Rename")
+	data, err := s.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.WriteFile(ctx, newFileName, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.DeleteFile(ctx, oldFileName)
+}
+
+// AtomicWriteFile implements ExternalStorage interface.
+func (s *gcsStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
+	// gcsStorage write is may already atomic
+	// https://pkg.go.dev/cloud.google.com/go/storage#ObjectHandle.NewWriter
+	return s.WriteFile(ctx, name, data)
 }
 
 func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {

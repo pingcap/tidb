@@ -1035,16 +1035,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// because `WriteFile` is not atomic, directly write into it may reset the file
-	// to an empty file if write is not finished.
-	tmpFileName := cpdb.fileName + ".tmp"
-	if err := cpdb.exStorage.WriteFile(cpdb.ctx, tmpFileName, serialized); err != nil {
-		return errors.Trace(err)
-	}
-	if err := cpdb.exStorage.Rename(cpdb.ctx, tmpFileName, cpdb.fileName); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return cpdb.exStorage.AtomicWriteFile(cpdb.ctx, cpdb.fileName, serialized)
 }
 
 func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {

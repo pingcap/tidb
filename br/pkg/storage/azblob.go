@@ -381,7 +381,22 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFil
 }
 
 func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
-	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently azure blob storage doesn't support Rename")
+	data, err := s.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.WriteFile(ctx, newFileName, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.DeleteFile(ctx, oldFileName)
+}
+
+// AtomicWriteFile implements ExternalStorage interface.
+func (s *AzureBlobStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
+	// AzureBlobStorage WriteFile use interface about BlockBlob Upload which may be atomic
+	// https://pkg.go.dev/github.com/Azure/azure-storage-blob-go/azblob#BlockBlobURL.Upload
+	return s.WriteFile(ctx, name, data)
 }
 
 type azblobObjectReader struct {

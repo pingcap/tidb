@@ -746,15 +746,6 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 	if err != nil {
 		return errors.Trace(err)
 	}
-	isExist, err := rs.FileExists(ctx, newFileName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if isExist {
-		if err = rs.DeleteFile(ctx, newFileName); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	err = rs.WriteFile(ctx, newFileName, content)
 	if err != nil {
 		return errors.Trace(err)
@@ -763,6 +754,13 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// AtomicWriteFile implements ExternalStorage interface.
+func (rs *S3Storage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
+	// s3 write is already atomic
+	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel
+	return rs.WriteFile(ctx, name, data)
 }
 
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.

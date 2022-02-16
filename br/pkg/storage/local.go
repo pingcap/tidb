@@ -111,6 +111,20 @@ func (l *LocalStorage) Rename(ctx context.Context, oldFileName, newFileName stri
 	return os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName))
 }
 
+// AtomicWriteFile implements ExternalStorage interface.
+func (l *LocalStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
+	// because `os.WriteFile` is not atomic, directly write into it may reset the file
+	// to an empty file if write is not finished.
+	tmpPath := filepath.Join(l.base, name) + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
 	if err != nil {
