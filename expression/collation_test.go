@@ -526,6 +526,32 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColString(charset.CharsetGBK, charset.CollationGBKBin),
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColJSON(),
+				newColString(charset.CharsetBinary, charset.CharsetBinary),
+			},
+			[]types.EvalType{types.ETJson, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+		},
+		{
+			[]string{
 				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
