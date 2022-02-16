@@ -92,6 +92,7 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
+	// Deprecated: only used by feedback now
 	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
@@ -1766,8 +1767,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 
 // CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
 func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
 }
 
