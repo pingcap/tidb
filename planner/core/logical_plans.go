@@ -1058,9 +1058,9 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             *ast.SelectLockInfo
-	tblID2Handle     map[int64][]HandleCols
-	partitionedTable []table.PartitionedTable
+	Lock         *ast.SelectLockInfo
+	tblID2Handle map[int64][]HandleCols
+
 	// tblID2phyTblIDCol is used for partitioned tables,
 	// the child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)

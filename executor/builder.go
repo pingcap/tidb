@@ -717,7 +717,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
 		tblID2Handle:       v.TblID2Handle,
-		partitionedTable:   v.PartitionedTable,
 		tblID2PhysTblIDCol: v.TblID2PhysTblIDCol,
 	}
 

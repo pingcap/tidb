@@ -1250,7 +1250,6 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 	selectLock := LogicalLock{
 		Lock:               lock,
 		tblID2Handle:       b.handleHelper.tailMap(),
-		partitionedTable:   b.partitionedTable,
 		tblID2PhysTblIDCol: tblID2PhysTblIDCol,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)

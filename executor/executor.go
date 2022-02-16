@@ -914,11 +914,8 @@ type SelectLockExec struct {
 
 	tblID2Handle map[int64][]plannercore.HandleCols
 
-	// All the partition tables in the children of this executor.
-	partitionedTable []table.PartitionedTable
-
 	// TODO: Do we even need to use a plannercore.HandleCols struct?
-	// tblID2PhyTblIDCol is used for partitioned tables in dynamic prune mode,
+	// tblID2PhyTblIDCol is used for partitioned tables
 	// the child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)
 	// Used during building
@@ -935,7 +932,7 @@ type SelectLockExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	if len(e.partitionedTable) > 0 {
+	if len(e.tblID2PhysTblIDCol) > 0 {
 		// This should be possible to do by going through the tblID2Handle and then see if the TableById gives a partitioned table or not, and then create the map for static prune? Maybe works for dynamic too?
 		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
