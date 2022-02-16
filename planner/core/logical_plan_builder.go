@@ -5798,14 +5798,18 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 	return spec, false
 }
 
-// append ast.WindowSpec to []*ast.WindowSpec if absent
-func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*ast.WindowSpec {
+// append ast.WindowSpec to []*ast.WindowSpec if absent, check deep equal.
+func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) ([]*ast.WindowSpec, *ast.WindowSpec, error) {
 	for _, spec := range specs {
-		if spec == ns {
-			return specs
+		equal, err := specEqual(spec, ns)
+		if err != nil {
+			return nil, nil, err
+		}
+		if equal {
+			return specs, spec, nil
 		}
 	}
-	return append(specs, ns)
+	return append(specs, ns), ns, nil
 }
 
 func specEqual(s1, s2 *ast.WindowSpec) (equal bool, err error) {
@@ -5825,64 +5829,45 @@ func specEqual(s1, s2 *ast.WindowSpec) (equal bool, err error) {
 }
 
 // groupWindowFuncs groups the window functions according to the window specification name.
-// TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
-	updatedSpecMap := make(map[string][]*ast.WindowSpec)
+	updatedSpecMap := make(map[string]struct{})
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
+	var err error
 	for _, windowFunc := range windowFuncs {
+		var spec *ast.WindowSpec
 		if windowFunc.Spec.Name.L == "" {
-			spec := &windowFunc.Spec
+			spec = &windowFunc.Spec
 			if spec.Ref.L != "" {
 				ref, ok := b.windowSpecs[spec.Ref.L]
 				if !ok {
 					return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
 				}
-				err := mergeWindowSpec(spec, ref)
+				err = mergeWindowSpec(spec, ref)
 				if err != nil {
 					return nil, nil, err
 				}
 			}
 			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
-			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
-			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
-			continue
+		} else {
+			var ok, updated bool
+			name := windowFunc.Spec.Name.L
+			spec, ok = b.windowSpecs[name]
+			if !ok {
+				return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
+			}
+			spec, updated = b.handleDefaultFrame(spec, windowFunc.F)
+			if updated {
+				updatedSpecMap[name] = struct{}{}
+			}
 		}
 
-		name := windowFunc.Spec.Name.L
-		spec, ok := b.windowSpecs[name]
-		if !ok {
-			return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
+		orderedSpec, spec, err = appendIfAbsentWindowSpec(orderedSpec, spec)
+		if err != nil {
+			return nil, nil, err
 		}
-		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
-		if !updated {
-			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
-			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
-		} else {
-			var updatedSpec *ast.WindowSpec
-			if _, ok := updatedSpecMap[name]; !ok {
-				updatedSpecMap[name] = []*ast.WindowSpec{newSpec}
-				updatedSpec = newSpec
-			} else {
-				for _, spec := range updatedSpecMap[name] {
-					eq, err := specEqual(spec, newSpec)
-					if err != nil {
-						return nil, nil, err
-					}
-					if eq {
-						updatedSpec = spec
-						break
-					}
-				}
-				if updatedSpec == nil {
-					updatedSpec = newSpec
-					updatedSpecMap[name] = append(updatedSpecMap[name], newSpec)
-				}
-			}
-			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
-			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
-		}
+		groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 	}
 	// Unused window specs should also be checked in b.buildWindowFunctions,
 	// so we add them to `groupedWindow` with empty window functions.
@@ -5890,7 +5875,10 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if _, ok := groupedWindow[spec]; !ok {
 			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
 				groupedWindow[spec] = nil
-				orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
+				orderedSpec, _, err = appendIfAbsentWindowSpec(orderedSpec, spec)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}
