@@ -525,10 +525,11 @@ func containTableDual(p Plan) bool {
 	if !ok {
 		return false
 	}
+	childContainTableDual := false
 	for _, child := range physicalPlan.Children() {
-		return containTableDual(child)
+		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
-	return false
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
