@@ -209,6 +209,8 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
 	p.cost = tasks[0].cost()
+	// We need to pull the projection under unionScan upon unionScan.
+	// Since the projection only prunes columns, it's ok the put it upon unionScan.
 	if sel, ok := tasks[0].plan().(*PhysicalSelection); ok {
 		if pj, ok := sel.children[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
