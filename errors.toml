@@ -226,6 +226,271 @@ error = '''
 the system table isn't supported for restoring yet
 '''
 
+["Lighting:Restore:ErrChecksumMismatch"]
+error = '''
+checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
+'''
+
+["Lightning:Checkpoint:ErrCheckpointNotFound"]
+error = '''
+checkpoint not found
+'''
+
+["Lightning:Checkpoint:ErrCleanCheckpoint"]
+error = '''
+clean checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrInitCheckpoint"]
+error = '''
+init checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrInvalidCheckpoint"]
+error = '''
+invalid checkpoint
+'''
+
+["Lightning:Checkpoint:ErrOpenCheckpoint"]
+error = '''
+open checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrReadCheckpoint"]
+error = '''
+read checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrUnknownCheckpointDriver"]
+error = '''
+unknown checkpoint driver '%s'
+'''
+
+["Lightning:Checkpoint:ErrUpdateCheckpoint"]
+error = '''
+update checkpoint error
+'''
+
+["Lightning:Common:ErrInvalidArgument"]
+error = '''
+invalid argument
+'''
+
+["Lightning:Common:ErrUnknown"]
+error = '''
+unknown error
+'''
+
+["Lightning:Common:ErrVersionMismatch"]
+error = '''
+version mismatch
+'''
+
+["Lightning:Config:ErrInvalidConfig"]
+error = '''
+invalid config
+'''
+
+["Lightning:Config:ErrInvalidSortedKVDir"]
+error = '''
+invalid sorted-kv-dir '%s' for local backend, please change the config or delete the path
+'''
+
+["Lightning:Config:ErrInvalidTLSConfig"]
+error = '''
+invalid tls config
+'''
+
+["Lightning:Config:ErrParseConfigFile"]
+error = '''
+cannot parse config file '%s'
+'''
+
+["Lightning:Config:ErrReadConfigFile"]
+error = '''
+cannot read config file '%s'
+'''
+
+["Lightning:DB:ErrDBConnect"]
+error = '''
+failed to connect database
+'''
+
+["Lightning:DB:ErrInitErrManager"]
+error = '''
+init error manager error
+'''
+
+["Lightning:DB:ErrInitMetaManager"]
+error = '''
+init meta manager error
+'''
+
+["Lightning:KV:ErrCheckKVVersion"]
+error = '''
+check tikv version error
+'''
+
+["Lightning:KV:ErrCheckMultiIngest"]
+error = '''
+check multi-ingest support error
+'''
+
+["Lightning:KV:ErrCreateKVClient"]
+error = '''
+create kv client error
+'''
+
+["Lightning:Loader:ErrInvalidSchemaFile"]
+error = '''
+invalid schema file
+'''
+
+["Lightning:Loader:ErrTableRoute"]
+error = '''
+table route error
+'''
+
+["Lightning:MetaMgr:ErrMetaMgrUnknown"]
+error = '''
+unknown error occur on meta manager
+'''
+
+["Lightning:PD:ErrCreatePDClient"]
+error = '''
+create pd client error
+'''
+
+["Lightning:PD:ErrPauseGC"]
+error = '''
+pause gc error
+'''
+
+["Lightning:PD:ErrUpdatePD"]
+error = '''
+update pd error
+'''
+
+["Lightning:PreCheck:ErrCheckCSVHeader"]
+error = '''
+check csv header error
+'''
+
+["Lightning:PreCheck:ErrCheckClusterRegion"]
+error = '''
+check tikv cluster region error
+'''
+
+["Lightning:PreCheck:ErrCheckDataSource"]
+error = '''
+check data source error
+'''
+
+["Lightning:PreCheck:ErrCheckLocalResource"]
+error = '''
+check local storage resource error
+'''
+
+["Lightning:PreCheck:ErrCheckTableEmpty"]
+error = '''
+check table empty error
+'''
+
+["Lightning:PreCheck:ErrCheckpointSchemaConflict"]
+error = '''
+checkpoint schema conflict
+'''
+
+["Lightning:PreCheck:ErrPreCheckFailed"]
+error = '''
+tidb-lightning pre-check failed: %s
+'''
+
+["Lightning:PreCheck:ErrSystemRequirementNotMet"]
+error = '''
+system requirement not met
+'''
+
+["Lightning:Restore:ErrAllocTableRowIDs"]
+error = '''
+allocate table row id error
+'''
+
+["Lightning:Restore:ErrCheckLocalFile"]
+error = '''
+cannot find local file for table: %s engineDir: %s
+'''
+
+["Lightning:Restore:ErrCreateSchema"]
+error = '''
+create schema failed, table: %s, stmt: %s
+'''
+
+["Lightning:Restore:ErrEncodeKV"]
+error = '''
+encode kv error in file %s at offset %d
+'''
+
+["Lightning:Restore:ErrInvalidMetaStatus"]
+error = '''
+invalid meta status: '%s'
+'''
+
+["Lightning:Restore:ErrInvalidSchemaStmt"]
+error = '''
+invalid schema statement: '%s'
+'''
+
+["Lightning:Restore:ErrOpenDuplicateDB"]
+error = '''
+open duplicate db error
+'''
+
+["Lightning:Restore:ErrRestoreTable"]
+error = '''
+restore table %s failed
+'''
+
+["Lightning:Restore:ErrSchemaNotExists"]
+error = '''
+table `%s`.`%s` schema not found
+'''
+
+["Lightning:Restore:ErrTableIsChecksuming"]
+error = '''
+table '%s' is checksuming
+'''
+
+["Lightning:Restore:ErrUnknownBackend"]
+error = '''
+unknown backend %s
+'''
+
+["Lightning:Restore:ErrUnknownColumns"]
+error = '''
+unknown columns in header (%s) for table %s
+'''
+
+["Lightning:Storage:ErrEmptySourceDir"]
+error = '''
+data-source-dir '%s' is empty
+'''
+
+["Lightning:Storage:ErrInvalidPermission"]
+error = '''
+invalid permission
+'''
+
+["Lightning:Storage:ErrInvalidStorageConfig"]
+error = '''
+invalid data-source-dir
+'''
+
+["Lightning:Storage:ErrStorageUnknown"]
+error = '''
+unknown storage error
+'''
+
 ["admin:8003"]
 error = '''
 TiDB admin check table failed.
