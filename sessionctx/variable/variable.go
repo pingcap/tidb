@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +64,15 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+
+	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// even if the performance might be slowed down.
+	AssertionStrictStr = "STRICT"
+	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	// performance should be performed.
+	AssertionFastStr = "FAST"
+	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	AssertionOffStr = "OFF"
 )
 
 // Global config name list.
@@ -377,7 +385,7 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 		}
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	val, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
@@ -385,11 +393,12 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	}
 	if val < uint64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
+
 	}
 	return value, nil
 }
@@ -404,11 +413,11 @@ func (sv *SysVar) checkInt64SystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < sv.MinValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > int64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -418,7 +427,7 @@ func (sv *SysVar) checkEnumSystemVar(value string, vars *SessionVars) (string, e
 	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
 	var iStr string
 	for i, v := range sv.PossibleValues {
-		iStr = fmt.Sprintf("%d", i)
+		iStr = strconv.Itoa(i)
 		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
 			return v, nil
 		}
@@ -436,11 +445,11 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < float64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > float64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -554,12 +563,12 @@ func SetSysVar(name string, value string) {
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	copy := make(map[string]*SysVar, len(sysVars))
+	m := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
 		tmp := *sv
-		copy[name] = &tmp
+		m[name] = &tmp
 	}
-	return copy
+	return m
 }
 
 func init() {

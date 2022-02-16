@@ -34,7 +34,7 @@ func TestSpace(t *testing.T) {
 	}
 	for _, test := range okTable {
 		rest, err := utilparser.Space(test.Input, test.Times)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, test.Expected, rest)
 	}
 
@@ -70,7 +70,7 @@ func TestDigit(t *testing.T) {
 	for _, test := range okTable {
 		digits, rest, err := utilparser.Digit(test.Input, test.Times)
 
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, test.ExpectedDigits, digits)
 		require.Equal(t, test.ExpectedRest, rest)
 	}
@@ -107,7 +107,7 @@ func TestNumber(t *testing.T) {
 	for _, test := range okTable {
 		digits, rest, err := utilparser.Number(test.Input)
 
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, test.ExpectedNum, digits)
 		require.Equal(t, test.ExpectedRest, rest)
 	}
@@ -143,12 +143,12 @@ func TestCharAndAnyChar(t *testing.T) {
 	for _, test := range okTable {
 		rest, err := utilparser.Char(test.Input, test.Char)
 
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, test.Expected, rest)
 
 		rest, err = utilparser.AnyChar(test.Input)
 
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, test.Expected, rest)
 	}
 

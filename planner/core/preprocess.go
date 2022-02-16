@@ -773,18 +773,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 				return
-			case ast.TableOptionPlacementPrimaryRegion,
-				ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount,
-				ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount,
-				ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints,
-				ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints,
-				ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints,
-				ast.TableOptionPlacementPolicy:
+			case ast.TableOptionPlacementPolicy:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
@@ -847,6 +836,16 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
+	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
 	}
 }
 
@@ -1118,6 +1117,14 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				p.err = ErrInternal.GenWithStack(msg)
 				return
 			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -1139,13 +1146,19 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 	return nil
 }
 
-// checkIndexInfo checks index name and index column names.
+// checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
+	}
+	for _, idxSpec := range IndexPartSpecifications {
+		// -1 => unspecified/full, > 0 OK, 0 => error
+		if idxSpec.Expr == nil && idxSpec.Length == 0 {
+			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
+		}
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
 }
@@ -1204,7 +1217,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+	if tableMetaInfo.PlacementPolicyRef != nil {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 

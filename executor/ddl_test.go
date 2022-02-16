@@ -671,25 +671,6 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 
 }
 
-func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
-	tk.MustExec(testSQL)
-
-	testSQL = `use test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
-
-	testSQL = `drop database test_db;`
-	tk.MustExec(testSQL)
-	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows(mysql.DefaultCharset))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(mysql.DefaultCollationName))
-}
-
 func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "col_charset_collate"
@@ -1612,7 +1593,7 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("use rename3")
 	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
 	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t3", errno.ErrTableExists)
-	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t4", errno.ErrFileNotFound)
+	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t4", errno.ErrNoSuchTable)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")

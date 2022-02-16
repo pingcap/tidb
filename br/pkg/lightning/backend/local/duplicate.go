@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -67,12 +66,12 @@ type pendingIndexHandles struct {
 
 // makePendingIndexHandlesWithCapacity makes the pendingIndexHandles struct-of-arrays with the given
 // capacity for every internal array.
-func makePendingIndexHandlesWithCapacity(cap int) pendingIndexHandles {
+func makePendingIndexHandlesWithCapacity(capacity int) pendingIndexHandles {
 	return pendingIndexHandles{
-		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, cap),
-		indexNames:        make([]string, 0, cap),
-		handles:           make([]tidbkv.Handle, 0, cap),
-		rawHandles:        make([][]byte, 0, cap),
+		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, capacity),
+		indexNames:        make([]string, 0, capacity),
+		handles:           make([]tidbkv.Handle, 0, capacity),
+		rawHandles:        make([][]byte, 0, capacity),
 	}
 }
 
@@ -248,7 +247,7 @@ type DupKVStream interface {
 // It collects duplicate key-value pairs from a pebble.DB.
 //goland:noinspection GoNameStartsWithPackageName
 type LocalDupKVStream struct {
-	iter pkgkv.Iter
+	iter Iter
 }
 
 // NewLocalDupKVStream creates a new LocalDupKVStream with the given duplicate db and key range.
@@ -543,11 +542,11 @@ type dupTask struct {
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
-	var tasks []dupTask
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tasks := make([]dupTask, 0, len(keyRanges))
 	for _, kr := range keyRanges {
 		tableID := tablecodec.DecodeTableID(kr.StartKey)
 		tasks = append(tasks, dupTask{
@@ -587,7 +586,7 @@ func (m *DuplicateManager) splitLocalDupTaskByKeys(
 		return nil, errors.Trace(err)
 	}
 	ranges := splitRangeBySizeProps(Range{start: task.StartKey, end: task.EndKey}, sizeProps, sizeLimit, keysLimit)
-	var newDupTasks []dupTask
+	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
 			KeyRange: tidbkv.KeyRange{
