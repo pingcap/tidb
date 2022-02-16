@@ -107,7 +107,7 @@ func SearchPlacementRule(tableID int64, placementRules []pdtypes.Rule, role pdty
 		if err != nil {
 			continue
 		}
-		_, decoded, err := codec.DecodeBytes(key)
+		_, decoded, err := codec.DecodeBytes(key, nil)
 		if err != nil {
 			continue
 		}
