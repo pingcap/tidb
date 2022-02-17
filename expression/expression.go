@@ -993,6 +993,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		ast.LastDay,
+		ast.Sysdate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,

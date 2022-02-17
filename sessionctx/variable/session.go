@@ -1002,6 +1002,8 @@ type SessionVars struct {
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
 
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
 	// EnableMutationChecker indicates whether to check data consistency for mutations
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
