@@ -465,6 +465,7 @@ type EtcdBackend interface {
 	StartGCWorker() error
 }
 
+// StorageWithPD is used to get pd client.
 type StorageWithPD interface {
 	GetPDClient() pd.Client
 }
