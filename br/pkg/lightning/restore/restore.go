@@ -1467,6 +1467,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if cp.Status < checkpoints.CheckpointStatusAllWritten && len(tableMeta.DataFiles) == 0 {
+				continue
+			}
 			igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbInfo.Name, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 			if err != nil {
 				return errors.Trace(err)
@@ -1508,8 +1511,8 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				for task := range postProcessTaskChan {
 					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
 					// force all the remain post-process tasks to be executed
-					_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
-					restoreErr.Set(err)
+					_, err2 := task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					restoreErr.Set(err2)
 				}
 			}()
 		}
@@ -1526,7 +1529,6 @@ func (tr *TableRestore) restoreTable(
 	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
 	// 1. Load the table info.
-
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()

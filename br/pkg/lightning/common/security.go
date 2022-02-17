@@ -72,10 +72,11 @@ func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 		return nil, errors.New("failed to append ca certs")
 	}
 
-	return &tls.Config{ // nolint:gosec
+	return &tls.Config{
 		Certificates: certificates,
 		RootCAs:      certPool,
 		NextProtos:   []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
+		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
 

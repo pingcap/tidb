@@ -70,51 +70,51 @@ type Column struct {
 
 // ColumnAllocator defines an allocator for Column.
 type ColumnAllocator interface {
-	NewColumn(ft *types.FieldType, cap int) *Column
+	NewColumn(ft *types.FieldType, count int) *Column
 }
 
 // DefaultColumnAllocator is the default implementation of ColumnAllocator.
 type DefaultColumnAllocator struct{}
 
 // NewColumn implements the ColumnAllocator interface.
-func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
-	return newColumn(getFixedLen(ft), cap)
+func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, capacity int) *Column {
+	return newColumn(getFixedLen(ft), capacity)
 }
 
 // NewColumn creates a new column with the specific type and capacity.
-func NewColumn(ft *types.FieldType, cap int) *Column {
-	return newColumn(getFixedLen(ft), cap)
+func NewColumn(ft *types.FieldType, capacity int) *Column {
+	return newColumn(getFixedLen(ft), capacity)
 }
 
-func newColumn(typeSize, cap int) *Column {
+func newColumn(ts, capacity int) *Column {
 	var col *Column
-	if typeSize == varElemLen {
-		col = newVarLenColumn(cap)
+	if ts == varElemLen {
+		col = newVarLenColumn(capacity)
 	} else {
-		col = newFixedLenColumn(typeSize, cap)
+		col = newFixedLenColumn(ts, capacity)
 	}
 	return col
 }
 
 // newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, cap int) *Column {
+func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
+		data:       make([]byte, 0, capacity*elemLen),
+		nullBitmap: make([]byte, 0, (capacity+7)>>3),
 	}
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
-func newVarLenColumn(cap int) *Column {
+func newVarLenColumn(capacity int) *Column {
 	estimatedElemLen := 8
 	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
 	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
 
 	return &Column{
-		offsets:    make([]int64, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
+		offsets:    make([]int64, 1, capacity+1),
+		data:       make([]byte, 0, capacity*estimatedElemLen),
+		nullBitmap: make([]byte, 0, (capacity+7)>>3),
 	}
 }
 

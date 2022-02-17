@@ -704,7 +704,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	do.cancel()
+	if do.cancel != nil {
+		do.cancel()
+	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
@@ -878,9 +880,9 @@ type sessionPool struct {
 	}
 }
 
-func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+func newSessionPool(capacity int, factory pools.Factory) *sessionPool {
 	return &sessionPool{
-		resources: make(chan pools.Resource, cap),
+		resources: make(chan pools.Resource, capacity),
 		factory:   factory,
 	}
 }
