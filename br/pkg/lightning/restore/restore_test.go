@@ -300,6 +300,63 @@ func (s *restoreSuite) TestDiskQuotaLock(c *C) {
 	}
 }
 
+// failMetaMgrBuilder mocks meta manager init failure
+type failMetaMgrBuilder struct {
+	metaMgrBuilder
+}
+
+func (b failMetaMgrBuilder) Init(context.Context) error {
+	return errors.New("mock init meta failure")
+}
+
+type panicCheckpointDB struct {
+	checkpoints.DB
+}
+
+func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints.TidbDBInfo) error {
+	panic("should not reach here")
+}
+
+func (s *restoreSuite) TestPreCheckFailed(c *C) {
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.App.CheckRequirements = false
+
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+
+	ctl := &Controller{
+		cfg:            cfg,
+		saveCpCh:       make(chan saveCp),
+		checkpointsDB:  panicCheckpointDB{},
+		metaMgrBuilder: failMetaMgrBuilder{},
+		checkTemplate:  NewSimpleTemplate(),
+		tidbGlue:       g,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	// precheck failed, will not do init checkpoint.
+	err = ctl.Run(context.Background())
+	c.Assert(err, ErrorMatches, ".*mock init meta failure")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	ctl.saveCpCh = make(chan saveCp)
+	// precheck failed, will not do init checkpoint.
+	err1 := ctl.Run(context.Background())
+	c.Assert(err1.Error(), Equals, err.Error())
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
 var _ = Suite(&tableRestoreSuite{})
 
 type tableRestoreSuiteBase struct {
