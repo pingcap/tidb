@@ -16,7 +16,6 @@ package globalconfigsync
 
 import (
 	"context"
-	"errors"
 
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -40,17 +39,20 @@ func NewGlobalConfigSyncer(p pd.Client) *GlobalConfigSyncer {
 // StoreGlobalConfig is used to store global config.
 func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
 	if s.pd == nil {
-		return errors.New("pd client is nil")
+		return nil
 	}
 	err := s.pd.StoreGlobalConfig(ctx, []pd.GlobalConfigItem{item})
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("store global config", zap.Any("Configs", item))
-	return err
+	logutil.BgLogger().Info("store global config", zap.String("name", item.Name), zap.String("value", item.Value))
+	return nil
 }
 
 // Notify pushes global config to internal channel and will be sync into pd's GlobalConfig.
 func (s *GlobalConfigSyncer) Notify(globalConfigItem pd.GlobalConfigItem) {
+	if s.pd == nil {
+		return
+	}
 	s.NotifyCh <- globalConfigItem
 }

@@ -817,13 +817,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	if err != nil {
 		return err
 	}
-	// try cast do.store to kv.Storage
+
+	var pdClient pd.Client
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(store.GetPDClient())
-	} else {
-		logutil.BgLogger().Warn("could not properly initialize GlobalConfigSyncer, due to store does not contain GetPDClient method")
-		do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(nil)
+		pdClient = store.GetPDClient()
 	}
+	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdClient)
 
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
