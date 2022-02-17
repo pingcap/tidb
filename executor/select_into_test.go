@@ -33,7 +33,7 @@ func cmpAndRm(expected, outfile string, t *testing.T) {
 	content, err := os.ReadFile(outfile)
 	require.NoError(t, err)
 	require.Equal(t, expected, string(content))
-	require.Nil(t, os.Remove(outfile))
+	require.NoError(t, os.Remove(outfile))
 }
 
 func randomSelectFilePath(testName string) string {
@@ -43,7 +43,7 @@ func randomSelectFilePath(testName string) string {
 func TestSelectIntoFileExists(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoFileExists")
 	defer func() {
-		require.Nil(t, os.Remove(outfile))
+		require.NoError(t, os.Remove(outfile))
 	}()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
