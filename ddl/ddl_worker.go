@@ -461,6 +461,8 @@ func writeDDLSeqNum(t *meta.Meta, job *model.Job) error {
 		job.SeqNum = lastJob[0].SeqNum + 1
 	} else {
 		job.SeqNum, err = t.GetHistoryDDLCount()
+		// Make it start from 1.
+		job.SeqNum += 1
 	}
 	if err != nil {
 		return err
