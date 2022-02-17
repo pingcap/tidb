@@ -440,7 +440,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
-	err = writeDDLSequenceInfo(t, job)
+	err = writeDDLSeqNum(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -448,7 +448,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	return errors.Trace(err)
 }
 
-func writeDDLSequenceInfo(t *meta.Meta, job *model.Job) error {
+func writeDDLSeqNum(t *meta.Meta, job *model.Job) error {
 	it, err := t.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return err
