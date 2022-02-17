@@ -27,14 +27,14 @@ import (
 
 // SessionHandle is used to handle all session sql bind operations.
 type SessionHandle struct {
-	ch     cache
+	ch     *bindCache
 	parser *parser.Parser
 }
 
 // NewSessionBindHandle creates a new SessionBindHandle.
-func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
+func NewSessionBindHandle(ctx sessionctx.Context, parser *parser.Parser) *SessionHandle {
 	sessionHandle := &SessionHandle{parser: parser}
-	sessionHandle.ch = make(cache)
+	sessionHandle.ch = newBindCache(ctx)
 	return sessionHandle
 }
 
@@ -87,7 +87,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := h.ch[hash]
+	bindRecords := h.ch.Get(bindCacheKey(hash))
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {
 			return bindRecord
@@ -98,18 +98,13 @@ func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord
 
 // GetAllBindRecord return all session bind info.
 func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	for _, bindRecord := range h.ch {
-		bindRecords = append(bindRecords, bindRecord...)
-	}
-	return bindRecords
+	return h.ch.GetAllBindRecords()
 }
 
 // Close closes the session handle.
 func (h *SessionHandle) Close() {
-	for _, bindRecords := range h.ch {
-		for _, bindRecord := range bindRecords {
-			updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
-		}
+	for _, bindRecord := range h.ch.GetAllBindRecords() {
+		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 	}
 }
 

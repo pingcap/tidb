@@ -110,6 +110,7 @@ const (
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
+	TiDBMemQuotaBindCache  = "tidb_mem_quota_bind_cache"
 	// TODO: remove them below sometime, it should have only one Quota(TiDBMemQuotaQuery).
 	TiDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TiDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -709,6 +710,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
+	DefTiDBMemQuotaBindCache              = 32 << 20 // 32MB
 	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                   = 32 << 30 // 32GB.
