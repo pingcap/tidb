@@ -2430,4 +2430,34 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
 	tk.MustExec("set @@session.time_zone='SYSTEM'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
 	tk.MustExec("admin check table t")
+
+	// tests DST
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '1990-04-15 18:00:00');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00"))
+	tk.MustExec("set @@session.time_zone='Asia/Shanghai'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 19900416030000"))
+	tk.MustExec("alter table t modify c1 timestamp default '1990-04-15 18:00:00'")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00", "2 1990-04-15 09:00:00"))
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2016-03-13 02:30:00', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2016-03-13 02:30:00"))
+	tk.MustExec("set @@session.time_zone='America/Los_Angeles'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustExec("admin check table t")
 }
