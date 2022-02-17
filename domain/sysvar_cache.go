@@ -95,11 +95,7 @@ func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, e
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), true, `SELECT variable_name, variable_value FROM mysql.global_variables`)
-	if err != nil {
-		return tableContents, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +212,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		topsqlstate.GlobalState.MaxCollect.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBSuperReadOnly:
+		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)

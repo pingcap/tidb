@@ -52,11 +52,11 @@ type CTEUsageCounter struct {
 
 // Sub returns the difference of two counters.
 func (c CTEUsageCounter) Sub(rhs CTEUsageCounter) CTEUsageCounter {
-	new := CTEUsageCounter{}
-	new.NonRecursiveCTEUsed = c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed
-	new.RecursiveUsed = c.RecursiveUsed - rhs.RecursiveUsed
-	new.NonCTEUsed = c.NonCTEUsed - rhs.NonCTEUsed
-	return new
+	return CTEUsageCounter{
+		NonRecursiveCTEUsed: c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed,
+		RecursiveUsed:       c.RecursiveUsed - rhs.RecursiveUsed,
+		NonCTEUsed:          c.NonCTEUsed - rhs.NonCTEUsed,
+	}
 }
 
 // GetCTECounter gets the TxnCommitCounter.

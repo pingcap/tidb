@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -249,6 +248,11 @@ func newColString(chs, coll string) *Column {
 	if chs == charset.CharsetASCII {
 		column.SetRepertoire(ASCII)
 	}
+	return column
+}
+
+func newColJSON() *Column {
+	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
 	return column
 }
 
@@ -508,6 +512,46 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
+				ast.ExportSet, ast.Elt, ast.MakeSet,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColJSON(),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColString(charset.CharsetGBK, charset.CollationGBKBin),
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColJSON(),
+				newColString(charset.CharsetBinary, charset.CharsetBinary),
+			},
+			[]types.EvalType{types.ETJson, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+		},
+		{
+			[]string{
 				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
@@ -531,6 +575,18 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote,
+			},
+			[]Expression{
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{
@@ -637,9 +693,6 @@ func TestDeriveCollation(t *testing.T) {
 }
 
 func TestCompareString(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	require.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
 	require.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
 	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))

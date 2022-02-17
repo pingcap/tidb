@@ -41,11 +41,11 @@ func (r responseAndStore) GetStore() *metapb.Store {
 }
 
 // newPushDown creates a push down backup.
-func newPushDown(mgr ClientMgr, cap int) *pushDown {
+func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 	return &pushDown{
 		mgr:    mgr,
-		respCh: make(chan responseAndStore, cap),
-		errCh:  make(chan error, cap),
+		respCh: make(chan responseAndStore, capacity),
+		errCh:  make(chan error, capacity),
 	}
 }
 

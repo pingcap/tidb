@@ -1115,7 +1115,33 @@ var defaultSysVars = []*SysVar{
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		on := TiDBOptOn(val)
+		if on {
+			err := s.GlobalVarsAccessor.SetGlobalSysVar(TiDBSuperReadOnly, "ON")
+			if err != nil {
+				return err
+			}
+		}
+		RestrictedReadOnly.Store(on)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		on := TiDBOptOn(normalizedValue)
+		if !on {
+			result, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if TiDBOptOn(result) {
+				return normalizedValue, fmt.Errorf("can't turn off %s when %s is on", TiDBSuperReadOnly, TiDBRestrictedReadOnly)
+			}
+		}
+		return normalizedValue, nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		VarTiDBSuperReadOnly.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
@@ -1349,6 +1375,30 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SysdateIsNow = TiDBOptOn(s)
+			return nil
+		},
+		GetGlobal: func(vars *SessionVars) (s string, err error) {
+			return strconv.FormatBool(GlobalSysdateIsNow.Load()), nil
+		},
+		SetGlobal: func(vars *SessionVars, s string) error {
+			GlobalSysdateIsNow.Store(TiDBOptOn(s))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
+		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableMutationChecker = TiDBOptOn(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnAssertionLevel, Value: DefTiDBTxnAssertionLevel, PossibleValues: []string{AssertionOffStr, AssertionFastStr, AssertionStrictStr}, Hidden: true, Type: TypeEnum, SetSession: func(s *SessionVars, val string) error {
+		s.AssertionLevel = tidbOptAssertionLevel(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1658,4 +1708,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// SysdateIsNow is the name of the `sysdate_is_now` system variable
+	SysdateIsNow = "sysdate_is_now"
 )
