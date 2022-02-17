@@ -219,9 +219,5 @@ func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
 			// ignore
 		}
 	}
-<<<<<<< HEAD
-	p.Unlock()
-=======
 	p.profileData = nil
->>>>>>> 8622c0665... cpuprofile: fix unstable test (#32429)
 }
