@@ -152,7 +152,6 @@ func (b *MockExecutorBuilder) Build(p plannercore.Plan) Executor {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
-	var e Executor
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -267,13 +266,13 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
-		e = b.buildTableReader(v)
+		return b.buildTableReader(v)
 	case *plannercore.PhysicalTableSample:
 		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
-		e = b.buildIndexReader(v)
+		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
-		e = b.buildIndexLookUpReader(v)
+		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
 	case *plannercore.PhysicalShuffle:
@@ -304,57 +303,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
-
-	if tblExec, ok := e.(dataSourceExecutor); ok {
-		tbl := tblExec.Table()
-		tableInfo := tbl.Meta()
-		// When reading from a cached table, check whether it satisfies the conditions of read cache.
-		if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-			physicalPlan := p.(plannercore.PhysicalPlan)
-			return b.buildCachedTableExecutor(tbl, physicalPlan, e)
-		}
-	}
-
-	return e
-}
-
-// buildCachedTableExecutor adds an UnionScan to the original Executor to make the reader read from table cache.
-func (b *executorBuilder) buildCachedTableExecutor(tbl table.Table, p plannercore.PhysicalPlan, e Executor) Executor {
-	if b.ctx.GetSessionVars().SnapshotTS != 0 || b.ctx.GetSessionVars().StmtCtx.IsStaleness {
-		return e
-	}
-
-	cachedTable := tbl.(table.CachedTable)
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-
-	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-	sessionVars := b.ctx.GetSessionVars()
-	// Use the TS of the transaction to determine whether the cache can be used.
-	cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
-	if cacheData != nil {
-		sessionVars.StmtCtx.ReadFromTableCache = true
-		switch raw := e.(type) {
-		case *TableReaderExecutor:
-			raw.dummy = true
-		case *IndexReaderExecutor:
-			raw.dummy = true
-		case *IndexLookUpExecutor:
-			raw.dummy = true
-		}
-		us := plannercore.PhysicalUnionScan{CacheTable: cacheData}.Init(b.ctx, nil, -1)
-		us.SetChildren(p)
-		e = b.buildUnionScanFromReader(e, us)
-	} else {
-		if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
-			store := b.ctx.GetStore()
-			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-		}
-	}
-	return e
 }
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {
@@ -1133,7 +1081,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return x
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
-	us.cacheTable = v.CacheTable
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
@@ -1149,6 +1096,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
 	}
 
+	startTS, err := b.getSnapshotTS()
+	sessionVars := b.ctx.GetSessionVars()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -1156,6 +1110,23 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			// Determine whether the cache can be used.
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1169,6 +1140,24 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
+
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			// Determine whether the cache can be used.
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1183,6 +1172,24 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
+
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			// Determine whether the cache can be used.
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexMergeReaderExecutor:
 		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
