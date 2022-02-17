@@ -292,7 +292,7 @@ type Job struct {
 	Priority int `json:"priority"`
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
-	SeqNum uint64
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // FinishTableJob is called when a job is finished.
