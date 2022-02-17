@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
@@ -998,11 +999,9 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 
 	threads := 8
 	loops := 20
-	wg := sync.WaitGroup{}
-	wg.Add(threads + 1)
+	var wg tidbutil.WaitGroupWrapper
 
 	addStmtFunc := func() {
-		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
@@ -1012,22 +1011,39 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 		}
 	}
 	for i := 0; i < threads; i++ {
-		go addStmtFunc()
+		wg.Run(addStmtFunc)
 	}
 
+<<<<<<< HEAD
 	defer c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
+=======
+	defer func() {
+		require.NoError(t, ssMap.SetMaxStmtCount(3000))
+	}()
+
+>>>>>>> 5e52263d8... stmtsummary: fix unstable test (#32434)
 	setStmtCountFunc := func() {
-		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
 		for i := 10; i > 0; i-- {
+<<<<<<< HEAD
 			c.Assert(s.ssMap.SetMaxStmtCount(strconv.Itoa(i), true), IsNil)
+=======
+			require.NoError(t, ssMap.SetMaxStmtCount(uint(i)))
+>>>>>>> 5e52263d8... stmtsummary: fix unstable test (#32434)
 		}
 	}
-	go setStmtCountFunc()
+	wg.Run(setStmtCountFunc)
 
 	wg.Wait()
 
+<<<<<<< HEAD
 	reader := newStmtSummaryReaderForTest(s.ssMap)
+=======
+	// add stmt again to make sure evict occurs after SetMaxStmtCount.
+	addStmtFunc()
+
+	reader := newStmtSummaryReaderForTest(ssMap)
+>>>>>>> 5e52263d8... stmtsummary: fix unstable test (#32434)
 	datums := reader.GetStmtSummaryCurrentRows()
 	// due to evictions happened in cache, an additional record will be appended to the table.
 	c.Assert(len(datums), Equals, 2)
