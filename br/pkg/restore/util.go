@@ -32,10 +32,10 @@ var (
 	quoteRegexp     = regexp.MustCompile("`(?:[^`]|``)*`")
 )
 
-// ApplyedFile has two types for now.
+// AppliedFile has two types for now.
 // 1. SST file used by full backup/restore.
 // 2. KV file used by pitr restore.
-type ApplyedFile interface {
+type AppliedFile interface {
 	GetStartKey() []byte
 	GetEndKey() []byte
 }
@@ -386,7 +386,7 @@ func SplitRanges(
 	})
 }
 
-func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
+func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	if startID != endID {
@@ -400,7 +400,10 @@ func findMatchedRewriteRule(file ApplyedFile, rules *RewriteRules) *import_sstpb
 	return rule
 }
 
-func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
+// RewriteFileKeys tries to choose and apply the rewrite rules to the file.
+// This method would try to detach whether the file key is encoded.
+// Note: Maybe add something like `GetEncodedStartKey` Or `GetRawStartkey` for `AppliedFile` for making it more determinable?
+func RewriteFileKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
 	endID := tablecodec.DecodeTableID(file.GetEndKey())
 	var rule *import_sstpb.RewriteRule
@@ -414,16 +417,16 @@ func rewriteFileKeys(file ApplyedFile, rewriteRules *RewriteRules) (startKey, en
 			startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
 			if rule == nil {
 				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for start key")
+				return
 			}
-			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
 			endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
 			if rewriteRules != nil && rule == nil {
 				err = errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule for end key")
+				return
 			}
-			return
 		}
 	} else {
 		log.Error("table ids dont matched",

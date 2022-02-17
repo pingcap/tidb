@@ -102,7 +102,7 @@ type Client struct {
 	batchDdlSize uint
 	// restoreTs is used for kv file restore.
 	// TiKV will filter the key space larger than this ts.
-	restoreTs   uint64
+	restoreTs uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
