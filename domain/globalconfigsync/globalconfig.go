@@ -32,7 +32,7 @@ type GlobalConfigSyncer struct {
 func NewGlobalConfigSyncer(p pd.Client) *GlobalConfigSyncer {
 	return &GlobalConfigSyncer{
 		pd:       p,
-		NotifyCh: make(chan pd.GlobalConfigItem, 100),
+		NotifyCh: make(chan pd.GlobalConfigItem, 8),
 	}
 }
 
@@ -51,8 +51,5 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Glob
 
 // Notify pushes global config to internal channel and will be sync into pd's GlobalConfig.
 func (s *GlobalConfigSyncer) Notify(globalConfigItem pd.GlobalConfigItem) {
-	if s.pd == nil {
-		return
-	}
 	s.NotifyCh <- globalConfigItem
 }

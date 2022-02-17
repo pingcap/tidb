@@ -366,9 +366,7 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 
 // NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
-	if do.globalCfgSyncer != nil {
-		do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
-	}
+	do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
 }
 
 // GetGlobalConfigSyncer exports for testing.

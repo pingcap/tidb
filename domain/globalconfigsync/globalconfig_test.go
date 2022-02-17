@@ -81,13 +81,21 @@ func TestStoreGlobalConfig(t *testing.T) {
 
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
 	require.NoError(t, err)
-	<-time.After(50 * time.Millisecond)
-	client :=
-		store.(kv.StorageWithPD).GetPDClient()
-	// enable top sql will be translated to enable_resource_metering
-	items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, items[0].Name, "/global/config/enable_resource_metering")
-	require.Equal(t, items[0].Value, "true")
+	// for 20 times
+	for i := 0; i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		client :=
+			store.(kv.StorageWithPD).GetPDClient()
+		// enable top sql will be translated to enable_resource_metering
+		items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering"})
+		require.NoError(t, err)
+		if len(items) == 1 && items[0].Value == "" {
+			continue
+		}
+		require.Len(t, items, 1)
+		require.Equal(t, items[0].Name, "/global/config/enable_resource_metering")
+		require.Equal(t, items[0].Value, "true")
+		return
+	}
+	require.Fail(t, "timeout for waiting global config synced")
 }
