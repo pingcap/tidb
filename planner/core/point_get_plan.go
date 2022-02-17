@@ -1182,20 +1182,15 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			colName *ast.ColumnNameExpr
 			ok      bool
 			con     *expression.Constant
+			err     error
 		)
 		if colName, ok = binOp.L.(*ast.ColumnNameExpr); ok {
 			switch x := binOp.R.(type) {
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				param, err := expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, true)
 				if err != nil {
-					return nil, false
-				}
-				con, ok = param.(*expression.Constant)
-				if !ok {
-					// The return value for the expression.ParamMarkerExpression must be constant.
-					// Add this part for safety.
 					return nil, false
 				}
 				d, err = con.Eval(chunk.Row{})
@@ -1208,14 +1203,8 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				param, err := expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, true)
 				if err != nil {
-					return nil, false
-				}
-				con, ok = param.(*expression.Constant)
-				if !ok {
-					// The return value for the expression.ParamMarkerExpression must be constant.
-					// Add this part for safety.
 					return nil, false
 				}
 				d, err = con.Eval(chunk.Row{})

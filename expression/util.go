@@ -754,7 +754,7 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (Expression, error) {
+func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -708,18 +709,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleConstant != nil {
-			val, err := x.HandleConstant.Eval(chunk.Row{})
+			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
-			}
-			dVal, err := val.ConvertTo(sc, x.handleFieldType)
-			if err != nil {
-				return err
-			}
-			// The converted result must be same as original datum.
-			cmp, err := dVal.Compare(sc, &val, collate.GetCollator(x.handleFieldType.Collate))
-			if err != nil || cmp != 0 {
-				return errors.New("The parameter for point get can not use plan cache, because the parameter has changed after the covert")
 			}
 			iv, err := dVal.ToInt64(sc)
 			if err != nil {
@@ -730,20 +722,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexConstants {
 			if param != nil {
-				val, err := param.Eval(chunk.Row{})
+				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
 				if err != nil {
 					return err
 				}
-				dVal, err := val.ConvertTo(sc, x.ColsFieldType[i])
-				if err != nil {
-					return err
-				}
-				// The converted result must be same as original datum.
-				cmp, err := dVal.Compare(sc, &val, collate.GetCollator(x.ColsFieldType[i].Collate))
-				if err != nil || cmp != 0 {
-					return errors.New("The parameter for point get can not use plan cache, because the parameter has changed after the covert")
-				}
-				x.IndexValues[i] = val
+				x.IndexValues[i] = *dVal
 			}
 		}
 		return nil
@@ -835,6 +818,23 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
+	dVal, err := val.ConvertTo(sc, target)
+	if err != nil {
+		return nil, err
+	}
+	// The converted result must be same as original datum.
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	if err != nil || cmp != 0 {
+		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
+	}
+	return &dVal, nil
 }
 
 func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
