@@ -81,7 +81,6 @@ func TestStoreGlobalConfig(t *testing.T) {
 
 	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
 	require.NoError(t, err)
-	// for 20 times
 	for i := 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)
 		client :=
