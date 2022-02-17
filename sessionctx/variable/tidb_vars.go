@@ -818,6 +818,7 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 )
@@ -853,4 +854,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	GlobalSysdateIsNow                    = atomic.NewBool(DefSysdateIsNow)
 )
