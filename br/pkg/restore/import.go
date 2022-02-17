@@ -322,7 +322,7 @@ func (importer *FileImporter) ImportKVFiles(
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
 	var startKey, endKey []byte
-	start, end, err := rewriteFileKeys(file, rule)
+	start, end, err := RewriteFileKeys(file, rule)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -386,6 +386,7 @@ func (importer *FileImporter) ImportKVFiles(
 				zap.Stringer("take", time.Since(startTime)),
 				logutil.Key("fileStart", file.StartKey),
 				logutil.Key("fileEnd", file.EndKey),
+				logutil.Region(info.Region),
 			)
 		}
 		return nil
@@ -798,18 +799,17 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
 	}
 
-
 	meta := &import_sstpb.KVMeta{
-		Name:           file.Path,
-		Cf:             file.Cf,
+		Name: file.Path,
+		Cf:   file.Cf,
 		// TODO fill the length
-		Length: 0,
-		IsDelete: file.Type == backuppb.FileType_Delete,
+		Length:    0,
+		IsDelete:  file.Type == backuppb.FileType_Delete,
 		RestoreTs: restoreTs,
 	}
 
 	req := &import_sstpb.ApplyRequest{
-		Meta: meta,
+		Meta:           meta,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
 	}

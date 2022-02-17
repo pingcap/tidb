@@ -277,3 +277,37 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
 }
+
+func TestRewriteFileKeys(t *testing.T) {
+	rewriteRules := restore.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(2),
+				OldKeyPrefix: tablecodec.GenTablePrefix(1),
+			},
+		},
+	}
+	rawKeyFile := backuppb.File{
+		Name:     "backup.sst",
+		StartKey: tablecodec.GenTableRecordPrefix(1),
+		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
+	}
+	start, end, err := restore.RewriteFileKeys(&rawKeyFile, &rewriteRules)
+	require.NoError(t, err)
+	_, end, err = codec.DecodeBytes(end, nil)
+	require.NoError(t, err)
+	_, start, err = codec.DecodeBytes(start, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(2)), start)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
+
+	encodeKeyFile := backuppb.DataFileInfo{
+		Path:     "bakcup.log",
+		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
+		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
+	}
+	start, end, err = restore.RewriteFileKeys(&encodeKeyFile, &rewriteRules)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2)), start)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
+}
