@@ -200,7 +200,6 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 // timeStr.String() returns: "2022-01-20 12:23:54.082461 +0800 CST".
 // types.GetTimezone() returns: -1, "", "", "", "".
 // Finally, GetTimeZone() returns: 'Asia/Shanghai', 0, nil.
-
 // Case 2: session's time_zone is set to a fixed offset like '-08:00'.
 // timeStr.String() returns: "2022-01-19 20:23:54.082332 -0800 -0800".
 // types.GetTimezone() returns: 33, "-", "08", "", "00".
