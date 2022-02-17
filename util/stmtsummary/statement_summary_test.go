@@ -1020,6 +1020,10 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 
 	wg.Wait()
 
+	// add stmt again to make sure evict occurs after SetMaxStmtCount.
+	wg.Add(1)
+	addStmtFunc()
+
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
 	// due to evictions happened in cache, an additional record will be appended to the table.
