@@ -74,7 +74,7 @@ type statsCache struct {
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
-		sync.Mutex
+		sync.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
@@ -1762,6 +1762,8 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 
 // CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
 func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
 }
 
