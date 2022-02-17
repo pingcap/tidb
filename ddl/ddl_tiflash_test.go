@@ -596,7 +596,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-func TestAlterDatabaseFail(t *testing.T) {
+func TestAlterDatabaseErrorGrammar(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -612,4 +612,20 @@ func TestAlterDatabaseFail(t *testing.T) {
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
+}
+
+func TestAlterDatabaseBasic(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("drop database if exists tiflash_ddl")
+	tk.MustExec("create database tiflash_ddl")
+	tk.MustExec("create table tiflash_ddl.ddltiflash(z int)")
+	tk.MustExec("create table tiflash_ddl.ddltiflash2(z int)")
+	tk.MustExec("alter table tiflash_ddl.ddltiflash set tiflash replica 1")
+	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 2)
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
 }

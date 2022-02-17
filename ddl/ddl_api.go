@@ -207,11 +207,35 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	_, ok := is.SchemaByName(dbName)
+	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	return nil
+	fail := make([]int64, 0)
+	succ := 0
+	for _, tbl := range dbInfo.Tables {
+		job := &model.Job{
+			SchemaID:   dbInfo.ID,
+			SchemaName: dbInfo.Name.L,
+			TableID:    tbl.ID,
+			Type:       model.ActionSetTiFlashReplica,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{*tiflashReplica},
+		}
+		err := d.doDDLJob(ctx, job)
+		err = d.callHookOnChanged(err)
+		if err != nil {
+			fail = append(fail, tbl.ID)
+		} else {
+			succ += 1
+		}
+		logutil.BgLogger().Info("processing schema table", zap.Int64("t", tbl.ID), zap.Int64("s", dbInfo.ID), zap.Error(err))
+	}
+	if l := len(fail); l > 0 {
+		return fmt.Errorf("meet %v failures, including table %v", l, fail[0])
+	} else {
+		return nil
+	}
 }
 
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
