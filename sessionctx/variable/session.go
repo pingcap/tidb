@@ -919,7 +919,7 @@ type SessionVars struct {
 	LastQueryInfo QueryInfo
 
 	// LastDDLInfo keeps track the info of last DDL.
-	LastDDLInfo DDLInfo
+	LastDDLInfo LastDDLInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
@@ -2292,7 +2292,8 @@ type QueryInfo struct {
 	ErrMsg      string `json:"error,omitempty"`
 }
 
-type DDLInfo struct {
+// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
+type LastDDLInfo struct {
 	Query  string `json:"query"`
 	SeqNum uint64 `json:"seq_num"`
 }

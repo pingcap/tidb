@@ -3856,11 +3856,11 @@ func TestDDLLastInfo(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	firstSequence := 0
 	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')")
-	require.Equal(t, 1, len(res.Rows()))
+	require.Len(t, res.Rows(), 1)
 	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
 	var err error
 	firstSequence, err = strconv.Atoi(fmt.Sprintf("%v", res.Rows()[0][1]))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test;`)
