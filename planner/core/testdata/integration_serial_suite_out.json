@@ -153,15 +153,15 @@
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "StreamAgg_12 1.00 18.93 root  funcs:count(1)->Column#7",
-          "└─TableReader_44 3.00 9.93 root  data:ExchangeSender_43",
-          "  └─ExchangeSender_43 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin_40 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "      ├─ExchangeReceiver_19(Build) 3.00 77.00 cop[tiflash]  ",
-          "      │ └─ExchangeSender_18 3.00 77.00 cop[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Selection_17 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
-          "      │     └─TableFullScan_16 3.00 65.00 cop[tiflash] table:t1 keep order:false",
-          "      └─Selection_21(Probe) 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
-          "        └─TableFullScan_20 3.00 65.00 cop[tiflash] table:t2 keep order:false"
+          "└─TableReader_45 3.00 9.93 root  data:ExchangeSender_44",
+          "  └─ExchangeSender_44 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_41 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver_20(Build) 3.00 77.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender_19 3.00 77.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection_18 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan_17 3.00 65.00 cop[tiflash] table:t1 keep order:false",
+          "      └─Selection_22(Probe) 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan_21 3.00 65.00 cop[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -207,15 +207,15 @@
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "StreamAgg_11 1.00 59.65 root  funcs:count(1)->Column#7",
-          "└─MergeJoin_29 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Sort_27(Build) 3.00 20.83 root  test.t2.a",
-          "  │ └─TableReader_26 3.00 6.56 root  data:Selection_25",
-          "  │   └─Selection_25 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
-          "  │     └─TableFullScan_24 3.00 65.00 cop[tiflash] table:t2 keep order:false",
-          "  └─Sort_20(Probe) 3.00 20.83 root  test.t1.a",
-          "    └─TableReader_19 3.00 6.56 root  data:Selection_18",
-          "      └─Selection_18 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
-          "        └─TableFullScan_17 3.00 65.00 cop[tiflash] table:t1 keep order:false"
+          "└─MergeJoin_30 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort_28(Build) 3.00 20.83 root  test.t2.a",
+          "  │ └─TableReader_27 3.00 6.56 root  data:Selection_26",
+          "  │   └─Selection_26 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "  │     └─TableFullScan_25 3.00 65.00 cop[tiflash] table:t2 keep order:false",
+          "  └─Sort_21(Probe) 3.00 20.83 root  test.t1.a",
+          "    └─TableReader_20 3.00 6.56 root  data:Selection_19",
+          "      └─Selection_19 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_18 3.00 65.00 cop[tiflash] table:t1 keep order:false"
         ]
       }
     ]
