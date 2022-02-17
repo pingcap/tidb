@@ -180,10 +180,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	return nil
 }
 
-func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (new []*util.ByItems,
+func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
-	new = make([]*util.ByItems, 0, len(old))
+	byItems = make([]*util.ByItems, 0, len(old))
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
@@ -196,14 +196,14 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (n
 		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				pruned = false
-				new = append(new, byItem)
+				byItems = append(byItems, byItem)
 			}
 		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false
 			parentUsedCols = append(parentUsedCols, cols...)
-			new = append(new, byItem)
+			byItems = append(byItems, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)

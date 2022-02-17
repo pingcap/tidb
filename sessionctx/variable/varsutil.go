@@ -327,6 +327,31 @@ func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 	}
 }
 
+// AssertionLevel controls the assertion that will be performed during transactions.
+type AssertionLevel int
+
+const (
+	// AssertionLevelOff indicates no assertion should be performed.
+	AssertionLevelOff AssertionLevel = iota
+	// AssertionLevelFast indicates assertions that doesn't affect performance should be performed.
+	AssertionLevelFast
+	// AssertionLevelStrict indicates full assertions should be performed, even if the performance might be slowed down.
+	AssertionLevelStrict
+)
+
+func tidbOptAssertionLevel(opt string) AssertionLevel {
+	switch opt {
+	case AssertionStrictStr:
+		return AssertionLevelStrict
+	case AssertionFastStr:
+		return AssertionLevelFast
+	case AssertionOffStr:
+		return AssertionLevelOff
+	default:
+		return AssertionLevelOff
+	}
+}
+
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {

@@ -507,8 +507,8 @@ func MustGetRollback(key []byte, ts uint64, store *TestStore) {
 }
 
 func TestBasicOptimistic(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key1 := []byte("key1")
 	val1 := []byte("val1")
@@ -522,8 +522,8 @@ func TestBasicOptimistic(t *testing.T) {
 
 func TestPessimiticTxnTTL(t *testing.T) {
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// Pessimisitc lock key1
 	key1 := []byte("key1")
@@ -550,8 +550,8 @@ func TestPessimiticTxnTTL(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key := []byte("tkey")
 	val := []byte("value")
@@ -585,8 +585,8 @@ func TestRollback(t *testing.T) {
 
 func TestOverwritePessimisitcLock(t *testing.T) {
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key := []byte("key")
 	startTs := uint64(1)
@@ -613,8 +613,8 @@ func TestOverwritePessimisitcLock(t *testing.T) {
 
 func TestCheckTxnStatus(t *testing.T) {
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	var resTTL, resCommitTs uint64
 	var action kvrpcpb.Action
@@ -714,8 +714,8 @@ func TestCheckTxnStatus(t *testing.T) {
 }
 
 func TestCheckSecondaryLocksStatus(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("pk")
 	secondary := []byte("secondary")
@@ -781,8 +781,8 @@ func TestCheckSecondaryLocksStatus(t *testing.T) {
 
 func TestMvccGet(t *testing.T) {
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	lockTTL := uint64(100)
 	pk := []byte("t1_r1")
@@ -894,8 +894,8 @@ func TestMvccGet(t *testing.T) {
 }
 
 func TestPrimaryKeyOpLock(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := func() []byte { return []byte("tpk") }
 	val2 := []byte("val2")
@@ -945,8 +945,8 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 }
 
 func TestMvccTxnRead(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k1 := []byte("tk1")
@@ -1016,8 +1016,8 @@ func TestMvccTxnRead(t *testing.T) {
 }
 
 func TestTxnPrewrite(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k := []byte("tk")
@@ -1051,8 +1051,8 @@ func TestTxnPrewrite(t *testing.T) {
 }
 
 func TestPrewriteInsert(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k1 := []byte("tk1")
@@ -1087,8 +1087,8 @@ func TestPrewriteInsert(t *testing.T) {
 }
 
 func TestRollbackKey(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1112,8 +1112,8 @@ func TestRollbackKey(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1134,8 +1134,8 @@ func TestCleanup(t *testing.T) {
 }
 
 func TestCommit(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1185,8 +1185,8 @@ func TestCommit(t *testing.T) {
 }
 
 func TestMinCommitTs(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1206,8 +1206,8 @@ func TestMinCommitTs(t *testing.T) {
 }
 
 func TestPessimisticLock(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1371,8 +1371,8 @@ func TestPessimisticLock(t *testing.T) {
 }
 
 func TestResolveCommit(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("tpk")
 	v := []byte("v")
@@ -1436,8 +1436,8 @@ func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
 }
 
 func TestBatchGet(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	MustLoad(100, 101, store, "ta:1", "tb:2", "tc:3")
 	MustPrewritePut([]byte("ta"), []byte("ta"), []byte("0"), 103, store)
 	keys := [][]byte{[]byte("ta"), []byte("tb"), []byte("tc")}
@@ -1449,8 +1449,8 @@ func TestBatchGet(t *testing.T) {
 }
 
 func TestCommitPessimisticLock(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	k := []byte("ta")
 	MustAcquirePessimisticLock(k, k, 10, 10, store)
 	MustCommitErr(k, 20, 30, store)
@@ -1459,8 +1459,8 @@ func TestCommitPessimisticLock(t *testing.T) {
 }
 
 func TestOpCheckNotExist(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("ta")
 	v := []byte("v")
@@ -1476,8 +1476,8 @@ func TestOpCheckNotExist(t *testing.T) {
 }
 
 func TestPessimisticLockForce(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("ta")
 	v := []byte("v")
@@ -1493,8 +1493,8 @@ func TestPessimisticLockForce(t *testing.T) {
 }
 
 func TestScanSampleStep(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	for i := 0; i < 1000; i++ {
 		k := genScanSampleStepKey(i)
 		MustPrewritePut(k, k, k, 1, store)
@@ -1526,8 +1526,8 @@ func genScanSampleStepKey(i int) []byte {
 }
 
 func TestAsyncCommitPrewrite(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("tpk")
 	pkVal := []byte("tpkVal")
@@ -1555,8 +1555,8 @@ func TestAsyncCommitPrewrite(t *testing.T) {
 }
 
 func TestAccessCommittedLocks(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k0 := []byte("t0")
 	v0 := []byte("v0")
@@ -1651,8 +1651,8 @@ func TestAccessCommittedLocks(t *testing.T) {
 }
 
 func TestTiKVRCRead(t *testing.T) {
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k1 := []byte("t1")
 	k2, v2 := []byte("t2"), []byte("v2")
@@ -1703,8 +1703,8 @@ func TestTiKVRCRead(t *testing.T) {
 }
 
 func TestAssertion(t *testing.T) {
-	store, close := NewTestStore("TestAssertion", "TestAssertion", t)
-	defer close()
+	store, clean := NewTestStore("TestAssertion", "TestAssertion", t)
+	defer clean()
 
 	// Prepare
 	MustPrewriteOptimistic([]byte("k1"), []byte("k1"), []byte("v1"), 1, 100, 0, store)

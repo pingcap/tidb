@@ -1001,6 +1001,13 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1662,7 +1669,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
@@ -2149,7 +2156,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if len(s.CurrentDB) > 0 {
-		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
+		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
 	}
 	if len(logItems.IndexNames) > 0 {
 		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
@@ -2260,7 +2267,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
 	}
 

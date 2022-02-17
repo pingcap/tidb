@@ -614,6 +614,12 @@ const (
 
 	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
 	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
+
+	// TiDBEnableMutationChecker indicates whether to check data consistency for mutations
+	TiDBEnableMutationChecker = "tidb_enable_mutation_checker"
+	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps detecting and preventing data &
+	// index inconsistency problems.
+	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
 )
 
 // TiDB vars that have only global scope
@@ -809,6 +815,9 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefSysdateIsNow                       = false
+	DefTiDBEnableMutationChecker          = false
+	DefTiDBTxnAssertionLevel              = AssertionOffStr
 )
 
 // Process global variables.
@@ -842,4 +851,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	GlobalSysdateIsNow                    = atomic.NewBool(DefSysdateIsNow)
 )

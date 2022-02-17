@@ -102,6 +102,21 @@ var (
 	GlobalDiskUsageTracker *disk.Tracker
 )
 
+var (
+	_ dataSourceExecutor = &TableReaderExecutor{}
+	_ dataSourceExecutor = &IndexReaderExecutor{}
+	_ dataSourceExecutor = &IndexLookUpExecutor{}
+	_ dataSourceExecutor = &IndexMergeReaderExecutor{}
+)
+
+// dataSourceExecutor is a table DataSource converted Executor.
+// Currently, there are TableReader/IndexReader/IndexLookUp/IndexMergeReader.
+// Note, partition reader is special and the caller should handle it carefully.
+type dataSourceExecutor interface {
+	Executor
+	Table() table.Table
+}
+
 type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            int
@@ -769,10 +784,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(idxOffset)
-		}
-		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
+			err = e.checkTableRecord(ctx, idxOffset)
 		}
 		return errors.Trace(err)
 	}
@@ -807,7 +819,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
+func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -815,7 +827,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx)
+		return admin.CheckRecordAndIndex(ctx, e.ctx, txn, e.table, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()
@@ -823,7 +835,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
-		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx); err != nil {
+		if err := admin.CheckRecordAndIndex(ctx, e.ctx, txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -974,10 +986,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
 	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
@@ -1009,6 +1021,9 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		}
 		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
 		deadlockhistory.GlobalDeadlockHistory.Push(rec)
+	}
+	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
+		lockCtx.InitCheckExistence(numKeys)
 	}
 	return lockCtx
 }
@@ -1707,6 +1722,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
+
+	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
