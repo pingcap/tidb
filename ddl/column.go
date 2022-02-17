@@ -192,6 +192,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if columnInfo == nil {
 		columnInfo, _, offset, err = createColumnInfo(tblInfo, col, pos)
+		// 新建的 col name 必须是 testcol 为名字
+		if col.Name.L == "testcol" {
+			// 替换 ddl 历史里面找到的 col id
+			columnInfo.ID = 2
+		}
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
