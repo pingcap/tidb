@@ -2293,8 +2293,8 @@ type QueryInfo struct {
 }
 
 type DDLInfo struct {
-	Query    string `json:"query"`
-	Sequence uint64 `json:"sequence"`
+	Query  string `json:"query"`
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts

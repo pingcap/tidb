@@ -291,8 +291,8 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// Sequence is the total order in all DDLs, it's used to identify the order of DDL.
-	Sequence uint64
+	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	SeqNum uint64
 }
 
 // FinishTableJob is called when a job is finished.

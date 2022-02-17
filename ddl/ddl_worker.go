@@ -457,10 +457,10 @@ func writeDDLSequenceInfo(t *meta.Meta, job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	if len(lastJob) > 0 && lastJob[0].Sequence > 0 {
-		job.Sequence = lastJob[0].Sequence + 1
+	if len(lastJob) > 0 && lastJob[0].SeqNum > 0 {
+		job.SeqNum = lastJob[0].SeqNum + 1
 	} else {
-		job.Sequence, err = t.GetHistoryDDLCount()
+		job.SeqNum, err = t.GetHistoryDDLCount()
 	}
 	if err != nil {
 		return err

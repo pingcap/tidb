@@ -572,7 +572,7 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 
 func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
-	ctx.GetSessionVars().LastDDLInfo.Sequence = job.Sequence
+	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
 // doDDLJob will return

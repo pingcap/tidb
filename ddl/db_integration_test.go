@@ -3865,8 +3865,8 @@ func TestDDLLastInfo(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test;`)
 	tk.MustExec("create table t2(a int)")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
 
 	tk.MustExec("drop table t, t2")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.sequence')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
 }
