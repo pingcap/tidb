@@ -772,10 +772,17 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	return &regionsInfo, err
 }
 
+// GetStoreRegionsInfo gets the region in given store.
+func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
 // GetRegionInfoByID gets the region information of the region ID by using PD's api.
 func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -1123,8 +1130,8 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
-	endKey, _ = url.QueryUnescape(endKey)
-	_, decodedEndKey, _ := codec.DecodeBytes([]byte(endKey), []byte{})
+	e, _ := hex.DecodeString(endKey)
+	_, decodedEndKey, _ := codec.DecodeBytes(e, []byte{})
 	tableID := tablecodec.DecodeTableID(decodedEndKey)
 	tableID -= 1
 	return tableID
@@ -1139,15 +1146,22 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	}
 	for i := int64(0); i < n; i++ {
 		rs, _, _ := reader.ReadLine()
-		// For (`table`, `store`), has region `r`
-		r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if i, ok := (*regionReplica)[r]; ok {
-			(*regionReplica)[r] = i + 1
-		} else {
-			(*regionReplica)[r] = 1
+		srs := strings.Trim(string(rs), "\r\n\t")
+		splits := strings.Split(srs, " ")
+		for _, s := range splits {
+			// For (`table`, `store`), has region `r`
+			if s == "" {
+				continue
+			}
+			r, err := strconv.ParseInt(s, 10, 32)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if c, ok := (*regionReplica)[r]; ok {
+				(*regionReplica)[r] = c + 1
+			} else {
+				(*regionReplica)[r] = 1
+			}
 		}
 	}
 	return nil

@@ -312,7 +312,8 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond), collate.GetCollator(tp.Collate))
+		collator := collate.GetCollator(tp.Collate)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -372,7 +373,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	}
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i])
+		point := rb.build(accessCondition[i], collate.GetCollator(newTp[i].Collate))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -388,7 +389,8 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]), collate.GetCollator(newTp[eqAndInCount].Collate))
+		collator := collate.GetCollator(newTp[eqAndInCount].Collate)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i], collator), collator)
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -644,7 +646,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[i])
+				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[j])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -652,7 +654,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 					return "", errors.New("unexpected form of range")
 				}
 			}
-			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[i])
+			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[j])
 			if err != nil {
 				return "false", err
 			}

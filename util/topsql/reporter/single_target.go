@@ -63,19 +63,23 @@ func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSin
 		registered: atomic.NewBool(false),
 		registerer: registerer,
 	}
+	return dataSink
+}
 
+// Start starts to run SingleTargetDataSink.
+func (ds *SingleTargetDataSink) Start() {
 	addr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 	if addr != "" {
-		dataSink.curRPCAddr = addr
-		if err := registerer.Register(dataSink); err != nil {
+		ds.curRPCAddr = addr
+		err := ds.registerer.Register(ds)
+		if err == nil {
+			ds.registered.Store(true)
+		} else {
 			logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
-			return nil
 		}
-		dataSink.registered.Store(true)
 	}
 
-	go dataSink.recoverRun()
-	return dataSink
+	go ds.recoverRun()
 }
 
 // recoverRun will run until SingleTargetDataSink is closed.

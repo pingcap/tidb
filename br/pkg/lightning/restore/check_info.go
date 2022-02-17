@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -218,7 +219,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.StoreID] = store
+		stores[store.Store.GetId()] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -314,11 +315,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }
@@ -405,6 +406,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
+	errMgr := errormanager.New(nil, rc.cfg)
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
 		if !ok {
@@ -421,10 +423,17 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
-					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr); err != nil {
 						return sourceSize, errors.Trace(err)
 					}
-					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+
+					if tbl.IndexRatio > 0 {
+						sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					} else {
+						// if sample data failed due to max-error, fallback to use source size
+						sourceSize += tbl.TotalSize
+					}
+
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
 						bigTableCount += 1
 						if !tbl.IsRowOrdered {
@@ -741,8 +750,8 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		if _, ok := defaultCols[col]; ok {
 			continue
 		}
-		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
-			"please give a default value for %s or choose another column to ignore or add this column in data file",
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s. "+
+			"Please add default value for column '%s' or choose another column to ignore or add this column in data file",
 			tableInfo.DB, tableInfo.Name, col, col))
 	}
 	return msgs, nil
@@ -797,8 +806,6 @@ outer:
 
 			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = tableCSVCount
-				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
@@ -927,7 +934,13 @@ func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{
 	return true
 }
 
-func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+func (rc *Controller) sampleDataFromTable(
+	ctx context.Context,
+	dbName string,
+	tableMeta *mydump.MDTableMeta,
+	tableInfo *model.TableInfo,
+	errMgr *errormanager.ErrorManager,
+) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
@@ -944,13 +957,18 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -983,7 +1001,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -994,7 +1012,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
@@ -1011,22 +1029,27 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)
 			return errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowSize += uint64(lastRow.Length)
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
-		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
-			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
-			return errors.Trace(err)
+			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+				"" /* use a empty string here because we don't actually record */, encodeErr)
+			if encodeErr != nil {
+				return errors.Annotatef(encodeErr, "in file at offset %d", offset)
+			}
+			if rowCount < maxSampleRowCount {
+				continue
+			} else {
+				break
+			}
 		}
 		if tableMeta.IsRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -1042,11 +1065,13 @@ outloop:
 			indexKVs = indexKVs.Clear()
 		}
 		kvSize += kvs.Size()
+		rowSize += uint64(lastRow.Length)
+		parser.RecycleRow(lastRow)
 
 		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 			kvSize += uint64(val.(int))
 		})
-		if rowSize > maxSampleDataSize && rowCount > maxSampleRowCount {
+		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}
 	}

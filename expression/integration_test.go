@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -810,6 +811,12 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+
+	// For issue 31603, only affects unistore.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varbinary(100));")
+	tk.MustExec("insert into t1 values('abc');")
+	tk.MustQuery("select 1 from t1 where char_length(c1) = 10;").Check(testkit.Rows())
 }
 
 func TestInvalidStrings(t *testing.T) {
@@ -2770,6 +2777,9 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
+
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
@@ -3473,36 +3483,33 @@ func TestExprPushdown(t *testing.T) {
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
 	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
 	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
+
 func TestIssue16973(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4757,17 +4764,6 @@ func TestIssue17287(t *testing.T) {
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
 
-func TestIssue26989(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select position('a' in 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'a');").Check(testkit.Rows("1"))
-}
-
 func TestIssue17898(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -5764,7 +5760,7 @@ func TestVitessHash(t *testing.T) {
 		"(1, 30375298039), " +
 		"(2, 1123), " +
 		"(3, 30573721600), " +
-		"(4, " + fmt.Sprintf("%d", uint64(math.MaxUint64)) + ")," +
+		"(4, " + strconv.FormatUint(uint64(math.MaxUint64), 10) + ")," +
 		"(5, 116)," +
 		"(6, null);")
 
@@ -6988,4 +6984,62 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
 	// compare JSON/JSON, return JSON type
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
+}
+
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
+	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
+	require.NotNil(t, err)
+	tk.MustQuery("select * from t1").Check(nil)
+
+	// test vectorized build-in function
+	tk.MustExec("insert into t1 (a) values ('a'),('b');")
+	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	// test cast
+	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
+	require.NoError(t, err)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{nil},
+		{"a"},
+		{"b"},
+	})
+}
+
+func TestIssue22206(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
+	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
+	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime(5000000000);")
+	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(unixTime))
 }

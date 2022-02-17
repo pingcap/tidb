@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -61,14 +62,15 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -257,6 +259,33 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
+}
+
+func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+	if *withTiKV {
+		initPdAddrs()
+		pdAddr := <-pdAddrChan
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		require.NoError(t, err)
+		err = clearStorage(store)
+		require.NoError(t, err)
+		err = clearETCD(store.(kv.EtcdBackend))
+		require.NoError(t, err)
+		session.ResetStoreForWithTiKVTest(store)
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		return store, func() {
+			dom.Close()
+			store.Close()
+			pdAddrChan <- pdAddr
+		}
+	}
+	return newTestkit.CreateMockStore(t)
 }
 
 type mockBinlogPump struct {
@@ -2162,11 +2191,13 @@ func (s *testSchemaSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	originalRetryTime := domain.SchemaOutOfDateRetryTimes.Load()
+	originalRetryInterval := domain.SchemaOutOfDateRetryInterval.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(3)
+	domain.SchemaOutOfDateRetryInterval.Store(20 * time.Millisecond)
 	defer func() {
-		atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTime)
+		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3726,6 +3757,7 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")
 	c.Assert(len(result.Rows()), Equals, 2)
 
+	timeBeforeWriting := time.Now()
 	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
@@ -3738,7 +3770,9 @@ PARTITION BY RANGE (c) (
 	result.Check(testkit.Rows("local"))
 
 	// test local txn auto commit
-	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	tk.MustExec("insert into t1 (c) values (1)")          // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c = 1") // point get dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 3)
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
@@ -3774,7 +3808,16 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	tk.MustExec("begin")
+	err = tk.ExecToErr("select * from t1 where c = 101") // point get dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
@@ -3800,6 +3843,30 @@ PARTITION BY RANGE (c) (
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 4)
+
+	// Stale Read will ignore the cross-dc txn scope.
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "dc-1")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows("local"))
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	// Read dc-2 with Stale Read (in dc-1 scope)
+	timestamp := timeBeforeWriting.Format(time.RFC3339Nano)
+	// TODO: check the result of Stale Read when we figure out how to make the time precision more accurate.
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c = 101", timestamp))
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
+	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
+	tk.MustExec("select * from t1 where c > 100")
+	tk.MustExec("commit")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
+	tk.MustExec(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%s' where c > 100", timestamp))
+	tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", timestamp))
+	tk.MustExec("select * from t1 where c = 101")
+	tk.MustExec("select * from t1 where c > 100")
+	tk.MustExec("commit")
+
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
@@ -4018,7 +4085,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -4364,12 +4431,10 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
-		wg.Done()
-	}()
+	})
 	time.Sleep(2 * time.Second)
 	pi := tk.Se.ShowProcess()
 	c.Assert(pi, NotNil)
@@ -4378,17 +4443,17 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4398,15 +4463,15 @@ func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()
@@ -4869,8 +4934,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5891,13 +5954,16 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 	tk.MustQuery("select * from ct1").Check(testkit.Rows())
 	tk.MustQuery("select * from ct2").Check(testkit.Rows())
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 50; i++ {
-		if tk.HasPlan("select * from ct1", "Union") {
-			if tk.HasPlan("select * from ct2", "Union") {
-				cached = true
-				break
-			}
+		tk.MustQuery("select * from ct1")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -5938,4 +6004,14 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

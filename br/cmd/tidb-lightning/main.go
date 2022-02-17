@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"go.uber.org/zap"
 )
 
@@ -78,6 +79,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
 		return
 	}
+	if len(globalCfg.App.StatusAddr) > 0 {
+		web.EnableCurrentProgress()
+	}
 
 	err = func() error {
 		if globalCfg.App.ServerMode {
@@ -101,7 +105,7 @@ func main() {
 	} else {
 		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
 		exitMsg := "tidb lightning exit successfully"
-		if finished {
+		if !finished {
 			exitMsg = "tidb lightning canceled"
 		}
 		fmt.Fprintln(os.Stdout, exitMsg)

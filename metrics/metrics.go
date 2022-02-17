@@ -112,7 +112,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PseudoEstimation)
-	prometheus.MustRegister(PacketIOHistogram)
+	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -161,6 +161,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
 	prometheus.MustRegister(PDApiExecutionHistogram)
+	prometheus.MustRegister(CPUProfileCounter)
+	prometheus.MustRegister(ReadFromTableCacheCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

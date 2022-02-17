@@ -118,6 +118,11 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialAccess  []bool
 }
 
+// Table implements the dataSourceExecutor interface.
+func (e *IndexMergeReaderExecutor) Table() table.Table {
+	return e.table
+}
+
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
@@ -253,7 +258,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
-func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) (err error) {
+func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
@@ -288,6 +293,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
+					var err error
 					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						worker.syncErr(e.resultCh, err)
 						return
@@ -295,9 +301,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 
 				var builder distsql.RequestBuilder
-				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-					builder.SetIsolationLevel(kv.RC)
-				}
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
@@ -359,7 +362,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) (err error) {
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
@@ -376,6 +379,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				var err error
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
@@ -415,8 +419,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// init partialTableReader and partialTableWorker again for the next table
 					partialTableReader.table = tbl
-					err := partialTableReader.Open(ctx)
-					if err != nil {
+					if err = partialTableReader.Open(ctx); err != nil {
 						logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
 						worker.syncErr(e.resultCh, err)
 						break
@@ -438,7 +441,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// release related resources
 					cancel()
-					if err := worker.tableReader.Close(); err != nil {
+					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
@@ -615,7 +618,9 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
+	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Also it's good for performance.
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err

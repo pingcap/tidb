@@ -105,24 +105,24 @@ func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOpt
 }
 
 func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildPlanTrace())
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
 }
 
 func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
+	op.tracer.RecordFinalLogicalPlan(final.buildPlanTrace())
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -290,7 +290,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
-
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
+		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
+	}
 	return finalPlan, cost, nil
 }
 
@@ -409,12 +411,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
+		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			vars.StmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
 	}
 	var err error
@@ -440,7 +443,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPlan, float64, error) {
+func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
 	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
@@ -452,8 +455,21 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPl
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	opt := defaultPhysicalOptimizeOption()
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PlanTrace)}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			if err == nil {
+				tracer.RecordFinalPlanTrace(plan.buildPlanTrace())
+				stmtCtx.OptimizeTracer.Physical = tracer
+			}
+		}()
+	}
+
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter)
+	t, _, err := logic.findBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}

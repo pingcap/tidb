@@ -121,7 +121,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
 	conf := configForWriteCSV(cfg, true, opt)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	require.Equal(t, uint64(4), n)
@@ -217,7 +217,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
 	conf := configForWriteCSV(cfg, true, opt)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
 	require.Equal(t, uint64(3), n)

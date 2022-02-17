@@ -255,16 +255,16 @@ const (
 	microsecondBitFieldMask uint64 = ((1 << microsecondBitFieldWidth) - 1) << microsecondBitFieldOffset
 	fspTtBitFieldMask       uint64 = ((1 << fspTtBitFieldWidth) - 1) << fspTtBitFieldOffset
 
-	fspTtForDate         uint8  = 0b1110
+	fspTtForDate         uint   = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
 	coreTimeBitFieldMask        = ^fspTtBitFieldMask
 )
 
 // NewTime constructs time from core time, type and fsp.
-func NewTime(coreTime CoreTime, tp uint8, fsp int8) Time {
+func NewTime(coreTime CoreTime, tp uint8, fsp int) Time {
 	t := ZeroTime
 	p := (*uint64)(&t.coreTime)
-	*p |= (uint64(coreTime) & coreTimeBitFieldMask)
+	*p |= uint64(coreTime) & coreTimeBitFieldMask
 	if tp == mysql.TypeDate {
 		*p |= uint64(fspTtForDate)
 		return t
@@ -279,11 +279,11 @@ func NewTime(coreTime CoreTime, tp uint8, fsp int8) Time {
 	return t
 }
 
-func (t Time) getFspTt() uint8 {
-	return uint8(uint64(t.coreTime) & fspTtBitFieldMask)
+func (t Time) getFspTt() uint {
+	return uint(uint64(t.coreTime) & fspTtBitFieldMask)
 }
 
-func (t *Time) setFspTt(fspTt uint8) {
+func (t *Time) setFspTt(fspTt uint) {
 	*(*uint64)(&t.coreTime) &= ^(fspTtBitFieldMask)
 	*(*uint64)(&t.coreTime) |= uint64(fspTt)
 }
@@ -300,12 +300,12 @@ func (t Time) Type() uint8 {
 }
 
 // Fsp returns fsp value.
-func (t Time) Fsp() int8 {
+func (t Time) Fsp() int {
 	fspTt := t.getFspTt()
 	if fspTt == fspTtForDate {
 		return 0
 	}
-	return int8(fspTt >> 1)
+	return int(fspTt >> 1)
 }
 
 // SetType updates the type in Time.
@@ -321,13 +321,13 @@ func (t *Time) SetType(tp uint8) {
 	case mysql.TypeTimestamp:
 		fspTt |= 1
 	case mysql.TypeDatetime:
-		fspTt &= ^(uint8(1))
+		fspTt &= ^(uint(1))
 	}
 	t.setFspTt(fspTt)
 }
 
 // SetFsp updates the fsp in Time.
-func (t *Time) SetFsp(fsp int8) {
+func (t *Time) SetFsp(fsp int) {
 	if t.getFspTt() == fspTtForDate {
 		return
 	}
@@ -335,7 +335,7 @@ func (t *Time) SetFsp(fsp int8) {
 		fsp = DefaultFsp
 	}
 	*(*uint64)(&t.coreTime) &= ^(fspBitFieldMask)
-	*(*uint64)(&t.coreTime) |= (uint64(fsp) << 1)
+	*(*uint64)(&t.coreTime) |= uint64(fsp) << 1
 }
 
 // CoreTime returns core time.
@@ -346,7 +346,7 @@ func (t Time) CoreTime() CoreTime {
 // SetCoreTime updates core time.
 func (t *Time) SetCoreTime(ct CoreTime) {
 	*(*uint64)(&t.coreTime) &= ^coreTimeBitFieldMask
-	*(*uint64)(&t.coreTime) |= (uint64(ct) & coreTimeBitFieldMask)
+	*(*uint64)(&t.coreTime) |= uint64(ct) & coreTimeBitFieldMask
 }
 
 // CurrentTime returns current time with type tp.
@@ -436,7 +436,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 	fsp := t.Fsp()
 	if fsp > 0 {
 		s1 := fmt.Sprintf("%s.%06d", s, t.Microsecond())
-		s = s1[:len(s)+int(fsp)+1]
+		s = s1[:len(s)+fsp+1]
 	}
 	// We skip checking error here because time formatted string can be parsed certainly.
 	err = dec.FromString([]byte(s))
@@ -492,19 +492,19 @@ func (t Time) CompareString(sc *stmtctx.StatementContext, str string) (int, erro
 }
 
 // roundTime rounds the time value according to digits count specified by fsp.
-func roundTime(t gotime.Time, fsp int8) gotime.Time {
-	d := gotime.Duration(math.Pow10(9 - int(fsp)))
+func roundTime(t gotime.Time, fsp int) gotime.Time {
+	d := gotime.Duration(math.Pow10(9 - fsp))
 	return t.Round(d)
 }
 
 // RoundFrac rounds the fraction part of a time-type value according to `fsp`.
-func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
+func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	if t.Type() == mysql.TypeDate || t.IsZero() {
 		// date type has no fsp
 		return t, nil
 	}
 
-	fsp, err := CheckFsp(int(fsp))
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return t, errors.Trace(err)
 	}
@@ -542,7 +542,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 }
 
 // GetFsp gets the fsp of a string.
-func GetFsp(s string) int8 {
+func GetFsp(s string) int {
 	index := GetFracIndex(s)
 	var fsp int
 	if index < 0 {
@@ -553,7 +553,7 @@ func GetFsp(s string) int8 {
 	if fsp > 6 {
 		fsp = 6
 	}
-	return int8(fsp)
+	return fsp
 }
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
@@ -576,22 +576,22 @@ func GetFracIndex(s string) (index int) {
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
 // and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func RoundFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
-	_, err := CheckFsp(int(fsp))
+func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
+	_, err := CheckFsp(fsp)
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	return t.Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil //nolint:durationcheck
+	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil //nolint:durationcheck
 }
 
 // TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
 // 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
 // 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
-func TruncateFrac(t gotime.Time, fsp int8) (gotime.Time, error) {
-	if _, err := CheckFsp(int(fsp)); err != nil {
+func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
+	if _, err := CheckFsp(fsp); err != nil {
 		return t, err
 	}
-	return t.Truncate(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond), nil //nolint:durationcheck
+	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil //nolint:durationcheck
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -786,7 +786,8 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	if prevParts == 2 && (c == ' ' || c == 'T') {
+	// for https://github.com/pingcap/tidb/issues/32232
+	if prevParts == 2 && (c == 'T' || c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r') {
 		return true
 	}
 
@@ -923,7 +924,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -1270,7 +1271,7 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 }
 
 // NewDuration construct duration with time.
-func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
+func NewDuration(hour, minute, second, microsecond int, fsp int) Duration {
 	return Duration{
 		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond, //nolint:durationcheck
 		Fsp:      fsp,
@@ -1282,11 +1283,11 @@ type Duration struct {
 	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-	Fsp int8
+	Fsp int
 }
 
 // MaxMySQLDuration returns Duration with maximum mysql time.
-func MaxMySQLDuration(fsp int8) Duration {
+func MaxMySQLDuration(fsp int) Duration {
 	return NewDuration(TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0, fsp)
 }
 
@@ -1475,14 +1476,14 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int8, loc *gotime.Location) (Duration, error) {
+func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
 	tz := loc
 	if tz == nil {
 		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 
-	fsp, err := CheckFsp(int(fsp))
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1492,7 +1493,7 @@ func (d Duration) RoundFrac(fsp int8, loc *gotime.Location) (Duration, error) {
 	}
 
 	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n) //nolint:durationcheck
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n) //nolint:durationcheck
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -1643,7 +1644,7 @@ func checkHHMMSS(hms [3]int) bool {
 }
 
 // matchFrac returns overflow, fraction, rest, error
-func matchFrac(str string, fsp int8) (bool, int, string, error) {
+func matchFrac(str string, fsp int) (bool, int, string, error) {
 	rest, err := parser.Char(str, '.')
 	if err != nil {
 		return false, 0, str, nil
@@ -1662,8 +1663,8 @@ func matchFrac(str string, fsp int8) (bool, int, string, error) {
 	return overflow, frac, rest, nil
 }
 
-func matchDuration(str string, fsp int8) (Duration, error) {
-	fsp, err := CheckFsp(int(fsp))
+func matchDuration(str string, fsp int) (Duration, error) {
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}
@@ -1760,7 +1761,7 @@ func canFallbackToDateTime(str string) bool {
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
 	rest := strings.TrimSpace(str)
 	d, err := matchDuration(rest, fsp)
 	if err == nil {
@@ -1926,12 +1927,12 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
 	return parseTime(sc, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
-func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
+func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
 	// MySQL compatibility: 0.0 should not be converted to null, see #11203
 	if len(str) >= 3 && str[:3] == "0.0" {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
@@ -1939,8 +1940,8 @@ func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte,
 	return parseTime(sc, str, tp, fsp, true)
 }
 
-func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
-	fsp, err := CheckFsp(int(fsp))
+func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
@@ -1986,7 +1987,7 @@ func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
-func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
+func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
@@ -2002,7 +2003,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8
 		}
 		return zt, nil
 	}
-	fsp, err := CheckFsp(int(fsp))
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
@@ -2393,7 +2394,7 @@ func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, 
 	if err != nil {
 		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
-	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], int(MaxFsp)), 10, 64)
+	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
@@ -2558,7 +2559,8 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		if (length == 8) || (length == 6) {
+		// "20129" will be parsed to 2020-12-09, which is date format.
+		if (length == 8) || (length == 6) || (length == 5) {
 			return true
 		}
 	case 3:

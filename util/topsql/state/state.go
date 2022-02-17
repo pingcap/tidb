@@ -20,24 +20,24 @@ import "go.uber.org/atomic"
 const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
-	DefTiDBTopSQLMaxCollect            = 5000
+	DefTiDBTopSQLMaxTimeSeriesCount    = 100
+	DefTiDBTopSQLMaxMetaCount          = 5000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 )
 
 // GlobalState is the global Top-SQL state.
 var GlobalState = State{
-	Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
+	enable:                atomic.NewBool(false),
 	PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
-	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
-	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
+	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxTimeSeriesCount),
+	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxMetaCount),
 	ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 }
 
 // State is the state for control top sql feature.
 type State struct {
-	// Enable top-sql or not.
-	Enable *atomic.Bool
+	// enable top-sql or not.
+	enable *atomic.Bool
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -48,7 +48,17 @@ type State struct {
 	ReportIntervalSeconds *atomic.Int64
 }
 
+// EnableTopSQL enables the top SQL feature.
+func EnableTopSQL() {
+	GlobalState.enable.Store(true)
+}
+
+// DisableTopSQL disables the top SQL feature.
+func DisableTopSQL() {
+	GlobalState.enable.Store(false)
+}
+
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return GlobalState.Enable.Load()
+	return GlobalState.enable.Load()
 }

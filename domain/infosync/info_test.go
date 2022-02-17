@@ -210,3 +210,65 @@ func TestPutBundlesRetry(t *testing.T) {
 		require.True(t, got.IsEmpty())
 	})
 }
+
+func TestTiFlashManager(t *testing.T) {
+	ctx := context.Background()
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, false)
+	tiflash := NewMockTiFlash()
+	SetMockTiFlash(tiflash)
+
+	require.NoError(t, err)
+
+	// SetTiFlashPlacementRule/GetTiFlashGroupRules
+	rule := MakeNewRule(1, 2, []string{"a"})
+	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+	require.Equal(t, "table-1-r", rules[0].ID)
+	require.Equal(t, 2, rules[0].Count)
+	require.Equal(t, []string{"a"}, rules[0].LocationLabels)
+	require.Equal(t, false, rules[0].Override, false)
+	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
+
+	// PostTiFlashAccelerateSchedule
+	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
+	z, ok := tiflash.SyncStatus[1]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	// GetTiFlashStoresStat
+	stats, err := GetTiFlashStoresStat(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Count)
+
+	// DeleteTiFlashPlacementRule
+	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 0, len(rules))
+
+	// ConfigureTiFlashPDForTable
+	require.Nil(t, ConfigureTiFlashPDForTable(1, 2, &[]string{"a"}))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+
+	// ConfigureTiFlashPDForPartitions
+	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
+		{
+			ID:       2,
+			Name:     model.NewCIStr("p"),
+			LessThan: []string{},
+		},
+	}, 3, &[]string{})
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	// Have table 1 and 2
+	require.Equal(t, 2, len(rules))
+	z, ok = tiflash.SyncStatus[2]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	CloseTiFlashManager(ctx)
+}

@@ -222,6 +222,9 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 
 func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
 	enc = charset.FindEncoding(chs)
+	if sc == nil {
+		return enc, false
+	}
 	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
 		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
 		return nil, true
@@ -342,7 +345,7 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 
 // GetMysqlDuration gets Duration value
 func (d *Datum) GetMysqlDuration() Duration {
-	return Duration{Duration: time.Duration(d.i), Fsp: int8(d.decimal)}
+	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
 }
 
 // SetMysqlDuration sets Duration value
@@ -1133,10 +1136,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 			return ret, errors.Trace(err1)
 		}
 		val, err = ConvertUintToUint(uval, upperBound, tp)
-		if err != nil {
-			return ret, errors.Trace(err)
+		if err == nil {
+			err = err1
 		}
-		err = err1
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
 		err = dec.Round(dec, 0, ModeHalfEven)
@@ -1188,7 +1190,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	)
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	switch d.k {
 	case KindMysqlTime:
@@ -1236,7 +1238,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	var (
 		ret Datum
@@ -1299,7 +1301,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	var ret Datum
 	switch d.k {
@@ -1616,7 +1618,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
-		if j, err = json.ParseBinaryFromString(d.GetBinaryStringEncoded()); err == nil {
+		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:

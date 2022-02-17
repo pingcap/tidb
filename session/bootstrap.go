@@ -376,6 +376,16 @@ const (
 		column_ids TEXT(19372),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
+	// CreateStatsHistory stores the historical stats.
+	CreateStatsHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
+		table_id bigint(64) NOT NULL,
+		stats_data longblob NOT NULL,
+		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
+		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+		create_time datetime(6) NOT NULL,
+		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		KEY table_create_time (table_id, create_time, seq_no)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -557,11 +567,13 @@ const (
 	version81 = 81
 	// version82 adds the mysql.analyze_options table
 	version82 = 82
+	// version83 adds the tables mysql.stats_history
+	version83 = 83
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version82
+var currentBootstrapVersion int64 = version83
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -647,6 +659,7 @@ var (
 		upgradeToVer80,
 		upgradeToVer81,
 		upgradeToVer82,
+		upgradeToVer83,
 	}
 )
 
@@ -1219,13 +1232,12 @@ func upgradeToVer42(s Session, ver int64) {
 // Convert statement summary global variables to non-empty values.
 func writeStmtSummaryVars(s Session) {
 	sql := "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''"
-	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount)
-	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBEnableStmtSummary), variable.TiDBEnableStmtSummary)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBStmtSummaryInternalQuery), variable.TiDBStmtSummaryInternalQuery)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryRefreshInterval), variable.TiDBStmtSummaryRefreshInterval)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryHistorySize), variable.TiDBStmtSummaryHistorySize)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength)
 }
 
 func upgradeToVer43(s Session, ver int64) {
@@ -1608,7 +1620,7 @@ func upgradeToVer74(s Session, ver int64) {
 		return
 	}
 	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
-	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", variable.DefTiDBStmtSummaryMaxStmtCount))
 }
 
 func upgradeToVer75(s Session, ver int64) {
@@ -1703,6 +1715,13 @@ func upgradeToVer82(s Session, ver int64) {
 	doReentrantDDL(s, CreateAnalyzeOptionsTable)
 }
 
+func upgradeToVer83(s Session, ver int64) {
+	if ver >= version83 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1789,6 +1808,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTableCacheMetaTable)
 	// Create analyze_options table.
 	mustExecute(s, CreateAnalyzeOptionsTable)
+	// Create stats_history table.
+	mustExecute(s, CreateStatsHistory)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1842,6 +1863,12 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
+			}
+			if v.Name == variable.TiDBEnableMutationChecker {
+				vVal = variable.On
+			}
+			if v.Name == variable.TiDBTxnAssertionLevel {
+				vVal = variable.AssertionFastStr
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
