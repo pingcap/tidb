@@ -102,6 +102,21 @@ var (
 	GlobalDiskUsageTracker *disk.Tracker
 )
 
+var (
+	_ dataSourceExecutor = &TableReaderExecutor{}
+	_ dataSourceExecutor = &IndexReaderExecutor{}
+	_ dataSourceExecutor = &IndexLookUpExecutor{}
+	_ dataSourceExecutor = &IndexMergeReaderExecutor{}
+)
+
+// dataSourceExecutor is a table DataSource converted Executor.
+// Currently, there are TableReader/IndexReader/IndexLookUp/IndexMergeReader.
+// Note, partition reader is special and the caller should handle it carefully.
+type dataSourceExecutor interface {
+	Executor
+	Table() table.Table
+}
+
 type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            int
@@ -1707,6 +1722,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
+
+	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)

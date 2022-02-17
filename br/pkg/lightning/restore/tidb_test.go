@@ -284,7 +284,8 @@ func TestLoadSchemaInfo(t *testing.T) {
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
 			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
-			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
+			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);"+
+			"CREATE TABLE `T4` (`f` BIGINT PRIMARY KEY);",
 		"", "")
 	require.NoError(t, err)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
@@ -308,6 +309,10 @@ func TestLoadSchemaInfo(t *testing.T) {
 				{
 					DB:   "db",
 					Name: "t2",
+				},
+				{
+					DB:   "db",
+					Name: "t4",
 				},
 			},
 		},
@@ -334,13 +339,19 @@ func TestLoadSchemaInfo(t *testing.T) {
 					Name: "t2",
 					Core: tableInfos[1],
 				},
+				"t4": {
+					ID:   103,
+					DB:   "db",
+					Name: "t4",
+					Core: tableInfos[3],
+				},
 			},
 		},
 	}, loaded)
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-	require.Equal(t, 2.0, tableCntAfter-tableCntBefore)
+	require.Equal(t, 3.0, tableCntAfter-tableCntBefore)
 }
 
 func TestLoadSchemaInfoMissing(t *testing.T) {
