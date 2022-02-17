@@ -1021,8 +1021,11 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 	wg.Wait()
 
 	// add stmt again to make sure evict occurs after SetMaxStmtCount.
-	wg.Add(1)
-	addStmtFunc()
+	stmtExecInfo1 := generateAnyExecInfo()
+	for i := 0; i < loops; i++ {
+		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
+		ssMap.AddStatement(stmtExecInfo1)
+	}
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
