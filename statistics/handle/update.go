@@ -191,7 +191,7 @@ var (
 	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
-// StoreQueryFeedback merges the feedback into stats collector.
+// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
@@ -564,7 +564,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	return errors.Trace(err)
 }
 
-// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
 func (h *Handle) DumpStatsFeedbackToKV() error {
 	h.feedback.Lock()
 	feedback := h.feedback.data
@@ -1345,7 +1345,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 	}
 }
 
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
@@ -1459,7 +1459,7 @@ func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location
 	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
 }
 
-// DumpFeedbackForIndex dumps the feedback for index.
+// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
 	idx, ok := t.Indices[q.Hist.ID]
