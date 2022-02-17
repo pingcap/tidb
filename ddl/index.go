@@ -409,6 +409,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
+	failpoint.Inject("skipAddIndex", func() {
+		failpoint.Return(ver, nil)
+	})
+
 	var (
 		unique                  bool
 		global                  bool
