@@ -1403,6 +1403,13 @@ var defaultSysVars = []*SysVar{
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		info, err := json.Marshal(s.LastDDLInfo)
+		if err != nil {
+			return "", err
+		}
+		return string(info), nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
