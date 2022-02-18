@@ -3845,3 +3845,28 @@ func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
 	require.Error(t, err)
 	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
 }
+
+func TestDDLLastInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test;`)
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows("\"\" 0"))
+	tk.MustExec("create table t(a int)")
+	firstSequence := 0
+	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')")
+	require.Len(t, res.Rows(), 1)
+	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
+	var err error
+	firstSequence, err = strconv.Atoi(fmt.Sprintf("%v", res.Rows()[0][1]))
+	require.NoError(t, err)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use test;`)
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
+
+	tk.MustExec("drop table t, t2")
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+}
