@@ -55,7 +55,6 @@ var (
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
 	errTooLongKey                             = dbterror.ClassDDL.NewStd(mysql.ErrTooLongKey)
 	errKeyColumnDoesNotExits                  = dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
-	errInvalidDDLJobVersion                   = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJobVersion)
 	errInvalidUseOfNull                       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidUseOfNull)
 	errTooManyFields                          = dbterror.ClassDDL.NewStd(mysql.ErrTooManyFields)
 	errTooManyKeys                            = dbterror.ClassDDL.NewStd(mysql.ErrTooManyKeys)

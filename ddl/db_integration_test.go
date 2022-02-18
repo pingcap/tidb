@@ -1283,7 +1283,6 @@ func TestBackwardCompatibility(t *testing.T) {
 	tt := meta.NewMeta(txn)
 	job.ID, err = tt.GenGlobalID()
 	require.NoError(t, err)
-	job.Version = 1
 	job.StartTS = txn.StartTS()
 
 	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,

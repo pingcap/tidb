@@ -288,7 +288,6 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 
 		for i, task := range tasks {
 			job := task.job
-			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
 			if err = buildJobDependence(t, job); err != nil {
@@ -381,13 +380,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 }
 
 func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
-	var err error
-	if job.Version <= currentVersion {
-		err = w.delRangeManager.addDelRangeJob(ctx, job)
-	} else {
-		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
-	}
-	return errors.Trace(err)
+	return w.delRangeManager.addDelRangeJob(ctx, job)
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.

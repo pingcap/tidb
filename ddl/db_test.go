@@ -6598,7 +6598,6 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 	t := meta.NewMeta(txn)
 	job.ID, err = t.GenGlobalID()
 	c.Assert(err, IsNil)
-	job.Version = 1
 	job.StartTS = txn.StartTS()
 
 	err = t.EnQueueDDLJob(job)

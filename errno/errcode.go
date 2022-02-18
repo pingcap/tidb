@@ -1031,7 +1031,6 @@ const (
 	ErrInvalidDDLState                    = 8210
 	ErrReorgPanic                         = 8211
 	ErrInvalidSplitRegionRanges           = 8212
-	ErrInvalidDDLJobVersion               = 8213
 	ErrCancelledDDLJob                    = 8214
 	ErrRepairTable                        = 8215
 	ErrInvalidAutoRandom                  = 8216

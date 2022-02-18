@@ -278,9 +278,6 @@ type Job struct {
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
-
 	// ReorgMeta is meta info of ddl reorganization.
 	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
