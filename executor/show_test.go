@@ -1404,7 +1404,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 274
+	const builtinFuncNum = 275
 	require.Equal(t, len(rows), builtinFuncNum)
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")

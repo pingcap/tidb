@@ -953,7 +953,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// arithmetical functions.
 		ast.PI, ast.Truncate,
-		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
+		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
 
 		// math functions.
 		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
@@ -983,13 +983,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat,                                               /* Date */
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month, /* ast.MonthName */
-		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
-		ast.Weekday, ast.WeekOfYear, ast.Year, /* ast.YearWeek */
+		ast.Date, ast.Week, ast.YearWeek, ast.ToSeconds, ast.DateDiff,
+		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
+		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
+		ast.DateFormat,
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
+		ast.Weekday, ast.WeekOfYear, ast.Year,
 		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		ast.LastDay,
+		ast.Sysdate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
