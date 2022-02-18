@@ -156,6 +156,33 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
+func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
+	tmpDir := c.MkDir()
+	// use slashPath in url to be compatible with windows
+	slashPath := filepath.ToSlash(tmpDir)
+
+	cfg := config.NewConfig()
+	cases := []string{
+		tmpDir,
+		".",
+		"file://" + slashPath,
+		"local://" + slashPath,
+		"s3://bucket_name",
+		"s3://bucket_name/path/to/dir",
+		"gcs://bucketname/path/to/dir",
+		"gs://bucketname/path/to/dir",
+		"noop:///",
+	}
+
+	for _, testCase := range cases {
+		cfg.Mydumper.SourceDir = testCase
+
+		err := cfg.CheckAndAdjustFilePath()
+		c.Assert(err, IsNil)
+	}
+
+}
+
 func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
