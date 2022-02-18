@@ -1584,6 +1584,17 @@ func TestShowVar(t *testing.T) {
 	// Test Hidden tidb_enable_streaming
 	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
 	require.Len(t, res.Rows(), 0)
+
+	// Test versions' related variables
+	res = tk.MustQuery("show variables like 'version%'")
+	for _, row := range res.Rows() {
+		line := fmt.Sprint(row)
+		if strings.HasPrefix(line, "version ") {
+			require.Equal(t, mysql.ServerVersion, line[len("version "):])
+		} else if strings.HasPrefix(line, "version_comment ") {
+			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
+		}
+	}
 }
 
 func TestIssue19507(t *testing.T) {
