@@ -2096,10 +2096,6 @@ func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestIssue27797(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-=======
 func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2132,11 +2128,8 @@ func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
-	store, _ := s.store, s.dom
-	tk := testkit.NewTestKit(c, store)
-
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
+func (s *testIntegrationSuite) TestIssue27797(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t27797")
 	tk.MustExec("create table t27797(a int, b int, c int, d int) " +

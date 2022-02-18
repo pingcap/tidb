@@ -4089,7 +4089,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return updt, err
 }
 
-<<<<<<< HEAD
 // GetUpdateColumns gets the columns of updated lists.
 func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
@@ -4101,12 +4100,6 @@ func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignme
 		assignFlag[idx] = true
 	}
 	return assignFlag, nil
-=======
-type tblUpdateInfo struct {
-	name                string
-	pkUpdated           bool
-	partitionColUpdated bool
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
 }
 
 func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
@@ -4118,21 +4111,16 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
-<<<<<<< HEAD
 		var updatePK bool
-=======
-		var update, updatePK, updatePartitionCol bool
 		var partitionColumnNames []model.CIStr
 		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
 			partitionColumnNames = pt.GetPartitionColumnNames()
 		}
 
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-<<<<<<< HEAD
 			// Check for multi-updates on primary key,
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if !flags[i] {
@@ -4140,33 +4128,11 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 			}
 			if mysql.HasPriKeyFlag(col.Flag) {
 				updatePK = true
-=======
-			if flags[i] >= 0 {
-				update = true
-				if mysql.HasPriKeyFlag(col.Flag) {
+			}
+			for _, partColName := range partitionColumnNames {
+				if col.Name.L == partColName.L {
 					updatePK = true
 				}
-				for _, partColName := range partitionColumnNames {
-					if col.Name.L == partColName.L {
-						updatePartitionCol = true
-					}
-				}
-			}
-		}
-		if update {
-			// Check for multi-updates on primary key,
-			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
-			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
-				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
-					return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
-				}
-			} else {
-				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:                updt.names[content.Start].TblName.O,
-					pkUpdated:           updatePK,
-					partitionColUpdated: updatePartitionCol,
-				}
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
 			}
 		}
 		if updatePK {
