@@ -39,7 +39,7 @@ Sort	1985.00	root		test.t2.c2
 explain format = 'brief' select * from t1 where t1.c1 > 0;
 id	estRows	task	access object	operator info
 TableReader	1999.00	root		data:TableRangeScan
-└─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf], keep order:false
+└─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf), keep order:false
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 IndexReader	0.00	root		index:IndexRangeScan
@@ -51,7 +51,7 @@ HashJoin	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 │ └─Selection	1985.00	cop[tikv]		not(isnull(test.t2.c1))
 │   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	1998.00	root		data:TableRangeScan
-  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf), keep order:false
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -81,7 +81,7 @@ TopN	1.00	root		test.t2.c2, offset:0, count:1
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.00	root		
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf), keep order:false
 └─Selection(Probe)	0.00	cop[tikv]		lt(test.t1.c3, 1)
   └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;

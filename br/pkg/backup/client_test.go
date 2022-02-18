@@ -177,7 +177,6 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 	require.NoError(t, err_l)
 	high, err_h := codec.EncodeKey(nil, nil, []types.Datum{types.MaxValueDatum()}...)
 	require.NoError(t, err_h)
-	high = kv.Key(high).PrefixNext()
 	cases := []Case{
 		{ids: []int64{1}, trs: []kv.KeyRange{
 			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},

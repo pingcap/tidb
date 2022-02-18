@@ -38,7 +38,7 @@ Sort	10000.00	root		test.t2.c2
 explain format = 'brief' select * from t1 where t1.c1 > 0;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root		data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf], keep order:false, stats:pseudo
+└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf), keep order:false, stats:pseudo
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 IndexReader	10.00	root		index:IndexRangeScan
@@ -47,7 +47,7 @@ explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1
 id	estRows	task	access object	operator info
 HashJoin	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 ├─TableReader(Build)	3333.33	root		data:TableRangeScan
-│ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf], keep order:false, stats:pseudo
+│ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf), keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
   └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.c1))
     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -81,7 +81,7 @@ TopN	1.00	root		test.t2.c2, offset:0, count:1
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp	11.08	root		
-├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf), keep order:false, stats:pseudo
 └─Selection(Probe)	11.08	cop[tikv]		lt(test.t1.c3, 1)
   └─TableRowIDScan	33.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
@@ -147,7 +147,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexLookUp	1.00	root		
   ├─Selection(Build)	3.00	cop[tikv]		gt(test.t4.b, 1)
-  │ └─IndexRangeScan	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf), keep order:false, stats:pseudo
   └─Limit(Probe)	1.00	cop[tikv]		offset:0, count:1
     └─Selection	1.00	cop[tikv]		gt(test.t4.c, 1)
       └─TableRowIDScan	3.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
@@ -157,7 +157,7 @@ Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
     └─Selection	1.00	cop[tikv]		gt(test.t4.c, 1)
-      └─TableRangeScan	3.00	cop[tikv]	table:t4	range:(1,+inf], keep order:false, stats:pseudo
+      └─TableRangeScan	3.00	cop[tikv]	table:t4	range:(1,+inf), keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(null, t1.c1) from t1;
 id	estRows	task	access object	operator info
 TableReader	10000.00	root		data:TableFullScan
@@ -644,7 +644,7 @@ explain format = 'brief' select * from t where _tidb_rowid > 0;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		test.t.a
 └─TableReader	10000.00	root		data:TableRangeScan
-  └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
+  └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf), keep order:false, stats:pseudo
 explain format = 'brief' select a, _tidb_rowid from t where a > 0;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root		data:Selection
@@ -655,7 +655,7 @@ id	estRows	task	access object	operator info
 Projection	2666.67	root		test.t.a
 └─TableReader	2666.67	root		data:Selection
   └─Selection	2666.67	cop[tikv]		gt(test.t.a, 0)
-    └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
+    └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf), keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'brief' select * from (select * from t order by (select 2)) t order by a, b;
