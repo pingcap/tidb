@@ -527,8 +527,8 @@ github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLA
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
 github.com/nxadm/tail v1.4.8/go.mod h1:+ncqLTQzXmGhMZNUePPaPqPvBxHAIsmXswZKocGu+AU=
-github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218041121-c4b69f8dd06c+incompatible h1:UHDUj8eYFk4+UacIjNE8tP+PeBuFazG6CcS2pErxWIY=
-github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218041121-c4b69f8dd06c+incompatible/go.mod h1:/IgQzrRyD+IWwpDLCR1KJz0mXJYW7RKlClmfWD7hCIk=
+github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218132048-8ac81a04efb9+incompatible h1:fq31pqOLX7w/3ejVEvCvbY+KiCvYepErGUf5hAcE5sk=
+github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218132048-8ac81a04efb9+incompatible/go.mod h1:/IgQzrRyD+IWwpDLCR1KJz0mXJYW7RKlClmfWD7hCIk=
 github.com/oklog/ulid v1.3.1/go.mod h1:CirwcVhetQ6Lv90oh/F+FBtV6XMibvdAFo93nm5qn4U=
 github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
 github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
