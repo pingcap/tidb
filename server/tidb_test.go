@@ -1649,6 +1649,14 @@ func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
 	c.f(data)
 }
 
+func waitCollected(ch chan struct{}) {
+	select {
+	case <-ch:
+	case <-time.After(time.Second * 3):
+	}
+	return
+}
+
 func TestTopSQLStatementStats(t *testing.T) {
 	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
@@ -1874,7 +1882,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 
 	wg.Wait()
 	// Wait for collect.
-	<-collectedNotifyCh
+	waitCollected(collectedNotifyCh)
 
 	found := 0
 	for digest, item := range total {
@@ -2055,7 +2063,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	}
 
 	// Wait for collect.
-	<-collectedNotifyCh
+	waitCollected(collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2106,7 +2114,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca
 	}
 	// Wait for collect.
-	<-collectedNotifyCh
+	waitCollected(collectedNotifyCh)
 
 	foundMap := map[stmtstats.BinaryDigest]string{}
 	for digest, item := range total {
@@ -2123,7 +2131,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 	// wait sql execute finish.
 	wg.Wait()
 	// Wait for collect.
-	<-collectedNotifyCh
+	waitCollected(collectedNotifyCh)
 
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
