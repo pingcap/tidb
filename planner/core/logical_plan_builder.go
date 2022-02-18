@@ -4165,6 +4165,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
+	for i, colExpr := range ds.Schema().Columns {
+		var expr expression.Expression
+		if i < len(columns) {
+			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				if err != nil {
+					return nil, err
+				}
+				colExpr.VirtualExpr = expr.Clone()
+			}
+		}
+	}
+
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
 		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
@@ -4173,6 +4187,21 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+
+			// check whether the path's index has a tidb_shard() prefix and the index column count
+			// more than 1. e.g. index(tidb_shard(a), a)
+			// set UkShardIndexPath only for unique secondary index
+			if !path.IsCommonHandlePath {
+				// tidb_shard expression must be first column of index
+				col := path.FullIdxCols[0]
+				if col != nil &&
+					expression.GcColumnExprIsTidbShard(col.VirtualExpr) &&
+					len(path.Index.Columns) > 1 &&
+					path.Index.Unique {
+					path.IsUkShardIndexPath = true
+					ds.containExprPrefixUk = true
+				}
+			}
 		}
 	}
 
@@ -4188,20 +4217,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	}
 	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
-
-	for i, colExpr := range ds.Schema().Columns {
-		var expr expression.Expression
-		if i < len(columns) {
-			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
-				var err error
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
-				if err != nil {
-					return nil, err
-				}
-				colExpr.VirtualExpr = expr.Clone()
-			}
-		}
-	}
 
 	return result, nil
 }
