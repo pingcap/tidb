@@ -235,6 +235,7 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnNames() []model.CIStr
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
