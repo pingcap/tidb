@@ -50,6 +50,8 @@ func TestInfo(t *testing.T) {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 
+	integration.BeforeTest(t)
+
 	if !unixSocketAvailable() {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
