@@ -608,8 +608,6 @@ func TestIssue24746(t *testing.T) {
 	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
 	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue31629(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
@@ -673,19 +671,3 @@ func TestIssue31629(t *testing.T) {
 		tk.MustExec("drop table t1")
 	}
 }
-
-func TestIssue31721(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_list_partition=on;")
-	tk.MustExec("drop tables if exists t_31721")
-	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
-		"(PARTITION `P0` VALUES IN ('1')," +
-		"PARTITION `P1` VALUES IN ('2')," +
-		"PARTITION `P2` VALUES IN ('3'));")
-	tk.MustExec("insert into t_31721 values ('1')")
-	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
-}
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)

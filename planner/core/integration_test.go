@@ -5226,8 +5226,6 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t31202")
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5260,75 +5258,3 @@ func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
 	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
 	tk.MustExec("drop table t1")
 }
-
-func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
-	store, _ := s.store, s.dom
-	tk := testkit.NewTestKit(c, store)
-
-	tk.MustExec("use test")
-	tk.MustExec(`create table t32157(
-  process_code varchar(8) NOT NULL,
-  ctrl_class varchar(2) NOT NULL,
-  ctrl_type varchar(1) NOT NULL,
-  oper_no varchar(12) DEFAULT NULL,
-  modify_date datetime DEFAULT NULL,
-  d_c_flag varchar(2) NOT NULL,
-  PRIMARY KEY (process_code,ctrl_class,d_c_flag));`)
-	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '1', '10000', '2016-06-29 00:00:00', 'C')")
-	tk.MustExec("insert into t32157 values ('GDEP0071', '05', '0', '0000', '2016-06-01 00:00:00', 'D')")
-	tk.MustExec("alter table t32157 cache")
-
-	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
-			"[└─TableReader 10.00 root  data:Selection]\n" +
-			"[  └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-			"[    └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
-
-	var readFromCacheNoPanic bool
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
-		if tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache {
-			readFromCacheNoPanic = true
-			break
-		}
-	}
-	c.Assert(readFromCacheNoPanic, IsTrue)
-
-	tk.MustExec("drop table if exists t31202")
-}
-
-func (s *testIntegrationSuite) TestIssue31240(c *C) {
-	store, dom := s.store, s.dom
-	tk := testkit.NewTestKit(c, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t31240(a int, b int);")
-	tk.MustExec("set @@tidb_allow_mpp = 0")
-
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
-	c.Assert(err, IsNil)
-	// Set the hacked TiFlash replica for explain tests.
-	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") {
-			tk.MustExec(tt)
-			continue
-		}
-		s.testData.OnRecord(func() {
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-	tk.MustExec("drop table if exists t31240")
-}
->>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
