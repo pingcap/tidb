@@ -792,7 +792,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 500, 500, resourceIdleTimeout)
+	var capacity int
+	if ddl.AllowConcurrentDDL.Load() {
+		capacity = 310
+	} else {
+		capacity = 2
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, capacity, capacity, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback

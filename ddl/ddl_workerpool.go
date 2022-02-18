@@ -70,7 +70,7 @@ func (sg *workerPool) put(wk *worker) {
 	sg.resPool.Put(wk)
 }
 
-// close clean up the sessionPool.
+// close clean up the workerPool.
 func (sg *workerPool) close() {
 	sg.mu.Lock()
 	defer sg.mu.Unlock()

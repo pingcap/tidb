@@ -55,7 +55,6 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 
 	// no need to protect sg.resPool
 	resource, err := sg.resPool.Get()
-	logutil.BgLogger().Debug("sessionPool get22233")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -90,6 +89,5 @@ func (sg *sessionPool) close() {
 	}
 	logutil.BgLogger().Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
-	logutil.BgLogger().Info("[ddl] closed sessionPool")
 	sg.mu.closed = true
 }
