@@ -87,13 +87,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := h.ch.Get(bindCacheKey(hash))
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
-			return bindRecord
-		}
-	}
-	return nil
+	return h.ch.getBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all session bind info.

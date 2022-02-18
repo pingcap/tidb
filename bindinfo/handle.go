@@ -142,7 +142,6 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		return err
 	}
 
-	// TODO: Should we need to copy one?
 	newCache := h.bindInfo.Value.Load().(*bindCache).copy()
 	defer func() {
 		h.bindInfo.lastUpdateTime = lastUpdateTime

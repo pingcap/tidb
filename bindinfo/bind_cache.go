@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// bindCache
+// bindCache uses the LRU cache to store the bindRecord.
+// The key of the LRU cache is original sql, the value is a slice of BindRecord.
+// Note: The bindCache is not thread-safe.
 type bindCache struct {
 	ctx         sessionctx.Context
-	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
+	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
 }
@@ -39,10 +41,56 @@ func (key bindCacheKey) Hash() []byte {
 func bindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	var valMem int64
 	for _, bindRecord := range value {
-		// TODO: use the memTracker struct for the BindRecord
 		valMem += int64(bindRecord.size())
 	}
 	return int64(len(key.Hash())) + valMem
+}
+
+// get gets a cache item according to cache key. It's not thread-safe.
+// Only other functions of the bindCache can use this function.
+func (c *bindCache) get(key bindCacheKey) []*BindRecord {
+	value, hit := c.cache.Get(key)
+	if !hit {
+		return nil
+	}
+	typedValue := value.([]*BindRecord)
+	return typedValue
+}
+
+// set inserts an item to the cache. It's not thread-safe.
+// Only other functions of the bindCache can use this function.
+func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
+	mem := bindCacheKVMem(key, value)
+	if mem > c.memCapacity { // ignore this kv pair if its size is too large
+		return false
+	}
+	bindRecords := c.get(key)
+	if bindRecords != nil {
+		// Remove the origin key-value pair.
+		mem -= bindCacheKVMem(key, bindRecords)
+	}
+	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
+		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
+		if !evicted {
+			return false
+		}
+		c.memTracker.Consume(-bindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
+	}
+	c.memTracker.Consume(mem)
+	c.cache.Put(key, value)
+	return true
+}
+
+// delete remove an item from the cache. It's not thread-safe.
+// Only other functions of the bindCache can use this function.
+func (c *bindCache) delete(key bindCacheKey) bool {
+	bindRecords := c.get(key)
+	if bindRecords != nil {
+		mem := bindCacheKVMem(key, bindRecords)
+		c.cache.Delete(key)
+		c.memTracker.Consume(-mem)
+	}
+	return true
 }
 
 func newBindCache(ctx sessionctx.Context) *bindCache {
@@ -58,52 +106,7 @@ func newBindCache(ctx sessionctx.Context) *bindCache {
 	return &c
 }
 
-// Get gets a cache item according to cache key. It's thread-safe.
-func (c *bindCache) Get(key bindCacheKey) []*BindRecord {
-	value, hit := c.cache.Get(key)
-	if !hit {
-		return nil
-	}
-	typedValue := value.([]*BindRecord)
-	return typedValue
-}
-
-// Set inserts an item to the cache. It's thread-safe.
-func (c *bindCache) Set(key bindCacheKey, value []*BindRecord) bool {
-	mem := bindCacheKVMem(key, value)
-	if mem > c.memCapacity { // ignore this kv pair if its size is too large
-		return false
-	}
-	bindRecords := c.Get(key)
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			mem -= int64(bindRecord.size())
-		}
-	}
-	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
-		if !evicted {
-			return false
-		}
-		c.memTracker.Consume(-bindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
-	}
-	c.memTracker.Consume(mem)
-	c.cache.Put(key, value)
-	return true
-}
-
-// Delete remove an item from the cache. It's thread-safe.
-func (c *bindCache) Delete(key bindCacheKey) bool {
-	value, ok := c.cache.Get(key)
-	if ok {
-		mem := bindCacheKVMem(key, value.([]*BindRecord))
-		c.cache.Delete(key)
-		c.memTracker.Consume(-mem)
-	}
-	return true
-}
-
-// GetAllBindRecords.
+// GetAllBindRecords return all the bindRecords from the bindCache.
 func (c *bindCache) GetAllBindRecords() []*BindRecord {
 	values := c.cache.Values()
 	var bindRecords []*BindRecord
@@ -113,14 +116,9 @@ func (c *bindCache) GetAllBindRecords() []*BindRecord {
 	return bindRecords
 }
 
-// GetMemTracker returns the memory tracker of this apply cache.
-func (c *bindCache) GetMemTracker() *memory.Tracker {
-	return c.memTracker
-}
-
 // removeDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
 func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
-	metas := c.Get(bindCacheKey(hash))
+	metas := c.get(bindCacheKey(hash))
 	if metas == nil {
 		return
 	}
@@ -132,31 +130,27 @@ func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 				metas = append(metas[:i], metas[i+1:]...)
 			}
 			if len(metas) == 0 {
-				c.Delete(bindCacheKey(hash))
+				c.delete(bindCacheKey(hash))
 				return
 			}
 		}
 	}
-	c.Set(bindCacheKey(hash), metas)
+	c.set(bindCacheKey(hash), metas)
 }
 
 func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
 	cacheKey := bindCacheKey(hash)
-	value, ok := c.cache.Get(cacheKey)
-	if ok {
-		metas := value.([]*BindRecord)
-		for i := range metas {
-			if metas[i].OriginalSQL == meta.OriginalSQL {
-				metas[i] = meta
-				return
-			}
+	metas := c.get(cacheKey)
+	for i := range metas {
+		if metas[i].OriginalSQL == meta.OriginalSQL {
+			metas[i] = meta
 		}
 	}
-	c.Set(cacheKey, []*BindRecord{meta})
+	c.set(cacheKey, []*BindRecord{meta})
 }
 
 func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := c.Get(bindCacheKey(hash))
+	bindRecords := c.get(bindCacheKey(hash))
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {
 			return bindRecord
@@ -170,10 +164,10 @@ func (c bindCache) copy() *bindCache {
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
-		v := c.Get(cacheKey)
+		v := c.get(cacheKey)
 		bindRecords := make([]*BindRecord, len(v))
 		copy(bindRecords, v)
-		newCache.Set(cacheKey, bindRecords)
+		newCache.set(cacheKey, bindRecords)
 	}
 	return newCache
 }

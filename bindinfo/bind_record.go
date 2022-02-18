@@ -232,6 +232,7 @@ func (br *BindRecord) isSame(other *BindRecord) bool {
 	return br.OriginalSQL == other.OriginalSQL
 }
 
+// size calculates the memory size of a BindRecord.
 func (br *BindRecord) size() float64 {
 	mem := float64(len(hack.Slice(br.OriginalSQL)) + len(hack.Slice(br.Db)))
 	for _, binding := range br.Bindings {
