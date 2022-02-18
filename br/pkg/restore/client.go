@@ -619,7 +619,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
-					err = errors.Trace(fmt.Errorf("sample error without extra message"))
+					err = errors.New("sample error without extra message")
 				}
 			})
 			if err != nil {

@@ -117,8 +117,8 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-createtable
 run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
 export GO_FAILPOINTS=""
 
-pause_count=$(cat $RESTORE_LOG | grep "panic"| wc -l | xargs)
-if [ "${pause_count}" != "0" ];then
+panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)
+if [ "${panic_count}" != "0" ];then
     echo "TEST: [$TEST_NAME] fail on batch create tables"
     exit 1
 fi

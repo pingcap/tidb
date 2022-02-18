@@ -143,9 +143,7 @@ func isSingleRetryableError(err error) bool {
 func FallBack2CreateTable(err error) bool {
 	switch nerr := errors.Cause(err).(type) {
 	case *terror.Error:
-		if nerr.Code() == tmysql.ErrInvalidDDLJob {
-			return true
-		}
+		return nerr.Code() == tmysql.ErrInvalidDDLJob
 	}
 	return false
 }
