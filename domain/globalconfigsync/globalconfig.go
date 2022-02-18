@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
