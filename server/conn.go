@@ -885,6 +885,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		if err != nil {
 			return nil, err
 		}
+		if resp.Capability&mysql.ClientPluginAuth > 0 {
+			cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+		}
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
