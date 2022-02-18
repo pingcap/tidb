@@ -213,6 +213,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	}
 	fail := make([]int64, 0)
 	succ := 0
+	total := len(dbInfo.Tables)
 	for _, tbl := range dbInfo.Tables {
 		job := &model.Job{
 			SchemaID:   dbInfo.ID,
@@ -231,9 +232,12 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		}
 		logutil.BgLogger().Info("processing schema table", zap.Int64("t", tbl.ID), zap.Int64("s", dbInfo.ID), zap.Error(err))
 	}
-	if l := len(fail); l > 0 {
-		return fmt.Errorf("meet %v failures, including table %v", l, fail[0])
+	failStmt := ""
+	if len(fail) > 0 {
+		failStmt = fmt.Sprintf("(including table %v)", fail[0])
 	}
+	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, the rest are not handled", total, succ, len(fail), failStmt)
+	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 	return nil
 }
 
