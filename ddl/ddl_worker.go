@@ -379,10 +379,6 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
-func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
-	return w.delRangeManager.addDelRangeJob(ctx, job)
-}
-
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -399,10 +395,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			}
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(w.ddlJobCtx, job)
+			err = w.delRangeManager.addDelRangeJob(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			err = w.deleteRange(w.ddlJobCtx, job)
+			err = w.delRangeManager.addDelRangeJob(w.ddlJobCtx, job)
 		}
 	}
 
