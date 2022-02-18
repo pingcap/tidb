@@ -2963,7 +2963,11 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		s.txn.changeInvalidToPending(txnFuture)
 	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
 		// Prepare the statement future if the transaction is valid in RC transactions.
-		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		if s.GetSessionVars().StmtCtx.RCCheckTS && s.sessionVars.RetryInfo.AsyncTsFuture != nil {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.sessionVars.RetryInfo.AsyncTsFuture)
+		} else {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		}
 	}
 }
 

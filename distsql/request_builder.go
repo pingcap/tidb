@@ -246,6 +246,8 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	}
 	if sv.StmtCtx.WeakConsistency {
 		builder.Request.IsolationLevel = kv.RC
+	} else if sv.StmtCtx.RCCheckTS {
+		builder.Request.IsolationLevel = kv.RCCheckTS
 	} else {
 		builder.Request.IsolationLevel = builder.getIsolationLevel()
 	}

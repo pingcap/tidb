@@ -66,6 +66,8 @@ type RetryInfo struct {
 	DroppedPreparedStmtIDs []uint32
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
+	AsyncTsFuture          oracle.Future
+	LastRcReadTS           uint64
 }
 
 // Clean does some clean work.
@@ -182,6 +184,8 @@ type TransactionContext struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
+
+	LastRcReadTs uint64
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -1002,6 +1006,9 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	//
+	RcReadCheckTS bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

@@ -1838,8 +1838,18 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
+		cc.ctx.GetSessionVars().RetryInfo.AsyncTsFuture = nil
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if cc.ctx.GetSessionVars().StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict) {
+				cc.ctx.GetSessionVars().RetryInfo.AsyncTsFuture = cc.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
+				logutil.Logger(ctx).Info("RC read using start_ts has failed, retry RC read", zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break
 			}

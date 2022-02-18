@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
 
@@ -69,6 +70,7 @@ type DBReader struct {
 	iter      *badger.Iterator
 	extraIter *badger.Iterator
 	revIter   *badger.Iterator
+	RcCheckTS bool
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
@@ -105,9 +107,23 @@ func (r *DBReader) GetMvccInfoByKey(key []byte, isRowKey bool, mvccInfo *kvrpcpb
 // Get gets a value with the key and start ts.
 func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 	r.txn.SetReadTS(startTS)
+	if r.RcCheckTS {
+		r.txn.SetReadTS(math.MaxUint64)
+	}
 	item, err := r.txn.Get(key)
 	if err != nil && err != badger.ErrKeyNotFound {
 		return nil, errors.Trace(err)
+	}
+
+	if r.RcCheckTS {
+		userMeta := mvcc.DBUserMeta(item.UserMeta())
+		if userMeta.CommitTS() > startTS {
+			return nil, &kverrors.ErrConflict{
+				StartTS:          startTS,
+				ConflictTS:       userMeta.StartTS(),
+				ConflictCommitTS: userMeta.CommitTS(),
+			}
+		}
 	}
 	if item == nil {
 		return nil, nil
@@ -152,6 +168,9 @@ type BatchGetFunc = func(key, value []byte, err error)
 // BatchGet batch gets keys.
 func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	r.txn.SetReadTS(startTS)
+	if r.RcCheckTS {
+		r.txn.SetReadTS(math.MaxUint64)
+	}
 	items, err := r.txn.MultiGet(keys)
 	if err != nil {
 		for _, key := range keys {
@@ -164,6 +183,16 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 		var val []byte
 		if item != nil {
 			val, err = item.Value()
+		}
+		if r.RcCheckTS {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				err = &kverrors.ErrConflict{
+					StartTS:          startTS,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+				}
+			}
 		}
 		f(key, val, err)
 	}
@@ -195,6 +224,9 @@ func exceedEndKey(current, endKey []byte) bool {
 // Scan scans the key range with the given ScanProcessor.
 func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
 	r.txn.SetReadTS(startTS)
+	if r.RcCheckTS {
+		r.txn.SetReadTS(math.MaxUint64)
+	}
 	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
@@ -203,6 +235,16 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		key := item.Key()
 		if exceedEndKey(key, endKey) {
 			break
+		}
+		if r.RcCheckTS {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				return &kverrors.ErrConflict{
+					StartTS:          startTS,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+				}
+			}
 		}
 		var err error
 		if item.IsEmpty() {
@@ -253,6 +295,9 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 	skipValue := proc.SkipValue()
 	iter := r.getReverseIter()
 	r.txn.SetReadTS(startTS)
+	if r.RcCheckTS {
+		r.txn.SetReadTS(math.MaxUint64)
+	}
 	var cnt int
 	for iter.Seek(endKey); iter.Valid(); iter.Next() {
 		item := iter.Item()
@@ -264,6 +309,16 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 			continue
 		}
 		var err error
+		if r.RcCheckTS {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				return &kverrors.ErrConflict{
+					StartTS:          startTS,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+				}
+			}
+		}
 		if item.IsEmpty() {
 			continue
 		}

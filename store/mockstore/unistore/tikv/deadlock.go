@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"errors"
+	errors2 "github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"sync/atomic"
 	"time"
 
@@ -214,7 +215,7 @@ func (dt *DetectorClient) Detect(txnTs uint64, waitForTxnTs uint64, keyHash uint
 }
 
 // convertErrToResp converts `ErrDeadlock` to `DeadlockResponse` proto type
-func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uint64) *deadlockPb.DeadlockResponse {
+func convertErrToResp(errDeadlock *errors2.ErrDeadlock, txnTs, waitForTxnTs, keyHash uint64) *deadlockPb.DeadlockResponse {
 	entry := deadlockPb.WaitForEntry{}
 	entry.Txn = txnTs
 	entry.WaitForTxn = waitForTxnTs

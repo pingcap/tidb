@@ -116,6 +116,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
 	}
