@@ -1654,7 +1654,6 @@ func waitCollected(ch chan struct{}) {
 	case <-ch:
 	case <-time.After(time.Second * 3):
 	}
-	return
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
