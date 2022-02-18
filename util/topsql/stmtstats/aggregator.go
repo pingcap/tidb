@@ -49,9 +49,6 @@ func newAggregator() *aggregator {
 func (m *aggregator) run() {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.running.Store(true)
-	defer func() {
-		m.running.Store(false)
-	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
@@ -120,6 +117,7 @@ func (m *aggregator) unregisterCollector(collector Collector) {
 // close ends the execution of the current aggregator.
 func (m *aggregator) close() {
 	m.cancel()
+	m.running.Store(false)
 }
 
 // closed returns whether the aggregator has been closed.
