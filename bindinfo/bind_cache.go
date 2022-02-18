@@ -15,8 +15,6 @@
 package bindinfo
 
 import (
-	"sync"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
@@ -27,7 +25,6 @@ import (
 // bindCache
 type bindCache struct {
 	ctx         sessionctx.Context
-	lock        sync.Mutex
 	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
@@ -63,8 +60,6 @@ func newBindCache(ctx sessionctx.Context) *bindCache {
 
 // Get gets a cache item according to cache key. It's thread-safe.
 func (c *bindCache) Get(key bindCacheKey) []*BindRecord {
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil
@@ -93,21 +88,15 @@ func (c *bindCache) Set(key bindCacheKey, value []*BindRecord) bool {
 		c.memTracker.Consume(-bindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	c.cache.Put(key, value)
 	return true
 }
 
 // Delete remove an item from the cache. It's thread-safe.
 func (c *bindCache) Delete(key bindCacheKey) bool {
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	value, ok := c.cache.Get(key)
 	if ok {
 		mem := bindCacheKVMem(key, value.([]*BindRecord))
-		c.lock.Lock()
-		defer c.lock.Unlock()
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
 	}
@@ -116,8 +105,6 @@ func (c *bindCache) Delete(key bindCacheKey) bool {
 
 // GetAllBindRecords.
 func (c *bindCache) GetAllBindRecords() []*BindRecord {
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	values := c.cache.Values()
 	var bindRecords []*BindRecord
 	for _, vals := range values {
@@ -164,9 +151,8 @@ func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
 				return
 			}
 		}
-		c.Set(cacheKey, []*BindRecord{meta})
 	}
-
+	c.Set(cacheKey, []*BindRecord{meta})
 }
 
 func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
