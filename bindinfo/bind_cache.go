@@ -106,8 +106,8 @@ func newBindCache(ctx sessionctx.Context) *bindCache {
 	return &c
 }
 
-// GetAllBindRecords return all the bindRecords from the bindCache.
-func (c *bindCache) GetAllBindRecords() []*BindRecord {
+// getAllBindRecords return all the bindRecords from the bindCache.
+func (c *bindCache) getAllBindRecords() []*BindRecord {
 	values := c.cache.Values()
 	var bindRecords []*BindRecord
 	for _, vals := range values {

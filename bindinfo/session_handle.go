@@ -92,12 +92,12 @@ func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord
 
 // GetAllBindRecord return all session bind info.
 func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	return h.ch.GetAllBindRecords()
+	return h.ch.getAllBindRecords()
 }
 
 // Close closes the session handle.
 func (h *SessionHandle) Close() {
-	for _, bindRecord := range h.ch.GetAllBindRecords() {
+	for _, bindRecord := range h.ch.getAllBindRecords() {
 		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 	}
 }

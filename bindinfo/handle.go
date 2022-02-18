@@ -517,7 +517,7 @@ func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
 
 // Size returns the size of bind info cache.
 func (h *BindHandle) Size() int {
-	size := len(h.bindInfo.Load().(*bindCache).GetAllBindRecords())
+	size := len(h.bindInfo.Load().(*bindCache).getAllBindRecords())
 	return size
 }
 
@@ -529,7 +529,7 @@ func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 // GetAllBindRecord returns all bind records in cache.
 func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 	bindRecordMap := h.bindInfo.Load().(*bindCache)
-	for _, bindRecord := range bindRecordMap.GetAllBindRecords() {
+	for _, bindRecord := range bindRecordMap.getAllBindRecords() {
 		bindRecords = append(bindRecords, bindRecord)
 	}
 	return bindRecords
@@ -912,7 +912,7 @@ const (
 
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
-	for _, bindRecord := range cache.GetAllBindRecords() {
+	for _, bindRecord := range cache.getAllBindRecords() {
 		for _, bind := range bindRecord.Bindings {
 			if bind.Status == PendingVerify {
 				return bindRecord.OriginalSQL, bindRecord.Db, bind
