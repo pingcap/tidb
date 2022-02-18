@@ -92,7 +92,7 @@ func TestCreateSequence(t *testing.T) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'", err.Error())
+	require.EqualError(t, err, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
 // Test for sequence still works with a infoschema attached by temporary table
@@ -126,7 +126,7 @@ func TestDropSequence(t *testing.T) {
 	tk.MustExec("create sequence seq")
 	_, err := tk.Exec("drop sequence seq, seq2")
 	require.Error(t, err)
-	require.Equal(t, "[schema:4139]Unknown SEQUENCE: 'test.seq2'", err.Error())
+	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'test.seq2'")
 
 	// Test the specified object is not sequence.
 	tk.MustExec("create table seq3 (a int)")
@@ -137,7 +137,7 @@ func TestDropSequence(t *testing.T) {
 	// Test schema is not exist.
 	_, err = tk.Exec("drop sequence unknown.seq")
 	require.Error(t, err)
-	require.Equal(t, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'", err.Error())
+	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'")
 
 	// Test drop sequence successfully.
 	tk.MustExec("create sequence seq")
@@ -145,13 +145,13 @@ func TestDropSequence(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("drop sequence seq")
 	require.Error(t, err)
-	require.Equal(t, "[schema:4139]Unknown SEQUENCE: 'test.seq'", err.Error())
+	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
 
 	// Test drop table when the object is a sequence.
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("drop table seq")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1051]Unknown table 'test.seq'", err.Error())
+	require.EqualError(t, err, "[schema:1051]Unknown table 'test.seq'")
 
 	// Test drop view when the object is a sequence.
 	_, err = tk.Exec("drop view seq")
@@ -176,7 +176,7 @@ func TestDropSequence(t *testing.T) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'", err.Error())
+	require.EqualError(t, err, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
 
 	// Test for `drop sequence if exists`.
 	tk.MustExec("drop sequence if exists seq_if_exists")
@@ -211,7 +211,7 @@ func TestShowCreateSequence(t *testing.T) {
 	tk1.MustExec("show create table t")
 	_, err = tk1.Exec("show create sequence seq")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'", err.Error())
+	require.EqualError(t, err, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// Grant the myuser the access to sequence seq in database test.
 	tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
@@ -256,7 +256,7 @@ func TestShowCreateSequence(t *testing.T) {
 	tk.MustExec("create table seq (a int)")
 	err = tk.QueryToErr("show create sequence seq")
 	require.Error(t, err)
-	require.Equal(t, "[executor:1347]'test.seq' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[executor:1347]'test.seq' is not SEQUENCE")
 	tk.MustExec("drop table if exists seq")
 
 	// Test use the show create sequence result to create sequence.
@@ -389,7 +389,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("8"))
 	err := tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle")
@@ -397,7 +397,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test negative-growth sequence
 	tk.MustExec("drop sequence if exists seq")
@@ -425,14 +425,14 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-6"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = -3 start = 2 minvalue -2 maxvalue 10")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-1"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test sequence setval function.
 	tk.MustExec("drop sequence if exists seq")
@@ -458,14 +458,14 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 8)").Check(testkit.Rows("8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 	tk.MustQuery("select setval(seq, 11)").Check(testkit.Rows("11"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 	// set value can be bigger than maxvalue.
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test setval in second cache round.
 	tk.MustExec("drop sequence if exists seq")
@@ -662,24 +662,24 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("create table seq(a int)")
 	_, err = tk.Exec("select nextval(seq)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq, 10)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
 
 	tk.MustExec("create view seq1 as select * from seq")
 	_, err = tk.Exec("select nextval(seq1)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq1' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq1)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq1' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq1, 10)")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.seq1' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop table if exists seq")
 	tk.MustExec("drop view if exists seq")
@@ -729,10 +729,10 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
 	_, err = tk.Exec("select nextval(t), t.a from t")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.t' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.t' is not SEQUENCE")
 	_, err = tk.Exec("select nextval(seq), nextval(t), t.a from t")
 	require.Error(t, err)
-	require.Equal(t, "[schema:1347]'test.t' is not SEQUENCE", err.Error())
+	require.EqualError(t, err, "[schema:1347]'test.t' is not SEQUENCE")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustExec("drop sequence seq")
 	tk.MustExec("drop table t")
@@ -806,7 +806,7 @@ func TestInsertSequence(t *testing.T) {
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := tk.QueryToErr("select nextval(seq)")
-	require.Equal(t, "[table:4135]Sequence 'test.seq' has run out", err.Error())
+	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
 }
 
 func TestUnflodSequence(t *testing.T) {
@@ -930,21 +930,21 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select nextval(seq)")
 	require.Error(t, err)
-	require.Equal(t, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'", err.Error())
+	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	_, err = tk1.Exec("insert into t values()")
 	require.Error(t, err)
-	require.Equal(t, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'", err.Error())
+	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// SELECT privilege required to use lastval.
 	err = tk1.QueryToErr("select lastval(seq)")
 	require.Error(t, err)
-	require.Equal(t, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'", err.Error())
+	require.EqualError(t, err, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// INSERT privilege required to use setval.
 	err = tk1.QueryToErr("select setval(seq, 10)")
 	require.Error(t, err)
-	require.Equal(t, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'", err.Error())
+	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// grant the myuser the SELECT & UPDATE access to sequence seq.
 	tk.MustExec("grant SELECT, INSERT on test.seq to 'myuser'@'localhost'")
@@ -1021,11 +1021,11 @@ func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
 	tk.MustExec("drop sequence if exists seq")
 	_, err := tk.Exec("create sequence seq cache -1")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:4136]Sequence 'test.seq' values are conflicting", err.Error())
+	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	_, err = tk.Exec("create sequence seq cache 0")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:4136]Sequence 'test.seq' values are conflicting", err.Error())
+	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	// This will error because
 	// 1: maxvalue = -1 by default
@@ -1035,7 +1035,7 @@ func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
 	// ensure there is enough value for one cache allocation at least.
 	_, err = tk.Exec("create sequence seq INCREMENT -9223372036854775807 cache 1")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:4136]Sequence 'test.seq' values are conflicting", err.Error())
+	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	tk.MustExec("create sequence seq cache 1")
 }
@@ -1126,7 +1126,7 @@ func TestAlterSequencePrivilege(t *testing.T) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("alter sequence my_seq increment = 2")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'", err.Error())
+	require.EqualError(t, err, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'")
 	tk.MustExec("drop sequence if exists my_seq")
 }
 
