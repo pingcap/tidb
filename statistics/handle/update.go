@@ -1115,7 +1115,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 }
 
 func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	h.mu.RUnlock()
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
