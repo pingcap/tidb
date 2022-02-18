@@ -98,7 +98,7 @@ func NewPollTiFlashBackoffContext(MinTick, MaxTick TiFlashTick, Capacity int, Ra
 		return nil, fmt.Errorf("negative `Capacity`")
 	}
 	if Rate <= 1 {
-		return nil, fmt.Errorf("`Rate` shoule always larger than 1")
+		return nil, fmt.Errorf("`Rate` should always be larger than 1")
 	}
 	return &PollTiFlashBackoffContext{
 		MinTick:  MinTick,
