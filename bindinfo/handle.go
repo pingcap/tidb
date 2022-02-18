@@ -1040,9 +1040,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
-	h.sctx.Lock()
 	h.bindInfo.Store(newBindCache(h.sctx.Context))
-	h.sctx.Unlock()
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
@@ -1060,9 +1058,7 @@ func (h *BindHandle) FlushBindings() error {
 // It is used to maintain consistency between cache and mysql.bind_info if the table is deleted or truncated.
 func (h *BindHandle) ReloadBindings() error {
 	h.bindInfo.Lock()
-	h.sctx.Lock()
 	h.bindInfo.Store(newBindCache(h.sctx.Context))
-	h.sctx.Unlock()
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	return h.Update(true)
