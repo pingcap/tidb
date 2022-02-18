@@ -268,6 +268,11 @@ type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+<<<<<<< HEAD
+=======
+	GetAllPartitionIDs() []int64
+	GetPartitionColumnNames() []model.CIStr
+>>>>>>> 313960e49... planner, table: Disallow update self (natural) join on partitioning columns (#31629) (#31779)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
