@@ -32,12 +32,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/atomic"
 )
 
@@ -51,7 +50,7 @@ type testClient struct {
 	mu           sync.RWMutex
 	stores       map[uint64]*metapb.Store
 	regions      map[uint64]*restore.RegionInfo
-	regionsInfo  *core.RegionsInfo // For now it's only used in ScanRegions
+	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID uint64
 	splitCount   atomic.Int32
 	hook         clientHook
@@ -63,9 +62,9 @@ func newTestClient(
 	nextRegionID uint64,
 	hook clientHook,
 ) *testClient {
-	regionsInfo := core.NewRegionsInfo()
+	regionsInfo := &pdtypes.RegionTree{}
 	for _, regionInfo := range regions {
-		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
+		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &testClient{
 		stores:       stores,
@@ -150,12 +149,12 @@ func (c *testClient) SplitRegion(
 		},
 	}
 	c.regions[c.nextRegionID] = newRegion
-	c.regionsInfo.SetRegion(core.NewRegionInfo(newRegion.Region, newRegion.Leader))
+	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
 	c.nextRegionID++
 	target.Region.StartKey = splitKey
 	target.Region.RegionEpoch.ConfVer++
 	c.regions[target.Region.Id] = target
-	c.regionsInfo.SetRegion(core.NewRegionInfo(target.Region, target.Leader))
+	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
 	return newRegion, nil
 }
 
@@ -211,7 +210,7 @@ func (c *testClient) BatchSplitRegionsWithOrigin(
 			},
 		}
 		c.regions[c.nextRegionID] = newRegion
-		c.regionsInfo.SetRegion(core.NewRegionInfo(newRegion.Region, newRegion.Leader))
+		c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
 		c.nextRegionID++
 		startKey = key
 		newRegions = append(newRegions, newRegion)
@@ -219,7 +218,7 @@ func (c *testClient) BatchSplitRegionsWithOrigin(
 	if !bytes.Equal(target.Region.StartKey, startKey) {
 		target.Region.StartKey = startKey
 		c.regions[target.Region.Id] = target
-		c.regionsInfo.SetRegion(core.NewRegionInfo(target.Region, target.Leader))
+		c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
 	}
 
 	if len(newRegions) == 0 {
@@ -260,8 +259,8 @@ func (c *testClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
 		regions = append(regions, &restore.RegionInfo{
-			Region: info.GetMeta(),
-			Leader: info.GetLeader(),
+			Region: info.Meta,
+			Leader: info.Leader,
 		})
 	}
 
@@ -272,11 +271,11 @@ func (c *testClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, err
 }
 
-func (c *testClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r placement.Rule, err error) {
+func (c *testClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
 	return
 }
 
-func (c *testClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *testClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	return nil
 }
 
