@@ -1122,18 +1122,18 @@ func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_11 1.00 root  funcs:approx_count_distinct(Column#4)->Column#3",
-		"└─TableReader_12 1.00 root  data:HashAgg_6",
-		"  └─HashAgg_6 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#4",
-		"    └─TableFullScan_10 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader 1.00 root  data:StreamAgg",
+		"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
+		"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 
-	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
-		"HashAgg_5 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
-		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
-		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"HashAgg 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -2521,7 +2521,7 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int,c varchar(11),d datetime,b double)")
+	tk.MustExec("create table t(id int signed, id2 int unsigned ,c varchar(11), d datetime, b double)")
 	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
@@ -2530,8 +2530,22 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
+
 	rows[1][2] = "left(test.t.c, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "mod(test.t.id, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id2);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id2);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "sin(cast(test.t.id, double BINARY))"
@@ -2710,6 +2724,9 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where datediff(d,d)").
 		CheckAt([]int{0, 3, 6}, rows)
 
+	rows[1][2] = "gt(test.t.d, sysdate())"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
 }
 
 func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
@@ -5533,4 +5550,39 @@ func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
 	c.Assert(readFromCacheNoPanic, IsTrue)
 
 	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestIssue31240(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31240(a int, b int);")
+	tk.MustExec("set @@tidb_allow_mpp = 0")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") {
+			tk.MustExec(tt)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+	tk.MustExec("drop table if exists t31240")
 }
