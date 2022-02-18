@@ -37,11 +37,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -324,8 +324,8 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 }
 
 // GetPlacementRules return the current placement rules.
-func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]placement.Rule, error) {
-	var placementRules []placement.Rule
+func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pdtypes.Rule, error) {
+	var placementRules []pdtypes.Rule
 	i := 0
 	errRetry := utils.WithRetry(ctx, func() error {
 		var err error
@@ -1118,7 +1118,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},

@@ -572,13 +572,17 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 }
 
 // collectHistorySummaries puts at most `historySize` summaries to an array.
-func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stmtSummaryByDigestElement {
+func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChecker, historySize int) []*stmtSummaryByDigestElement {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
 	if !ssbd.initialized {
 		return nil
 	}
+	if checker != nil && !checker.isDigestValid(ssbd.digest) {
+		return nil
+	}
+
 	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
 	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)

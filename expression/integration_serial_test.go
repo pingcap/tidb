@@ -1912,7 +1912,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`update t set a = week("aa", 1)`)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
 	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
+	require.Equal(t, types.ErrWrongValue.Code(), errors.Cause(err).(*terror.Error).Code(), "err %v", err)
 
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
@@ -4426,8 +4426,8 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone))
+		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone)))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		tk.Exec("begin")
 		res, err := tk.Exec(testcase.sql)
@@ -4449,7 +4449,7 @@ PARTITION BY RANGE (c) (
 		}
 		tk.Exec("commit")
 	}
-	failpoint.Disable("tikvclient/injectTxnScope")
+	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
