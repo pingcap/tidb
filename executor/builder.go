@@ -425,6 +425,9 @@ func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) E
 	loc := b.ctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
+		if loc == nil {
+			loc = time.UTC
+		}
 	}
 	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
@@ -1837,9 +1840,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableDDLJobs):
+			loc := b.ctx.GetSessionVars().TimeZone
+			if loc == nil {
+				loc = time.Local
+				if loc == nil {
+					loc = time.UTC
+				}
+			}
+			ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 			return &DDLJobsReaderExec{
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-				is:           b.is,
+				baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				is:              b.is,
+				DDLJobRetriever: ddlJobRetriever,
 			}
 		case strings.ToLower(infoschema.TableTiFlashTables),
 			strings.ToLower(infoschema.TableTiFlashSegments):
