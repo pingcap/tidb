@@ -233,9 +233,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	}
 	if l := len(fail); l > 0 {
 		return fmt.Errorf("meet %v failures, including table %v", l, fail[0])
-	} else {
-		return nil
 	}
+	return nil
 }
 
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
