@@ -422,7 +422,11 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 }
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
-	ddlJobRetriever := DDLJobRetriever{TZLoc: b.ctx.GetSessionVars().TimeZone}
+	loc := b.ctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
 		jobNumber:       int(v.JobNumber),
 		is:              b.is,
