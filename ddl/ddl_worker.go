@@ -758,6 +758,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
+	if job.RealStartTS == 0 {
+		job.RealStartTS = t.StartTS
+	}
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
