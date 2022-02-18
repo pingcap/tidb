@@ -52,7 +52,6 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20220215045702-d229fcc888c8
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
-	github.com/pingcap/parser v3.1.2+incompatible // indirect
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb-tools v0.0.0
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -108,4 +107,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-replace github.com/pingcap/tidb-tools => github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220217062816-d70a73fd0527+incompatible
+replace github.com/pingcap/tidb-tools => github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218041121-c4b69f8dd06c+incompatible
