@@ -592,6 +592,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	startTime2, err := types.ParseDatetime(nil, row2[9].(string))
 	c.Assert(err, IsNil)
 	endTime2, err := types.ParseDatetime(nil, row2[10].(string))
+	c.Assert(err, IsNil)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
 	loc2, err := time.LoadLocation("Europe/Amsterdam")
