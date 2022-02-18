@@ -2048,7 +2048,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	executeCaseFn(execFn)
 	sqlStrs := append([]string{}, cases5...)
 	sqlStrs = append(sqlStrs, cases7[0])
-	sqlStrs = append([]string{}, cases8...)
+	sqlStrs = append(sqlStrs, cases8...)
 	for _, sqlStr := range sqlStrs {
 		_, digest := parser.NormalizeDigest(sqlStr)
 		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
