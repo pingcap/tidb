@@ -144,14 +144,14 @@ func (r *pointSorter) Swap(i, j int) {
 func getFullRange() []*point {
 	return []*point{
 		{start: true},
-		{value: types.MaxValueDatum()},
+		{value: types.MaxValueDatum(), excl: true},
 	}
 }
 
 func getNotNullFullRange() []*point {
 	return []*point{
 		{value: types.MinNotNullDatum(), start: true},
-		{value: types.MaxValueDatum()},
+		{value: types.MaxValueDatum(), excl: true},
 	}
 }
 
@@ -166,12 +166,12 @@ func FullIntRange(isUnsigned bool) []*Range {
 
 // FullRange is [null, +∞) for Range.
 func FullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // FullNotNullRange is (-∞, +∞) for Range.
 func FullNotNullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	return []*Range{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}, HighExclude: true}}
 }
 
 // NullRange is [null, null] for Range.
@@ -227,7 +227,7 @@ func (r *builder) buildFromColumn(expr *expression.Column) []*point {
 	endPoint1.value.SetInt64(0)
 	startPoint2 := &point{excl: true, start: true}
 	startPoint2.value.SetInt64(0)
-	endPoint2 := &point{value: types.MaxValueDatum()}
+	endPoint2 := &point{value: types.MaxValueDatum(), excl: true}
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
@@ -351,7 +351,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
-		endPoint2 := &point{value: types.MaxValueDatum()}
+		endPoint2 := &point{value: types.MaxValueDatum(), excl: true}
 		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
@@ -363,11 +363,11 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		return []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
-		endPoint := &point{value: types.MaxValueDatum()}
+		endPoint := &point{value: types.MaxValueDatum(), excl: true}
 		return []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
+		endPoint := &point{value: types.MaxValueDatum(), excl: true}
 		return []*point{startPoint, endPoint}
 	}
 	return nil
@@ -525,7 +525,7 @@ func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, ke
 	endPoint1.value.SetInt64(0)
 	startPoint2 := &point{excl: true, start: true}
 	startPoint2.value.SetInt64(0)
-	endPoint2 := &point{value: types.MaxValueDatum()}
+	endPoint2 := &point{value: types.MaxValueDatum(), excl: true}
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
@@ -537,7 +537,7 @@ func (r *builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) [
 		endPoint1.value.SetInt64(0)
 		startPoint2 := &point{start: true, excl: true}
 		startPoint2.value.SetInt64(0)
-		endPoint2 := &point{value: types.MaxValueDatum()}
+		endPoint2 := &point{value: types.MaxValueDatum(), excl: true}
 		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
 	// FALSE range is {[0, 0]}
@@ -682,7 +682,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		lowValue = append(lowValue, pattern[i])
 	}
 	if len(lowValue) == 0 {
-		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum(), excl: true}}
 	}
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate)
@@ -705,6 +705,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
 		if i == 0 {
 			endPoint.value = types.MaxValueDatum()
+			endPoint.excl = true
 		}
 	}
 	return []*point{startPoint, endPoint}
@@ -748,7 +749,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		}
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
-		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum(), excl: true})
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
@@ -756,7 +757,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		return getFullRange()
 	case ast.IsNull:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
+		endPoint := &point{value: types.MaxValueDatum(), excl: true}
 		return []*point{startPoint, endPoint}
 	}
 	// TODO: currently we don't handle ast.LogicAnd, ast.LogicOr, ast.GT, ast.LT and so on. Most of those cases are eliminated

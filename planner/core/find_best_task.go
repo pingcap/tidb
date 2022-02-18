@@ -1606,7 +1606,15 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		if i < 0 {
 			return nil, 0, true
 		}
-		convertedRanges = []*ranger.Range{{LowVal: ranges[i].HighVal, HighVal: []types.Datum{types.MaxValueDatum()}, LowExclude: !ranges[i].HighExclude, Collators: ranges[i].Collators}}
+		convertedRanges = []*ranger.Range{
+			{
+				LowVal:      ranges[i].HighVal,
+				HighVal:     []types.Datum{types.MaxValueDatum()},
+				LowExclude:  !ranges[i].HighExclude,
+				HighExclude: true,
+				Collators:   ranges[i].Collators,
+			},
+		}
 	} else {
 		for i = 0; i < len(ranges); i++ {
 			if count+rangeCounts[i] >= expectedCnt {
