@@ -211,10 +211,17 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	fail := make([]int64, 0)
+	failTableID := make([]int64, 0)
 	succ := 0
 	total := len(dbInfo.Tables)
+	skip := 0
 	for _, tbl := range dbInfo.Tables {
+		tbReplicaInfo := tbl.TiFlashReplica
+		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
+			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID))
+			skip += 1
+			continue
+		}
 		job := &model.Job{
 			SchemaID:   dbInfo.ID,
 			SchemaName: dbInfo.Name.L,
@@ -226,18 +233,22 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		err := d.doDDLJob(ctx, job)
 		err = d.callHookOnChanged(err)
 		if err != nil {
-			fail = append(fail, tbl.ID)
+			failTableID = append(failTableID, tbl.ID)
 		} else {
 			succ += 1
 		}
-		logutil.BgLogger().Info("processing schema table", zap.Int64("t", tbl.ID), zap.Int64("s", dbInfo.ID), zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Warn("processing schema table error", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.Error(err))
+		}
 	}
-	failCount := len(fail)
+	fail := len(failTableID)
 	failStmt := ""
-	if failCount > 0 {
-		failStmt = fmt.Sprintf("(including table %v)", fail[0])
+	if fail > 0 {
+		failStmt = fmt.Sprintf("(including table %v)", failTableID[0])
 	}
-	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, failCount, failStmt, total - succ - failCount)
+	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
 	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 	return nil
 }
@@ -4850,6 +4861,19 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replicaInfo *ast.TiFlashReplicaSpec) bool {
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4872,18 +4896,8 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
-		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
-		changed := false
-		for i, label := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != label {
-				changed = true
-				break
-			}
-		}
-		if !changed {
-			return nil
-		}
+	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
+		return nil
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
