@@ -419,6 +419,8 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				}
 			}
 
+			logutil.BgLogger().Debug("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tableID", tb.ID))
+
 			var stats helper.PDRegionStats
 			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
 				return allReplicaReady, err
@@ -429,7 +431,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
 				avail = val.(bool)
 			})
-			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Int64("tb.ID", tb.ID), zap.Any("regionReplica", regionReplica))
 
 			if !avail {
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
