@@ -1361,6 +1361,10 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		exprs = append(exprs, function)
 	}
 
+	function, err = NewFunction(mock.NewContext(), ast.Mod, types.NewFieldType(mysql.TypeInt24), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
