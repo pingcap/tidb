@@ -191,10 +191,13 @@ func TestBenchMark(t *testing.T) {
 func TestCharset(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.Nil(t, f)
-	require.Error(t, err)
-	require.Regexp(t, "FUNCTION CHARSET does not exist$", err.Error())
+
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewCollationStringDatum("123", charset.CollationUTF8MB4)}))
+	require.NotNil(t, f)
+	require.NoError(t, err)
+	require.Equal(t, 64, f.getRetTp().Flen)
+	ch, _, _ := f.evalString(chunk.Row{})
+	require.Equal(t, charset.CharsetUTF8MB4, ch)
 }
 
 func TestCoercibility(t *testing.T) {
