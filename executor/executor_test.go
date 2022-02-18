@@ -426,7 +426,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
@@ -442,7 +442,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -569,13 +569,13 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
-	c.Assert(row[9], Equals, "<nil>")
+	c.Assert(row[10], Equals, "<nil>")
 
 	// Test the START_TIME and END_TIME field.
 	re = tk.MustQuery("admin show ddl jobs where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')")
 	row = re.Rows()[0]
 	c.Assert(row[2], Equals, "t")
-	c.Assert(row[9], Equals, "<nil>")
+	c.Assert(row[10], Equals, "<nil>")
 }
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
