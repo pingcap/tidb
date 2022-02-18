@@ -528,11 +528,7 @@ func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 // GetAllBindRecord returns all bind records in cache.
 func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	bindRecordMap := h.bindInfo.Load().(*bindCache)
-	for _, bindRecord := range bindRecordMap.getAllBindRecords() {
-		bindRecords = append(bindRecords, bindRecord)
-	}
-	return bindRecords
+	return h.bindInfo.Load().(*bindCache).getAllBindRecords()
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.
