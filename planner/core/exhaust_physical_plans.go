@@ -2405,11 +2405,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
-		if !la.canPushToCop(kv.TiKV) {
+		if !la.canPushToCop(kv.TiKV) && !la.canPushToCop(kv.TiFlash) {
 			taskTypes = []property.TaskType{property.RootTaskType}
-			if la.canPushToCop(kv.TiFlash) {
-				taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
-			}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
