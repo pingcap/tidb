@@ -232,11 +232,12 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		}
 		logutil.BgLogger().Info("processing schema table", zap.Int64("t", tbl.ID), zap.Int64("s", dbInfo.ID), zap.Error(err))
 	}
+	failCount := len(fail)
 	failStmt := ""
-	if len(fail) > 0 {
+	if failCount > 0 {
 		failStmt = fmt.Sprintf("(including table %v)", fail[0])
 	}
-	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, the rest are not handled", total, succ, len(fail), failStmt)
+	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, failCount, failStmt, total - succ - failCount)
 	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 	return nil
 }
