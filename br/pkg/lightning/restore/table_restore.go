@@ -1003,8 +1003,8 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	threshold := totalRawFileSize / 512
 	threshold = utils.NextPowerOfTwo(threshold)
 	if threshold < compactionLowerThreshold {
-		// disable compaction if threshold is smaller than lower bound
-		threshold = 0
+		// too may small SST files will cause inaccuracy of region range estimation,
+		threshold = compactionLowerThreshold
 	} else if threshold > compactionUpperThreshold {
 		threshold = compactionUpperThreshold
 	}
