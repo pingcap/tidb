@@ -2262,5 +2262,32 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue31240",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from t31240;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from t31240;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

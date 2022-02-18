@@ -204,6 +204,16 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
+func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+	dbName := model.NewCIStr(stmt.Name)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	_, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	return nil
+}
+
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -262,13 +272,35 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 	return placementPolicyRef, nil
 }
 
+func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption) error {
+	hasSetTiFlashReplica := false
+	if len(specs) == 1 {
+		return nil
+	}
+	for _, spec := range specs {
+		if spec.Tp == ast.DatabaseSetTiFlashReplica {
+			if hasSetTiFlashReplica {
+				return errRunMultiSchemaChanges
+			}
+			hasSetTiFlashReplica = true
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate                       string
-		isAlterCharsetAndCollate, isAlterPlacement bool
-		placementPolicyRef                         *model.PolicyRefInfo
+		toCharset, toCollate                                         string
+		isAlterCharsetAndCollate, isAlterPlacement, isTiFlashReplica bool
+		placementPolicyRef                                           *model.PolicyRefInfo
+		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
+
+	err = checkMultiSchemaSpecs(ctx, stmt.Options)
+	if err != nil {
+		return err
+	}
 
 	for _, val := range stmt.Options {
 		switch val.Tp {
@@ -294,6 +326,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{Name: model.NewCIStr(val.Value)}
 			isAlterPlacement = true
+		case ast.DatabaseSetTiFlashReplica:
+			tiflashReplica = val.TiFlashReplica
+			isTiFlashReplica = true
 		}
 	}
 
@@ -307,7 +342,11 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			return err
 		}
 	}
-
+	if isTiFlashReplica {
+		if err = d.ModifySchemaSetTiFlashReplica(ctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1628,19 +1667,19 @@ func buildTableInfo(
 	return
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (len int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
 			err = errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
 			return
 		}
-		var colLen int
-		colLen, err = getIndexColumnLength(col, idxCol.Length)
+		var l int
+		l, err = getIndexColumnLength(col, idxCol.Length)
 		if err != nil {
 			return
 		}
-		len += colLen
+		colLen += l
 	}
 	return
 }
@@ -5235,7 +5274,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
@@ -5244,7 +5283,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
-		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing

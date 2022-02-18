@@ -116,9 +116,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				err = sc.HandleOverflow(err, err)
 			}
 		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable)
 		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64

@@ -74,7 +74,7 @@ type statsCache struct {
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
-		sync.Mutex
+		sync.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
@@ -92,6 +92,7 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
+	// Deprecated: only used by feedback now
 	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
@@ -124,52 +125,24 @@ type Handle struct {
 	StatsLoad StatsLoad
 }
 
-func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return fn(ctx, exec)
-}
-
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionUseCurSession)
-	})
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
 }
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
-		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
-			pruneMode := h.CurrentPruneMode()
-			if session, ok := exec.(sessionctx.Context); ok {
-				session.GetSessionVars().PartitionPruneMode.Store(string(pruneMode))
-			}
-		}
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		return exec.ExecRestrictedStmt(ctx, stmt, execOptionForAnalyze[statsVer], sqlexec.ExecOptionUseCurSession)
-	})
+	optFuncs := []sqlexec.OptionFuncAlias{
+		sqlexec.ExecOptionUseSessionPool,
+		execOptionForAnalyze[statsVer],
+	}
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession)
-	})
+	optFuncs := []sqlexec.OptionFuncAlias{
+		sqlexec.ExecOptionUseSessionPool,
+		sqlexec.ExecOptionWithSnapshot(snapshot),
+	}
+	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }
 
 // Clear the statsCache, only for test.
@@ -1404,9 +1377,9 @@ type statsReader struct {
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
 	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
+		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
-	return sr.ctx.ExecRestrictedSQL(ctx, nil, sql, args...)
+	return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
 
 func (sr *statsReader) isHistory() bool {
@@ -1789,8 +1762,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 
 // CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
 func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
 }
 
