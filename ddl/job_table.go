@@ -26,14 +26,25 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]*model.Job, error) {
+func (d *ddl) insertRunningReorgJobMap(id int) {
+	d.runningReorgJobMapMu.Lock()
+	defer d.runningReorgJobMapMu.Unlock()
+	d.runningReorgJobMap[id] = struct{}{}
+}
+
+func (d *ddl) deleteRunningReorgJobMap(id int) {
+	d.runningReorgJobMapMu.Lock()
+	defer d.runningReorgJobMapMu.Unlock()
+	delete(d.runningReorgJobMap, id)
+}
+
+func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningReorgJobMapMu.RLock()
 	for id := range d.runningReorgJobMap {
@@ -52,12 +63,10 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]*model.Job, error) {
 		return nil, err
 	}
 	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-	if err != nil {
+	if rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8); err != nil {
 		return nil, err
 	}
-	err = rs.Close()
-	if err != nil {
+	if err = rs.Close(); err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
@@ -85,16 +94,13 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]*model.Job, error) {
 				}
 				runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(int(job.ID)))
 				sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id) limit 20) and not reorg and job_id not in (%s)", strings.Join(runningOrBlockedIDs, ", "))
-				rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-				if err != nil {
+				if rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql); err != nil {
 					return nil, err
 				}
-				rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-				if err != nil {
+				if rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8); err != nil {
 					return nil, err
 				}
-				err = rs.Close()
-				if err != nil {
+				if err = rs.Close(); err != nil {
 					return nil, err
 				}
 				if len(rows) == 0 {
@@ -102,16 +108,15 @@ func (d *ddl) getSomeGeneralJob(sess sessionctx.Context) ([]*model.Job, error) {
 				}
 				jobBinary = rows[0].GetBytes(0)
 				job = model.Job{}
-				err = job.Decode(jobBinary)
-				if err != nil {
+				if err = job.Decode(jobBinary); err != nil {
 					return nil, err
 				}
 			}
 		} else {
-			jobs = append(jobs, &job)
+			return &job, nil
 		}
 	}
-	return jobs, nil
+	return nil, nil
 }
 
 func (d *ddl) checkDropSchemaJobIsRunnable(sess sessionctx.Context, job *model.Job) (bool, error) {
@@ -148,7 +153,7 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 	return len(rows) == 0, nil
 }
 
-func (d *ddl) getOneReorgJob(sess sessionctx.Context) (*model.Job, error) {
+func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningReorgJobMapMu.RLock()
 	for id := range d.runningReorgJobMap {
@@ -238,126 +243,104 @@ func (d *ddl) startDispatchLoop() {
 		case <-d.ddlJobCh:
 			sleep := false
 			for !sleep {
-				log.Warn("wwz before getSomeGeneralJob", zap.String("time", time.Now().String()))
-				jobs, err := d.getSomeGeneralJob(sess)
+				job, err := d.getGeneralJob(sess)
 				if err != nil {
 					log.Warn("err", zap.Error(err))
 				}
-				var wg util.WaitGroupWrapper
-				for index, job := range jobs {
-					d.runningReorgJobMapMu.Lock()
-					d.runningReorgJobMap[int(job.ID)] = struct{}{}
-					d.runningReorgJobMapMu.Unlock()
-					wg.Run(func() {
-						defer func() {
-							d.runningReorgJobMapMu.Lock()
-							delete(d.runningReorgJobMap, int(jobs[index].ID))
-							d.runningReorgJobMapMu.Unlock()
-						}()
-						wk, _ := d.gwp.get()
-						wk.handleDDLJob(d.ddlCtx, jobs[index], d.ddlJobCh)
-						d.gwp.put(wk)
-					})
+				if job != nil {
+					d.doGeneralDDLJobWorker(job)
 				}
-				wg.Wait()
-				if jobs == nil {
+				if job == nil {
 					sleep = true
 				}
 			}
 		case <-ticker.C:
-			//log.Info("wwz tickerddl")
 			sleep := false
 			for !sleep {
-				jobs, err := d.getSomeGeneralJob(sess)
+				job, err := d.getGeneralJob(sess)
 				if err != nil {
-					log.Warn("err", zap.Error(err))
+					log.Warn("getGeneralJob", zap.Error(err))
+					break
 				}
-
-				for _, jobb := range jobs {
-					job := jobb
-					d.runningReorgJobMapMu.Lock()
-					d.runningReorgJobMap[int(job.ID)] = struct{}{}
-					d.runningReorgJobMapMu.Unlock()
-					go func() {
-						defer func() {
-							d.runningReorgJobMapMu.Lock()
-							delete(d.runningReorgJobMap, int(job.ID))
-							d.runningReorgJobMapMu.Unlock()
-						}()
-						wk, _ := d.gwp.get()
-						wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh)
-						d.gwp.put(wk)
-					}()
+				if job != nil {
+					d.doGeneralDDLJobWorker(job)
 				}
-				job2, _ := d.getOneReorgJob(sess)
-				if job2 != nil {
-					d.runningReorgJobMapMu.Lock()
-					d.runningReorgJobMap[int(job2.ID)] = struct{}{}
-					d.runningReorgJobMapMu.Unlock()
-					go func() {
-						defer func() {
-							d.runningReorgJobMapMu.Lock()
-							delete(d.runningReorgJobMap, int(job2.ID))
-							d.runningReorgJobMapMu.Unlock()
-						}()
-						wk, _ := d.wp.get()
-						wk.handleDDLJob(d.ddlCtx, job2, d.ddlJobCh)
-						d.wp.put(wk)
-					}()
+				reorgJob, err := d.getReorgJob(sess)
+				if err != nil {
+					log.Error("[ddl] getReorgJob", zap.Error(err))
+					break
 				}
-				if jobs == nil && job2 == nil {
+				if reorgJob != nil {
+					d.doReorgDDLJobWoker(reorgJob)
+				}
+				if job == nil && reorgJob == nil {
 					sleep = true
 				}
 			}
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
-			log.Info("wwz notifyDDLJobByEtcdChReorg")
 			if !ok {
 				panic("notifyDDLJobByEtcdChGeneral in trouble")
 			}
-			jobs, _ := d.getSomeGeneralJob(sess)
-			for _, jobb := range jobs {
-				d.runningReorgJobMapMu.Lock()
-				d.runningReorgJobMap[int(jobb.ID)] = struct{}{}
-				d.runningReorgJobMapMu.Unlock()
-				go func(job *model.Job) {
-					defer func() {
-						d.runningReorgJobMapMu.Lock()
-						delete(d.runningReorgJobMap, int(job.ID))
-						d.runningReorgJobMapMu.Unlock()
-					}()
-					wk, _ := d.gwp.get()
-					// TODO(hawkingrei): refactor it
-					// 1、 panic: context canceled
-					// 2. sync: WaitGroup is reused before previous Wait has returned
-					wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh)
-					d.gwp.put(wk)
-				}(jobb)
+			job, err := d.getGeneralJob(sess)
+			if err != nil {
+				log.Error("[ddl] getGeneralJob", zap.Error(err))
+				continue
+			}
+			if job != nil {
+				d.doGeneralDDLJobWorker(job)
 			}
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
-			log.Info("wwz notifyDDLJobByEtcdChReorg")
 			if !ok {
 				panic("notifyDDLJobByEtcdChReorg in trouble")
 			}
-			job, _ := d.getOneReorgJob(sess)
+			job, err := d.getReorgJob(sess)
+			if err != nil {
+				log.Error("[ddl] getReorgJob", zap.Error(err))
+				continue
+			}
 			if job != nil {
-				d.runningReorgJobMapMu.Lock()
-				d.runningReorgJobMap[int(job.ID)] = struct{}{}
-				d.runningReorgJobMapMu.Unlock()
-				go func() {
-					defer func() {
-						d.runningReorgJobMapMu.Lock()
-						delete(d.runningReorgJobMap, int(job.ID))
-						d.runningReorgJobMapMu.Unlock()
-					}()
-					wk, _ := d.wp.get()
-					wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh)
-					d.wp.put(wk)
-				}()
+				d.doReorgDDLJobWoker(job)
 			}
 		case <-d.ctx.Done():
 			return
 		}
 	}
+}
+
+func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
+	d.insertRunningReorgJobMap(int(job.ID))
+	d.wg.Run(func() {
+		defer func() {
+			d.deleteRunningReorgJobMap(int(job.ID))
+		}()
+		wk, err := d.generalWorker.get()
+		if err != nil {
+			log.Warn("fail to get generalWorker", zap.Error(err))
+			return
+		}
+		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+			log.Warn("[ddl] handle General DDL job failed", zap.Error(err))
+		}
+		d.generalWorker.put(wk)
+	})
+}
+
+func (d *ddl) doReorgDDLJobWoker(job *model.Job) {
+	d.insertRunningReorgJobMap(int(job.ID))
+	d.wg.Run(func() {
+		defer func() {
+			d.deleteRunningReorgJobMap(int(job.ID))
+		}()
+		wk, err := d.reorgWorker.get()
+		if err != nil {
+			log.Warn("fail to get addIdxWorker", zap.Error(err))
+			return
+		}
+		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+			log.Warn("[ddl] handle Reorg DDL job failed", zap.Error(err))
+		}
+		d.reorgWorker.put(wk)
+	})
 }
 
 func (d *ddl) addDDLJobs(job []*model.Job) error {
@@ -372,7 +355,7 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 		}
 		sql += fmt.Sprintf("(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
 	}
-	//log.Warn("add ddl job to table", zap.String("sql", sql))
+	log.Warn("add ddl job to table", zap.String("sql", sql))
 	//ts := time.Now()
 	sess, err := d.sessPool.get()
 	if err != nil {
@@ -398,14 +381,14 @@ func (d *ddl) addDDLJob(job *model.Job) error {
 
 	sess, err := d.sessPool.get()
 	if err != nil {
-		log.Error("add sessPool", zap.Error(err))
+		log.Error("[ddl] get session from sessPool", zap.Error(err))
 		return err
 	}
 	defer d.sessPool.put(sess)
 
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
-		log.Error("add ddl job to table", zap.Error(err))
+		log.Error("[ddl] add ddl job to table", zap.Error(err))
 		return err
 	}
 	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
@@ -456,11 +439,11 @@ func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, p
 		sess, _ = w.sessPool.get()
 		defer w.sessPool.put(sess)
 		if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin"); err != nil {
-			log.Error("fail to begin", zap.Error(err))
+			log.Error("[ddl] fail to begin", zap.Error(err))
 		}
 		defer func() {
 			if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit"); err != nil {
-				log.Error("fail to begin", zap.Error(err))
+				log.Error("[ddl] fail to begin", zap.Error(err))
 			}
 		}()
 	}

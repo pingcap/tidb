@@ -29,6 +29,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
@@ -202,8 +203,8 @@ type ddl struct {
 
 	*ddlCtx
 	workers           map[workerType]*worker
-	wp                *workerPool
-	gwp               *workerPool
+	reorgWorker       *workerPool
+	generalWorker     *workerPool
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	sessForAddDDL     sessionctx.Context
@@ -405,9 +406,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 		if AllowConcurrentDDL.Load() {
-			sysFac := func() (pools.Resource, error) {
-				wk := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-
+			addIdxWorkerFunc := func() (pools.Resource, error) {
+				wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+				if err != nil {
+					return wk, errors.Trace(err)
+				}
 				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 
 				// When the start function is called, we will send a fake job to let worker
@@ -415,9 +418,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				asyncNotify(wk.ddlJobCh)
 				return wk, nil
 			}
-			sysFac2 := func() (pools.Resource, error) {
-				wk := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-
+			generalWorkerFunc := func() (pools.Resource, error) {
+				wk, err := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+				if err != nil {
+					return wk, errors.Trace(err)
+				}
 				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 
 				// When the start function is called, we will send a fake job to let worker
@@ -425,14 +430,23 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				asyncNotify(wk.ddlJobCh)
 				return wk, nil
 			}
-			d.wp = newDDLWorkerPool(pools.NewResourcePool(sysFac, 10, 10, 3*time.Minute))
-			d.gwp = newDDLWorkerPool(pools.NewResourcePool(sysFac2, 300, 300, 0))
-			d.sessForAddDDL, _ = d.sessPool.get()
+			d.reorgWorker = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, 10, 10, 3*time.Minute))
+			d.generalWorker = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
+			d.sessForAddDDL, err = d.sessPool.get()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			d.wg.Run(d.startDispatchLoop)
 		} else {
 			d.workers = make(map[workerType]*worker, 2)
-			d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+			d.workers[generalWorker], err = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+			if err != nil {
+				log.Fatal("fail to create generalWorker", zap.Error(err))
+			}
+			d.workers[addIdxWorker], err = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+			if err != nil {
+				log.Fatal("fail to create addIdxWorker", zap.Error(err))
+			}
 			for _, worker := range d.workers {
 				worker.wg.Add(1)
 				w := worker
@@ -484,11 +498,11 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
 	if AllowConcurrentDDL.Load() {
-		if d.wp != nil {
-			d.wp.close()
+		if d.reorgWorker != nil {
+			d.reorgWorker.close()
 		}
-		if d.gwp != nil {
-			d.gwp.close()
+		if d.generalWorker != nil {
+			d.generalWorker.close()
 		}
 	} else {
 		for _, worker := range d.workers {
@@ -505,7 +519,6 @@ func (d *ddl) close() {
 		d.sessPool.put(d.sessForAddDDL)
 		d.sessPool.close()
 	}
-	logutil.BgLogger().Info("[ddl] DDL closing")
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))

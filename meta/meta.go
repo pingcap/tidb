@@ -41,9 +41,8 @@ import (
 )
 
 var (
-	globalIDMutex    sync.Mutex
-	globalJobIDMutex sync.Mutex
-	policyIDMutex    sync.Mutex
+	globalIDMutex sync.Mutex
+	policyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -62,25 +61,24 @@ var (
 //
 
 var (
-	mMetaPrefix         = []byte("m")
-	mNextGlobalIDKey    = []byte("NextGlobalID")
-	mNextGlobalJobIDKey = []byte("NextGlobalJobID")
-	mSchemaVersionKey   = []byte("SchemaVersionKey")
-	mDBs                = []byte("DBs")
-	mDBPrefix           = "DB"
-	mTablePrefix        = "Table"
-	mSequencePrefix     = "SID"
-	mSeqCyclePrefix     = "SequenceCycle"
-	mTableIDPrefix      = "TID"
-	mIncIDPrefix        = "IID"
-	mRandomIDPrefix     = "TARID"
-	mBootstrapKey       = []byte("BootstrapKey")
-	mSchemaDiffPrefix   = "Diff"
-	mPolicies           = []byte("Policies")
-	mPolicyPrefix       = "Policy"
-	mPolicyGlobalID     = []byte("PolicyGlobalID")
-	mPolicyMagicByte    = CurrentMagicByteVer
-	mInitDDLTable       = []byte("initDDLTable")
+	mMetaPrefix       = []byte("m")
+	mNextGlobalIDKey  = []byte("NextGlobalID")
+	mSchemaVersionKey = []byte("SchemaVersionKey")
+	mDBs              = []byte("DBs")
+	mDBPrefix         = "DB"
+	mTablePrefix      = "Table"
+	mSequencePrefix   = "SID"
+	mSeqCyclePrefix   = "SequenceCycle"
+	mTableIDPrefix    = "TID"
+	mIncIDPrefix      = "IID"
+	mRandomIDPrefix   = "TARID"
+	mBootstrapKey     = []byte("BootstrapKey")
+	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+	mInitDDLTable     = []byte("initDDLTable")
 )
 
 const (
@@ -165,23 +163,6 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	defer globalIDMutex.Unlock()
 
 	return m.txn.Inc(mNextGlobalIDKey, 1)
-}
-
-// GenGlobalJobID generates next job id globally.
-func (m *Meta) GenGlobalJobID(n int) ([]int64, error) {
-	globalJobIDMutex.Lock()
-	defer globalJobIDMutex.Unlock()
-
-	newID, err := m.txn.Inc(mNextGlobalJobIDKey, int64(n))
-	if err != nil {
-		return nil, err
-	}
-	origID := newID - int64(n)
-	ids := make([]int64, 0, n)
-	for i := origID + 1; i <= newID; i++ {
-		ids = append(ids, i)
-	}
-	return ids, nil
 }
 
 // GenGlobalIDs generates the next n global IDs.
