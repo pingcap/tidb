@@ -666,7 +666,7 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaApplyCache = TidbOptInt64(val, DefTiDBMemQuotaApplyCache)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindCache, Value: strconv.Itoa(DefTiDBMemQuotaBindCache), Type: TypeUnsigned, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaBindCache, Value: strconv.Itoa(DefTiDBMemQuotaBindCache), Type: TypeUnsigned, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaBindCache = TidbOptInt64(val, DefTiDBMemQuotaBindCache)
 		return nil
 	}},

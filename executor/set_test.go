@@ -443,6 +443,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
 
+	// test for tidb_mem_quota_bind_cache
+	defVal = fmt.Sprintf("%v", variable.DefTiDBMemQuotaBindCache)
+	tk.MustQuery(`select @@tidb_mem_quota_bind_cache`).Check(testkit.Rows(defVal))
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 0`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_mem_quota_bind_cache = 123`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_mem_quota_bind_cache`).Check(testkit.Rows("123"))
+
 	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	tk.MustExec("set tidb_general_log = 1")
