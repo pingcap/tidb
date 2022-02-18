@@ -359,7 +359,7 @@ func main() {
 	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		isSuccess = cmdRun()
+		isSucceed = cmdRun()
 	}
 
 	if len(os.Args) >= 2 {
