@@ -577,7 +577,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 
-	// Valid user filter
+	// test user filter
 	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")

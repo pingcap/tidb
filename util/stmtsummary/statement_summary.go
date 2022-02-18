@@ -374,7 +374,7 @@ type BindableStmt struct {
 	PlanHint  string
 	Charset   string
 	Collation string
-	Users     map[string]struct{}
+	Users     map[string]struct{} // which users have processed this stmt
 }
 
 // GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
