@@ -120,7 +120,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	for k, v := range vars {
-		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
@@ -287,13 +287,15 @@ func LoadSchemaInfo(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// Table names are case-sensitive in mydump.MDTableMeta.
+			// We should always use the original tbl.Name in checkpoints.
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo
@@ -369,7 +371,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -379,9 +381,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id

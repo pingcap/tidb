@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -319,7 +320,8 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
 			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
-			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
+			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);"+
+			"CREATE TABLE `T4` (`f` BIGINT PRIMARY KEY);",
 		"", "")
 	c.Assert(err, IsNil)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
@@ -343,6 +345,10 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 				{
 					DB:   "db",
 					Name: "t2",
+				},
+				{
+					DB:   "db",
+					Name: "t4",
 				},
 			},
 		},
@@ -369,13 +375,19 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 					Name: "t2",
 					Core: tableInfos[1],
 				},
+				"t4": {
+					ID:   103,
+					DB:   "db",
+					Name: "t4",
+					Core: tableInfos[3],
+				},
 			},
 		},
 	})
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-	c.Assert(tableCntAfter-tableCntBefore, Equals, 2.0)
+	c.Assert(tableCntAfter-tableCntBefore, Equals, 3.0)
 }
 
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
@@ -505,8 +517,22 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, ErrorMatches, "obtain new collation enabled failed: mock permission deny")
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
+	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, IsNil)
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -518,7 +544,8 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		c.Assert(err, IsNil)
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.
