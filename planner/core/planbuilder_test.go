@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"testing"
 	"unsafe"
 	_ "unsafe" // required by go:linkname
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -38,17 +38,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testPlanBuilderSuite{})
-
-func (s *testPlanBuilderSuite) SetUpSuite(c *C) {
-}
-
-type testPlanBuilderSuite struct {
-}
-
-func (s *testPlanBuilderSuite) TestShow(c *C) {
+func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
 		ast.ShowEngines,
@@ -78,12 +71,12 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 		node.Tp = tp
 		schema, _ := buildShowSchema(node, false, false)
 		for _, col := range schema.Columns {
-			c.Assert(col.RetType.Flen, Greater, 0)
+			require.Greater(t, col.RetType.Flen, 0)
 		}
 	}
 }
 
-func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
+func TestGetPathByIndexName(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		Indices:    make([]*model.IndexInfo, 0),
 		PKIsHandle: true,
@@ -96,15 +89,15 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
-	c.Assert(path, NotNil)
-	c.Assert(path, Equals, accessPath[1])
+	require.NotNil(t, path)
+	require.Equal(t, accessPath[1], path)
 
 	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
-	c.Assert(path, NotNil)
-	c.Assert(path, Equals, accessPath[0])
+	require.NotNil(t, path)
+	require.Equal(t, accessPath[0], path)
 
 	path = getPathByIndexName(accessPath, model.NewCIStr("not exists"), tblInfo)
-	c.Assert(path, IsNil)
+	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
 		Indices:    make([]*model.IndexInfo, 0),
@@ -112,10 +105,10 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 	}
 
 	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
-	c.Assert(path, IsNil)
+	require.Nil(t, path)
 }
 
-func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
+func TestRewriterPool(t *testing.T) {
 	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
@@ -133,17 +126,17 @@ func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
 	// Then, pick again and check if it's cleaned up.
 	builder.rewriterCounter++
 	cleanRewriter := builder.getExpressionRewriter(context.TODO(), nil)
-	c.Assert(cleanRewriter, Equals, dirtyRewriter) // Rewriter should be reused.
-	c.Assert(cleanRewriter.asScalar, Equals, false)
-	c.Assert(cleanRewriter.aggrMap, IsNil)
-	c.Assert(cleanRewriter.preprocess, IsNil)
-	c.Assert(cleanRewriter.insertPlan, IsNil)
-	c.Assert(cleanRewriter.disableFoldCounter, Equals, 0)
-	c.Assert(len(cleanRewriter.ctxStack), Equals, 0)
+	require.Equal(t, dirtyRewriter, cleanRewriter)
+	require.Equal(t, false, cleanRewriter.asScalar)
+	require.Nil(t, cleanRewriter.aggrMap)
+	require.Nil(t, cleanRewriter.preprocess)
+	require.Nil(t, cleanRewriter.insertPlan)
+	require.Zero(t, cleanRewriter.disableFoldCounter)
+	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
 }
 
-func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
+func TestDisableFold(t *testing.T) {
 	// Functions like BENCHMARK() shall not be folded into result 0,
 	// but normal outer function with constant args should be folded.
 	// Types of expression and first layer of args will be validated.
@@ -164,31 +157,31 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 	}
 
 	ctx := MockContext()
-	for _, t := range cases {
-		st, err := parser.New().ParseOneStmt(t.SQL, "", "")
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		st, err := parser.New().ParseOneStmt(c.SQL, "", "")
+		require.NoError(t, err)
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
 		builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
-		c.Assert(rewriter, NotNil)
-		c.Assert(rewriter.disableFoldCounter, Equals, 0)
-		rewritenExpression, _, err := builder.rewriteExprNode(rewriter, expr, true)
-		c.Assert(err, IsNil)
-		c.Assert(rewriter.disableFoldCounter, Equals, 0) // Make sure the counter is reduced to 0 in the end.
+		require.NotNil(t, rewriter)
+		require.Equal(t, 0, rewriter.disableFoldCounter)
+		rewrittenExpression, _, err := builder.rewriteExprNode(rewriter, expr, true)
+		require.NoError(t, err)
+		require.Equal(t, 0, rewriter.disableFoldCounter)
 		builder.rewriterCounter--
 
-		c.Assert(rewritenExpression, FitsTypeOf, t.Expected)
-		for i, expectedArg := range t.Args {
-			rewritenArg := expression.GetFuncArg(rewritenExpression, i)
-			c.Assert(rewritenArg, FitsTypeOf, expectedArg)
+		require.IsType(t, c.Expected, rewrittenExpression)
+		for i, expectedArg := range c.Args {
+			rewrittenArg := expression.GetFuncArg(rewrittenExpression, i)
+			require.IsType(t, expectedArg, rewrittenArg)
 		}
 	}
 }
 
-func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
+func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
@@ -198,24 +191,32 @@ func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
 	}
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "invalid slice pointers, path PhysicalSort.ByItems")
+	err := checkDeepClone(sort1, sort2)
+	require.Error(t, err)
+	require.Regexp(t, "invalid slice pointers, path PhysicalSort.ByItems", err.Error())
 
 	byItems2 := []*util.ByItems{{Expr: expr}}
 	sort2.ByItems = byItems2
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression")
+	err = checkDeepClone(sort1, sort2)
+	require.Error(t, err)
+	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression", err.Error())
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType")
+	err = checkDeepClone(sort1, sort2)
+	require.Error(t, err)
+	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeString)
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8")
+	err = checkDeepClone(sort1, sort2)
+	require.Error(t, err)
+	require.Regexp(t, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
-	c.Assert(checkDeepClone(sort1, sort2), IsNil)
+	require.NoError(t, checkDeepClone(sort1, sort2))
 }
 
-func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
+func TestPhysicalPlanClone(t *testing.T) {
 	ctx := mock.NewContext()
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
@@ -224,9 +225,9 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	idxInfo := &model.IndexInfo{}
 	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 	aggDesc1, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	aggDesc2, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{cst}, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
@@ -237,7 +238,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(tableScan), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(tableScan))
 
 	// table reader
 	tableReader := &PhysicalTableReader{
@@ -246,7 +247,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
-	c.Assert(checkPhysicalPlanClone(tableReader), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
 	indexScan := &PhysicalIndexScan{
@@ -258,7 +259,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(indexScan), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(indexScan))
 
 	// index reader
 	indexReader := &PhysicalIndexReader{
@@ -267,7 +268,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)
-	c.Assert(checkPhysicalPlanClone(indexReader), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(indexReader))
 
 	// index lookup
 	indexLookup := &PhysicalIndexLookUpReader{
@@ -279,33 +280,33 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 		PushedLimit:    &PushedDownLimit{1, 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
-	c.Assert(checkPhysicalPlanClone(indexLookup), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
 	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
-	c.Assert(checkPhysicalPlanClone(sel), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
-	c.Assert(checkPhysicalPlanClone(proj), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
 	lim := &PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
-	c.Assert(checkPhysicalPlanClone(lim), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
 	sort := &PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
-	c.Assert(checkPhysicalPlanClone(sort), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
 	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
-	c.Assert(checkPhysicalPlanClone(topN), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
 	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
@@ -314,7 +315,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}}
 	streamAgg = streamAgg.initForStream(ctx, stats, 0)
 	streamAgg.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(streamAgg), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
 	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
@@ -323,7 +324,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}}
 	hashAgg = hashAgg.initForHash(ctx, stats, 0)
 	hashAgg.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(hashAgg), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
 	hashJoin := &PhysicalHashJoin{
@@ -332,7 +333,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}
 	hashJoin = hashJoin.Init(ctx, stats, 0)
 	hashJoin.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(hashJoin), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(hashJoin))
 
 	// merge join
 	mergeJoin := &PhysicalMergeJoin{
@@ -341,7 +342,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	}
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
-	c.Assert(checkPhysicalPlanClone(mergeJoin), IsNil)
+	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface

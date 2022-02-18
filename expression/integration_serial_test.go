@@ -1912,7 +1912,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`update t set a = week("aa", 1)`)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
 	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
+	require.Equal(t, types.ErrWrongValue.Code(), errors.Cause(err).(*terror.Error).Code(), "err %v", err)
 
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)

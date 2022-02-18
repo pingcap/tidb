@@ -152,7 +152,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_13 1.00 18.93 root  funcs:count(1)->Column#7",
+          "StreamAgg_12 1.00 18.93 root  funcs:count(1)->Column#7",
           "└─TableReader_45 3.00 9.93 root  data:ExchangeSender_44",
           "  └─ExchangeSender_44 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_41 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
@@ -206,7 +206,7 @@
       {
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_12 1.00 59.65 root  funcs:count(1)->Column#7",
+          "StreamAgg_11 1.00 59.65 root  funcs:count(1)->Column#7",
           "└─MergeJoin_30 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
           "  ├─Sort_28(Build) 3.00 20.83 root  test.t2.a",
           "  │ └─TableReader_27 3.00 6.56 root  data:Selection_26",
