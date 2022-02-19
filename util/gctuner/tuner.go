@@ -25,9 +25,9 @@ import (
 
 const (
 	// MaxGCPercent is the default max cost of memory.
-	MaxGCPercent uint32 = 500
+	MaxGCPercent uint32 = 1000
 	// MinGCPercent is the default min cost of memory.
-	MinGCPercent uint32 = 50
+	MinGCPercent uint32 = 20
 )
 
 var defaultGCPercent uint32 = 100
