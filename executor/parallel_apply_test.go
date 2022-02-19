@@ -96,7 +96,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)`)
 	sql = "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
 	checkApplyPlan(c, tk, sql, 1)
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "3", "4", "2", "3", "4"))
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 
 	// char
 	tk.MustExec("drop table t1, t2")
@@ -209,7 +209,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec("insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
 	sql = "select a from t1 where (select sum(t2.b) from t2 where t2.a > t1.a and t2.b < t1.b) > 4"
 	checkApplyPlan(c, tk, sql, 1)
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "2", "3", "1", "2", "3"))
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "1", "2", "2", "3", "3"))
 
 	// int & double
 	tk.MustExec("drop table t1, t2")
