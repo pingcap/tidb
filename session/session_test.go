@@ -89,7 +89,6 @@ var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
 var _ = Suite(&testSessionSuite3{})
 var _ = Suite(&testSchemaSuite{})
-var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
@@ -261,7 +260,7 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	}
 }
 
-func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+func createStorage(t *testing.T) (kv.Storage, func()) {
 	if *withTiKV {
 		initPdAddrs()
 		pdAddr := <-pdAddrChan
@@ -271,17 +270,15 @@ func createStorage(t *testing.T) (store kv.Storage, clean func()) {
 		})
 		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
 		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
+		require.NoError(t, clearStorage(store))
+		require.NoError(t, clearETCD(store.(kv.EtcdBackend)))
 		session.ResetStoreForWithTiKVTest(store)
 		dom, err := session.BootstrapSession(store)
 		require.NoError(t, err)
 
 		return store, func() {
 			dom.Close()
-			store.Close()
+			require.NoError(t, store.Close())
 			pdAddrChan <- pdAddr
 		}
 	}
