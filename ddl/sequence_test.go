@@ -877,7 +877,6 @@ func TestUnflodSequence(t *testing.T) {
 // single insert consume: 50.498672ms
 // after this PR:
 // single insert consume: 33.213615ms
-// Notice: use go test -check.b Benchmarkxxx to test it.
 func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 	store, clean := testkit.CreateMockStore(b)
 	defer clean()
