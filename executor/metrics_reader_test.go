@@ -67,7 +67,6 @@ func TestStmtLabel(t *testing.T) {
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		require.Equal(t, tt.label, executor.GetStmtLabel(stmtNode))
