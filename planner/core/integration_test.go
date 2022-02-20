@@ -5520,6 +5520,38 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 	tk.MustExec("drop table if exists t31202")
 }
 
+func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database natural_join_update")
+	defer tk.MustExec("drop database natural_join_update")
+	tk.MustExec("use natural_join_update")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("update t1 as a natural join t1 b SET a.a = 2, b.b = 3")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2 3", "2 3"))
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int primary key, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 b SET a.a = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int, b int) partition by hash (a) partitions 3")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 b SET a.a = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (A int, b int) partition by hash (b) partitions 3")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	_, err := tk.Exec(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".planner:1706.Primary key/partition key update is not allowed since the table is updated both as 'a' and 'B'.")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
+}
+
 func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
 	store, _ := s.store, s.dom
 	tk := testkit.NewTestKit(c, store)
