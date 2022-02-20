@@ -17,8 +17,8 @@ package ddl_test
 import (
 	"strconv"
 	"testing"
-	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
@@ -26,15 +26,16 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	testkit2 "github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestCreateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+var _ = Suite(&testSequenceSuite{&testDBSuite{}})
+
+type testSequenceSuite struct{ *testDBSuite }
+
+func (s *testSequenceSuite) TestCreateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
@@ -63,44 +64,40 @@ func TestCreateSequence(t *testing.T) {
 	tk.MustGetErrCode("create sequence seq CHARSET=utf8", mysql.ErrSequenceUnsupportedTableOption)
 
 	_, err := tk.Exec("create sequence seq comment=\"test\"")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
-	sequenceTable := testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
-
-	require.Equal(t, true, sequenceTable.Meta().IsSequence())
-	require.Equal(t, model.DefaultSequenceIncrementValue, sequenceTable.Meta().Sequence.Increment)
-	require.Equal(t, model.DefaultPositiveSequenceStartValue, sequenceTable.Meta().Sequence.Start)
-	require.Equal(t, model.DefaultPositiveSequenceMinValue, sequenceTable.Meta().Sequence.MinValue)
-	require.Equal(t, model.DefaultPositiveSequenceMaxValue, sequenceTable.Meta().Sequence.MaxValue)
-	require.Equal(t, true, sequenceTable.Meta().Sequence.Cache)
-	require.Equal(t, model.DefaultSequenceCacheValue, sequenceTable.Meta().Sequence.CacheValue)
-	require.Equal(t, false, sequenceTable.Meta().Sequence.Cycle)
+	sequenceTable := testGetTableByName(c, s.s, "test", "seq")
+	c.Assert(sequenceTable.Meta().IsSequence(), Equals, true)
+	c.Assert(sequenceTable.Meta().Sequence.Increment, Equals, model.DefaultSequenceIncrementValue)
+	c.Assert(sequenceTable.Meta().Sequence.Start, Equals, model.DefaultPositiveSequenceStartValue)
+	c.Assert(sequenceTable.Meta().Sequence.MinValue, Equals, model.DefaultPositiveSequenceMinValue)
+	c.Assert(sequenceTable.Meta().Sequence.MaxValue, Equals, model.DefaultPositiveSequenceMaxValue)
+	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
+	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
+	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
 
 	// Test create privilege.
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
-	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
-	tk1.SetSession(se)
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// grant the myuser the access to database test.
 	tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
 
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
 // Test for sequence still works with a infoschema attached by temporary table
-func TestIssue28881(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestIssue28881(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists s")
 	tk.MustExec("create sequence s")
@@ -111,11 +108,8 @@ func TestIssue28881(t *testing.T) {
 	tk.MustQuery("select lastval(s)").Check(testkit.Rows("1"))
 }
 
-func TestDropSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestDropSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 
@@ -125,49 +119,49 @@ func TestDropSequence(t *testing.T) {
 	// Test non-existed sequence can't drop successfully.
 	tk.MustExec("create sequence seq")
 	_, err := tk.Exec("drop sequence seq, seq2")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'test.seq2'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq2'")
 
 	// Test the specified object is not sequence.
 	tk.MustExec("create table seq3 (a int)")
 	_, err = tk.Exec("drop sequence seq3")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, ddl.ErrWrongObject))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 
 	// Test schema is not exist.
 	_, err = tk.Exec("drop sequence unknown.seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'")
 
 	// Test drop sequence successfully.
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("drop sequence seq")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("drop sequence seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
 
 	// Test drop table when the object is a sequence.
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("drop table seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1051]Unknown table 'test.seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.seq'")
 
 	// Test drop view when the object is a sequence.
 	_, err = tk.Exec("drop view seq")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, ddl.ErrWrongObject))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 	tk.MustExec("drop sequence seq")
 
 	// Test drop privilege.
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
-	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
-	tk1.SetSession(se)
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// grant the myuser the access to database test.
 	tk.MustExec("create sequence my_seq")
@@ -175,19 +169,16 @@ func TestDropSequence(t *testing.T) {
 
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
 
 	// Test for `drop sequence if exists`.
 	tk.MustExec("drop sequence if exists seq_if_exists")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 4139 Unknown SEQUENCE: 'test.seq_if_exists'"))
 }
 
-func TestShowCreateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop sequence if exists seq")
@@ -198,11 +189,11 @@ func TestShowCreateSequence(t *testing.T) {
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
-	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
-	tk1.SetSession(se)
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// Grant the myuser the access to table t in database test, but sequence seq.
 	tk.MustExec("grant select on test.t to 'myuser'@'localhost'")
@@ -210,8 +201,8 @@ func TestShowCreateSequence(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("show create table t")
 	_, err = tk1.Exec("show create sequence seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// Grant the myuser the access to sequence seq in database test.
 	tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
@@ -255,8 +246,8 @@ func TestShowCreateSequence(t *testing.T) {
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create table seq (a int)")
 	err = tk.QueryToErr("show create sequence seq")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1347]'test.seq' is not SEQUENCE")
 	tk.MustExec("drop table if exists seq")
 
 	// Test use the show create sequence result to create sequence.
@@ -267,11 +258,8 @@ func TestShowCreateSequence(t *testing.T) {
 	tk.MustExec(showString)
 }
 
-func TestSequenceAsDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
@@ -309,11 +297,8 @@ func TestSequenceAsDefaultValue(t *testing.T) {
 	tk.MustExec("alter table t5 change column c c int default next value for seq")
 }
 
-func TestSequenceFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestSequenceFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
@@ -389,7 +374,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("8"))
 	err := tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle")
@@ -397,7 +382,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test negative-growth sequence
 	tk.MustExec("drop sequence if exists seq")
@@ -425,14 +410,14 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-6"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = -3 start = 2 minvalue -2 maxvalue 10")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-1"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test sequence setval function.
 	tk.MustExec("drop sequence if exists seq")
@@ -458,14 +443,14 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 8)").Check(testkit.Rows("8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 	tk.MustQuery("select setval(seq, 11)").Check(testkit.Rows("11"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 	// set value can be bigger than maxvalue.
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	err = tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test setval in second cache round.
 	tk.MustExec("drop sequence if exists seq")
@@ -475,22 +460,22 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("20"))
 	// the next value will not be base on next value.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("25"))
-	sequenceTable := testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(95), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(95))
+	c.Assert(round, Equals, int64(0))
 	// exhausted the sequence first round in cycle.
 	tk.MustQuery("select setval(seq, 95)").Check(testkit.Rows("95"))
 	// make sequence alloc the next batch.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(91), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(91))
+	c.Assert(round, Equals, int64(1))
 	tk.MustQuery("select setval(seq, 15)").Check(testkit.Rows("15"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("21"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("31"))
@@ -500,41 +485,41 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, -20)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("20"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-10"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(-6), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(-6))
+	c.Assert(round, Equals, int64(1))
 
 	// test setval in negative-growth sequence.
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment -3 start 5 maxvalue 10 minvalue -10 cache 3 cycle")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("5"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(-1), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(-1))
+	c.Assert(round, Equals, int64(0))
 	// exhausted the sequence first cache batch.
 	tk.MustQuery("select setval(seq, -2)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-4"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(-10), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(-10))
+	c.Assert(round, Equals, int64(0))
 	// exhausted the sequence second cache batch.
 	tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(4), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(4))
+	c.Assert(round, Equals, int64(1))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("7"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("4"))
 	// test the sequence negative rebase.
@@ -546,12 +531,12 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select setval(seq, -20)").Check(testkit.Rows("-20"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(6), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(6))
+	c.Assert(round, Equals, int64(1))
 
 	// test sequence lastval function.
 	tk.MustExec("drop sequence if exists seq")
@@ -574,34 +559,34 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("create sequence seq increment 3 start 3 maxvalue 14 cache 3 cycle")
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(9), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(9))
+	c.Assert(round, Equals, int64(0))
 	// invalidate the current sequence cache.
 	tk.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("3"))
 	// trigger the next sequence cache.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("12"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(14), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(14))
+	c.Assert(round, Equals, int64(0))
 	// invalidate the current sequence cache.
 	tk.MustQuery("select setval(seq, 13)").Check(testkit.Rows("13"))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("12"))
 	// trigger the next sequence cache.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(7), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(7))
+	c.Assert(round, Equals, int64(1))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("1"))
 
 	// test lastval in negative-growth sequence cycle and cache.
@@ -609,22 +594,22 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("create sequence seq increment -3 start -2 maxvalue 10 minvalue -10 cache 3 cycle")
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(-8), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(-8))
+	c.Assert(round, Equals, int64(0))
 	// invalidate the current sequence cache.
 	tk.MustQuery("select setval(seq, -8)").Check(testkit.Rows("-8"))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(4), end)
-	require.Equal(t, int64(1), round)
+	c.Assert(end, Equals, int64(4))
+	c.Assert(round, Equals, int64(1))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("10"))
 
 	tk.MustExec("drop sequence if exists seq")
@@ -632,12 +617,12 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
 	tk.MustQuery("select setval(seq, -8)").Check(testkit.Rows("-8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
-	require.Equal(t, true, ok)
+	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
-	require.Equal(t, int64(-10), end)
-	require.Equal(t, int64(0), round)
+	c.Assert(end, Equals, int64(-10))
+	c.Assert(round, Equals, int64(0))
 
 	// Test the sequence seek formula will overflow Int64.
 	tk.MustExec("drop sequence if exists seq")
@@ -661,25 +646,25 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("drop view if exists seq1")
 	tk.MustExec("create table seq(a int)")
 	_, err = tk.Exec("select nextval(seq)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq, 10)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
 
 	tk.MustExec("create view seq1 as select * from seq")
 	_, err = tk.Exec("select nextval(seq1)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq1)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq1, 10)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop table if exists seq")
 	tk.MustExec("drop view if exists seq")
@@ -700,10 +685,10 @@ func TestSequenceFunction(t *testing.T) {
 	// test the current value already satisfied setval in other session.
 	tk.MustExec("create sequence seq")
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.SetSession(se)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.Se = se
 	tk1.MustExec("use test")
 	tk1.MustQuery("select setval(seq, 50)").Check(testkit.Rows("<nil>"))
 	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("101"))
@@ -728,21 +713,18 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("insert into t values(1),(2)")
 	tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
 	_, err = tk.Exec("select nextval(t), t.a from t")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.t' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
 	_, err = tk.Exec("select nextval(seq), nextval(t), t.a from t")
-	require.Error(t, err)
-	require.EqualError(t, err, "[schema:1347]'test.t' is not SEQUENCE")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustExec("drop sequence seq")
 	tk.MustExec("drop table t")
 }
 
-func TestInsertSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestInsertSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop table if exists t")
@@ -806,14 +788,11 @@ func TestInsertSequence(t *testing.T) {
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := tk.QueryToErr("select nextval(seq)")
-	require.EqualError(t, err, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 }
 
-func TestUnflodSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestUnflodSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// test insert into select from.
 	tk.MustExec("drop sequence if exists seq")
@@ -877,11 +856,9 @@ func TestUnflodSequence(t *testing.T) {
 // single insert consume: 50.498672ms
 // after this PR:
 // single insert consume: 33.213615ms
-func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
-	store, clean := testkit.CreateMockStore(b)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(b, store)
+// Notice: use go test -check.b Benchmarkxxx to test it.
+func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop table if exists t")
@@ -895,17 +872,14 @@ func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 			sql += ",()"
 		}
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
 		tk.MustExec(sql)
 	}
 }
 
-func TestSequenceFunctionPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	// Test sequence function privilege.
@@ -916,11 +890,11 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
-	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
-	tk1.SetSession(se)
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// grant the myuser the create access to the sequence.
 	tk.MustExec("grant insert on test.t to 'myuser'@'localhost'")
@@ -928,22 +902,22 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 	// INSERT privilege required to use nextval.
 	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select nextval(seq)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	_, err = tk1.Exec("insert into t values()")
-	require.Error(t, err)
-	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// SELECT privilege required to use lastval.
 	err = tk1.QueryToErr("select lastval(seq)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// INSERT privilege required to use setval.
 	err = tk1.QueryToErr("select setval(seq, 10)")
-	require.Error(t, err)
-	require.EqualError(t, err, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// grant the myuser the SELECT & UPDATE access to sequence seq.
 	tk.MustExec("grant SELECT, INSERT on test.seq to 'myuser'@'localhost'")
@@ -978,11 +952,8 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 // So under current situation, TiDB will
 // [1]: forbid the new added column has sequence as it's default value.
 // [2]: allow the altered column with sequence as default value.
-func TestSequenceDefaultLogic(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestSequenceDefaultLogic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop sequence if exists seq")
@@ -1010,21 +981,18 @@ func TestSequenceDefaultLogic(t *testing.T) {
 }
 
 // Close issue #17945, sequence cache shouldn't be negative.
-func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestSequenceCacheShouldNotBeNegative(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop sequence if exists seq")
 	_, err := tk.Exec("create sequence seq cache -1")
-	require.Error(t, err)
-	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	_, err = tk.Exec("create sequence seq cache 0")
-	require.Error(t, err)
-	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	// This will error because
 	// 1: maxvalue = -1 by default
@@ -1033,17 +1001,14 @@ func TestSequenceCacheShouldNotBeNegative(t *testing.T) {
 	// `seqInfo.CacheValue < (math.MaxInt64-absIncrement)/absIncrement` will
 	// ensure there is enough value for one cache allocation at least.
 	_, err = tk.Exec("create sequence seq INCREMENT -9223372036854775807 cache 1")
-	require.Error(t, err)
-	require.EqualError(t, err, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
 	tk.MustExec("create sequence seq cache 1")
 }
 
-func TestAlterSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestAlterSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop sequence if exists seq")
@@ -1100,11 +1065,8 @@ func TestAlterSequence(t *testing.T) {
 	tk.MustExec("drop sequence if exists seq")
 }
 
-func TestAlterSequencePrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	session.SetSchemaLease(600 * time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSequenceSuite) TestAlterSequencePrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists my_seq")
 	tk.MustExec("create sequence my_seq")
@@ -1113,27 +1075,27 @@ func TestAlterSequencePrivilege(t *testing.T) {
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
-	tk1 := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
-	tk1.SetSession(se)
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// grant the myuser the access to database test.
 	tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
 
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("alter sequence my_seq increment = 2")
-	require.Error(t, err)
-	require.EqualError(t, err, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'")
 	tk.MustExec("drop sequence if exists my_seq")
 }
 
 func TestDdl_AlterSequenceIssue31265(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit2.CreateMockStore(t)
 	defer clean()
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit2.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create sequence seq cache=1 nocache")
 	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))

@@ -16,14 +16,18 @@ package executor
 
 import (
 	gjson "encoding/json"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/stretchr/testify/require"
 )
 
-func TestShowPlacementLabelsBuilder(t *testing.T) {
+var _ = SerialSuites(&testShowPlacementLabelSuit{})
+
+type testShowPlacementLabelSuit struct {
+}
+
+func (s *testShowPlacementLabelSuit) TestShowPlacementLabelsBuilder(c *C) {
 	cases := []struct {
 		stores  [][]*helper.StoreLabel
 		expects [][]interface{}
@@ -53,9 +57,9 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 	b := &showPlacementLabelsResultBuilder{}
 	toBinaryJSON := func(obj interface{}) (bj json.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		err = bj.UnmarshalJSON(d)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		return
 	}
 
@@ -63,19 +67,19 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 		for _, store := range ca.stores {
 			bj := toBinaryJSON(store)
 			err := b.AppendStoreLabels(bj)
-			require.NoError(t, err)
+			c.Assert(err, IsNil)
 		}
 
 		rows, err := b.BuildRows()
-		require.NoError(t, err)
-		require.Equal(t, len(ca.expects), len(rows))
+		c.Assert(err, IsNil)
+		c.Assert(len(rows), Equals, len(ca.expects))
 		for idx, expect := range ca.expects {
 			row := rows[idx]
 			bj := toBinaryJSON(expect[1])
 
-			require.Equal(t, expect[0].(string), row[0].(string))
-			require.Equal(t, bj.TypeCode, row[1].(json.BinaryJSON).TypeCode)
-			require.Equal(t, bj.Value, row[1].(json.BinaryJSON).Value)
+			c.Assert(row[0].(string), Equals, expect[0].(string))
+			c.Assert(row[1].(json.BinaryJSON).TypeCode, Equals, bj.TypeCode)
+			c.Assert(row[1].(json.BinaryJSON).Value, BytesEquals, bj.Value)
 		}
 	}
 }

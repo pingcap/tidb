@@ -7043,31 +7043,3 @@ func TestIssue22206(t *testing.T) {
 	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
 	result.Check(testkit.Rows(unixTime))
 }
-
-func TestIssue30738(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE t1 (a int, b bit(8), c bit(1), d bit(24));")
-	tk.MustExec("insert into t1 values(1, 65, 1, 65);") //A
-	tk.MustExec("insert into t1 values(2, 53, 0, 53);") //5
-	tk.MustExec("insert into t1 values(3, 54, 1, 54);") //6
-
-	tk.MustQuery("select a from t1 where b+1=54;").Check(testkit.Rows("2"))
-	tk.MustQuery("select a from t1 where c+1=2;").Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select a from t1 where d-1=53;").Check(testkit.Rows("3"))
-
-	tk.MustQuery("select a from t1 where ascii(b)=65;").Check(testkit.Rows("1"))
-	tk.MustQuery("select a from t1 where ascii(c)=0;").Check(testkit.Rows("2"))
-	tk.MustQuery("select a from t1 where ascii(d)=54;").Check(testkit.Rows())
-
-	tk.MustQuery("select a from t1 where cast(b as char)='A';").Check(testkit.Rows("1"))
-	tk.MustQuery("select a from t1 where cast(c as char)='\\1';").Check(testkit.Rows())
-	tk.MustQuery("select a from t1 where cast(d as char)='\\0\\06';").Check(testkit.Rows("3"))
-
-	tk.MustQuery("select a from t1 where concat(b, 'kji')='Akji';").Check(testkit.Rows("1"))
-	tk.MustQuery("select a from t1 where concat(c, 'kji')='\\0kji';").Check(testkit.Rows("2"))
-	tk.MustQuery("select a from t1 where concat(d, 'kji')='\\0\\06kji';").Check(testkit.Rows("3"))
-}

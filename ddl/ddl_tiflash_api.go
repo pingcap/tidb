@@ -54,7 +54,6 @@ type TiFlashReplicaStatus struct {
 	LocationLabels []string
 	Available      bool
 	HighPriority   bool
-	IsPartition    bool
 }
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
@@ -133,16 +132,16 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 		for _, p := range pi.Definitions {
 			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
 			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID,
-				tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), false, true})
+				tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), false})
 		}
 		// partitions that in adding mid-state
 		for _, p := range pi.AddingDefinitions {
-			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition adding %v\n", tblInfo.ID, p.ID))
-			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), true, true})
+			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
+			*tableList = append(*tableList, TiFlashReplicaStatus{p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), true})
 		}
 	} else {
 		logutil.BgLogger().Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
-		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, false, false})
+		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, false})
 	}
 }
 
@@ -272,7 +271,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				}
 			}
 
-			logutil.BgLogger().Debug("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tableID", tb.ID))
+			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tb.ID", tb.ID))
 
 			var stats helper.PDRegionStats
 			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
@@ -286,13 +285,13 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			})
 
 			if !avail {
-				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
+				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
 				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 				if err != nil {
 					return false, err
 				}
 			} else {
-				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)))
+				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)))
 				err := infosync.DeleteTiFlashTableSyncProgress(tb.ID)
 				if err != nil {
 					return false, err
@@ -300,12 +299,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
-				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {
-					// May be due to blocking add partition
-					logutil.BgLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tb.ID), zap.Bool("isPartition", tb.IsPartition))
-				} else {
-					logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tb.ID), zap.Bool("isPartition", tb.IsPartition))
-				}
+				logutil.BgLogger().Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
 			}
 		}
 	}

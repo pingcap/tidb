@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
@@ -989,9 +988,11 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 
 	threads := 8
 	loops := 20
-	var wg tidbutil.WaitGroupWrapper
+	wg := sync.WaitGroup{}
+	wg.Add(threads + 1)
 
 	addStmtFunc := func() {
+		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
@@ -1001,25 +1002,23 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		}
 	}
 	for i := 0; i < threads; i++ {
-		wg.Run(addStmtFunc)
+		go addStmtFunc()
 	}
 
 	defer func() {
-		require.NoError(t, ssMap.SetMaxStmtCount(3000))
+		require.Nil(t, ssMap.SetMaxStmtCount(3000))
 	}()
 
 	setStmtCountFunc := func() {
+		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
 		for i := 10; i > 0; i-- {
-			require.NoError(t, ssMap.SetMaxStmtCount(uint(i)))
+			require.Nil(t, ssMap.SetMaxStmtCount(uint(i)))
 		}
 	}
-	wg.Run(setStmtCountFunc)
+	go setStmtCountFunc()
 
 	wg.Wait()
-
-	// add stmt again to make sure evict occurs after SetMaxStmtCount.
-	addStmtFunc()
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()

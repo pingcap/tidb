@@ -191,7 +191,9 @@
       {
         "SQL": "select * from t5 where id in ('0')",
         "Plan": [
-          "Point_Get 1.00 root table:t5, clustered index:PRIMARY(id) "
+          "Selection 8000.00 root  eq(test.t5.id, 0)",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
         ],
         "Res": null
       }

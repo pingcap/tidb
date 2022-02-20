@@ -906,29 +906,6 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
-func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
-	// PARTITION BY {LIST|RANGE} COLUMNS uses columns directly without expressions
-	pi := t.Meta().Partition
-	if len(pi.Columns) > 0 {
-		return pi.Columns
-	}
-
-	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
-	colIDs := make([]int64, 0, len(partitionCols))
-	for _, col := range partitionCols {
-		colIDs = append(colIDs, col.ID)
-	}
-	colNames := make([]model.CIStr, 0, len(partitionCols))
-	for _, colID := range colIDs {
-		for _, col := range t.Cols() {
-			if col.ID == colID {
-				colNames = append(colNames, col.Name)
-			}
-		}
-	}
-	return colNames
-}
-
 // PartitionRecordKey is exported for test.
 func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)

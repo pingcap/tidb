@@ -16,19 +16,17 @@ package executor_test
 
 import (
 	"fmt"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestShowPlacement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2, t3, t4, db2.t2")
@@ -109,10 +107,8 @@ func TestShowPlacement(t *testing.T) {
 	))
 }
 
-func TestShowPlacementPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3, db2.t1, db2.t3")
 	tk.MustExec("drop database if exists db2")
@@ -152,8 +148,11 @@ func TestShowPlacementPrivilege(t *testing.T) {
 	tk.MustExec("create table db2.t3 (id int) PLACEMENT POLICY p1")
 	defer tk.MustExec("drop table if exists db2.t3")
 
-	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// before grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
@@ -175,10 +174,8 @@ func TestShowPlacementPrivilege(t *testing.T) {
 	))
 }
 
-func TestShowPlacementForDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacementForDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop database if exists db2")
@@ -194,7 +191,7 @@ func TestShowPlacementForDB(t *testing.T) {
 	defer tk.MustExec("drop database if exists db2")
 
 	err := tk.QueryToErr("show placement for database dbnoexist")
-	require.EqualError(t, err, "[schema:1049]Unknown database 'dbnoexist'")
+	c.Assert(err.Error(), Equals, "[schema:1049]Unknown database 'dbnoexist'")
 
 	tk.MustQuery("show placement for database test").Check(testkit.Rows())
 	tk.MustQuery("show placement for database db2").Check(testkit.Rows(
@@ -202,10 +199,8 @@ func TestShowPlacementForDB(t *testing.T) {
 	))
 }
 
-func TestShowPlacementForTableAndPartition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
@@ -271,21 +266,19 @@ func TestShowPlacementForTableAndPartition(t *testing.T) {
 
 	// not exists
 	err := tk.ExecToErr("show placement for table tn")
-	require.EqualError(t, err, "[schema:1146]Table 'test.tn' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.tn' doesn't exist")
 	err = tk.ExecToErr("show placement for table dbn.t1")
-	require.EqualError(t, err, "[schema:1146]Table 'dbn.t1' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'dbn.t1' doesn't exist")
 	err = tk.ExecToErr("show placement for table tn partition pn")
-	require.EqualError(t, err, "[schema:1146]Table 'test.tn' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.tn' doesn't exist")
 	err = tk.QueryToErr("show placement for table t1 partition pn")
-	require.EqualError(t, err, "[table:1735]Unknown partition 'pn' in table 't1'")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'pn' in table 't1'")
 	err = tk.QueryToErr("show placement for table t4 partition pn")
-	require.EqualError(t, err, "[table:1735]Unknown partition 'pn' in table 't4'")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'pn' in table 't4'")
 }
 
-func TestShowPlacementForDBPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists db2.t1")
@@ -312,8 +305,11 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 	tk.MustExec("create table db2.t1 (id int) PLACEMENT POLICY p2")
 	defer tk.MustExec("drop table db2.t1")
 
-	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	privs := []string{
 		"all privileges on db2.*",
@@ -327,8 +323,8 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 	}
 
 	// before grant
-	err := tk1.QueryToErr("show placement for database db2")
-	require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+	err = tk1.QueryToErr("show placement for database db2")
+	c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",
@@ -350,12 +346,12 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 		))
 
 		err = tk1.QueryToErr("show placement for database test")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
+		c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.QueryToErr("show placement for database db2")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+		c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",
@@ -364,10 +360,8 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 	}
 }
 
-func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
@@ -405,24 +399,27 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	tk.MustExec("create table db2.t1 (id int) PLACEMENT POLICY p2")
 	defer tk.MustExec("drop table if exists db2.t1")
 
-	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
 
 	// before grant
-	err := tk1.ExecToErr("show placement for table test.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	err = tk1.ExecToErr("show placement for table test.t1")
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t1 partition p1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t2")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t3")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 	err = tk1.ExecToErr("show placement for table db2.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
@@ -458,18 +455,18 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+		c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 		err = tk1.ExecToErr("show placement for table test.t3")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+		c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 		err = tk1.ExecToErr("show placement for table db2.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.ExecToErr("show placement for table test.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",

@@ -93,7 +93,7 @@ func makeATestMutaion(op kvrpcpb.Op, key []byte, value []byte) *kvrpcpb.Mutation
 	}
 }
 
-func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
+func prepareTestTableData(t *testing.T, keyNumber int, tableID int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldType{
@@ -105,9 +105,8 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	colTypeMap := map[int64]*types.FieldType{}
 	for i := 0; i < 3; i++ {
 		colInfos[i] = &tipb.ColumnInfo{
-			ColumnId:  colIds[i],
-			Tp:        int32(colTypes[i].Tp),
-			Collation: -mysql.DefaultCollationID,
+			ColumnId: colIds[i],
+			Tp:       int32(colTypes[i].Tp),
 		}
 		colTypeMap[colIds[i]] = colTypes[i]
 	}
@@ -118,9 +117,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, encoder)
-		if err != nil {
-			return nil, err
-		}
+		require.NoError(t, err)
 		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
 		encodedTestKVDatas[i] = &encodedTestKVData{encodedRowKey: rowKeyEncodedData, encodedRowValue: rowEncodedData}
 	}
@@ -129,7 +126,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 		encodedTestKVDatas: encodedTestKVDatas,
 		rows:               rows,
 		colTypes:           colTypeMap,
-	}, nil
+	}
 }
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
@@ -205,7 +202,8 @@ func newDagContext(store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRe
 
 // build and execute the executors according to the dagRequest and dagContext,
 // return the result chunk data, rows count and err if occurs.
-func buildExecutorsAndExecute(dagCtx *dagContext, dagRequest *tipb.DAGRequest) ([]tipb.Chunk, int, error) {
+func buildExecutorsAndExecute(dagRequest *tipb.DAGRequest,
+	dagCtx *dagContext) ([]tipb.Chunk, int, error) {
 	closureExec, err := buildClosureExecutor(dagCtx, dagRequest)
 	if err != nil {
 		return nil, 0, err
@@ -222,20 +220,14 @@ func buildExecutorsAndExecute(dagCtx *dagContext, dagRequest *tipb.DAGRequest) (
 
 // dagBuilder is used to build dag request
 type dagBuilder struct {
-	startTs            uint64
-	executors          []*tipb.Executor
-	outputOffsets      []uint32
-	collectRangeCounts bool
+	startTs       uint64
+	executors     []*tipb.Executor
+	outputOffsets []uint32
 }
 
 // return a default dagBuilder
 func newDagBuilder() *dagBuilder {
 	return &dagBuilder{executors: make([]*tipb.Executor, 0)}
-}
-
-func (dagBuilder *dagBuilder) setCollectRangeCounts(collectRangeCounts bool) *dagBuilder {
-	dagBuilder.collectRangeCounts = collectRangeCounts
-	return dagBuilder
 }
 
 func (dagBuilder *dagBuilder) setStartTs(startTs uint64) *dagBuilder {
@@ -280,9 +272,8 @@ func (dagBuilder *dagBuilder) addLimit(limit uint64) *dagBuilder {
 
 func (dagBuilder *dagBuilder) build() *tipb.DAGRequest {
 	return &tipb.DAGRequest{
-		Executors:          dagBuilder.executors,
-		OutputOffsets:      dagBuilder.outputOffsets,
-		CollectRangeCounts: &dagBuilder.collectRangeCounts,
+		Executors:     dagBuilder.executors,
+		OutputOffsets: dagBuilder.outputOffsets,
 	}
 }
 
@@ -305,14 +296,9 @@ func TestPointGet(t *testing.T) {
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
-	data, err := prepareTestTableData(keyNumber, tableID)
-	require.NoError(t, err)
-	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
-	require.NoError(t, err)
-	defer func() {
-		err := clean()
-		require.NoError(t, err)
-	}()
+	data := prepareTestTableData(t, keyNumber, tableID)
+	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
+	defer clean()
 
 	errs := initTestData(store, data.encodedTestKVDatas)
 	require.Nil(t, errs)
@@ -326,7 +312,7 @@ func TestPointGet(t *testing.T) {
 		build()
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
-	chunks, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
+	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
 	require.Len(t, chunks, 0)
 	require.NoError(t, err)
 	require.Equal(t, 0, rowCount)
@@ -340,7 +326,7 @@ func TestPointGet(t *testing.T) {
 		build()
 	dagCtx = newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
-	chunks, rowCount, err = buildExecutorsAndExecute(dagCtx, dagRequest)
+	chunks, rowCount, err = buildExecutorsAndExecute(dagRequest, dagCtx)
 	require.NoError(t, err)
 	require.Equal(t, 1, rowCount)
 	returnedRow, err := codec.Decode(chunks[0].RowsData, 2)
@@ -359,14 +345,9 @@ func TestPointGet(t *testing.T) {
 }
 
 func TestClosureExecutor(t *testing.T) {
-	data, err := prepareTestTableData(keyNumber, tableID)
-	require.NoError(t, err)
-	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
-	require.NoError(t, err)
-	defer func() {
-		err := clean()
-		require.NoError(t, err)
-	}()
+	data := prepareTestTableData(t, keyNumber, tableID)
+	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
+	defer clean()
 
 	errs := initTestData(store, data.encodedTestKVDatas)
 	require.Nil(t, errs)
@@ -381,61 +362,12 @@ func TestClosureExecutor(t *testing.T) {
 
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
+	_, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
 	require.NoError(t, err)
 	require.Equal(t, 0, rowCount)
 }
 
-func TestMppExecutor(t *testing.T) {
-	data, err := prepareTestTableData(keyNumber, tableID)
-	require.NoError(t, err)
-	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
-	require.NoError(t, err)
-	defer func() {
-		err := clean()
-		require.NoError(t, err)
-	}()
-
-	errs := initTestData(store, data.encodedTestKVDatas)
-	require.Nil(t, errs)
-
-	dagRequest := newDagBuilder().
-		setStartTs(dagRequestStartTs).
-		addTableScan(data.colInfos, tableID).
-		addSelection(buildEQIntExpr(1, 1)).
-		addLimit(1).
-		setOutputOffsets([]uint32{0, 1}).
-		setCollectRangeCounts(true).
-		build()
-
-	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
-		dagRequest, dagRequestStartTs)
-	_, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest)
-	require.Equal(t, rowCount[0], int64(1))
-	require.NoError(t, err)
-}
-
-func buildNEIntExpr(colIdx, val int64) *tipb.Expr {
-	return &tipb.Expr{
-		Tp:        tipb.ExprType_ScalarFunc,
-		Sig:       tipb.ScalarFuncSig_NEInt,
-		FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
-		Children: []*tipb.Expr{
-			{
-				Tp:        tipb.ExprType_ColumnRef,
-				Val:       codec.EncodeInt(nil, colIdx),
-				FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
-			},
-			{
-				Tp:        tipb.ExprType_Int64,
-				Val:       codec.EncodeInt(nil, val),
-				FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
-			},
-		},
-	}
-}
-
-func buildEQIntExpr(colIdx, val int64) *tipb.Expr {
+func buildEQIntExpr(colID, val int64) *tipb.Expr {
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Sig:       tipb.ScalarFuncSig_EQInt,
@@ -443,7 +375,7 @@ func buildEQIntExpr(colIdx, val int64) *tipb.Expr {
 		Children: []*tipb.Expr{
 			{
 				Tp:        tipb.ExprType_ColumnRef,
-				Val:       codec.EncodeInt(nil, colIdx),
+				Val:       codec.EncodeInt(nil, colID),
 				FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
 			},
 			{
@@ -499,40 +431,25 @@ func (ts *testStore) commit(keys [][]byte, startTS, commitTS uint64) error {
 	})
 }
 
-func newTestStore(dbPrefix string, logPrefix string) (*testStore, func() error, error) {
-	dbPath, err := os.MkdirTemp("", dbPrefix)
-	if err != nil {
-		return nil, nil, err
-	}
-	LogPath, err := os.MkdirTemp("", logPrefix)
-	if err != nil {
-		return nil, nil, err
-	}
+func newTestStore(t *testing.T, dbPrefix string, logPrefix string) (*testStore, func()) {
+	dbPath := t.TempDir()
+	LogPath := t.TempDir()
 	db, err := createTestDB(dbPath, LogPath)
-	if err != nil {
-		return nil, nil, err
-	}
+	require.NoError(t, err)
 	// Some raft store path problems could not be found using simple store in tests
 	// writer := NewDBWriter(dbBundle, safePoint)
 	kvPath := filepath.Join(dbPath, "kv")
 	raftPath := filepath.Join(dbPath, "raft")
 	snapPath := filepath.Join(dbPath, "snap")
 	err = os.MkdirAll(kvPath, os.ModePerm)
-	if err != nil {
-		return nil, nil, err
-	}
+	require.NoError(t, err)
 	err = os.MkdirAll(raftPath, os.ModePerm)
-	if err != nil {
-		return nil, nil, err
-	}
+	require.NoError(t, err)
 	err = os.Mkdir(snapPath, os.ModePerm)
-	if err != nil {
-		return nil, nil, err
-	}
+	require.NoError(t, err)
 
-	clean := func() error {
-		fmt.Printf("db closed")
-		return db.Close()
+	clean := func() {
+		require.NoError(t, db.Close())
 	}
 
 	return &testStore{
@@ -540,7 +457,7 @@ func newTestStore(dbPrefix string, logPrefix string) (*testStore, func() error, 
 		locks:   lockstore.NewMemStore(4096),
 		dbPath:  dbPath,
 		logPath: LogPath,
-	}, clean, nil
+	}, clean
 }
 
 func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
@@ -550,82 +467,4 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 	opts.ValueDir = LogPath + subPath
 	opts.ManagedTxns = true
 	return badger.Open(opts)
-}
-
-func BenchmarkExecutors(b *testing.B) {
-
-	prepare := func(rows, limit int) (dagReq *tipb.DAGRequest, dagCtx *dagContext, clean func() error) {
-		data, err := prepareTestTableData(rows, tableID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		store, clean, err := newTestStore(fmt.Sprintf("cop_handler_bench_db_%d_%d", rows, limit), "cop_handler_test_log")
-		if err != nil {
-			b.Fatal(err)
-		}
-		errs := initTestData(store, data.encodedTestKVDatas)
-		if len(errs) > 0 {
-			b.Fatal(errs)
-		}
-
-		dagReq = newDagBuilder().
-			setStartTs(dagRequestStartTs).
-			addTableScan(data.colInfos, tableID).
-			addSelection(buildNEIntExpr(0, 1)).
-			addLimit(uint64(limit)).
-			setOutputOffsets([]uint32{0, 1}).
-			setCollectRangeCounts(true).
-			build()
-
-		dagCtx = newDagContext(
-			store,
-			[]kv.KeyRange{
-				{
-					StartKey: tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(0)),
-					EndKey:   tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(rows)),
-				},
-			},
-			dagReq,
-			3000000,
-		)
-		return dagReq, dagCtx, clean
-	}
-
-	rows := []int{1, 10, 100, 1000, 10000, 100000}
-	limit := []int{1, 10, 100, 1000, 10000, 100000}
-	cleanFuncs := make([]func() error, 0, len(rows)*len(limit))
-
-	for _, row := range rows {
-		for _, lim := range limit {
-			if lim > row {
-				break
-			}
-			dagReq, dagCtx, clean := prepare(row, lim)
-			cleanFuncs = append(cleanFuncs, clean)
-
-			// b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
-			// 	for i := 0; i < b.N; i++ {
-			// 		_, _, err := buildExecutorsAndExecute(dagCtx, dagReq)
-			// 		if err != nil {
-			// 			b.Fatal(err)
-			// 		}
-			// 	}
-			//
-			// })
-			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					_, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq)
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			})
-		}
-	}
-	for _, clean := range cleanFuncs {
-		err := clean()
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
 }

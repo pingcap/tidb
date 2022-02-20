@@ -509,8 +509,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	createTime := ts2Time(job.StartTS)
-	startTime := ts2Time(job.RealStartTS)
+	startTime := ts2Time(job.StartTS)
 	finishTime := ts2Time(finishTS)
 
 	// Check the privilege.
@@ -526,18 +525,13 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
-	req.AppendTime(8, createTime)
-	if job.RealStartTS > 0 {
-		req.AppendTime(9, startTime)
+	req.AppendTime(8, startTime)
+	if finishTS > 0 {
+		req.AppendTime(9, finishTime)
 	} else {
 		req.AppendNull(9)
 	}
-	if finishTS > 0 {
-		req.AppendTime(10, finishTime)
-	} else {
-		req.AppendNull(10)
-	}
-	req.AppendString(11, job.State.String())
+	req.AppendString(10, job.State.String())
 }
 
 func ts2Time(timestamp uint64) types.Time {
@@ -1728,8 +1722,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
-
-	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)

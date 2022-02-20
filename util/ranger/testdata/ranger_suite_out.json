@@ -408,9 +408,9 @@
       {
         "SQL": "select * from t where a = 0;",
         "Plan": [
-          "TableReader_9 1.00 root  data:Selection_8",
-          "└─Selection_8 1.00 cop[tikv]  eq(test.t.a, 0)",
-          "  └─TableFullScan_7 1.00 cop[tikv] table:t, partition:p0 keep order:false"
+          "Selection_7 0.80 root  eq(test.t.a, 0)",
+          "└─TableReader_9 1.00 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 1.00 cop[tikv] table:t, partition:p0 keep order:false"
         ],
         "Result": [
           "\u0000 0"

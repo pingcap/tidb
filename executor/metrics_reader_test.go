@@ -17,20 +17,17 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestStmtLabel(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite7) TestStmtLabel(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
 	for i := 0; i < 10; i++ {
@@ -63,12 +60,13 @@ func TestStmtLabel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
-		require.NoError(t, err)
+		c.Check(err, IsNil)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
-		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
-		require.NoError(t, err)
-		require.Equal(t, tt.label, executor.GetStmtLabel(stmtNode))
+		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		c.Check(err, IsNil)
+		c.Assert(err, IsNil)
+		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, preprocessorReturn.InfoSchema)
+		c.Assert(err, IsNil)
+		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
 }

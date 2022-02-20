@@ -17,9 +17,12 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/api"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/statistics"
 )
 
 func TestScheduler(t *testing.T) {
@@ -103,26 +106,26 @@ func TestGetClusterVersion(t *testing.T) {
 }
 
 func TestRegionCount(t *testing.T) {
-	regions := &pdtypes.RegionTree{}
-	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
+	regions := core.NewRegionsInfo()
+	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
 		Id:          1,
 		StartKey:    codec.EncodeBytes(nil, []byte{1, 1}),
 		EndKey:      codec.EncodeBytes(nil, []byte{1, 3}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
+	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
 		Id:          2,
 		StartKey:    codec.EncodeBytes(nil, []byte{1, 3}),
 		EndKey:      codec.EncodeBytes(nil, []byte{1, 5}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
+	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
 		Id:          3,
 		StartKey:    codec.EncodeBytes(nil, []byte{2, 3}),
 		EndKey:      codec.EncodeBytes(nil, []byte{3, 4}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	require.Equal(t, 3, len(regions.Regions))
+	require.Equal(t, 3, regions.Len())
 
 	mock := func(
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
@@ -135,7 +138,7 @@ func TestRegionCount(t *testing.T) {
 		t.Log(hex.EncodeToString([]byte(start)))
 		t.Log(hex.EncodeToString([]byte(end)))
 		scanRegions := regions.ScanRange([]byte(start), []byte(end), 0)
-		stats := pdtypes.RegionStats{Count: len(scanRegions)}
+		stats := statistics.RegionStats{Count: len(scanRegions)}
 		ret, err := json.Marshal(stats)
 		require.NoError(t, err)
 		return ret, nil
@@ -203,12 +206,12 @@ func TestPDRequestRetry(t *testing.T) {
 }
 
 func TestStoreInfo(t *testing.T) {
-	storeInfo := pdtypes.StoreInfo{
-		Status: &pdtypes.StoreStatus{
-			Capacity:  pdtypes.ByteSize(1024),
-			Available: pdtypes.ByteSize(1024),
+	storeInfo := api.StoreInfo{
+		Status: &api.StoreStatus{
+			Capacity:  typeutil.ByteSize(1024),
+			Available: typeutil.ByteSize(1024),
 		},
-		Store: &pdtypes.MetaStore{
+		Store: &api.MetaStore{
 			StateName: "Tombstone",
 		},
 	}

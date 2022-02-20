@@ -25,15 +25,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
@@ -45,38 +42,24 @@ const (
 	MPPErrEstablishConnMultiTimes
 )
 
-const (
-	// ErrExecutorNotSupportedMsg is the message for executor not supported.
-	ErrExecutorNotSupportedMsg = "executor not supported: "
-)
-
 type mppExecBuilder struct {
 	sc       *stmtctx.StatementContext
 	dbReader *dbreader.DBReader
+	req      *coprocessor.Request
 	mppCtx   *MPPCtx
 	dagReq   *tipb.DAGRequest
-	dagCtx   *dagContext
-	counts   []int64
-	ndvs     []int64
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
-	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, pb.Desc)
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.req.Ranges, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ts := &tableScanExec{
 		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
-		startTS:     b.dagCtx.startTS,
+		startTS:     b.req.StartTs,
 		kvRanges:    ranges,
 		dbReader:    b.dbReader,
-		counts:      b.counts,
-		ndvs:        b.ndvs,
-		desc:        pb.Desc,
-	}
-	if b.dagCtx != nil {
-		ts.lockStore = b.dagCtx.lockStore
-		ts.resolvedLocks = b.dagCtx.resolvedLocks
 	}
 	for _, col := range pb.Columns {
 		ft := fieldTypeFromPBColumn(col)
@@ -84,112 +67,6 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 	}
 	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
 	return ts, err
-}
-
-func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error) {
-	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, pb.Desc)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	numCols := len(pb.Columns)
-	numIdxCols := numCols
-	colInfos := make([]rowcodec.ColInfo, 0, numCols)
-	fieldTypes := make([]*types.FieldType, 0, numCols)
-	primaryColIds := pb.GetPrimaryColumnIds()
-
-	lastCol := pb.Columns[numCols-1]
-	if lastCol.GetColumnId() == model.ExtraPidColID {
-		lastCol = pb.Columns[numCols-2]
-		numIdxCols--
-	}
-
-	hdlStatus := tablecodec.HandleDefault
-	if len(primaryColIds) == 0 {
-		if lastCol.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(lastCol.GetFlag())) {
-				hdlStatus = tablecodec.HandleIsUnsigned
-			}
-			numIdxCols--
-		} else if lastCol.ColumnId == model.ExtraHandleID {
-			numIdxCols--
-		}
-	} else {
-		numIdxCols -= len(primaryColIds)
-	}
-
-	for _, col := range pb.Columns {
-		ft := fieldTypeFromPBColumn(col)
-		fieldTypes = append(fieldTypes, ft)
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ColumnId,
-			Ft:         ft,
-			IsPKHandle: col.GetPkHandle(),
-		})
-	}
-
-	var prevVals [][]byte
-	if b.dagReq.GetCollectRangeCounts() {
-		prevVals = make([][]byte, numIdxCols)
-	}
-	idxScan := &indexScanExec{
-		baseMPPExec:   baseMPPExec{sc: b.sc, fieldTypes: fieldTypes},
-		startTS:       b.dagCtx.startTS,
-		kvRanges:      ranges,
-		dbReader:      b.dbReader,
-		lockStore:     b.dagCtx.lockStore,
-		resolvedLocks: b.dagCtx.resolvedLocks,
-		counts:        b.counts,
-		ndvs:          b.ndvs,
-		prevVals:      prevVals,
-		colInfos:      colInfos,
-		numIdxCols:    numIdxCols,
-		hdlStatus:     hdlStatus,
-		desc:          pb.Desc,
-	}
-	return idxScan, nil
-}
-
-func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
-	child, err := b.buildMPPExecutor(pb.Child)
-	if err != nil {
-		return nil, err
-	}
-	exec := &limitExec{
-		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, fieldTypes: child.getFieldTypes(), children: []mppExec{child}},
-		limit:       pb.GetLimit(),
-	}
-	return exec, nil
-}
-
-func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (*topNExec, error) {
-	child, err := b.buildMPPExecutor(pb.Child)
-	if err != nil {
-		return nil, err
-	}
-	pbConds := make([]*tipb.Expr, len(pb.OrderBy))
-	for i, item := range pb.OrderBy {
-		pbConds[i] = item.Expr
-	}
-	heap := &topNHeap{
-		totalCount: int(pb.Limit),
-		topNSorter: topNSorter{
-			orderByItems: pb.OrderBy,
-			sc:           b.sc,
-		},
-	}
-	fieldTps := child.getFieldTypes()
-	var conds []expression.Expression
-	if conds, err = convertToExprs(b.sc, fieldTps, pbConds); err != nil {
-		return nil, errors.Trace(err)
-	}
-	exec := &topNExec{
-		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, fieldTypes: fieldTps, children: []mppExec{child}},
-		heap:        heap,
-		conds:       conds,
-		row:         newTopNSortRow(len(conds)),
-		topn:        pb.Limit,
-	}
-	return exec, nil
 }
 
 func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchSenderExec, error) {
@@ -432,21 +309,15 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypeJoin:
 		join := exec.Join
 		return b.buildMPPJoin(join, join.Children)
-	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+	case tipb.ExecType_TypeAggregation:
 		agg := exec.Aggregation
 		return b.buildMPPAgg(agg)
 	case tipb.ExecType_TypeProjection:
 		return b.buildMPPProj(exec.Projection)
 	case tipb.ExecType_TypeSelection:
 		return b.buildMPPSel(exec.Selection)
-	case tipb.ExecType_TypeIndexScan:
-		return b.buildIdxScan(exec.IdxScan)
-	case tipb.ExecType_TypeLimit:
-		return b.buildLimit(exec.Limit)
-	case tipb.ExecType_TypeTopN:
-		return b.buildTopN(exec.TopN)
 	default:
-		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
+		return nil, errors.Errorf("Do not support executor %s", exec.Tp.String())
 	}
 }
 
@@ -458,17 +329,12 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	if err != nil {
 		return &coprocessor.Response{OtherError: err.Error()}
 	}
-	dagCtx := &dagContext{
-		dbReader:  dbReader,
-		startTS:   req.StartTs,
-		keyRanges: req.Ranges,
-	}
 	builder := mppExecBuilder{
 		dbReader: dbReader,
+		req:      req,
 		mppCtx:   mppCtx,
 		sc:       flagsToStatementContext(dagReq.Flags),
 		dagReq:   dagReq,
-		dagCtx:   dagCtx,
 	}
 	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
 	if err != nil {

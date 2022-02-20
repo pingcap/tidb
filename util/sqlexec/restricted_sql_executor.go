@@ -84,12 +84,6 @@ var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
 	option.UseCurSession = true
 }
 
-// ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
-// UseCurSession is false by default, sometimes we set it explicitly for readability
-var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
-	option.UseCurSession = false
-}
-
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {

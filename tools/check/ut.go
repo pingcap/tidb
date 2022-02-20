@@ -356,13 +356,14 @@ func main() {
 		fmt.Println("os.Getwd() error", err)
 	}
 
-	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		isSucceed = cmdRun()
+		cmdRun()
+		return
 	}
 
 	if len(os.Args) >= 2 {
+		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
 			isSucceed = cmdList(os.Args[2:]...)
@@ -373,9 +374,9 @@ func main() {
 		default:
 			isSucceed = usage()
 		}
-	}
-	if !isSucceed {
-		os.Exit(1)
+		if !isSucceed {
+			os.Exit(1)
+		}
 	}
 }
 

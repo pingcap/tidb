@@ -16,16 +16,22 @@ package executor
 
 import (
 	"math/rand"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/require"
 )
 
-func TestRequiredRows(t *testing.T) {
+var _ = Suite(&testSuiteJoiner{})
+
+type testSuiteJoiner struct{}
+
+func (s *testSuiteJoiner) SetUpSuite(c *C) {
+}
+
+func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
@@ -68,8 +74,8 @@ func TestRequiredRows(t *testing.T) {
 					it := chunk.NewIterator4Chunk(innerChk)
 					it.Begin()
 					_, _, err := joiner.tryToMatchInners(outerRow, it, result)
-					require.NoError(t, err)
-					require.Equal(t, required, result.NumRows())
+					c.Assert(err, IsNil)
+					c.Assert(result.NumRows(), Equals, required)
 				}
 			}
 		}

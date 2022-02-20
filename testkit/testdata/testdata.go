@@ -32,7 +32,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -121,14 +120,6 @@ func ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 		// Trim the leftmost `[` and rightmost `]`.
 		s = s[1 : len(s)-1]
 		rs = append(rs, s)
-	}
-	return rs
-}
-
-// ConvertSQLWarnToStrings converts []SQLWarn to []string.
-func ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
-	for _, warn := range warns {
-		rs = append(rs, fmt.Sprint(warn.Err.Error()))
 	}
 	return rs
 }

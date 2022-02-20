@@ -3667,17 +3667,6 @@ DatabaseOption:
 			UintValue: placementOptions.UintValue,
 		}
 	}
-|	"SET" "TIFLASH" "REPLICA" LengthNum LocationLabelList
-	{
-		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
-			Count:  $4.(uint64),
-			Labels: $5.([]string),
-		}
-		$$ = &ast.DatabaseOption{
-			Tp:             ast.DatabaseSetTiFlashReplica,
-			TiFlashReplica: tiflashReplicaSpec,
-		}
-	}
 
 DatabaseOptionListOpt:
 	{

@@ -11,8 +11,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/pkg/tsoutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -37,7 +37,7 @@ func (sp BRServiceSafePoint) MarshalLogObject(encoder zapcore.ObjectEncoder) err
 	encoder.AddString("ID", sp.ID)
 	ttlDuration := time.Duration(sp.TTL) * time.Second
 	encoder.AddString("TTL", ttlDuration.String())
-	backupTime := oracle.GetTimeFromTS(sp.BackupTS)
+	backupTime, _ := tsoutil.ParseTS(sp.BackupTS)
 	encoder.AddString("BackupTime", backupTime.String())
 	encoder.AddUint64("BackupTS", sp.BackupTS)
 	return nil

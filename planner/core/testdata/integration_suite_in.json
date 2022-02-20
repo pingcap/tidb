@@ -419,13 +419,5 @@
 	// Test correlated column in TablePath.TableFilters.
 	"select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;"
     ]
-  },
-  {
-    "name": "TestIssue31240",
-    "cases": [
-      "explain format = 'brief' select count(*) from t31240;",
-      "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
-      "explain format = 'brief' select count(*) from t31240;"
-    ]
   }
 ]

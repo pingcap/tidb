@@ -15,9 +15,9 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
-	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/pd/pkg/codec"
+	"github.com/tikv/pd/server/schedule/placement"
 )
 
 // UndoFunc is a 'undo' operation of some undoable command.
@@ -65,7 +65,7 @@ func ResetTS(ctx context.Context, pdAddr string, ts uint64, tlsConf *tls.Config)
 }
 
 // GetPlacementRules return the current placement rules.
-func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) ([]pdtypes.Rule, error) {
+func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) ([]placement.Rule, error) {
 	cli := httputil.NewClient(tlsConf)
 	prefix := "http://"
 	if tlsConf != nil {
@@ -87,12 +87,12 @@ func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) 
 		return nil, errors.Trace(err)
 	}
 	if resp.StatusCode == http.StatusPreconditionFailed {
-		return []pdtypes.Rule{}, nil
+		return []placement.Rule{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "get placement rules failed: resp=%v, err=%v, code=%d", buf.String(), err, resp.StatusCode)
 	}
-	var rules []pdtypes.Rule
+	var rules []placement.Rule
 	err = json.Unmarshal(buf.Bytes(), &rules)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -101,13 +101,13 @@ func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) 
 }
 
 // SearchPlacementRule returns the placement rule matched to the table or nil.
-func SearchPlacementRule(tableID int64, placementRules []pdtypes.Rule, role pdtypes.PeerRoleType) *pdtypes.Rule {
+func SearchPlacementRule(tableID int64, placementRules []placement.Rule, role placement.PeerRoleType) *placement.Rule {
 	for _, rule := range placementRules {
 		key, err := hex.DecodeString(rule.StartKeyHex)
 		if err != nil {
 			continue
 		}
-		_, decoded, err := codec.DecodeBytes(key, nil)
+		_, decoded, err := codec.DecodeBytes(key)
 		if err != nil {
 			continue
 		}

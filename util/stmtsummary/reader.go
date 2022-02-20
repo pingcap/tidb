@@ -103,7 +103,11 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
 		rows = append(rows, records...)
 	}
 
@@ -151,7 +155,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryBy
 
 func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDigest, historySize int) [][]types.Datum {
 	// Collect all history summaries to an array.
-	ssElements := ssbd.collectHistorySummaries(ssr.checker, historySize)
+	ssElements := ssbd.collectHistorySummaries(historySize)
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {

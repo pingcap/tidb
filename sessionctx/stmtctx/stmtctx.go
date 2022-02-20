@@ -235,9 +235,6 @@ type StatementContext struct {
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
-
-	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
-	SysdateIsNow bool
 }
 
 // StmtHints are SessionVars related sql hints.

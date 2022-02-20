@@ -20,9 +20,9 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
@@ -38,20 +38,18 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/stretchr/testify/require"
 )
 
-func TestTruncateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestTruncateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
 	tk.MustExec(`create table truncate_test (a int)`)
@@ -67,25 +65,21 @@ func TestTruncateTable(t *testing.T) {
 //  1. Execute the SQL of "begin";
 //  2. A SQL that will fail to execute;
 //  3. Execute DDL.
-func TestInTxnExecDDLFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestInTxnExecDDLFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key);")
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
 
-func TestInTxnExecDDLInvalid(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestInTxnExecDDLInvalid(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (c_int int, c_str varchar(40));")
@@ -95,20 +89,18 @@ func TestInTxnExecDDLInvalid(t *testing.T) {
 	tk.MustExec("alter table t add index idx_4 (c_str);")
 }
 
-func TestCreateTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
 	_, err := tk.Exec("CREATE database test")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Test create an exist table
 	tk.MustExec("CREATE TABLE create_test (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 
 	_, err = tk.Exec("CREATE TABLE create_test (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Test "if not exist"
 	tk.MustExec("CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
@@ -117,65 +109,65 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec(`create table issue312_1 (c float(24));`)
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	ctx := context.Background()
 	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
-		require.NoError(t, err1)
+		c.Assert(err1, IsNil)
 		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			require.Equal(t, "float", row.GetString(1))
+			c.Assert(row.GetString(1), Equals, "float")
 		}
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	req = rs.NewChunk(nil)
 	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
-		require.NoError(t, err1)
+		c.Assert(err1, IsNil)
 		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			require.Equal(t, "double", req.GetRow(0).GetString(1))
+			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
-	require.NoError(t, rs.Close())
+	c.Assert(rs.Close(), IsNil)
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
 	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
 
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
 	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
 
 	// test Err case for multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
 	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
 	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -206,10 +198,8 @@ func TestCreateTable(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
-func TestCreateView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// create an source table
 	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
@@ -217,10 +207,10 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	require.EqualError(t, err, "[schema:1050]Table 'test.view_t' already exists")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
 	// create view on nonexistent table
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.t1' doesn't exist")
 	// simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -236,26 +226,26 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create view v5 as select * from t1")
 	tk.MustExec("create view v6 (c,d) as select * from t1")
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	require.EqualError(t, err, "[schema:1050]Table 'test.v1' already exists")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
 	// view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	// view with or_replace flag
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 (c,d) as select a,b from t1")
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
 	tk.MustExec("execute stmt")
@@ -264,7 +254,7 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("drop view if exists v")
 	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
@@ -273,13 +263,13 @@ func TestCreateView(t *testing.T) {
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
 	tk.MustExec("alter table t1 drop column a")
 	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
 	tk.MustExec("alter table t1 add column a int")
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
 	tk.MustExec("alter table t1 drop column a")
 	tk.MustExec("alter table t2 drop column b")
 	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create view v as (select * from t1)")
@@ -299,19 +289,17 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
 	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
 	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrNoSuchTable))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
 
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
+	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
-func TestViewRecursion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestViewRecursion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create definer='root'@'localhost' view recursive_view1 as select * from t")
@@ -319,25 +307,21 @@ func TestViewRecursion(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("rename table recursive_view2 to t")
 	_, err := tk.Exec("select * from recursive_view1")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewRecursive))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewRecursive), IsTrue)
 	tk.MustExec("drop view recursive_view1, t")
 }
 
-func TestIssue16250(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestIssue16250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create view view_issue16250 as select * from t")
 	_, err := tk.Exec("truncate table view_issue16250")
-	require.EqualError(t, err, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
-func TestIssue24771(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestIssue24771(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists zy_tab;`)
 	tk.MustExec(`create table if not exists zy_tab (
@@ -374,25 +358,21 @@ func TestIssue24771(t *testing.T) {
 	tk.MustQuery(`select * from v_st_2`)
 }
 
-func TestTruncateSequence(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s testSuite6) TestTruncateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create sequence if not exists seq")
 	_, err := tk.Exec("truncate table seq")
-	require.EqualError(t, err, "[schema:1146]Table 'test.seq' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq' doesn't exist")
 	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
 	_, err = tk.Exec("truncate table seq1")
-	require.EqualError(t, err, "[schema:1146]Table 'test.seq1' doesn't exist")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq1' doesn't exist")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
 }
 
-func TestCreateViewWithOverlongColName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	defer tk.MustExec("drop table t")
@@ -435,25 +415,23 @@ func TestCreateViewWithOverlongColName(t *testing.T) {
 
 	tk.MustExec("drop view v ")
 	err := tk.ExecToErr("create view v(`" + strings.Repeat("b", 65) + "`) as select a from t;")
-	require.EqualError(t, err, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
+	c.Assert(err.Error(), Equals, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
 }
 
-func TestCreateDropDatabase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateDropDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
 	tk.MustExec("create database drop_test;")
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	err = tk.ExecToErr("select * from t;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
 	_, err = tk.Exec("drop database mysql")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	tk.MustExec("create database charset_test charset ascii;")
 	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
@@ -498,10 +476,8 @@ func TestCreateDropDatabase(t *testing.T) {
 	))
 }
 
-func TestCreateDropTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateDropTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
 	tk.MustExec("drop table if exists drop_test")
@@ -509,30 +485,29 @@ func TestCreateDropTable(t *testing.T) {
 	tk.MustExec("drop table drop_test")
 
 	_, err := tk.Exec("drop table mysql.gc_delete_range")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 }
 
-func TestCreateDropView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateDropView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
 
 	_, err := tk.Exec("drop table drop_test")
-	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
 
-	tk.MustExec("drop view if exists drop_test")
+	_, err = tk.Exec("drop view if exists drop_test")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
-	require.EqualError(t, err, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
 
 	_, err = tk.Exec("drop view drop_test")
-	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
 
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
-	require.EqualError(t, err, "[ddl:1347]'test.t_v' is not VIEW")
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
 
 	tk.MustExec("create table t_v1(a int, b int);")
 	tk.MustExec("create table t_v2(a int, b int);")
@@ -542,10 +517,8 @@ func TestCreateDropView(t *testing.T) {
 		testkit.Rows("def test v SELECT `test`.`t_v2`.`a` AS `a`,`test`.`t_v2`.`b` AS `b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
-func TestCreateDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCreateDropIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
 	tk.MustExec("create index idx_a on drop_test (a)")
@@ -553,10 +526,8 @@ func TestCreateDropIndex(t *testing.T) {
 	tk.MustExec("drop table drop_test")
 }
 
-func TestAlterTableAddColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestAlterTableAddColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("insert into alter_test values(1)")
@@ -564,93 +535,87 @@ func TestAlterTableAddColumn(t *testing.T) {
 	time.Sleep(1 * time.Millisecond)
 	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	row := req.GetRow(0)
-	require.Equal(t, 1, row.Len())
-	require.GreaterOrEqual(t, now, row.GetTime(0).String())
-	require.Nil(t, r.Close())
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(now, GreaterEqual, row.GetTime(0).String())
+	c.Assert(r.Close(), IsNil)
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq add column c int")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
 	tk.MustExec("drop sequence alter_seq")
 }
 
-func TestAlterTableAddColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestAlterTableAddColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp, add column c8 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
 	r, err := tk.Exec("select c2 from alter_test")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	row := req.GetRow(0)
-	require.Equal(t, 1, row.Len())
-	require.Nil(t, r.Close())
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(r.Close(), IsNil)
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq add column (c1 int, c2 varchar(10))")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
 	tk.MustExec("drop sequence alter_seq")
 }
 
-func TestAddNotNullColumnNoDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
 
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
-	require.NoError(t, err)
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	c.Assert(err, IsNil)
 	col2 := tbl.Meta().Columns[1]
-	require.Nil(t, col2.DefaultValue)
-	require.Equal(t, "0", col2.OriginDefaultValue)
+	c.Assert(col2.DefaultValue, IsNil)
+	c.Assert(col2.OriginDefaultValue, Equals, "0")
 
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
 	_, err = tk.Exec("insert nn (c1) values (3)")
-	require.Error(t, err)
+	c.Check(err, NotNil)
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert nn (c1) values (3)")
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
 }
 
-func TestAlterTableModifyColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
 	tk.MustExec("create table mc(c1 int, c2 varchar(10), c3 bit)")
 	_, err := tk.Exec("alter table mc modify column c1 short")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	tk.MustExec("alter table mc modify column c1 bigint")
 
 	_, err = tk.Exec("alter table mc modify column c2 blob")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
@@ -658,58 +623,56 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
 	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	require.Equal(t, expected, createSQL)
+	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq modify column c int")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
 	tk.MustExec("drop sequence alter_seq")
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
-	require.NoError(t, err)
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	c.Assert(err, IsNil)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
-	require.NoError(t, err)
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	c.Assert(err, IsNil)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
+	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_bin")
 
 	// test Err case for multiple collate modification in column.
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
 	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;")
-	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
 	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;")
-	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
 
 }
 
-func TestColumnCharsetAndCollate(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	dbName := "col_charset_collate"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
@@ -770,7 +733,7 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 			errMsg:      "",
 		},
 	}
-	sctx := tk.Session()
+	sctx := tk.Se.(sessionctx.Context)
 	dm := domain.GetDomain(sctx)
 	for i, tt := range tests {
 		tblName := fmt.Sprintf("t%d", i)
@@ -778,31 +741,29 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 		if tt.errMsg == "" {
 			tk.MustExec(sql)
 			is := dm.InfoSchema()
-			require.NotNil(t, is)
+			c.Assert(is, NotNil)
 
 			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
-			require.NoError(t, err)
-			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].Charset, sql)
-			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].Collate, sql)
+			c.Assert(err, IsNil)
+			c.Assert(tb.Meta().Columns[0].Charset, Equals, tt.exptCharset, Commentf(sql))
+			c.Assert(tb.Meta().Columns[0].Collate, Equals, tt.exptCollate, Commentf(sql))
 		} else {
 			_, err := tk.Exec(sql)
-			require.Errorf(t, err, sql)
+			c.Assert(err, NotNil, Commentf(sql))
 		}
 	}
 	tk.MustExec("drop database " + dbName)
 }
 
-func TestTooLargeIdentifierLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	// for database.
 	dbName1, dbName2 := strings.Repeat("a", mysql.MaxDatabaseNameLength), strings.Repeat("a", mysql.MaxDatabaseNameLength+1)
 	tk.MustExec(fmt.Sprintf("create database %s", dbName1))
 	tk.MustExec(fmt.Sprintf("drop database %s", dbName1))
 	_, err := tk.Exec(fmt.Sprintf("create database %s", dbName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2), err.Error())
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2))
 
 	// for table.
 	tk.MustExec("use test")
@@ -810,7 +771,7 @@ func TestTooLargeIdentifierLength(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create table %s(c int)", tableName1))
 	tk.MustExec(fmt.Sprintf("drop table %s", tableName1))
 	_, err = tk.Exec(fmt.Sprintf("create table %s(c int)", tableName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2), err.Error())
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2))
 
 	// for column.
 	tk.MustExec("drop table if exists t;")
@@ -818,7 +779,7 @@ func TestTooLargeIdentifierLength(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create table t(%s int)", columnName1))
 	tk.MustExec("drop table t")
 	_, err = tk.Exec(fmt.Sprintf("create table t(%s int)", columnName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2), err.Error())
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2))
 
 	// for index.
 	tk.MustExec("create table t(c int);")
@@ -826,18 +787,16 @@ func TestTooLargeIdentifierLength(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create index %s on t(c)", indexName1))
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2), err.Error())
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 
 	// for create table with index.
 	tk.MustExec("drop table t;")
 	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2), err.Error())
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
-func TestShardRowIDBits(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite8) TestShardRowIDBits(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
@@ -845,16 +804,16 @@ func TestShardRowIDBits(t *testing.T) {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
-	dom := domain.GetDomain(tk.Session())
+	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
-	assertCountAndShard := func(tt table.Table, expectCount int) {
+	assertCountAndShard := func(t table.Table, expectCount int) {
 		var hasShardedID bool
 		var count int
-		require.NoError(t, tk.Session().NewTxn(context.Background()))
-		err = tables.IterRecords(tt, tk.Session(), nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
-			require.GreaterOrEqual(t, h.IntValue(), int64(0))
+		c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+		err = tables.IterRecords(t, tk.Se, nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+			c.Assert(h.IntValue(), GreaterEqual, int64(0))
 			first8bits := h.IntValue() >> 56
 			if first8bits > 0 {
 				hasShardedID = true
@@ -862,9 +821,9 @@ func TestShardRowIDBits(t *testing.T) {
 			count++
 			return true, nil
 		})
-		require.NoError(t, err)
-		require.Equal(t, expectCount, count)
-		require.True(t, hasShardedID)
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, expectCount)
+		c.Assert(hasShardedID, IsTrue)
 	}
 
 	assertCountAndShard(tbl, 100)
@@ -898,22 +857,22 @@ func TestShardRowIDBits(t *testing.T) {
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
-	require.True(t, ok)
+	c.Assert(ok, IsTrue)
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	tblInfo := tbl.Meta()
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
-		require.NoError(t, err)
-		require.Nil(t, m.UpdateTable(db.ID, tblInfo))
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
 		return nil
 	})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	err = dom.Reload()
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	tk.MustExec("insert auto(b) values (1), (3), (5)")
 	tk.MustQuery("select id from auto order by id").Check(testkit.Rows("1", "2", "3"))
@@ -929,11 +888,11 @@ func TestShardRowIDBits(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	for i := 1; i < 100; i++ {
 		b, err := strconv.Atoi(tk.MustQuery(fmt.Sprintf("select b from auto where a=%d", i)).Rows()[0][0].(string))
-		require.NoError(t, err)
-		require.Greater(t, b, prevB)
+		c.Assert(err, IsNil)
+		c.Assert(b, Greater, prevB)
 		prevB = b
 	}
 
@@ -943,28 +902,26 @@ func TestShardRowIDBits(t *testing.T) {
 	defer tk.MustExec("drop table if exists t1")
 
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	alloc := tbl.Allocators(tk.Session()).Get(autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Se).Get(autoid.RowIDAllocType)
 	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
 	// continue inserting will fail.
 	_, err = tk.Exec("insert into t1 values(2)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 	_, err = tk.Exec("insert into t1 values(3)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
 type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
-func TestAutoRandomBitsData(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test_auto_random_bits")
 	defer tk.MustExec("drop database if exists test_auto_random_bits")
@@ -972,8 +929,8 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	extractAllHandles := func() []int64 {
-		allHds, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test_auto_random_bits", "t")
-		require.NoError(t, err)
+		allHds, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+		c.Assert(err, IsNil)
 		return allHds
 	}
 
@@ -987,18 +944,18 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	// Test auto random id number.
-	require.Equal(t, 100, len(allHandles))
+	c.Assert(len(allHandles), Equals, 100)
 	// Test the handles are not all zero.
 	allZero := true
 	for _, h := range allHandles {
 		allZero = allZero && (h>>(64-16)) == 0
 	}
-	require.False(t, allZero)
+	c.Assert(allZero, IsFalse)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
 	orderedHandles := testutil.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
-		require.Equal(t, orderedHandles[i-1], i)
+		c.Assert(i, Equals, orderedHandles[i-1])
 	}
 
 	// Test explicit insert.
@@ -1008,8 +965,8 @@ func TestAutoRandomBitsData(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
 	_, err := tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	// Test overflow.
@@ -1018,16 +975,16 @@ func TestAutoRandomBitsData(t *testing.T) {
 	// so firstly we rebase auto_rand to the position before overflow.
 	tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", autoRandBitsUpperBound, 1))
 	_, err = tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
 	_, err = tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	// Test insert negative integers explicitly won't trigger rebase.
@@ -1040,10 +997,10 @@ func TestAutoRandomBitsData(t *testing.T) {
 	orderedHandles = testutil.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < 100; i++ {
-		require.Equal(t, i-100, orderedHandles[i])
+		c.Assert(orderedHandles[i], Equals, i-100)
 	}
 	for i := int64(100); i < size; i++ {
-		require.Equal(t, i-99, orderedHandles[i])
+		c.Assert(orderedHandles[i], Equals, i-99)
 	}
 	tk.MustExec("drop table t")
 
@@ -1054,7 +1011,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	}
 	for _, h := range extractAllHandles() {
 		// Sign bit should be reserved.
-		require.True(t, h > 0)
+		c.Assert(h > 0, IsTrue)
 	}
 	tk.MustExec("drop table t")
 
@@ -1067,7 +1024,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 		signBitUnused = signBitUnused && (h > 0)
 	}
 	// Sign bit should be used for shard.
-	require.False(t, signBitUnused)
+	c.Assert(signBitUnused, IsFalse)
 	tk.MustExec("drop table t;")
 
 	// Test rename table does not affect incremental part of auto_random ID.
@@ -1088,46 +1045,44 @@ func TestAutoRandomBitsData(t *testing.T) {
 	for _, h := range extractAllHandles() {
 		uniqueHandles[h&((1<<(63-5))-1)] = struct{}{}
 	}
-	require.Equal(t, 30, len(uniqueHandles))
+	c.Assert(len(uniqueHandles), Equals, 30)
 	tk.MustExec("drop database test_auto_random_bits_rename;")
 	tk.MustExec("drop table t;")
 }
 
-func TestAutoRandomTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	// test table option is auto-random
 	tk.MustExec("drop table if exists auto_random_table_option")
 	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
-	require.NoError(t, err)
-	require.Equal(t, int64(1000), tt.Meta().AutoRandID)
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(1000))
 	tk.MustExec("insert into auto_random_table_option values (),(),(),(),()")
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "auto_random_table_option")
-	require.NoError(t, err)
-	require.Equal(t, 5, len(allHandles))
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "auto_random_table_option")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 5)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
 	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
-		require.Equal(t, orderedHandles[i], i+1000)
+		c.Assert(i+1000, Equals, orderedHandles[i])
 	}
 
 	tk.MustExec("drop table if exists alter_table_auto_random_option")
 	tk.MustExec("create table alter_table_auto_random_option (a bigint primary key auto_random(4), b int)")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
-	require.NoError(t, err)
-	require.Equal(t, int64(0), tt.Meta().AutoRandID)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(0))
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "alter_table_auto_random_option")
-	require.NoError(t, err)
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
-		require.Equal(t, i+1, orderedHandles[i])
+		c.Assert(orderedHandles[i], Equals, i+1)
 	}
 	tk.MustExec("delete from alter_table_auto_random_option")
 
@@ -1136,24 +1091,24 @@ func TestAutoRandomTableOption(t *testing.T) {
 	// value is not what we rebased, because the local cache is dropped, here we choose
 	// a quite big value to do this.
 	tk.MustExec("alter table alter_table_auto_random_option auto_random_base = 3000000")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
-	require.NoError(t, err)
-	require.Equal(t, int64(3000000), tt.Meta().AutoRandID)
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(3000000))
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "alter_table_auto_random_option")
-	require.NoError(t, err)
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
-		require.Equal(t, i+3000000, orderedHandles[i])
+		c.Assert(orderedHandles[i], Equals, i+3000000)
 	}
 	tk.MustExec("drop table alter_table_auto_random_option")
 
 	// Alter auto_random_base on non auto_random table.
 	tk.MustExec("create table alter_auto_random_normal (a int)")
 	_, err = tk.Exec("alter table alter_auto_random_normal auto_random_base = 100")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), autoid.AutoRandomRebaseNotApplicable)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), autoid.AutoRandomRebaseNotApplicable), IsTrue, Commentf(err.Error()))
 }
 
 // Test filter different kind of allocators.
@@ -1162,10 +1117,8 @@ func TestAutoRandomTableOption(t *testing.T) {
 // 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
 // 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
 // 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
-func TestFilterDifferentAllocators(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -1173,33 +1126,33 @@ func TestFilterDifferentAllocators(t *testing.T) {
 	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
 	tk.MustExec("insert into t values()")
 	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
 	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(1), orderedHandles[0])
+	c.Assert(orderedHandles[0], Equals, int64(1))
 	tk.MustExec("delete from t")
 
 	// Test rebase auto_increment.
 	tk.MustExec("alter table t auto_increment 3000000")
 	tk.MustExec("insert into t values()")
 	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(2), orderedHandles[0])
+	c.Assert(orderedHandles[0], Equals, int64(2))
 	tk.MustExec("delete from t")
 
 	// Test rebase auto_random.
 	tk.MustExec("alter table t auto_random_base 3000000")
 	tk.MustExec("insert into t values()")
 	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(3000000), orderedHandles[0])
+	c.Assert(orderedHandles[0], Equals, int64(3000000))
 	tk.MustExec("delete from t")
 
 	// Test rename table.
@@ -1207,19 +1160,17 @@ func TestFilterDifferentAllocators(t *testing.T) {
 	tk.MustExec("insert into t1 values()")
 	res := tk.MustQuery("select b from t1")
 	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Greater(t, strInt64, int64(3000002))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t1")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
+	c.Assert(err, IsNil)
+	c.Assert(strInt64, Greater, int64(3000002))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
 	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Greater(t, orderedHandles[0], int64(3000001))
+	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
-func TestMaxHandleAddIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
@@ -1235,28 +1186,26 @@ func TestMaxHandleAddIndex(t *testing.T) {
 	tk.MustExec("admin check table t1")
 }
 
-func TestSetDDLReorgWorkerCnt(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSerialSuite) TestSetDDLReorgWorkerCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(variable.DefTiDBDDLReorgWorkerCount), variable.GetDDLReorgWorkerCounter())
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(1), variable.GetDDLReorgWorkerCounter())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
@@ -1276,31 +1225,29 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
 }
 
-func TestSetDDLReorgBatchSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSerialSuite) TestSetDDLReorgBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(variable.DefTiDBDDLReorgBatchSize), variable.GetDDLReorgBatchSize())
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, variable.MinDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MinDDLReorgBatchSize)
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, variable.MaxDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MaxDDLReorgBatchSize)
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), variable.GetDDLReorgBatchSize())
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
 
@@ -1315,81 +1262,77 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	res.Check(testkit.Rows("1000"))
 }
 
-func TestIllegalFunctionCall4GeneratedColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestIllegalFunctionCall4GeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
 	_, err := tk.Exec("CREATE database test")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("create table t1 (b double generated always as (rand()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (curdate()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (current_time()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (current_timestamp()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
 
 	_, err = tk.Exec("create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(1024) generated always as (uuid()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
 
 	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
 
 	_, err = tk.Exec("alter table t1 add column d varchar(1024) generated always as (database());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
 
 	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
 
 	_, err = tk.Exec("alter table t1 change column c cc bigint generated always as (connection_id());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error())
 }
 
-func TestGeneratedColumnRelatedDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
 	_, err := tk.Exec("CREATE database test")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
 
 	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
 
 	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
 	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1);")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
 	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
 	tk.MustExec("set session tidb_enable_auto_increment_in_generated = 1;")
 	tk.MustExec("alter table t1 modify column d bigint generated always as (a + 1);")
 
 	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
-	require.Equal(t, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
 
 	tk.MustExec("drop table t1;")
 
@@ -1400,41 +1343,37 @@ func TestGeneratedColumnRelatedDDL(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2 3"))
 }
 
-func TestSetDDLErrorCountLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(variable.DefTiDBDDLErrorCountLimit), variable.GetDDLErrorCountLimit())
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
 
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(0), variable.GetDDLErrorCountLimit())
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(math.MaxInt64), variable.GetDDLErrorCountLimit())
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
 	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
 }
 
 // Test issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
-func TestIssue9205(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
@@ -1472,52 +1411,48 @@ func TestIssue9205(t *testing.T) {
 	))
 }
 
-func TestCheckDefaultFsp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestCheckDefaultFsp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 
 	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
 
 	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
 	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
 	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }
 
-func TestTimestampMinDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tdv;")
 	tk.MustExec("create table tdv(a int);")
@@ -1525,14 +1460,12 @@ func TestTimestampMinDefaultValue(t *testing.T) {
 }
 
 // this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
-func TestRenameTable(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+func (s *testRecoverTable) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
@@ -1586,38 +1519,34 @@ func TestRenameTable(t *testing.T) {
 	result = tk.MustQuery("select * from rename2.t1")
 	result.Check(testkit.Rows("1", "100000", "100001"))
 	_, err := tk.Exec("insert rename1.t values ()")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 }
 
-func TestAutoIncrementColumnErrorMessage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
 	_, err := tk.Exec("CREATE database test")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	tk.MustExec("CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);")
 
 	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
-	require.Equal(t, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error(), err.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
 
 	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
 	tk.MustExec("SET SESSION tidb_enable_auto_increment_in_generated = 1;")
 	tk.MustExec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 }
 
-func TestRenameMultiTables(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+func (s *testRecoverTable) TestRenameMultiTables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")

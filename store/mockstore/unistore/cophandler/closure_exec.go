@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -605,7 +604,7 @@ func (e *closureExecutor) isPointGetRange(ran kv.KeyRange) bool {
 func (e *closureExecutor) checkRangeLock() error {
 	if !e.ignoreLock && !e.lockChecked {
 		for _, ran := range e.kvRanges {
-			err := checkRangeLockForRange(e.lockStore, e.startTS, e.resolvedLocks, ran)
+			err := e.checkRangeLockForRange(ran)
 			if err != nil {
 				return err
 			}
@@ -615,14 +614,14 @@ func (e *closureExecutor) checkRangeLock() error {
 	return nil
 }
 
-func checkRangeLockForRange(store *lockstore.MemStore, startTS uint64, resolvedLocks []uint64, ran kv.KeyRange) error {
-	it := store.NewIterator()
+func (e *closureExecutor) checkRangeLockForRange(ran kv.KeyRange) error {
+	it := e.lockStore.NewIterator()
 	for it.Seek(ran.StartKey); it.Valid(); it.Next() {
 		if exceedEndKey(it.Key(), ran.EndKey) {
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		err := checkLock(lock, it.Key(), startTS, resolvedLocks)
+		err := checkLock(lock, it.Key(), e.startTS, e.resolvedLocks)
 		if err != nil {
 			return err
 		}

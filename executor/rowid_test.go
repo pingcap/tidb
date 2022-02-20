@@ -15,23 +15,18 @@
 package executor_test
 
 import (
-	"testing"
-
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-func TestExportRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().AllowWriteRowID = true
+func (s *testSuite1) TestExportRowID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().AllowWriteRowID = true
 	defer func() {
-		tk.Session().GetSessionVars().AllowWriteRowID = false
+		tk.Se.GetSessionVars().AllowWriteRowID = false
 	}()
 
-	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9)")
@@ -53,27 +48,25 @@ func TestExportRowID(t *testing.T) {
 	tk.MustExec("create table s (a int primary key)")
 	tk.MustExec("insert s values (1)")
 	_, err := tk.Exec("insert s (a, _tidb_rowid) values (1, 2)")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	err = tk.ExecToErr("select _tidb_rowid from s")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	_, err = tk.Exec("update s set a = 2 where _tidb_rowid = 1")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete from s where _tidb_rowid = 1")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	// Make sure "AllowWriteRowID" is a session variable.
-	tk1 := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("insert into t (a, _tidb_rowid) values(10, 1);")
-	require.EqualError(t, err, "insert, update and replace statements for _tidb_rowid are not supported.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 }
 
-func TestNotAllowWriteRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite1) TestNotAllowWriteRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table tt(id binary(10), c int, primary key(id));")
 	tk.MustExec("insert tt values (1, 10);")
 	// select statement
@@ -81,13 +74,13 @@ func TestNotAllowWriteRowID(t *testing.T) {
 		Check(testkit.Rows("1\x00\x00\x00\x00\x00\x00\x00\x00\x00 10 1"))
 	// insert statement
 	_, err := tk.Exec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
-	require.EqualError(t, err, "insert, update and replace statements for _tidb_rowid are not supported.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	// replace statement
 	_, err = tk.Exec("replace into tt (id, c, _tidb_rowid) values(30000,10,1);")
-	require.EqualError(t, err, "insert, update and replace statements for _tidb_rowid are not supported.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	// update statement
 	_, err = tk.Exec("update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1")
-	require.EqualError(t, err, "insert, update and replace statements for _tidb_rowid are not supported.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	tk.MustExec("update tt set id = 2 where _tidb_rowid = 1")
 	tk.MustExec("admin check table tt;")
 	tk.MustExec("drop table tt")
@@ -98,10 +91,8 @@ func TestNotAllowWriteRowID(t *testing.T) {
 }
 
 // Test for https://github.com/pingcap/tidb/issues/22029.
-func TestExplicitInsertRowID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite3) TestExplicitInsertRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_explicit_insert_rowid;")
 	tk.MustExec("create database test_explicit_insert_rowid;")
 	tk.MustExec("use test_explicit_insert_rowid;")

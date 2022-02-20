@@ -918,11 +918,6 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	return jobs, nil
 }
 
-// GetHistoryDDLCount the count of all history DDL jobs.
-func (m *Meta) GetHistoryDDLCount() (uint64, error) {
-	return m.txn.HGetLen(mDDLJobHistoryKey)
-}
-
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
 func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)

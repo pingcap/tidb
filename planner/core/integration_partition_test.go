@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,6 +182,10 @@ func TestListPartitionFunctions(t *testing.T) {
 }
 
 func TestListPartitionOrderLimit(t *testing.T) {
+	if israce.RaceEnabled {
+		t.Skip("skip race test")
+	}
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -240,6 +245,10 @@ func TestListPartitionOrderLimit(t *testing.T) {
 }
 
 func TestListPartitionAgg(t *testing.T) {
+	if israce.RaceEnabled {
+		t.Skip("skip race test")
+	}
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -884,6 +893,10 @@ func TestListPartitionAlterPK(t *testing.T) {
 }
 
 func TestListPartitionRandomTransaction(t *testing.T) {
+	if israce.RaceEnabled {
+		t.Skip("skip race test")
+	}
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
