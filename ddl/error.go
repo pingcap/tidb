@@ -30,7 +30,6 @@ var (
 	errCantDecodeRecord      = dbterror.ClassDDL.NewStd(mysql.ErrCantDecodeRecord)
 	errInvalidDDLJob         = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	errCancelledDDLJob       = dbterror.ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
-	errFileNotFound          = dbterror.ClassDDL.NewStd(mysql.ErrFileNotFound)
 	errRunMultiSchemaChanges = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
 	errWaitReorgTimeout      = dbterror.ClassDDL.NewStdErr(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidStoreVersion)
