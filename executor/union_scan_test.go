@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 
@@ -453,4 +455,37 @@ func TestIssue28073(t *testing.T) {
 		break
 	}
 	require.False(t, exist)
+}
+
+func BenchmarkUnionScanRead(b *testing.B) {
+	store, clean := testkit.CreateMockStore(b)
+	defer clean()
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_us (
+c1 varchar(10),
+c2 varchar(30),
+c3 varchar(1),
+c4 varchar(12),
+c5 varchar(10),
+c6 datetime);`)
+	tk.MustExec(`begin;`)
+	for i := 0; i < 8000; i++ {
+		tk.MustExec("insert into t_us values ('54321', '1234', '1', '000000', '7518', '2014-05-08')")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustQuery("select * from t_us where c1 = '12345'").Check(testkit.Rows())
+	}
+	b.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		executor.BenchmarkReadLastLinesOfHugeLine,
+		BenchmarkUnionScanRead,
+	)
 }

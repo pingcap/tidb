@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -85,7 +86,32 @@ type dagContext struct {
 	startTS       uint64
 }
 
-// handleCopDAGRequest handles coprocessor DAG request.
+// ExecutorListsToTree converts a list of executors to a tree.
+func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
+	i := len(exec) - 1
+	rootExec := exec[i]
+	for i--; 0 <= i; i-- {
+		switch exec[i+1].Tp {
+		case tipb.ExecType_TypeAggregation:
+			exec[i+1].Aggregation.Child = exec[i]
+		case tipb.ExecType_TypeProjection:
+			exec[i+1].Projection.Child = exec[i]
+		case tipb.ExecType_TypeTopN:
+			exec[i+1].TopN.Child = exec[i]
+		case tipb.ExecType_TypeLimit:
+			exec[i+1].Limit.Child = exec[i]
+		case tipb.ExecType_TypeSelection:
+			exec[i+1].Selection.Child = exec[i]
+		case tipb.ExecType_TypeStreamAgg:
+			exec[i+1].Aggregation.Child = exec[i]
+		default:
+			panic("unsupported dag executor type")
+		}
+	}
+	return rootExec
+}
+
+// handleCopDAGRequest handles coprocessor DAG request using MPP executors.
 func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
 	resp = &coprocessor.Response{}
@@ -113,12 +139,88 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		resp.OtherError = err.Error()
 		return resp
 	}
-	closureExec, err := buildClosureExecutor(dagCtx, dagReq)
+
+	exec, chunks, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq)
+
 	if err != nil {
-		return buildResp(nil, nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		errMsg := err.Error()
+		if strings.HasPrefix(errMsg, ErrExecutorNotSupportedMsg) {
+			resp.OtherError = err.Error()
+			return resp
+		}
+		return buildRespWithMPPExec(nil, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
-	chunks, err := closureExec.execute()
-	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildRespWithMPPExec(chunks, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+}
+
+func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExec, []tipb.Chunk, []int64, []int64, error) {
+	rootExec := dagReq.RootExecutor
+	if rootExec == nil {
+		rootExec = ExecutorListsToTree(dagReq.Executors)
+	}
+
+	var counts, ndvs []int64
+
+	if dagReq.GetCollectRangeCounts() {
+		counts = make([]int64, len(dagCtx.keyRanges))
+		ndvs = make([]int64, len(dagCtx.keyRanges))
+	}
+	builder := &mppExecBuilder{
+		sc:       dagCtx.sc,
+		dbReader: dagCtx.dbReader,
+		dagReq:   dagReq,
+		dagCtx:   dagCtx,
+		mppCtx:   nil,
+		counts:   counts,
+		ndvs:     ndvs,
+	}
+	exec, err := builder.buildMPPExecutor(rootExec)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	chunks, err := mppExecute(exec, dagCtx, dagReq)
+	return exec, chunks, counts, ndvs, err
+}
+
+func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chunks []tipb.Chunk, err error) {
+	err = exec.open()
+	defer func() {
+		err := exec.stop()
+		if err != nil {
+			panic(err)
+		}
+	}()
+	if err != nil {
+		return
+	}
+	var buf []byte
+	var datums []types.Datum
+	var chk *chunk.Chunk
+	fields := exec.getFieldTypes()
+	for {
+		chk, err = exec.next()
+		if err != nil || chk == nil || chk.NumRows() == 0 {
+			return
+		}
+		numRows := chk.NumRows()
+		for i := 0; i < numRows; i++ {
+			datums = datums[:0]
+			if dagReq.OutputOffsets != nil {
+				for _, j := range dagReq.OutputOffsets {
+					datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
+				}
+			} else {
+				for j, ft := range fields {
+					datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
+				}
+			}
+			buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			chunks = appendRow(chunks, buf, i)
+		}
+	}
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -291,12 +393,8 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func buildRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	var counts []int64
-	if closureExecutor != nil {
-		counts = closureExecutor.counts
-	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
@@ -305,34 +403,15 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int
 	}
 	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+		// for simplicity, we assume all executors to be spending the same amount of time as the request
+		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
-		for i := range execSummary {
-			if closureExecutor == nil {
-				selResp.ExecutionSummaries = execSummary
-				continue
-			}
-			switch executors[i].Tp {
-			case tipb.ExecType_TypeTableScan:
-				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeIndexScan:
-				execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeSelection:
-				execSummary[i] = closureExecutor.selectionCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeTopN:
-				execSummary[i] = closureExecutor.topNCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
-				execSummary[i] = closureExecutor.aggCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeLimit:
-				costNs := uint64(0)
-				rows := uint64(closureExecutor.rowCount)
-				numIter := uint64(1)
-				execSummary[i] = &tipb.ExecutorExecutionSummary{
-					TimeProcessedNs: &costNs,
-					NumProducedRows: &rows,
-					NumIterations:   &numIter,
-				}
-			default:
-				execSummary[i] = &tipb.ExecutorExecutionSummary{}
+		e := exec
+		for i := len(executors) - 1; 0 <= i; i-- {
+			execSummary[i] = e.buildSummary()
+			execSummary[i].TimeProcessedNs = &timeProcessed
+			if i != 0 {
+				e = exec.child()
 			}
 		}
 		selResp.ExecutionSummaries = execSummary
