@@ -7793,7 +7793,7 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
 		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
 		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
-		{"set time_zone = 'GMT+1'", "GMT+1", "GMT+1", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
+		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
 		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
 		{"set time_zone = 'Etc/GMT-12'", "Etc/GMT-12", "Etc/GMT-12", 0, ""},
 		{"set time_zone = 'EST'", "EST", "EST", 0, ""},
@@ -7803,7 +7803,6 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		err := tk.ExecToErr(tc.tzSQL)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tc.err)
-			continue
 		} else {
 			c.Assert(tc.err, Equals, "")
 		}
