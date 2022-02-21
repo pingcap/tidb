@@ -4341,11 +4341,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := ddlutil.GetTimeZone(sctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -4585,10 +4581,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
-	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
@@ -5403,10 +5396,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
@@ -5599,10 +5589,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset, err := ddlutil.GetTimeZone(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,

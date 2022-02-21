@@ -17,7 +17,6 @@ package util
 import (
 	"context"
 	"encoding/hex"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -195,32 +193,15 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 }
 
 // GetTimeZone gets the session location's zone name and offset.
-// e.g.
-// Case 1: session's time_zone is a location like 'Asia/Shanghai'.
-// timeStr.String() returns: "2022-01-20 12:23:54.082461 +0800 CST".
-// types.GetTimezone() returns: -1, "", "", "", "".
-// Finally, GetTimeZone() returns: 'Asia/Shanghai', 0, nil.
-// Case 2: session's time_zone is set to a fixed offset like '-08:00'.
-// timeStr.String() returns: "2022-01-19 20:23:54.082332 -0800 -0800".
-// types.GetTimezone() returns: 33, "-", "08", "", "00".
-// Finally, GetTimeZone() returns: "UTC", -28800, nil.
-func GetTimeZone(sctx sessionctx.Context) (string, int, error) {
-	sysTZ := sctx.GetSessionVars().Location()
-	timeStr := time.Now().In(sysTZ)
-	tzIdx, tzSign, tzHour, _, tzMinute := types.GetTimezone(timeStr.String())
-
-	tzName := timeStr.Location().String()
-	if tzIdx == -1 {
-		return tzName, 0, nil
+func GetTimeZone(sctx sessionctx.Context) (string, int) {
+	loc := sctx.GetSessionVars().Location()
+	name := loc.String()
+	if name != "" {
+		_, err := time.LoadLocation(name)
+		if err == nil {
+			return name, 0
+		}
 	}
-
-	tzH, err := strconv.Atoi(tzHour)
-	terror.Log(err)
-	tzM, err := strconv.Atoi(tzMinute)
-	terror.Log(err)
-	offset := tzH*60*60 + tzM*60
-	if tzSign == "-" {
-		offset = -offset
-	}
-	return "UTC", offset, nil
+	_, offset := time.Now().In(loc).Zone()
+	return "UTC", offset
 }

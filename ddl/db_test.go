@@ -7781,25 +7781,35 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		tzStr  string
 		tzName string
 		offset int
-		err    error
+		err    string
 	}{
-		{"set time_zone = '+00:00'", "", "UTC", 0, nil},
-		{"set time_zone = '-00:00'", "", "UTC", 0, nil},
-		{"set time_zone = 'UTC'", "UTC", "UTC", 0, nil},
-		{"set time_zone = '+05:00'", "", "UTC", 18000, nil},
-		{"set time_zone = '-08:00'", "", "UTC", -28800, nil},
-		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
-		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
-		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
-		{"set time_zone = 'GMT'", "GMT", "GMT", 0, nil},
-		{"set time_zone = 'EST'", "EST", "EST", 0, nil},
+		{"set time_zone = '+00:00'", "", "UTC", 0, ""},
+		{"set time_zone = '-00:00'", "", "UTC", 0, ""},
+		{"set time_zone = 'UTC'", "UTC", "UTC", 0, ""},
+		{"set time_zone = '+05:00'", "", "UTC", 18000, ""},
+		{"set time_zone = '-08:00'", "", "UTC", -28800, ""},
+		{"set time_zone = '+08:00'", "", "UTC", 28800, ""},
+		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
+		{"set time_zone = 'GMT+1'", "GMT+1", "GMT+1", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
+		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
+		{"set time_zone = 'Etc/GMT-12'", "Etc/GMT-12", "Etc/GMT-12", 0, ""},
+		{"set time_zone = 'EST'", "EST", "EST", 0, ""},
+		{"set time_zone = 'Australia/Lord_Howe'", "Australia/Lord_Howe", "Australia/Lord_Howe", 0, ""},
 	}
 	for _, tc := range testCases {
-		tk.MustExec(tc.tzSQL)
+		err := tk.ExecToErr(tc.tzSQL)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tc.err)
+			continue
+		} else {
+			c.Assert(tc.err, Equals, "")
+		}
 		c.Assert(tk.Se.GetSessionVars().TimeZone.String(), Equals, tc.tzStr, Commentf("sql: %s", tc.tzSQL))
-		tz, offset, err := ddlutil.GetTimeZone(tk.Se)
-		c.Assert(tc.err, Equals, err)
-		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s", tc.tzSQL))
+		tz, offset := ddlutil.GetTimeZone(tk.Se)
+		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
 	}
 }
