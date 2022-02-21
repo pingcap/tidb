@@ -623,11 +623,29 @@ func TestAlterDatabaseBasic(t *testing.T) {
 	tk.MustExec("create database tiflash_ddl")
 	tk.MustExec("create table tiflash_ddl.ddltiflash(z int)")
 	tk.MustExec("create table tiflash_ddl.ddltiflash2(z int)")
-	// ALTER DATABASE can override previoud ALTER TABLE.
+	// ALTER DATABASE can override previous ALTER TABLE.
 	tk.MustExec("alter table tiflash_ddl.ddltiflash set tiflash replica 1")
 	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
 	require.Equal(t, "In total 2 tables: 2 succeed, 0 failed, 0 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 2)
 	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
 	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
+
+	// Skip already set TiFlash tables.
+	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
+	require.Equal(t, "In total 2 tables: 0 succeed, 0 failed, 2 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
+
+	// There is no existing database.
+	tk.MustExec("drop database if exists tiflash_ddl_missing")
+	tk.MustGetErrMsg("alter database tiflash_ddl_missing set tiflash replica 2", "[schema:1049]Unknown database 'tiflash_ddl_missing'")
+
+	// There is no table in database
+	tk.MustExec("drop database if exists tiflash_ddl_empty")
+	tk.MustExec("create database tiflash_ddl_empty")
+	tk.MustGetErrMsg("alter database tiflash_ddl_empty set tiflash replica 2", "[schema:1049]Empty database 'tiflash_ddl_empty'")
+
+	// There is less TiFlash store
+	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
 }

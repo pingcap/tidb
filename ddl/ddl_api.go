@@ -217,6 +217,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	fail := 0
 	oneFail := int64(0)
 
+	if total == 0 {
+		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
+	}
+	err := checkTiFlashReplicaCount(ctx, tiflashReplica.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for _, tbl := range dbInfo.Tables {
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
