@@ -422,13 +422,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 }
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
-	loc := b.ctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
-		if loc == nil {
-			loc = time.UTC
-		}
-	}
+	loc := b.ctx.GetSessionVars().Location()
 	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
 		jobNumber:       int(v.JobNumber),
@@ -1840,13 +1834,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableDDLJobs):
-			loc := b.ctx.GetSessionVars().TimeZone
-			if loc == nil {
-				loc = time.Local
-				if loc == nil {
-					loc = time.UTC
-				}
-			}
+			loc := b.ctx.GetSessionVars().Location()
 			ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 			return &DDLJobsReaderExec{
 				baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
