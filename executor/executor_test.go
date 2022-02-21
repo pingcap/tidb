@@ -426,7 +426,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
@@ -442,7 +442,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -569,13 +569,13 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
-	c.Assert(row[9], Equals, "<nil>")
+	c.Assert(row[10], Equals, "<nil>")
 
 	// Test the START_TIME and END_TIME field.
 	re = tk.MustQuery("admin show ddl jobs where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')")
 	row = re.Rows()[0]
 	c.Assert(row[2], Equals, "t")
-	c.Assert(row[9], Equals, "<nil>")
+	c.Assert(row[10], Equals, "<nil>")
 }
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
@@ -3409,10 +3409,6 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) setCheckPriority(priority kvrpcpb.CommandPri) {
-	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
-}
-
 func (c *checkRequestClient) getCheckPriority() kvrpcpb.CommandPri {
 	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
@@ -3496,76 +3492,6 @@ func (s *testSuiteWithCliBase) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-}
-
-func (s *testSuite2) TestAddIndexPriority(c *C) {
-	cli := &checkRequestClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClientHijacker(hijackClient),
-	)
-	c.Assert(err, IsNil)
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		err = store.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	tk := testkit.NewTestKit(c, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int, v int)")
-
-	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
-	}
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkDDLAddIndexPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("alter table t1 add index t1_index (id);")
-
-	c.Assert(atomic.LoadUint32(&cli.lowPriorityCnt) > 0, IsTrue)
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
-
-	tk.MustExec("alter table t1 drop index t1_index;")
-	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_NORMAL'")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkDDLAddIndexPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustExec("alter table t1 add index t1_index (id);")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
-
-	tk.MustExec("alter table t1 drop index t1_index;")
-	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkDDLAddIndexPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustExec("alter table t1 add index t1_index (id);")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
 }
 
 func (s *testSuite1) TestAlterTableComment(c *C) {
