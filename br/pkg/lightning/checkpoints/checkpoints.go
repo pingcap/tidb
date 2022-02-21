@@ -972,33 +972,39 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 	cpdb.fileName = fileName
 	cpdb.exStorage = s
 
-	// ignore all errors -- file maybe not created yet (and it is fine).
-	content, err := cpdb.exStorage.ReadFile(ctx, fileName)
-	if err == nil {
-		err2 := cpdb.checkpoints.Unmarshal(content)
-		if err2 != nil {
-			log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err2))
-		}
-		// FIXME: patch for empty map may need initialize manually, because currently
-		// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
-		if cpdb.checkpoints.Checkpoints == nil {
-			cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
-		}
-		for _, table := range cpdb.checkpoints.Checkpoints {
-			if table.Engines == nil {
-				table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
-			}
-			for _, engine := range table.Engines {
-				if engine.Chunks == nil {
-					engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
-				}
-			}
-		}
-	} else {
+	isExists, err := cpdb.exStorage.FileExists(ctx, fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !isExists {
 		log.L().Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
 			log.ShortError(err),
 		)
+		return cpdb, nil
+	}
+	content, err := cpdb.exStorage.ReadFile(ctx, fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = cpdb.checkpoints.Unmarshal(content)
+	if err != nil {
+		log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err))
+	}
+	// FIXME: patch for empty map may need initialize manually, because currently
+	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
+	if cpdb.checkpoints.Checkpoints == nil {
+		cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
+	}
+	for _, table := range cpdb.checkpoints.Checkpoints {
+		if table.Engines == nil {
+			table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
+		}
+		for _, engine := range table.Engines {
+			if engine.Chunks == nil {
+				engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
+			}
+		}
 	}
 	return cpdb, nil
 }
@@ -1569,7 +1575,6 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 	if tableName == allTables {
 		cpdb.checkpoints.Reset()
 		return errors.Trace(cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName))
-		// return errors.Trace(os.Remove(cpdb.path))
 	}
 
 	delete(cpdb.checkpoints.Checkpoints, tableName)
