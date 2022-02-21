@@ -108,7 +108,10 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
-	case types.KindBytes, types.KindMysqlBit:
+	case types.KindMysqlBit:
+		tp = tipb.ExprType_MysqlBit
+		val = d.GetBytes()
+	case types.KindBytes:
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
 	case types.KindFloat32:

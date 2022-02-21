@@ -1126,6 +1126,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
+	case tipb.ExprType_MysqlBit:
+		return &Constant{Value: types.NewMysqlBitDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
 		return convertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
