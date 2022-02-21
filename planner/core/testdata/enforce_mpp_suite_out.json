@@ -192,12 +192,12 @@
         "Warn": null
       },
       {
-        "SQL": "explain select count(*) from t where a=1 -- 1. no replica",
+        "SQL": "explain format = 'brief' select count(*) from t where a=1 -- 1. no replica",
         "Plan": [
-          "StreamAgg_17 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader_18 1.00 root  index:StreamAgg_9",
-          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan_16 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because there aren't tiflash replicas of table `t`."
@@ -248,23 +248,23 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
+        "SQL": "explain format = 'brief' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader_20 1.00 root  index:StreamAgg_11",
-          "  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan_18 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
         ]
       },
       {
-        "SQL": "explain SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
+        "SQL": "explain format = 'brief' SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
         "Plan": [
-          "Window_7 10000.00 root  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
-          "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
-          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:idx(a) keep order:true, stats:pseudo"
+          "Window 10000.00 root  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx(a) keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because operator `Window` is not supported now.",
@@ -272,27 +272,27 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
+        "SQL": "EXPLAIN format = 'brief' SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
         "Plan": [
-          "HashJoin_36 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_56(Build) 9990.00 root  data:Selection_55",
-          "│ └─Selection_55 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_54 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_50(Probe) 9990.00 root  data:Selection_49",
-          "  └─Selection_49 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "    └─TableFullScan_48 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now."
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
+        "SQL": "EXPLAIN format = 'brief' SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
         "Plan": [
-          "StreamAgg_11 1.00 root  funcs:count(test.t.b)->Column#6",
-          "└─IndexLookUp_42 10.00 root  ",
-          "  ├─IndexRangeScan_40(Build) 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_41(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(test.t.b)->Column#6",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
@@ -303,12 +303,12 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
+        "SQL": "EXPLAIN format = 'brief' SELECT count(*) from t group by b; -- 8. group by virtual column",
         "Plan": [
-          "HashAgg_6 8000.00 root  group by:test.t.b, funcs:count(1)->Column#6",
-          "└─Projection_12 10000.00 root  test.t.b",
-          "  └─TableReader_11 10000.00 root  data:TableFullScan_10",
-          "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 8000.00 root  group by:test.t.b, funcs:count(1)->Column#6",
+          "└─Projection 10000.00 root  test.t.b",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
@@ -317,12 +317,12 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
+        "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
         "Plan": [
-          "HashAgg_6 8000.00 root  group by:Column#8, funcs:count(Column#7)->Column#6",
-          "└─Projection_19 10000.00 root  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#8",
-          "  └─TableReader_12 10000.00 root  data:TableFullScan_10",
-          "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 8000.00 root  group by:Column#8, funcs:count(Column#7)->Column#6",
+          "└─Projection 10000.00 root  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#8",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
@@ -334,12 +334,12 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
+        "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
-          "StreamAgg_11 1.00 root  funcs:count(test.t.a)->Column#6",
-          "└─Selection_29 10.00 root  eq(test.t.c, 1)",
-          "  └─TableReader_28 10000.00 root  data:TableFullScan_27",
-          "    └─TableFullScan_27 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(test.t.a)->Column#6",
+          "└─Selection 10.00 root  eq(test.t.c, 1)",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
@@ -350,13 +350,13 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t where d=1; -- 11.1. type not supported",
+        "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where d=1; -- 11.1. type not supported",
         "Plan": [
-          "HashAgg_9 1.00 root  funcs:count(test.t.a)->Column#6",
-          "└─Selection_19 8000.00 root  eq(test.t.d, 1)",
-          "  └─TableReader_22 10000.00 root  data:ExchangeSender_21",
-          "    └─ExchangeSender_21 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(test.t.a)->Column#6",
+          "└─Selection 8000.00 root  eq(test.t.d, 1)",
+          "  └─TableReader 10000.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'."

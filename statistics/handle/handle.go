@@ -74,7 +74,7 @@ type statsCache struct {
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
-		sync.Mutex
+		sync.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
