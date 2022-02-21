@@ -27,8 +27,10 @@ import (
 )
 
 func TestJoinExec(t *testing.T) {
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"))
-	defer func() { require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill")) }()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"))
+	}()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
