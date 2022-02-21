@@ -127,6 +127,7 @@ func TestTopSQLReporter(t *testing.T) {
 
 	sqlMap := make(map[string]string)
 	sql2plan := make(map[string]string)
+	recordsCnt := server.RecordsCnt()
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
@@ -143,7 +144,7 @@ func TestTopSQLReporter(t *testing.T) {
 			}
 		})
 	}
-	server.WaitCollectCnt(1, time.Second*5)
+	server.WaitCollectCnt(recordsCnt, 1, time.Second*5)
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
@@ -157,7 +158,7 @@ func TestTopSQLReporter(t *testing.T) {
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
-			require.Equal(t, len(req.PlanDigest), 0)
+			require.Len(t, req.PlanDigest, 0)
 			continue
 		}
 		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
@@ -320,7 +321,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(record.PlanDigest) == 0 {
-			require.Equal(t, len(record.PlanDigest), 0)
+			require.Len(t, record.PlanDigest, 0)
 			continue
 		}
 		normalizedPlan, exist := planMetas[string(record.PlanDigest)]
@@ -328,7 +329,7 @@ func TestTopSQLPubSub(t *testing.T) {
 		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
-	require.Equal(t, len(checkSQLPlanMap), 2)
+	require.Len(t, checkSQLPlanMap, 2)
 }
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {

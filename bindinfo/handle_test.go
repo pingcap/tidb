@@ -38,7 +38,7 @@ func utilCleanBindingEnv(tk *testkit.TestKit, dom *domain.Domain) {
 func utilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
 	return normalized, digest.String()
 }
@@ -82,7 +82,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 
 	bindHandle := bindinfo.NewBindHandle(tk.Session())
 	err := bindHandle.Update(true)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	sql, hash := parser.NormalizeDigest("select * from test . t0")
 	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
 	require.Equal(t, 1, len(bindData.Bindings))
@@ -121,7 +121,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	require.Equal(t, updateTime1, "2000-01-01 09:00:00.000")
 
 	rows2 := tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, len(rows2), 0)
+	require.Len(t, rows2, 0)
 }
 
 func TestBindParse(t *testing.T) {
@@ -146,7 +146,7 @@ func TestBindParse(t *testing.T) {
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewBindHandle(tk.Session())
 	err := bindHandle.Update(true)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
 	sql, hash := parser.NormalizeDigest("select * from test . t")
@@ -162,7 +162,7 @@ func TestBindParse(t *testing.T) {
 	require.NotNil(t, bind.CreateTime)
 	require.NotNil(t, bind.UpdateTime)
 	dur, err := bind.SinceUpdateTime()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.GreaterOrEqual(t, int64(dur), int64(0))
 
 	// Test fields with quotes or slashes.
@@ -387,19 +387,19 @@ func TestGlobalBinding(t *testing.T) {
 		metrics.BindMemoryUsage.Reset()
 
 		_, err := tk.Exec("create global " + testSQL.createSQL)
-		require.Nil(t, err, "err %v", err)
+		require.NoError(t, err, "err %v", err)
 
 		if testSQL.overlaySQL != "" {
 			_, err = tk.Exec("create global " + testSQL.overlaySQL)
-			require.Nil(t, err)
+			require.NoError(t, err)
 		}
 
 		pb := &dto.Metric{}
 		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, float64(1), pb.GetGauge().GetValue())
 		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		sql, hash := utilNormalizeWithDefaultDB(t, testSQL.querySQL, "test")
@@ -417,10 +417,10 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, bind.UpdateTime)
 
 		rs, err := tk.Exec("show global bindings")
-		require.Nil(t, err)
+		require.NoError(t, err)
 		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, 1, chk.NumRows())
 		row := chk.GetRow(0)
 		require.Equal(t, testSQL.originSQL, row.GetString(0))
@@ -434,7 +434,7 @@ func TestGlobalBinding(t *testing.T) {
 
 		bindHandle := bindinfo.NewBindHandle(tk.Session())
 		err = bindHandle.Update(true)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
 		bindData = bindHandle.GetBindRecord(hash, sql, "test")
@@ -450,35 +450,35 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, bind.UpdateTime)
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
 
 		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, float64(0), pb.GetGauge().GetValue())
 		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		// From newly created global bind handle.
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		bindHandle = bindinfo.NewBindHandle(tk.Session())
 		err = bindHandle.Update(true)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
 		bindData = bindHandle.GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
 
 		rs, err = tk.Exec("show global bindings")
-		require.Nil(t, err)
+		require.NoError(t, err)
 		chk = rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, 0, chk.NumRows())
 
 		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}
 }
 
