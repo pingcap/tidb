@@ -623,8 +623,10 @@ func TestAlterDatabaseBasic(t *testing.T) {
 	tk.MustExec("create database tiflash_ddl")
 	tk.MustExec("create table tiflash_ddl.ddltiflash(z int)")
 	tk.MustExec("create table tiflash_ddl.ddltiflash2(z int)")
+	// ALTER DATABASE can override previoud ALTER TABLE.
 	tk.MustExec("alter table tiflash_ddl.ddltiflash set tiflash replica 1")
 	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
+	require.Equal(t, "In total 2 tables: 2 succeed, 0 failed, 0 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 2)
 	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
 	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
