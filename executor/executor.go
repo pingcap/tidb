@@ -794,11 +794,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The number of table rows is equal to the number of index rows.
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
-		err := e.checkIndexHandle(ctx, e.srcs[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return nil
+		return e.checkIndexHandle(ctx, e.srcs[0])
 	}
 	taskCh := make(chan *IndexLookUpExecutor, len(e.srcs))
 	failure := atomicutil.NewBool(false)
