@@ -33,11 +33,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/ddl/placement"
-=======
 	ddlutil "github.com/pingcap/tidb/ddl/util"
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"

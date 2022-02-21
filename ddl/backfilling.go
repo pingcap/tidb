@@ -620,13 +620,9 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
-<<<<<<< HEAD
-=======
 			if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
 				return errors.Trace(err)
 			}
-
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()

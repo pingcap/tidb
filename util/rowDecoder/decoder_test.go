@@ -69,11 +69,6 @@ func TestRowDecoder(t *testing.T) {
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
-<<<<<<< HEAD
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
-=======
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
@@ -82,20 +77,10 @@ func TestRowDecoder(t *testing.T) {
 
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
 	require.Nil(t, err)
-<<<<<<< HEAD
-	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
-=======
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
 	require.Nil(t, err)
-<<<<<<< HEAD
-	err = time3.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
-=======
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	t3 := types.NewTimeDatum(time3)
 
 	testRows := []struct {
@@ -129,11 +114,7 @@ func TestRowDecoder(t *testing.T) {
 		require.Nil(t, err)
 		require.NotNil(t, bs)
 
-<<<<<<< HEAD
-		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-=======
 		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 		require.Nil(t, err)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
@@ -151,11 +132,7 @@ func TestRowDecoder(t *testing.T) {
 			}
 		}
 		// test decode with no generated column.
-<<<<<<< HEAD
-		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-=======
 		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 		require.Nil(t, err)
 		for k, v := range r2 {
 			v1, ok := r[k]
@@ -195,12 +172,6 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	}
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
-<<<<<<< HEAD
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
-
-=======
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	testRows := []struct {
 		cols   []int64
 		input  []types.Datum
@@ -218,11 +189,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		require.Nil(t, err)
 		require.NotNil(t, bs)
 
-<<<<<<< HEAD
-		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
-=======
 		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, nil)
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 		require.Nil(t, err)
 
 		for i, col := range cols {

@@ -195,8 +195,6 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-<<<<<<< HEAD
-=======
 	Location      *TimeZoneLocation                `json:"location"`
 }
 
@@ -219,7 +217,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.

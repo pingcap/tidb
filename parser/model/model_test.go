@@ -157,12 +157,9 @@ func TestJobCodec(t *testing.T) {
 		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
-<<<<<<< HEAD
-=======
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})

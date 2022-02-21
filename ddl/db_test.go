@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -7597,122 +7598,6 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
 }
-<<<<<<< HEAD
-=======
-
-func (s *testDBSuite2) TestBatchCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tables_1")
-	tk.MustExec("drop table if exists tables_2")
-	tk.MustExec("drop table if exists tables_3")
-
-	d := s.dom.DDL()
-	infos := []*model.TableInfo{}
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_1"),
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_2"),
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_3"),
-	})
-
-	// correct name
-	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
-	c.Check(err, IsNil)
-
-	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
-	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
-	c.Assert(job[1], Equals, "test")
-	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
-	c.Assert(job[3], Equals, "create tables")
-	c.Assert(job[4], Equals, "public")
-	// FIXME: we must change column type to give multiple id
-	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
-
-	// duplicated name
-	infos[1].Name = model.NewCIStr("tables_1")
-	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
-	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
-
-	newinfo := &model.TableInfo{
-		Name: model.NewCIStr("tables_4"),
-	}
-	{
-		colNum := 2
-		cols := make([]*model.ColumnInfo, colNum)
-		viewCols := make([]model.CIStr, colNum)
-		var stmtBuffer bytes.Buffer
-		stmtBuffer.WriteString("SELECT ")
-		for i := range cols {
-			col := &model.ColumnInfo{
-				Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
-				Offset: i,
-				State:  model.StatePublic,
-			}
-			cols[i] = col
-			viewCols[i] = col.Name
-			stmtBuffer.WriteString(cols[i].Name.L + ",")
-		}
-		stmtBuffer.WriteString("1 FROM t")
-		newinfo.Columns = cols
-		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
-	}
-
-	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
-	c.Check(err, IsNil)
-}
-
-func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
-	// For issue #31735.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, unique kye(a))")
-	tk.MustExec("insert into t1 value (1), (10)")
-
-	var checkErr error
-	tk1 := testkit.NewTestKit(c, s.store)
-	_, checkErr = tk1.Exec("use test_db")
-
-	d := s.dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	ctx := mock.NewContext()
-	ctx.Store = s.store
-	times := 0
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateDeleteOnly:
-			_, checkErr = tk1.Exec("insert into t1 values (1) on duplicate key update a=a+1")
-			if checkErr == nil {
-				_, checkErr = tk1.Exec("replace into t1 values (2)")
-			}
-		case model.StateWriteOnly:
-			_, checkErr = tk1.Exec("insert into t1 values (2) on duplicate key update a=a+1")
-			if checkErr == nil {
-				_, checkErr = tk1.Exec("replace into t1 values (3)")
-			}
-		case model.StateWriteReorganization:
-			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
-				_, checkErr = tk1.Exec("insert into t1 values (3) on duplicate key update a=a+1")
-				if checkErr == nil {
-					_, checkErr = tk1.Exec("replace into t1 values (4)")
-				}
-				times++
-			}
-		}
-	}
-	d.(ddl.DDLForTest).SetHook(hook)
-
-	tk.MustExec("alter table t1 add column gc int as ((a+1))")
-	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
-	c.Assert(checkErr, IsNil)
-}
 
 func (s *testDBSuite1) TestGetTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -7753,4 +7638,3 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
 	}
 }
->>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
