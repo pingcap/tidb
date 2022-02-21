@@ -1870,6 +1870,9 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		if expr.GetType().Tp == mysql.TypeBit {
+			tp.Flen = (expr.GetType().Flen + 7) / 8
+		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
