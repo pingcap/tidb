@@ -87,6 +87,11 @@ type tikvTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info kv.TxnInfo, err error)
+	//
+	lockAcquiredTime  *time.Time
+	commitStartTime   *time.Time
+	rollbackStartTime *time.Time
+	lockReleasedTime  *time.Time
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -279,7 +284,36 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	})
 
 	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
+	if len(txn.lockKeys) > 0 && txn.committer != nil && txn.committer.connID > 0 && txn.IsPessimistic() {
+		startCommitTime := time.Now()
+		txn.commitStartTime = &startCommitTime
+		if txn.lockAcquiredTime != nil {
+			logutil.Logger(ctx).Info("[pessimistic lock keys] txn try to commit",
+				zap.Uint64("start_ts", txn.startTS),
+				zap.Stringer("lock_time", txn.lockAcquiredTime),
+				zap.Stringer("start_commit_time", txn.commitStartTime),
+				zap.Int64("key_lock_time_to_commit_start[in ms]", txn.commitStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()))
+		}
+	}
+
+	var err error
+	defer func() {
+		tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds())
+		lockReleaseTime := time.Now()
+		txn.lockReleasedTime = &lockReleaseTime
+		if len(txn.lockKeys) > 0 && txn.committer != nil && txn.committer.connID > 0 && txn.IsPessimistic() &&
+			txn.lockAcquiredTime != nil && txn.commitStartTime != nil {
+			logutil.Logger(ctx).Info("[pessimistic lock keys] finish to commit",
+				zap.Error(err),
+				zap.Uint64("start_ts", txn.startTS),
+				zap.Stringer("lock_time", txn.lockAcquiredTime),
+				zap.Stringer("start_commit_time", txn.commitStartTime),
+				zap.Stringer("lock_released_time", txn.lockReleasedTime),
+				zap.Int64("key_lock_time_to_commit_start[in ms]", txn.commitStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
+				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
+				zap.Strings("locked keys", HexKeys(txn.lockKeys)))
+		}
+	}()
 
 	// connID is used for log.
 	var connID uint64
@@ -288,7 +322,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		connID = val.(uint64)
 	}
 
-	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
@@ -355,6 +388,14 @@ func (txn *tikvTxn) close() {
 	txn.valid = false
 }
 
+func HexKeys(keys [][]byte) []string {
+	resKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		resKeys = append(resKeys, kv.Key(key).String())
+	}
+	return resKeys
+}
+
 func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -362,7 +403,23 @@ func (txn *tikvTxn) Rollback() error {
 	start := time.Now()
 	// Clean up pessimistic lock.
 	if txn.IsPessimistic() && txn.committer != nil {
+		rollbackStartTime := time.Now()
+		txn.rollbackStartTime = &rollbackStartTime
 		err := txn.rollbackPessimisticLocks()
+		if len(txn.lockKeys) > 0 && txn.committer != nil && txn.committer.connID > 0 && txn.IsPessimistic() &&
+			txn.lockAcquiredTime != nil && txn.rollbackStartTime != nil {
+			lockReleasedTime := time.Now()
+			txn.lockReleasedTime = &lockReleasedTime
+			logutil.BgLogger().Info("[pessimistic lock keys] finish to rollback",
+				zap.Error(err),
+				zap.Uint64("start_ts", txn.startTS),
+				zap.Stringer("lock_time", txn.lockAcquiredTime),
+				zap.Stringer("start_to_rollback_time", txn.rollbackStartTime),
+				zap.Stringer("lock_released_time", txn.lockReleasedTime),
+				zap.Int64("key_lock_time_to_rollback_start[in ms]", txn.rollbackStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
+				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
+				zap.Strings("locked keys", HexKeys(txn.lockKeys)))
+		}
 		txn.committer.ttlManager.close()
 		if err != nil {
 			logutil.BgLogger().Error(err.Error())
@@ -514,6 +571,16 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 				txn.committer.primaryKey = nil
 			}
 			return err
+		}
+		if len(keys) > 0 && txn.committer != nil && txn.committer.connID > 0 {
+			if txn.lockAcquiredTime == nil {
+				now := time.Now()
+				txn.lockAcquiredTime = &now
+			}
+			logutil.Logger(ctx).Info("[pessimistic lock keys] txn locked keys",
+				zap.Uint64("start_ts", txn.startTS), zap.Int("key numbers", len(keys)),
+				zap.Strings("keys", HexKeys(keys)),
+				zap.Time("lockAcquiredTime", *txn.lockAcquiredTime))
 		}
 		if assignedPrimaryKey {
 			txn.committer.ttlManager.run(txn.committer, lockCtx)
