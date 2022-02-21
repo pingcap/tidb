@@ -925,7 +925,6 @@ loop:
 			case <-gCtx.Done():
 				break loop
 			}
-			ch <- common.UniqueTable(tbl.DB, tbl.Name)
 		}
 	}
 	close(ch)
