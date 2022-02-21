@@ -211,6 +211,13 @@ var (
 			Name:      "gogc",
 			Help:      "The value of GOGC",
 		})
+	GOGCTuner = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "gogctuner",
+			Help:      "The value of gogctuner",
+		})
 
 	ConnIdleDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{

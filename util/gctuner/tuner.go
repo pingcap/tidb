@@ -19,6 +19,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	atomicutil "go.uber.org/atomic"
 )
@@ -107,6 +108,7 @@ func (t *tuner) tuning() {
 // if threshold < inuse*2, so gcPercent < 100, and GC positively to avoid OOM
 // if threshold > inuse*2, so gcPercent > 100, and GC negatively to reduce GC times
 func calcGCPercent(inuse, threshold uint64) uint32 {
+	metrics.GOGCTuner.Inc()
 	// invalid params
 	if inuse == 0 || threshold == 0 {
 		return defaultGCPercent
