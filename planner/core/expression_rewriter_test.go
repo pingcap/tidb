@@ -15,52 +15,30 @@
 package core_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testExpressionRewriterSuite{})
-var _ = SerialSuites(&testExpressionRewriterSuiteSerial{})
-
-type testExpressionRewriterSuite struct {
-	testData testutil.TestData
-}
-
-func (s *testExpressionRewriterSuite) SetUpSuite(c *C) {
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "expression_rewriter_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testExpressionRewriterSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-type testExpressionRewriterSuiteSerial struct {
-}
-
-func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestIfNullEliminateColName(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	rs, err := tk.Exec("select ifnull(a,b) from t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fields := rs.Fields()
-	c.Assert(fields[0].Column.Name.L, Equals, "ifnull(a,b)")
-	c.Assert(rs.Close(), IsNil)
+	require.Greater(t, len(fields), 0)
+	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
+	require.NoError(t, rs.Close())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(e int not null, b int)")
@@ -73,15 +51,10 @@ func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
 	rows.Check(testkit.Rows("1"))
 }
 
-func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestBinaryOpFunction(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t(a int, b int, c int);")
@@ -90,15 +63,10 @@ func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
 	tk.MustQuery("SELECT * FROM t WHERE (a,b,c) > (1,2,3) order by b").Check(testkit.Rows("1 3 <nil>"))
 }
 
-func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestDefaultFunction(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1(
@@ -121,17 +89,15 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(e) as defe,
 		default(f) as deff
 		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
-	err = tk.ExecToErr("select default(x) from t1")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'x' in 'field list'")
+	require.EqualError(t, tk.ExecToErr("select default(x) from t1"), "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
-	err = tk.ExecToErr("select default(a0) from (select a+1 as a0 from t1) as t0")
-	c.Assert(err.Error(), Equals, "[table:1364]Field 'a0' doesn't have a default value")
+	require.EqualError(t, tk.ExecToErr("select default(a0) from (select a+1 as a0 from t1) as t0"), "[table:1364]Field 'a0' doesn't have a default value")
 
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
-	err = tk.ExecToErr("select default(a) from t1, t2")
-	c.Assert(err.Error(), Equals, "[expression:1052]Column 'a' in field list is ambiguous")
+	require.EqualError(t, tk.ExecToErr("select default(a) from t1, t2"), "[expression:1052]Column 'a' in field list is ambiguous")
+
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
 
 	tk.MustExec(`create table t3(
@@ -179,15 +145,10 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	tk.MustQuery(`select a from t8 order by default(b) * a`).Check(testkit.Rows("1", "0"))
 }
 
-func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestCompareSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists s")
@@ -282,32 +243,22 @@ func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
 	tk.MustQuery("select count(1) from table_40_utf8_4 where ( select count(1) from t where table_40_utf8_4.col_bit64_key_signed!=table_40_utf8_4.col_tinyint_key_unsigned)").Check(testkit.Rows("1"))
 }
 
-func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestCheckFullGroupBy(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustQuery("select t1.a, (select max(t2.b) from t t2) from t t1").Check(testkit.Rows())
-	err = tk.ExecToErr("select t1.a, (select t2.a, max(t2.b) from t t2) from t t1")
-	c.Assert(terror.ErrorEqual(err, core.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
+	err := tk.ExecToErr("select t1.a, (select t2.a, max(t2.b) from t t2) from t t1")
+	require.True(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields))
 }
 
-func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestPatternLikeToExpression(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select 0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0.0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0 like '0.00';").Check(testkit.Rows("0"))
@@ -317,16 +268,10 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
 
-func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestIssue20007(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1 (c_int int, c_str varchar(40), c_datetime datetime, primary key(c_int));")
@@ -340,16 +285,10 @@ func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
 	}
 }
 
-func (s *testExpressionRewriterSuite) TestIssue9869(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestIssue9869(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int, b bigint unsigned);")
@@ -358,33 +297,21 @@ func (s *testExpressionRewriterSuite) TestIssue9869(c *C) {
 		testkit.Rows("4572794622775114594 4572794622775114594", "18196094287899841997 -250649785809709619", "11120436154190595086 -7326307919518956530"))
 }
 
-func (s *testExpressionRewriterSuite) TestIssue17652(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestIssue17652(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(x bigint unsigned);")
 	tk.MustExec("insert into t values( 9999999703771440633);")
-	tk.MustQuery("select ifnull(max(x), 0) from t").Check(
-		testkit.Rows("9999999703771440633"))
+	tk.MustQuery("select ifnull(max(x), 0) from t").Check(testkit.Rows("9999999703771440633"))
 }
 
-func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+func TestCompareMultiFieldsInSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2, t3, t4;")
 	tk.MustExec("CREATE TABLE t1(c1 int, c2 int);")
@@ -407,55 +334,35 @@ func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
 	tk.MustExec("INSERT INTO t4 VALUES (1, 2);")
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
-
 }
 
-func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestIssue22818(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a time);")
 	tk.MustExec("insert into t values(\"23:22:22\");")
-	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
-		testkit.Rows("23:22:22"))
+	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(testkit.Rows("23:22:22"))
 }
 
-func (s *testExpressionRewriterSuite) TestIssue24705(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestIssue24705(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
 	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
-	err = tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
-	c.Assert(err.Error(), Equals, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
+	err := tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	require.EqualError(t, err, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }
 
-func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestBetweenExprCollation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a char(10) charset latin1 collate latin1_bin, c char(10) collate utf8mb4_general_ci);")
@@ -463,20 +370,13 @@ func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
 	tk.MustExec("insert into t1 values ('c', 'D');")
 	tk.MustQuery("select * from t1 where a between 'B' and c;").Check(testkit.Rows("c D"))
 	tk.MustQuery("explain select * from t1 where 'a' between 'g' and 'f';").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
-
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'")
 }
 
-func (s *testExpressionRewriterSuite) TestInsertOnDuplicateLazyMoreThan1Row(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 	tk.MustExec("CREATE TABLE t1(a INTEGER PRIMARY KEY);")
@@ -492,15 +392,10 @@ func (s *testExpressionRewriterSuite) TestInsertOnDuplicateLazyMoreThan1Row(c *C
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 }
 
-func (s *testExpressionRewriterSuite) TestMultiColInExpression(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
+func TestMultiColInExpression(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
@@ -515,12 +410,13 @@ func (s *testExpressionRewriterSuite) TestMultiColInExpression(c *C) {
 		Plan []string
 		Res  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
+	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
