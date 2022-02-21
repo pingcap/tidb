@@ -1665,12 +1665,10 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 }
 
 func (rc *Controller) switchToImportMode(ctx context.Context) {
-	log.L().Info("switch to import mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
 func (rc *Controller) switchToNormalMode(ctx context.Context) {
-	log.L().Info("switch to normal mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
 }
 
@@ -1679,6 +1677,8 @@ func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode)
 	if rc.isTiDBBackend() {
 		return
 	}
+
+	log.L().Info("switch import mode", zap.Stringer("mode", mode))
 
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.

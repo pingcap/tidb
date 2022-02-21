@@ -917,8 +917,14 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 			return nil
 		})
 	}
+loop:
 	for _, db := range rc.dbMetas {
 		for _, tbl := range db.Tables {
+			select {
+			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
+			case <-gCtx.Done():
+				break loop
+			}
 			ch <- common.UniqueTable(tbl.DB, tbl.Name)
 		}
 	}
@@ -927,7 +933,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 		if common.IsContextCanceledError(err) {
 			return nil
 		}
-		return errors.Trace(err)
+		return errors.Annotate(err, "check table contains data failed")
 	}
 
 	if len(tableNames) > 0 {
@@ -939,13 +945,17 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	return nil
 }
 
-func tableContainsData(ctx context.Context, db utils.QueryExecutor, tableName string) (bool, error) {
+func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName string) (bool, error) {
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
 	query := "select 1 from " + tableName + " limit 1"
 	var dump int
-	err := db.QueryRowContext(ctx, query).Scan(&dump)
+	err := exec.QueryRow(ctx, "check table empty", query, &dump)
 
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.ErrorEqual(err, sql.ErrNoRows):
 		return false, nil
 	case err != nil:
 		return false, errors.Trace(err)
