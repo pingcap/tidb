@@ -35,8 +35,12 @@ type AnalyzeJob struct {
 }
 
 const (
-	AnalyzePending  = "pending"
-	AnalyzeRunning  = "running"
+	// AnalyzePending means the analyze job is pending
+	AnalyzePending = "pending"
+	// AnalyzeRunning means the analyze job is running
+	AnalyzeRunning = "running"
+	// AnalyzeFinished means the analyze job has finished
 	AnalyzeFinished = "finished"
-	AnalyzeFailed   = "failed"
+	// AnalyzeFailed means the analyze job has failed
+	AnalyzeFailed = "failed"
 )

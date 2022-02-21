@@ -2018,3 +2018,9 @@ func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 	job.ID = rows[0].GetUint64(0)
 	return nil
 }
+
+// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
+	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
+	return err
+}
