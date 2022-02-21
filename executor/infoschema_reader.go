@@ -1191,7 +1191,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
-			req.AppendString(11, e.runningJobs[i].Query)
+			req.AppendString(12, e.runningJobs[i].Query)
 		}
 		e.cursor += num
 		count += num
@@ -1206,7 +1206,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
-			req.AppendString(11, job.Query)
+			req.AppendString(12, job.Query)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -2077,7 +2077,7 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	}
 	user := sctx.GetSessionVars().User
-	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr)
+	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr, sctx.GetSessionVars().StmtCtx.TimeZone)
 	if e.extractor.Enable {
 		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
 		reader.SetChecker(checker)
