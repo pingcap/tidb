@@ -1603,9 +1603,10 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)
 	_, err = tbl3.AddRecord(ctx, types.MakeDatums(11, 22, 33, 44))
 	c.Assert(err, IsNil)
+	time.Sleep(10 * time.Millisecond)
 
 	// set hook to execute jobs after all jobs are in queue.
-	jobCnt := int64(12)
+	jobCnt := int64(11)
 	tc := &TestDDLCallback{}
 	once := sync.Once{}
 	var checkErr error
@@ -1631,8 +1632,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 					break
 				}
 				if qLen1+qLen2 == jobCnt {
-					if qLen2 != 6 {
-						checkErr = errors.Errorf("add index jobs cnt %v != 6", qLen2)
+					if qLen2 != 5 {
+						checkErr = errors.Errorf("add index jobs cnt %v != 5", qLen2)
 					}
 					break
 				}
@@ -1655,8 +1656,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		/     8		/	 	2			/		3		/	rebase autoID/
 		/     9		/	 	1			/		1		/	add index	 /
 		/     10	/	 	2			/		null   	/	drop schema  /
-		/     11    /       1           /       1       /   modify column/
-		/     12	/	 	2			/		2		/	add index	 /
+		/     11	/	 	2			/		2		/	add index	 /
 	*/
 	job1 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx1", "c1")
 	addDDLJob(c, d, job1)
@@ -1678,10 +1678,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	addDDLJob(c, d, job9)
 	job10 := buildDropSchemaJob(dbInfo2)
 	addDDLJob(c, d, job10)
-	job11 := buildModifyColJob(dbInfo1, tblInfo1)
+	job11 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
 	addDDLJob(c, d, job11)
-	job12 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
-	addDDLJob(c, d, job12)
 	// TODO: add rename table job
 
 	// check results.
@@ -1689,26 +1687,26 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	for !isChecked {
 		err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			lastJob, err := m.GetHistoryDDLJob(job12.ID)
+			lastJob, err := m.GetHistoryDDLJob(job11.ID)
 			c.Assert(err, IsNil)
 			// all jobs are finished.
 			if lastJob != nil {
 				finishedJobs, err := m.GetAllHistoryDDLJobs()
 				c.Assert(err, IsNil)
 				// get the last 12 jobs completed.
-				finishedJobs = finishedJobs[len(finishedJobs)-12:]
+				finishedJobs = finishedJobs[len(finishedJobs)-11:]
 				// check some jobs are ordered because of the dependence.
-				c.Assert(finishedJobs[0].ID, Equals, job1.ID)
-				c.Assert(finishedJobs[1].ID, Equals, job2.ID)
-				c.Assert(finishedJobs[2].ID, Equals, job3.ID)
-				c.Assert(finishedJobs[4].ID, Equals, job5.ID)
-				c.Assert(finishedJobs[11].ID, Equals, job12.ID)
+				c.Assert(finishedJobs[0].ID, Equals, job1.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[1].ID, Equals, job2.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[2].ID, Equals, job3.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[4].ID, Equals, job5.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[10].ID, Equals, job11.ID, Commentf("%v", finishedJobs))
 				// check the jobs are ordered in the backfill-job queue or general-job queue.
 				backfillJobID := int64(0)
 				generalJobID := int64(0)
 				for _, job := range finishedJobs {
 					// check jobs' order.
-					if admin.MayNeedBackfill(job.Type) {
+					if mayNeedReorg(job) {
 						c.Assert(job.ID, Greater, backfillJobID)
 						backfillJobID = job.ID
 					} else {

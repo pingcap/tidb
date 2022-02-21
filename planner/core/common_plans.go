@@ -394,14 +394,14 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
 		return ""
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return ""
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -412,7 +412,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if globalHandle == nil {
 		return ""
 	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -585,10 +585,11 @@ func containTableDual(p Plan) bool {
 	if !ok {
 		return false
 	}
+	childContainTableDual := false
 	for _, child := range physicalPlan.Children() {
-		return containTableDual(child)
+		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
-	return false
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some

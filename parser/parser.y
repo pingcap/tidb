@@ -1195,6 +1195,7 @@ import (
 	TableSampleUnitOpt                     "table sample unit optional"
 	TableToTable                           "rename table to table"
 	TableToTableList                       "rename table to table by list"
+	TextString                             "text string item"
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
@@ -1393,7 +1394,6 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
-	TextString                      "text string item"
 
 %precedence empty
 %precedence as
@@ -11731,7 +11731,9 @@ StringType:
 |	"ENUM" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
 		x := types.NewFieldType(mysql.TypeEnum)
-		x.Elems = $3.([]string)
+		elems := $3.([]*ast.TextString)
+		opt := $5.(*ast.OptBinary)
+		x.Elems = ast.TransformTextStrings(elems, opt.Charset)
 		fieldLen := -1 // enum_flen = max(ele_flen)
 		for i := range x.Elems {
 			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
@@ -11740,7 +11742,6 @@ StringType:
 			}
 		}
 		x.Flen = fieldLen
-		opt := $5.(*ast.OptBinary)
 		x.Charset = opt.Charset
 		if opt.IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11750,14 +11751,15 @@ StringType:
 |	"SET" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
 		x := types.NewFieldType(mysql.TypeSet)
-		x.Elems = $3.([]string)
+		elems := $3.([]*ast.TextString)
+		opt := $5.(*ast.OptBinary)
+		x.Elems = ast.TransformTextStrings(elems, opt.Charset)
 		fieldLen := len(x.Elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
 		for i := range x.Elems {
 			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
 			fieldLen += len(x.Elems[i])
 		}
 		x.Flen = fieldLen
-		opt := $5.(*ast.OptBinary)
 		x.Charset = opt.Charset
 		if opt.IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -12064,23 +12066,26 @@ StringList:
 
 TextString:
 	stringLit
+	{
+		$$ = &ast.TextString{Value: $1}
+	}
 |	hexLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 |	bitLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 
 TextStringList:
 	TextString
 	{
-		$$ = []string{$1}
+		$$ = []*ast.TextString{$1.(*ast.TextString)}
 	}
 |	TextStringList ',' TextString
 	{
-		$$ = append($1.([]string), $3)
+		$$ = append($1.([]*ast.TextString), $3.(*ast.TextString))
 	}
 
 StringName:

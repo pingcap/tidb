@@ -37,7 +37,7 @@ type clusterInfoItem struct {
 func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {
 	// Explicitly list all field names instead of using `*` to avoid potential leaking sensitive info when adding new fields in future.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
+	stmt, err := exec.ParseWithParams(context.TODO(), true, `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

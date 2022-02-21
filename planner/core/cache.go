@@ -206,18 +206,18 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst          *ast.Prepared
-	VisitInfos           []visitInfo
-	ColumnInfos          interface{}
-	Executor             interface{}
-	NormalizedSQL        string
-	NormalizedPlan       string
-	SQLDigest            *parser.Digest
-	PlanDigest           *parser.Digest
-	ForUpdateRead        bool
-	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC     string
-	NormalizedSQL4PCHash string
+	PreparedAst         *ast.Prepared
+	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+	NormalizedSQL4PC    string
+	SQLDigest4PC        string
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
