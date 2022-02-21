@@ -126,6 +126,7 @@ func TestTopSQLReporter(t *testing.T) {
 	defer cancel()
 	sqlMap := make(map[string]string)
 	sql2plan := make(map[string]string)
+	recordsCnt := server.RecordsCnt()
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
@@ -144,7 +145,7 @@ func TestTopSQLReporter(t *testing.T) {
 	}
 	checkSQLPlanMap := map[string]struct{}{}
 	for retry := 0; retry < 5; retry++ {
-		server.WaitCollectCnt(1, time.Second*5)
+		server.WaitCollectCnt(recordsCnt, 1, time.Second*5)
 		records := server.GetLatestRecords()
 		for _, req := range records {
 			require.Greater(t, len(req.Items), 0)
