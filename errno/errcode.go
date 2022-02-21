@@ -1016,7 +1016,6 @@ const (
 	ErrInconsistentHandle                  = 8139
 	ErrInconsistentIndexedValue            = 8140
 	ErrAssertionFailed                     = 8141
-	ErrEmptyDatabase                     = 8142
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
