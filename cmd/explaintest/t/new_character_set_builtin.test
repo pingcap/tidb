@@ -26,6 +26,17 @@ select upper(a), upper(b) from t;
 select lower(a), lower(b) from t;
 set @@tidb_enable_vectorized_expression = false;
 
+-- test for #32488
+drop table if exists t;
+create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+insert into t values('ʞ'), ('İ');
+select binary upper(a), lower(a) from t;
+select distinct upper(a), lower(a) from t;
+set @@tidb_enable_vectorized_expression = true;
+select binary upper(a), lower(a) from t;
+select distinct upper(a), lower(a) from t;
+set @@tidb_enable_vectorized_expression = false;
+
 -- test for builtin function to_base64()
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
