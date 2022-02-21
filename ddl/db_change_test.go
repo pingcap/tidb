@@ -553,6 +553,20 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
+func (s *testStateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into tt values();")
+
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert into tt values();", nil}
+	modifyColumnSQL := "alter table tt modify column c1 bigint;"
+	expectQuery := &expectQuery{"select c1 from tt", []string{"20200710010508", "20200710010508"}}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
+}
+
 type idxType byte
 
 const (
