@@ -53,7 +53,7 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20220215045702-d229fcc888c8
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
-	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
+	github.com/pingcap/tidb-tools v5.4.1-0.20220221041303-00998a9a4bfd+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220110031732-29e23c62eeac
 	github.com/prometheus/client_golang v1.11.0
@@ -106,5 +106,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
-replace github.com/pingcap/tidb-tools => github.com/oh-my-tidb/tidb-tools v5.2.2-0.20220218132048-8ac81a04efb9+incompatible
