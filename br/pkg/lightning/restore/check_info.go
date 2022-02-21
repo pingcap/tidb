@@ -48,11 +48,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/tikv/pd/server/api"
-	pdconfig "github.com/tikv/pd/server/config"
 )
 
 const (
@@ -78,7 +77,7 @@ func (rc *Controller) isSourceInLocal() bool {
 }
 
 func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
-	result := &pdconfig.ReplicationConfig{}
+	result := &pdtypes.ReplicationConfig{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -87,7 +86,7 @@ func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
 }
 
 func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
-	result := &api.StoresInfo{}
+	result := &pdtypes.StoresInfo{}
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -183,7 +182,7 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	return nil
 }
 
-func isTiFlash(store *api.MetaStore) bool {
+func isTiFlash(store *pdtypes.MetaStore) bool {
 	for _, label := range store.Labels {
 		if label.Key == "engine" && label.Value == "tiflash" {
 			return true
@@ -198,7 +197,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	storeInfo := &api.StoresInfo{}
+	storeInfo := &pdtypes.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -207,19 +206,19 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		return nil
 	}
 
-	var result api.RegionsInfo
+	var result pdtypes.RegionsInfo
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
 	}
 	regions := make(map[uint64]int)
-	stores := make(map[uint64]*api.StoreInfo)
+	stores := make(map[uint64]*pdtypes.StoreInfo)
 	for _, region := range result.Regions {
 		for _, peer := range region.Peers {
 			regions[peer.StoreId]++
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.StoreID] = store
+		stores[store.Store.GetId()] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -275,12 +274,12 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
 
-	result := &api.StoresInfo{}
+	result := &pdtypes.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores := make([]*api.StoreInfo, 0, len(result.Stores))
+	stores := make([]*pdtypes.StoreInfo, 0, len(result.Stores))
 	for _, store := range result.Stores {
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
@@ -315,11 +314,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }

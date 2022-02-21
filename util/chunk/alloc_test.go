@@ -114,7 +114,7 @@ func TestColumnAllocator(t *testing.T) {
 	// Check max column size.
 	freeList := alloc1.pool[getFixedLen(ft)]
 	require.NotNil(t, freeList)
-	require.Equal(t, len(freeList), maxFreeColumnsPerType)
+	require.Len(t, freeList, maxFreeColumnsPerType)
 }
 
 func TestNoDuplicateColumnReuse(t *testing.T) {

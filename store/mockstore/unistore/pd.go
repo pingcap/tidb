@@ -32,13 +32,51 @@ type pdClient struct {
 
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex
+	globalConfig      map[string]string
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
 	return &pdClient{
 		MockPD:            pd,
 		serviceSafePoints: make(map[string]uint64),
+		globalConfig:      make(map[string]string),
 	}
+}
+
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
+	ret := make([]pd.GlobalConfigItem, len(names))
+	for i, name := range names {
+		if r, ok := c.globalConfig["/global/config/"+name]; ok {
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r}
+		} else {
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Error: errors.New("not found")}
+		}
+	}
+	return ret, nil
+}
+
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+	for _, item := range items {
+		c.globalConfig["/global/config/"+item.Name] = item.Value
+	}
+	return nil
+}
+
+func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+	globalConfigWatcherCh := make(chan []pd.GlobalConfigItem, 16)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				return
+			}
+		}()
+		for i := 0; i < 10; i++ {
+			for k, v := range c.globalConfig {
+				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
+			}
+		}
+	}()
+	return globalConfigWatcherCh, nil
 }
 
 func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {

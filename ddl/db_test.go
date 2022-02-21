@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"sort"
@@ -59,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -1452,22 +1450,7 @@ LOOP:
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	it, err := nidx.SeekFirst(txn)
-	c.Assert(err, IsNil)
-	defer it.Close()
-
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
-		c.Assert(err, IsNil)
-		_, ok := handles.Get(h)
-		c.Assert(ok, IsTrue, Commentf("handle: %v", h.String()))
-		handles.Delete(h)
-	}
-	c.Assert(handles.Len(), Equals, 0)
+	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
 
@@ -2862,8 +2845,8 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 
 	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
 
-	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
 	tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
 
 	tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", errno.ErrCollationCharsetMismatch)
@@ -2883,8 +2866,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk = testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
@@ -3189,8 +3170,8 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// Success when the new collation is enabled.
+	tk.MustExec("create table t_set (a set('1', '4', '10') default '1 ,4');")
 	// The type of default value is int.
 	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
@@ -3199,6 +3180,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 
 	// The type of default value is int.
 	// It's for successful cases
+	tk.MustExec("drop table if exists t_set")
 	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
 	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
@@ -3549,6 +3531,7 @@ func (s *testDBSuite5) TestAlterTableRenameTable(c *C) {
 func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
 	// for different databases
 	tk.MustExec("create table t (c1 int, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2)")
@@ -3588,19 +3571,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
@@ -3625,7 +3608,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
 	// for the same table name
@@ -3744,13 +3727,13 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 
 	// for failure case
 	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")

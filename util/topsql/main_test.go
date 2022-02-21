@@ -23,12 +23,5 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("time.Sleep"),
-		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-	}
-
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(m)
 }
