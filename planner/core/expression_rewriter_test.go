@@ -22,7 +22,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,7 +87,7 @@ func TestDefaultFunction(t *testing.T) {
 		default(d) as defd,
 		default(e) as defe,
 		default(f) as deff
-		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
+		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
 	require.EqualError(t, tk.ExecToErr("select default(x) from t1"), "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
@@ -111,7 +110,7 @@ func TestDefaultFunction(t *testing.T) {
 		default(b) as defb,
 		default(c) as defc,
 		default(d) as defd
-		from t3`).Check(testutil.RowsWithSep("|", "2011-11-11 11:11:11|2011-11-11 11:11:11|2011-11-11 11:11:11.000000|current_timestamp"))
+		from t3`).Check(testkit.RowsWithSep("|", "2011-11-11 11:11:11|2011-11-11 11:11:11|2011-11-11 11:11:11.000000|current_timestamp"))
 
 	tk.MustExec(`create table t4(a int default 1, b varchar(5))`)
 	tk.MustExec(`insert into t4 values (0, 'B'), (1, 'B'), (2, 'B')`)
