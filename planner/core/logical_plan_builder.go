@@ -4216,9 +4216,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
-			// table partition prune mode == dynamic
+			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage
 			_ = ds.AddExtraPhysTblIDColumn()
 		}

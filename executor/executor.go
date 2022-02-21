@@ -948,7 +948,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	if len(e.tblID2PhysTblIDCol) > 0 {
 		e.tblID2PhysTblIDColIdx = make(map[int64]int)
 		cols := e.Schema().Columns
-		for i := len(cols) - 1; i > 0; i-- {
+		for i := len(cols) - 1; i >= 0; i-- {
 			if cols[i].ID == model.ExtraPhysTblID {
 				for tblID, col := range e.tblID2PhysTblIDCol {
 					if cols[i].UniqueID == col.UniqueID {
