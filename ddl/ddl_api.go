@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -204,6 +205,16 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
+func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+	dbName := model.NewCIStr(stmt.Name)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	_, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	return nil
+}
+
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -262,13 +273,35 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 	return placementPolicyRef, nil
 }
 
+func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption) error {
+	hasSetTiFlashReplica := false
+	if len(specs) == 1 {
+		return nil
+	}
+	for _, spec := range specs {
+		if spec.Tp == ast.DatabaseSetTiFlashReplica {
+			if hasSetTiFlashReplica {
+				return errRunMultiSchemaChanges
+			}
+			hasSetTiFlashReplica = true
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate                       string
-		isAlterCharsetAndCollate, isAlterPlacement bool
-		placementPolicyRef                         *model.PolicyRefInfo
+		toCharset, toCollate                                         string
+		isAlterCharsetAndCollate, isAlterPlacement, isTiFlashReplica bool
+		placementPolicyRef                                           *model.PolicyRefInfo
+		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
+
+	err = checkMultiSchemaSpecs(ctx, stmt.Options)
+	if err != nil {
+		return err
+	}
 
 	for _, val := range stmt.Options {
 		switch val.Tp {
@@ -294,6 +327,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{Name: model.NewCIStr(val.Value)}
 			isAlterPlacement = true
+		case ast.DatabaseSetTiFlashReplica:
+			tiflashReplica = val.TiFlashReplica
+			isTiFlashReplica = true
 		}
 	}
 
@@ -307,7 +343,11 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			return err
 		}
 	}
-
+	if isTiFlashReplica {
+		if err = d.ModifySchemaSetTiFlashReplica(ctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -4340,6 +4380,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -4350,6 +4391,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
 		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
@@ -4578,6 +4620,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -4590,6 +4634,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
@@ -5390,6 +5435,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -5402,6 +5449,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -5579,6 +5627,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -5589,6 +5639,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,

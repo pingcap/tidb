@@ -103,11 +103,7 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		ssbd := value.(*stmtSummaryByDigest)
-		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
-			continue
-		}
-		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
+		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
 		rows = append(rows, records...)
 	}
 
@@ -155,7 +151,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryBy
 
 func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDigest, historySize int) [][]types.Datum {
 	// Collect all history summaries to an array.
-	ssElements := ssbd.collectHistorySummaries(historySize)
+	ssElements := ssbd.collectHistorySummaries(ssr.checker, historySize)
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
@@ -317,11 +313,19 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return reader.instanceAddr
 	},
-	SummaryBeginTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		beginTime := time.Unix(ssElement.beginTime, 0)
+		if beginTime.Location() != reader.tz {
+			beginTime = beginTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryEndTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		endTime := time.Unix(ssElement.endTime, 0)
+		if endTime.Location() != reader.tz {
+			endTime = endTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
 	StmtTypeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return ssbd.stmtType
