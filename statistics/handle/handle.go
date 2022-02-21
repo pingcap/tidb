@@ -136,7 +136,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 	optFuncs := []sqlexec.OptionFuncAlias{
 		sqlexec.ExecOptionUseSessionPool,
 		execOptionForAnalyze[statsVer],
-		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.TrackFunc, h.sysProcTracker.UnTrackFunc),
+		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
 	}
 	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }

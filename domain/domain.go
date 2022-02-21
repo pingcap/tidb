@@ -99,8 +99,7 @@ type Domain struct {
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
-	sysProcesses   SysProcesses
-	sysProcTracker sessionctx.SysProcTracker
+	sysProcesses SysProcesses
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -741,7 +740,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
-	do.sysProcTracker = newSysProcTracker(do.sysProcesses)
 	return do
 }
 
@@ -941,7 +939,7 @@ func (do *Domain) SysSessionPool() *sessionPool {
 
 // SysProcTracker returns the system processes tracker.
 func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
-	return do.sysProcTracker
+	return &do.sysProcesses
 }
 
 // GetEtcdClient returns the etcd client.
@@ -1251,7 +1249,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, do.sysProcTracker)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1281,7 +1279,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, do.sysProcTracker)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1826,37 +1824,34 @@ type SysProcesses struct {
 	procMap map[uint64]sessionctx.Context
 }
 
-func newSysProcTracker(s SysProcesses) sessionctx.SysProcTracker {
-	tracker := sessionctx.SysProcTracker{}
-	tracker.TrackFunc = func(id uint64, proc sessionctx.Context) error {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
-			return errors.Errorf("The ID is in use: %v", id)
-		}
-		s.procMap[id] = proc
-		proc.GetSessionVars().ConnectionID = id
+func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+		return errors.Errorf("The ID is in use: %v", id)
+	}
+	s.procMap[id] = proc
+	proc.GetSessionVars().ConnectionID = id
+	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	return nil
+}
+
+func (s *SysProcesses) UnTrack(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		delete(s.procMap, id)
+		proc.GetSessionVars().ConnectionID = 0
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
-		return nil
 	}
-	tracker.UnTrackFunc = func(id uint64) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if proc, ok := s.procMap[id]; ok {
-			delete(s.procMap, id)
-			proc.GetSessionVars().ConnectionID = 0
-			atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
-		}
-	}
-	return tracker
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (do *Domain) GetSysProcessList() map[uint64]*util.ProcessInfo {
-	do.sysProcesses.mu.RLock()
-	defer do.sysProcesses.mu.RUnlock()
+func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo)
-	for connID, proc := range do.sysProcesses.procMap {
+	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
 			rs[connID] = pi
@@ -1866,10 +1861,10 @@ func (do *Domain) GetSysProcessList() map[uint64]*util.ProcessInfo {
 }
 
 // KillSysProcess kills sys process with specified ID
-func (do *Domain) KillSysProcess(id uint64) {
-	do.sysProcesses.mu.Lock()
-	defer do.sysProcesses.mu.Unlock()
-	if proc, ok := do.sysProcesses.procMap[id]; ok {
+func (s *SysProcesses) KillSysProcess(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
 		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
 	}
 }

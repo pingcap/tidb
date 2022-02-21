@@ -621,7 +621,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 		rs[connID] = pi
 	}
 	if s.dom != nil {
-		for connID, pi := range s.dom.GetSysProcessList() {
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
 			rs[connID] = pi
 		}
 	}
@@ -679,7 +679,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
 	if !ok && s.dom != nil {
-		s.dom.KillSysProcess(connectionID)
+		s.dom.SysProcTracker().KillSysProcess(connectionID)
 		return
 	}
 
