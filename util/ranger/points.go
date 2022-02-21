@@ -335,7 +335,108 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 	return val, op, false
 }
 
+<<<<<<< HEAD
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
+=======
+// handleBoundCol handles the case when column meets overflow value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	if isUnsigned {
+		return val, op, true
+	}
+
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !isNegative && val.GetUint64() > math.MaxInt64 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewIntDatum(math.MaxInt64)
+			}
+		}
+	case mysql.TypeFloat:
+		if val.GetFloat64() > math.MaxFloat32 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewFloat32Datum(math.MaxFloat32)
+			}
+		} else if val.GetFloat64() < -math.MaxFloat32 {
+			switch op {
+			case ast.LE, ast.LT:
+				return val, op, false
+			case ast.GT, ast.GE, ast.NE:
+				op = ast.GE
+				val = types.NewFloat32Datum(-math.MaxFloat32)
+			}
+		}
+	}
+
+	return val, op, true
+}
+
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+	res := make([]*point, 0, len(ft.Elems)*2)
+	appendPointFunc := func(d types.Datum) {
+		res = append(res, &point{value: d, excl: false, start: true})
+		res = append(res, &point{value: d, excl: false, start: false})
+	}
+
+	if op == ast.NullEQ && val.IsNull() {
+		res = append(res, &point{start: true}, &point{}) // null point
+	}
+
+	tmpEnum := types.Enum{}
+	for i := 0; i <= len(ft.Elems); i++ {
+		if i == 0 {
+			tmpEnum = types.Enum{}
+		} else {
+			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Value = uint64(i)
+		}
+
+		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
+		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.Collate)); err == nil {
+			switch op {
+			case ast.LT:
+				if v < 0 {
+					appendPointFunc(d)
+				}
+			case ast.LE:
+				if v <= 0 {
+					appendPointFunc(d)
+				}
+			case ast.GT:
+				if v > 0 {
+					appendPointFunc(d)
+				}
+			case ast.GE:
+				if v >= 0 {
+					appendPointFunc(d)
+				}
+			case ast.EQ, ast.NullEQ:
+				if v == 0 {
+					appendPointFunc(d)
+				}
+			case ast.NE:
+				if v != 0 {
+					appendPointFunc(d)
+				}
+			}
+		}
+	}
+	return res
+}
+
+func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []*point {
+>>>>>>> 1b04c3b05... planner: fix wrong range calculation for Nulleq function on Enum values (#32440)
 	if isNot == 1 {
 		if keepNull {
 			// Range is {[0, 0]}
