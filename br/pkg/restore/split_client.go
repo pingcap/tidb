@@ -28,9 +28,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/store/pdtypes"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/server/config"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -60,15 +59,17 @@ type SplitClient interface {
 	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
 	// ScatterRegion scatters a specified region.
 	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
+	// ScatterRegions scatters regions in a batch.
+	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegion gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
 	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
 	// GetPlacementRule loads a placement rule from PD.
-	GetPlacementRule(ctx context.Context, groupID, ruleID string) (placement.Rule, error)
+	GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error)
 	// SetPlacementRule insert or update a placement rule to PD.
-	SetPlacementRule(ctx context.Context, rule placement.Rule) error
+	SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error
 	// DeletePlacementRule removes a placement rule from PD.
 	DeletePlacementRule(ctx context.Context, groupID, ruleID string) error
 	// SetStoreLabel add or update specified label of stores. If labelValue
@@ -114,6 +115,24 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 	return c.needScatterVal
 }
 
+// ScatterRegions scatters regions in a batch.
+func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	regionsID := make([]uint64, 0, len(regionInfo))
+	for _, v := range regionInfo {
+		regionsID = append(regionsID, v.Region.Id)
+	}
+	resp, err := c.client.ScatterRegions(ctx, regionsID)
+	if err != nil {
+		return err
+	}
+	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
+	}
+	return nil
+}
+
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,8 +171,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 
@@ -407,7 +428,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	api := c.getPDAPIAddr()
-	configAPI := api + "/pd/api/v1/config"
+	configAPI := api + "/pd/api/v1/config/replicate"
 	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -416,11 +437,16 @@ func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	var conf config.Config
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
+	var conf pdtypes.ReplicationConfig
 	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
 		return 0, errors.Trace(err)
 	}
-	return int(conf.Replication.MaxReplicas), nil
+	return int(conf.MaxReplicas), nil
 }
 
 func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
@@ -468,8 +494,8 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 	return regionInfos, nil
 }
 
-func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (placement.Rule, error) {
-	var rule placement.Rule
+func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
+	var rule pdtypes.Rule
 	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
@@ -482,11 +508,15 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
-	res.Body.Close()
 	err = json.Unmarshal(b, &rule)
 	if err != nil {
 		return rule, errors.Trace(err)
@@ -494,7 +524,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	return rule, nil
 }
 
-func (c *pdClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
@@ -565,10 +595,10 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func checkRegionEpoch(new, old *RegionInfo) bool {
-	return new.Region.GetId() == old.Region.GetId() &&
-		new.Region.GetRegionEpoch().GetVersion() == old.Region.GetRegionEpoch().GetVersion() &&
-		new.Region.GetRegionEpoch().GetConfVer() == old.Region.GetRegionEpoch().GetConfVer()
+func checkRegionEpoch(_new, _old *RegionInfo) bool {
+	return _new.Region.GetId() == _old.Region.GetId() &&
+		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
+		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
 }
 
 // exponentialBackoffer trivially retry any errors it meets.

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
+	atomic2 "go.uber.org/atomic"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -70,8 +71,13 @@ type stmtSummaryByDigestMap struct {
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
 
-	// sysVars encapsulates system variables needed to control statement summary.
-	sysVars *systemVars
+	// These options are set by global system variables and are accessed concurrently.
+	optEnabled             *atomic2.Bool
+	optEnableInternalQuery *atomic2.Bool
+	optMaxStmtCount        *atomic2.Uint32
+	optRefreshInterval     *atomic2.Int64
+	optHistorySize         *atomic2.Int32
+	optMaxSQLLength        *atomic2.Int32
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -240,15 +246,25 @@ type StmtExecInfo struct {
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
-	sysVars := newSysVars()
 
 	ssbde := newStmtSummaryByDigestEvicted()
 
-	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
+	// This initializes the stmtSummaryByDigestMap with "compiled defaults"
+	// (which are regrettably duplicated from sessionctx/variable/tidb_vars.go).
+	// Unfortunately we need to do this to avoid circular dependencies, but the correct
+	// values will be applied on startup as soon as domain.LoadSysVarCacheLoop() is called,
+	// which in turn calls func domain.checkEnableServerGlobalVar(name, sVal string) for each sysvar.
+	// Currently this is early enough in the startup sequence.
+	maxStmtCount := uint(3000)
 	newSsMap := &stmtSummaryByDigestMap{
-		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		sysVars:    sysVars,
-		other:      ssbde,
+		summaryMap:             kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		optMaxStmtCount:        atomic2.NewUint32(uint32(maxStmtCount)),
+		optEnabled:             atomic2.NewBool(true),
+		optEnableInternalQuery: atomic2.NewBool(false),
+		optRefreshInterval:     atomic2.NewInt64(1800),
+		optHistorySize:         atomic2.NewInt32(24),
+		optMaxSQLLength:        atomic2.NewInt32(4096),
+		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
@@ -401,14 +417,11 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 	return stmts
 }
 
-// SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeEnable, value, inSession); err != nil {
-		return err
-	}
-
-	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(typeEnable) == 0 {
+// SetEnabled enables or disables statement summary
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(value bool) error {
+	// `optEnabled` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optEnabled.Store(value)
+	if !value {
 		ssMap.Clear()
 	}
 	return nil
@@ -416,17 +429,14 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) er
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	return ssMap.sysVars.getVariable(typeEnable) > 0
+	return ssMap.optEnabled.Load()
 }
 
-// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeEnableInternalQuery, value, inSession); err != nil {
-		return err
-	}
-
-	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(typeEnableInternalQuery) == 0 {
+// SetEnabledInternalQuery enables or disables internal statement summary
+func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
+	// `optEnableInternalQuery` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optEnableInternalQuery.Store(value)
+	if !value {
 		ssMap.clearInternal()
 	}
 	return nil
@@ -434,52 +444,55 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSes
 
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
-	return ssMap.sysVars.getVariable(typeEnableInternalQuery) > 0
+	return ssMap.optEnableInternalQuery.Load()
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
-func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeRefreshInterval, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value int64) error {
+	ssMap.optRefreshInterval.Store(value)
+	return nil
 }
 
 // refreshInterval gets the refresh interval for summaries.
 func (ssMap *stmtSummaryByDigestMap) refreshInterval() int64 {
-	return ssMap.sysVars.getVariable(typeRefreshInterval)
+	return ssMap.optRefreshInterval.Load()
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeHistorySize, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value int) error {
+	ssMap.optHistorySize.Store(int32(value))
+	return nil
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	return int(ssMap.sysVars.getVariable(typeHistorySize))
+	return int(ssMap.optHistorySize.Load())
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession bool) error {
-	if err := ssMap.sysVars.setVariable(typeMaxStmtCount, value, inSession); err != nil {
-		return err
-	}
-	capacity := ssMap.sysVars.getVariable(typeMaxStmtCount)
+func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
+	// `optMaxStmtCount` and `ssMap` don't need to be strictly atomically updated.
+	ssMap.optMaxStmtCount.Store(uint32(value))
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	return ssMap.summaryMap.SetCapacity(uint(capacity))
+	return ssMap.summaryMap.SetCapacity(value)
 }
 
+// Used by tests
+// nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
-	return int(ssMap.sysVars.getVariable(typeMaxStmtCount))
+	return int(ssMap.optMaxStmtCount.Load())
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value string, inSession bool) error {
-	return ssMap.sysVars.setVariable(typeMaxSQLLength, value, inSession)
+func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value int) error {
+	ssMap.optMaxSQLLength.Store(int32(value))
+	return nil
 }
 
 func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
-	return int(ssMap.sysVars.getVariable(typeMaxSQLLength))
+	return int(ssMap.optMaxSQLLength.Load())
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
@@ -559,13 +572,17 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 }
 
 // collectHistorySummaries puts at most `historySize` summaries to an array.
-func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stmtSummaryByDigestElement {
+func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChecker, historySize int) []*stmtSummaryByDigestElement {
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
 	if !ssbd.initialized {
 		return nil
 	}
+	if checker != nil && !checker.isDigestValid(ssbd.digest) {
+		return nil
+	}
+
 	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
 	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)

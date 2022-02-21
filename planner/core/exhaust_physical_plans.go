@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -1538,6 +1539,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				HighVal:     make([]types.Datum, pointLength, pointLength+1),
 				LowExclude:  colRan.LowExclude,
 				HighExclude: colRan.HighExclude,
+				Collators:   make([]collate.Collator, pointLength, pointLength+1),
 			}
 			ran.LowVal = append(ran.LowVal, colRan.LowVal[0])
 			ran.HighVal = append(ran.HighVal, colRan.HighVal[0])
@@ -1546,13 +1548,15 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	} else if haveExtraCol {
 		// Reserve a position for the last col.
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength+1),
-			HighVal: make([]types.Datum, pointLength+1),
+			LowVal:    make([]types.Datum, pointLength+1),
+			HighVal:   make([]types.Datum, pointLength+1),
+			Collators: make([]collate.Collator, pointLength+1),
 		})
 	} else {
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength),
-			HighVal: make([]types.Datum, pointLength),
+			LowVal:    make([]types.Datum, pointLength),
+			HighVal:   make([]types.Datum, pointLength),
+			Collators: make([]collate.Collator, pointLength),
 		})
 	}
 	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
@@ -1575,6 +1579,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		for _, ran := range ranges {
 			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
 			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
+			ran.Collators[i] = oneColumnRan[0].Collators[0]
 		}
 		curRangeLen := len(ranges)
 		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
@@ -1583,6 +1588,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				newRange := ranges[oldRangeIdx].Clone()
 				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
 				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
+				newRange.Collators[i] = oneColumnRan[0].Collators[0]
 				newRanges = append(newRanges, newRange)
 			}
 			if sc.MemTracker != nil && len(newRanges) != 0 {
@@ -1865,7 +1871,12 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 
-	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin {
+	if !expression.IsPushDownEnabled(p.JoinType.String(), kv.TiFlash) {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.")
+		return nil
+	}
+
+	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin && p.JoinType != LeftOuterSemiJoin && p.JoinType != AntiLeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
 		return nil
 	}
@@ -1913,13 +1924,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
-	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+	} else if p.JoinType.IsSemiJoin() {
 		preferredBuildIndex = 1
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		// TiFlash does not requires that the build side must be the inner table for outer join
-		// so we can choose the build side based on the row count, except that
-		// 1. it is a broadcast join(for broadcast join, it make sense to use the broadcast side as the build side)
+		// TiFlash does not require that the build side must be the inner table for outer join.
+		// so we can choose the build side based on the row count, except that:
+		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
 		// 3. or there are otherConditions for this join
 		if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
@@ -1991,6 +2002,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		mppShuffleJoin:   !useBCJ,
 		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
+	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
 
@@ -2344,6 +2356,13 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			if (isTopN || isLimit) && considerIndexMerge {
 				return false // TopN and Limit cannot be pushed down to IndexMerge
 			}
+			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+				// Don't push to cop for cached table, it brings more harm than good:
+				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
+				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
+				// Once aggregation is pushed to cop, the cache data can't be use any more.
+				return false
+			}
 		case *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, true)
@@ -2487,6 +2506,9 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		}
 		if !la.canPushToCop(kv.TiKV) {
 			taskTypes = []property.TaskType{property.RootTaskType}
+			if la.canPushToCop(kv.TiFlash) {
+				taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
+			}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)

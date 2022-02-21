@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// connPool is a lazy pool of gRPC channels.
+// ConnPool is a lazy pool of gRPC channels.
 // When `Get` called, it lazily allocates new connection if connection not full.
 // If it's full, then it will return allocated channels round-robin.
 type ConnPool struct {
@@ -71,11 +71,11 @@ func (p *ConnPool) get(ctx context.Context) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// newConnPool creates a new connPool by the specified conn factory function and capacity.
-func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *ConnPool {
+// NewConnPool creates a new connPool by the specified conn factory function and capacity.
+func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *ConnPool {
 	return &ConnPool{
-		cap:     cap,
-		conns:   make([]*grpc.ClientConn, 0, cap),
+		cap:     capacity,
+		conns:   make([]*grpc.ClientConn, 0, capacity),
 		newConn: newConn,
 
 		mu: sync.Mutex{},
@@ -105,7 +105,7 @@ func (conns *GRPCConns) GetGrpcConn(ctx context.Context, storeID uint64, tcpConc
 	return conns.conns[storeID].get(ctx)
 }
 
-func NewGRPCConns() GRPCConns {
-	cons := GRPCConns{conns: make(map[uint64]*ConnPool)}
-	return cons
+func NewGRPCConns() *GRPCConns {
+	conns := &GRPCConns{conns: make(map[uint64]*ConnPool)}
+	return conns
 }

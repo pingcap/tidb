@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -76,6 +77,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
+	NoZeroDate             bool
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
@@ -89,6 +91,9 @@ type StatementContext struct {
 	IgnoreNoPartition      bool
 	SkipPlanCache          bool
 	IgnoreExplainIDSuffix  bool
+	SkipUTF8Check          bool
+	SkipASCIICheck         bool
+	SkipUTF8MB4Check       bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -114,6 +119,7 @@ type StatementContext struct {
 			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
 		*/
 		records uint64
+		deleted uint64
 		updated uint64
 		copied  uint64
 		touched uint64
@@ -153,6 +159,9 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
+	// If the binding is not used by the stmt, the value is empty
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
@@ -195,14 +204,40 @@ type StatementContext struct {
 
 	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
 	EnableOptimizeTrace bool
-	// LogicalOptimizeTrace indicates the trace for optimize
-	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
-	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
-	WaitLockLeaseTime time.Duration
+	// OptimizeTracer indicates the tracer for optimize
+	OptimizeTracer *tracing.OptimizeTracer
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
+
+	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
+	WeakConsistency bool
+
+	StatsLoad struct {
+		// Timeout to wait for sync-load
+		Timeout time.Duration
+		// NeededColumns stores the columns whose stats are needed for planner.
+		NeededColumns []model.TableColumnID
+		// ResultCh to receive stats loading results
+		ResultCh chan model.TableColumnID
+		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
+		Fallback bool
+		// LoadStartTime is to record the load start time to calculate latency
+		LoadStartTime time.Time
+	}
+
+	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
+	SysdateIsNow bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -390,6 +425,20 @@ func (sc *StatementContext) AddRecordRows(rows uint64) {
 	sc.mu.records += rows
 }
 
+// DeletedRows is used to generate info message
+func (sc *StatementContext) DeletedRows() uint64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.deleted
+}
+
+// AddDeletedRows adds record rows.
+func (sc *StatementContext) AddDeletedRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.deleted += rows
+}
+
 // UpdatedRows is used to generate info message
 func (sc *StatementContext) UpdatedRows() uint64 {
 	sc.mu.Lock()
@@ -574,6 +623,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.affectedRows = 0
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
+	sc.mu.deleted = 0
 	sc.mu.updated = 0
 	sc.mu.copied = 0
 	sc.mu.touched = 0

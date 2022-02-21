@@ -23,8 +23,6 @@ import (
 )
 
 func TestNewPool(t *testing.T) {
-	t.Parallel()
-
 	pool := NewPool(1024)
 	require.Equal(t, 1024, pool.initCap)
 	require.NotNil(t, pool.varLenColPool)
@@ -35,8 +33,6 @@ func TestNewPool(t *testing.T) {
 }
 
 func TestPoolGetChunk(t *testing.T) {
-	t.Parallel()
-
 	initCap := 1024
 	pool := NewPool(initCap)
 
@@ -53,7 +49,7 @@ func TestPoolGetChunk(t *testing.T) {
 
 	chk := pool.GetChunk(fieldTypes)
 	require.NotNil(t, chk)
-	require.Equal(t, len(fieldTypes), chk.NumCols())
+	require.Len(t, fieldTypes, chk.NumCols())
 	require.Nil(t, chk.columns[0].elemBuf)
 	require.Nil(t, chk.columns[1].elemBuf)
 	require.Equal(t, getFixedLen(fieldTypes[2]), len(chk.columns[2].elemBuf))
@@ -72,8 +68,6 @@ func TestPoolGetChunk(t *testing.T) {
 }
 
 func TestPoolPutChunk(t *testing.T) {
-	t.Parallel()
-
 	initCap := 1024
 	pool := NewPool(initCap)
 

@@ -15,6 +15,7 @@
 package helper
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
@@ -32,7 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -682,6 +683,17 @@ func NewPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 	}
 }
 
+// FilterMemDBs filters memory databases in the input schemas.
+func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
+	for _, dbInfo := range oldSchemas {
+		if util.IsMemDB(dbInfo.Name.L) {
+			continue
+		}
+		schemas = append(schemas, dbInfo)
+	}
+	return
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -758,6 +770,11 @@ func FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	return
 }
 
+// BytesKeyToHex converts bytes key to hex key, it is exported only for test.
+func BytesKeyToHex(key []byte) string {
+	return bytesKeyToHex(key)
+}
+
 func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
@@ -769,10 +786,17 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	return &regionsInfo, err
 }
 
+// GetStoreRegionsInfo gets the region in given store.
+func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
 // GetRegionInfoByID gets the region information of the region ID by using PD's api.
 func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -917,13 +941,191 @@ type PDRegionStats struct {
 }
 
 // GetPDRegionStats get the RegionStats by tableID.
-func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexStats bool) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
-	startKey := tablecodec.EncodeTablePrefix(tableID)
+	var startKey, endKey []byte
+	if noIndexStats {
+		startKey = tablecodec.GenTableRecordPrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	} else {
+		startKey = tablecodec.EncodeTablePrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	}
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
+}
+
+// DeletePlacementRule is to delete placement rule for certain group.
+func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+		ruleID,
+	)
+
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("DeletePlacementRule returns error")
+	}
+	return nil
+}
+
+// SetPlacementRule is a helper function to set placement rule.
+func (h *Helper) SetPlacementRule(rule placement.Rule) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m, _ := json.Marshal(rule)
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+	)
+	buf := bytes.NewBuffer(m)
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("SetPlacementRule returns error")
+	}
+	return nil
+}
+
+// GetGroupRules to get all placement rule in a certain group.
+func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+	)
+
+	resp, err := util.InternalHTTPClient().Get(getURL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("GetGroupRules returns error")
+	}
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(resp.Body)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rules []placement.Rule
+	err = json.Unmarshal(buf.Bytes(), &rules)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return rules, nil
+}
+
+// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+func (h *Helper) PostAccelerateSchedule(tableID int64) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startKey := tablecodec.GenTableRecordPrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0])
+
+	input := map[string]string{
+		"start_key": url.QueryEscape(string(startKey)),
+		"end_key":   url.QueryEscape(string(endKey)),
+	}
+	v, err := json.Marshal(input)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	return nil
+}
+
+// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
@@ -936,16 +1138,93 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
+}
+
+// GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
+func GetTiFlashTableIDFromEndKey(endKey string) int64 {
+	e, _ := hex.DecodeString(endKey)
+	_, decodedEndKey, _ := codec.DecodeBytes(e, []byte{})
+	tableID := tablecodec.DecodeTableID(decodedEndKey)
+	tableID -= 1
+	return tableID
+}
+
+// ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
+func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
+	ns, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The count
+	ns = strings.Trim(ns, "\r\n\t")
+	n, err := strconv.ParseInt(ns, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The regions
+	regions, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regions = strings.Trim(regions, "\r\n\t")
+	splits := strings.Split(regions, " ")
+	realN := int64(0)
+	for _, s := range splits {
+		// For (`table`, `store`), has region `r`
+		if s == "" {
+			continue
+		}
+		realN += 1
+		r, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
+		} else {
+			(*regionReplica)[r] = 1
+		}
+	}
+	if n != realN {
+		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
+	}
+	return nil
+}
+
+// CollectTiFlashStatus query sync status of one table from TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
+func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	reader := bufio.NewReader(resp.Body)
+	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }

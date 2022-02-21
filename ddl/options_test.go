@@ -26,10 +26,12 @@ import (
 )
 
 func TestOptions(t *testing.T) {
-	t.Parallel()
-
 	client, err := clientv3.NewFromURL("test")
 	require.NoError(t, err)
+	defer func() {
+		err := client.Close()
+		require.NoError(t, err)
+	}()
 	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}

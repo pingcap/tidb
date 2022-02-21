@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -33,9 +34,19 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	return datums
 }
 
+func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
+	s := NewFMSketch(maxSize)
+	for _, value := range values {
+		err := s.InsertValue(sc, value)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+	}
+	return s, s.NDV(), nil
+}
+
 func SubTestSketch() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		maxSize := 1000
@@ -67,7 +78,6 @@ func SubTestSketch() func(*testing.T) {
 
 func SubTestSketchProtoConversion() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		maxSize := 1000
@@ -86,7 +96,6 @@ func SubTestSketchProtoConversion() func(*testing.T) {
 
 func SubTestFMSketchCoding() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		maxSize := 1000

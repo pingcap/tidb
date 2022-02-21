@@ -19,8 +19,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -28,20 +28,21 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testMetaBundleSuite{})
-
-type testMetaBundleSuite struct {
+type metaBundleSuite struct {
 	policy1 *model.PolicyInfo
 	policy2 *model.PolicyInfo
+	policy3 *model.PolicyInfo
 	tbl1    *model.TableInfo
 	tbl2    *model.TableInfo
 	tbl3    *model.TableInfo
 	tbl4    *model.TableInfo
 }
 
-func (s *testMetaBundleSuite) SetUpSuite(c *C) {
+func createMetaBundleSuite() *metaBundleSuite {
+	s := new(metaBundleSuite)
 	s.policy1 = &model.PolicyInfo{
 		ID:   11,
 		Name: model.NewCIStr("p1"),
@@ -57,6 +58,14 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r2",
 			Regions:       "r1,r2",
+		},
+		State: model.StatePublic,
+	}
+	s.policy3 = &model.PolicyInfo{
+		ID:   13,
+		Name: model.NewCIStr("p3"),
+		PlacementSettings: &model.PlacementSettings{
+			LeaderConstraints: "[+region=bj]",
 		},
 		State: model.StatePublic,
 	}
@@ -82,11 +91,6 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 					ID:   1002,
 					Name: model.NewCIStr("par2"),
 				},
-				{
-					ID:                  1003,
-					Name:                model.NewCIStr("par3"),
-					DirectPlacementOpts: &model.PlacementSettings{PrimaryRegion: "r3", Regions: "r3"},
-				},
 			},
 		},
 	}
@@ -105,183 +109,175 @@ func (s *testMetaBundleSuite) SetUpSuite(c *C) {
 					Name: model.NewCIStr("par1"),
 				},
 				{
-					ID:                  1002,
-					Name:                model.NewCIStr("par2"),
-					DirectPlacementOpts: &model.PlacementSettings{PrimaryRegion: "r2", Regions: "r2"},
-				},
-				{
-					ID:   1003,
-					Name: model.NewCIStr("par3"),
+					ID:   1002,
+					Name: model.NewCIStr("par2"),
 				},
 			},
 		},
 	}
 	s.tbl3 = &model.TableInfo{
-		ID:   103,
-		Name: model.NewCIStr("t3"),
-		DirectPlacementOpts: &model.PlacementSettings{
-			LeaderConstraints: "[+region=bj]",
-		},
+		ID:                 103,
+		Name:               model.NewCIStr("t3"),
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 13, Name: model.NewCIStr("p3")},
 	}
 	s.tbl4 = &model.TableInfo{
 		ID:   104,
 		Name: model.NewCIStr("t4"),
 	}
+	return s
 }
 
-func (s *testMetaBundleSuite) prepareMeta(c *C, store kv.Storage) {
-	c.Assert(kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		c.Assert(t.CreatePolicy(s.policy1), IsNil)
-		c.Assert(t.CreatePolicy(s.policy2), IsNil)
+func (s *metaBundleSuite) prepareMeta(t *testing.T, store kv.Storage) {
+	err := kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		require.NoError(t, m.CreatePolicy(s.policy1))
+		require.NoError(t, m.CreatePolicy(s.policy2))
+		require.NoError(t, m.CreatePolicy(s.policy3))
 		return nil
-	}), IsNil)
+	})
+	require.NoError(t, err)
 }
 
-func (s *testMetaBundleSuite) TestNewTableBundle(c *C) {
-	store := newMockStore(c)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
-	s.prepareMeta(c, store)
-	c.Assert(kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+func TestNewTableBundle(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s := createMetaBundleSuite()
+	s.prepareMeta(t, store)
+	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 
 		// tbl1
-		bundle, err := placement.NewTableBundle(t, s.tbl1)
-		c.Assert(err, IsNil)
-		s.checkTableBundle(c, s.tbl1, bundle)
+		bundle, err := placement.NewTableBundle(m, s.tbl1)
+		require.NoError(t, err)
+		s.checkTableBundle(t, s.tbl1, bundle)
 
 		// tbl2
-		bundle, err = placement.NewTableBundle(t, s.tbl2)
-		c.Assert(err, IsNil)
-		s.checkTableBundle(c, s.tbl2, bundle)
+		bundle, err = placement.NewTableBundle(m, s.tbl2)
+		require.NoError(t, err)
+		s.checkTableBundle(t, s.tbl2, bundle)
 
 		// tbl3
-		bundle, err = placement.NewTableBundle(t, s.tbl3)
-		c.Assert(err, IsNil)
-		s.checkTableBundle(c, s.tbl3, bundle)
+		bundle, err = placement.NewTableBundle(m, s.tbl3)
+		require.NoError(t, err)
+		s.checkTableBundle(t, s.tbl3, bundle)
 
 		// tbl4
-		bundle, err = placement.NewTableBundle(t, s.tbl4)
-		c.Assert(err, IsNil)
-		s.checkTableBundle(c, s.tbl4, bundle)
+		bundle, err = placement.NewTableBundle(m, s.tbl4)
+		require.NoError(t, err)
+		s.checkTableBundle(t, s.tbl4, bundle)
 
 		return nil
-	}), IsNil)
+	}))
 }
 
-func (s *testMetaBundleSuite) TestNewPartitionBundle(c *C) {
-	store := newMockStore(c)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
-	s.prepareMeta(c, store)
+func TestNewPartitionBundle(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	c.Assert(kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	s := createMetaBundleSuite()
+	s.prepareMeta(t, store)
+
+	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 
 		// tbl1.par0
-		bundle, err := placement.NewPartitionBundle(t, s.tbl1.Partition.Definitions[0])
-		c.Assert(err, IsNil)
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[0], bundle)
+		bundle, err := placement.NewPartitionBundle(m, s.tbl1.Partition.Definitions[0])
+		require.NoError(t, err)
+		s.checkPartitionBundle(t, s.tbl1.Partition.Definitions[0], bundle)
 
 		// tbl1.par1
-		bundle, err = placement.NewPartitionBundle(t, s.tbl1.Partition.Definitions[1])
-		c.Assert(err, IsNil)
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundle)
-
-		// tbl1.par3
-		bundle, err = placement.NewPartitionBundle(t, s.tbl1.Partition.Definitions[3])
-		c.Assert(err, IsNil)
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundle)
+		bundle, err = placement.NewPartitionBundle(m, s.tbl1.Partition.Definitions[1])
+		require.NoError(t, err)
+		s.checkPartitionBundle(t, s.tbl1.Partition.Definitions[1], bundle)
 
 		return nil
-	}), IsNil)
+	}))
 }
 
-func (s *testMetaBundleSuite) TestNewPartitionListBundles(c *C) {
-	store := newMockStore(c)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
-	s.prepareMeta(c, store)
+func TestNewPartitionListBundles(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	c.Assert(kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	s := createMetaBundleSuite()
+	s.prepareMeta(t, store)
 
-		bundles, err := placement.NewPartitionListBundles(t, s.tbl1.Partition.Definitions)
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 2)
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundles[0])
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundles[1])
+	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 
-		bundles, err = placement.NewPartitionListBundles(t, []model.PartitionDefinition{})
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 0)
+		bundles, err := placement.NewPartitionListBundles(m, s.tbl1.Partition.Definitions)
+		require.NoError(t, err)
+		require.Len(t, bundles, 1)
+		s.checkPartitionBundle(t, s.tbl1.Partition.Definitions[1], bundles[0])
 
-		bundles, err = placement.NewPartitionListBundles(t, []model.PartitionDefinition{
+		bundles, err = placement.NewPartitionListBundles(m, []model.PartitionDefinition{})
+		require.NoError(t, err)
+		require.Len(t, bundles, 0)
+
+		bundles, err = placement.NewPartitionListBundles(m, []model.PartitionDefinition{
 			s.tbl1.Partition.Definitions[0],
 			s.tbl1.Partition.Definitions[2],
 		})
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 0)
+		require.NoError(t, err)
+		require.Len(t, bundles, 0)
 
 		return nil
-	}), IsNil)
+	}))
 }
 
-func (s *testMetaBundleSuite) TestNewFullTableBundles(c *C) {
-	store := newMockStore(c)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
-	s.prepareMeta(c, store)
+func TestNewFullTableBundles(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	c.Assert(kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	s := createMetaBundleSuite()
+	s.prepareMeta(t, store)
 
-		bundles, err := placement.NewFullTableBundles(t, s.tbl1)
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 3)
-		s.checkTableBundle(c, s.tbl1, bundles[0])
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[1], bundles[1])
-		s.checkPartitionBundle(c, s.tbl1.Partition.Definitions[3], bundles[2])
+	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 
-		bundles, err = placement.NewFullTableBundles(t, s.tbl2)
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 2)
-		s.checkPartitionBundle(c, s.tbl2.Partition.Definitions[0], bundles[0])
-		s.checkPartitionBundle(c, s.tbl2.Partition.Definitions[2], bundles[1])
+		bundles, err := placement.NewFullTableBundles(m, s.tbl1)
+		require.NoError(t, err)
+		require.Len(t, bundles, 2)
+		s.checkTableBundle(t, s.tbl1, bundles[0])
+		s.checkPartitionBundle(t, s.tbl1.Partition.Definitions[1], bundles[1])
 
-		bundles, err = placement.NewFullTableBundles(t, s.tbl3)
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 1)
-		s.checkTableBundle(c, s.tbl3, bundles[0])
+		bundles, err = placement.NewFullTableBundles(m, s.tbl2)
+		require.NoError(t, err)
+		require.Len(t, bundles, 1)
+		s.checkPartitionBundle(t, s.tbl2.Partition.Definitions[0], bundles[0])
 
-		bundles, err = placement.NewFullTableBundles(t, s.tbl4)
-		c.Assert(err, IsNil)
-		c.Assert(len(bundles), Equals, 0)
+		bundles, err = placement.NewFullTableBundles(m, s.tbl3)
+		require.NoError(t, err)
+		require.Len(t, bundles, 1)
+		s.checkTableBundle(t, s.tbl3, bundles[0])
+
+		bundles, err = placement.NewFullTableBundles(m, s.tbl4)
+		require.NoError(t, err)
+		require.Len(t, bundles, 0)
 
 		return nil
-	}), IsNil)
+	}))
 }
 
-func (s *testMetaBundleSuite) checkTwoJSONObjectEquals(c *C, expected interface{}, got interface{}) {
+func (s *metaBundleSuite) checkTwoJSONObjectEquals(t *testing.T, expected interface{}, got interface{}) {
 	expectedJSON, err := json.Marshal(expected)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	expectedStr := string(expectedJSON)
 
 	gotJSON, err := json.Marshal(got)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	gotStr := string(gotJSON)
 
-	c.Assert(gotStr, Equals, expectedStr)
+	require.Equal(t, expectedStr, gotStr)
 }
 
-func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *placement.Bundle) {
-	if tbl.PlacementPolicyRef == nil && tbl.DirectPlacementOpts == nil {
-		c.Assert(got, IsNil)
+func (s *metaBundleSuite) checkTableBundle(t *testing.T, tbl *model.TableInfo, got *placement.Bundle) {
+	if tbl.PlacementPolicyRef == nil {
+		require.Nil(t, got)
 		return
 	}
 
@@ -289,7 +285,7 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 		ID:       fmt.Sprintf("TiDB_DDL_%d", tbl.ID),
 		Index:    placement.RuleIndexTable,
 		Override: true,
-		Rules:    s.expectedRules(c, tbl.PlacementPolicyRef, tbl.DirectPlacementOpts),
+		Rules:    s.expectedRules(t, tbl.PlacementPolicyRef),
 	}
 
 	for idx, rule := range expected.Rules {
@@ -302,7 +298,7 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 
 	if tbl.Partition != nil {
 		for _, par := range tbl.Partition.Definitions {
-			rules := s.expectedRules(c, tbl.PlacementPolicyRef, tbl.DirectPlacementOpts)
+			rules := s.expectedRules(t, tbl.PlacementPolicyRef)
 			for idx, rule := range rules {
 				rule.GroupID = expected.ID
 				rule.Index = placement.RuleIndexPartition
@@ -314,12 +310,12 @@ func (s *testMetaBundleSuite) checkTableBundle(c *C, tbl *model.TableInfo, got *
 		}
 	}
 
-	s.checkTwoJSONObjectEquals(c, expected, got)
+	s.checkTwoJSONObjectEquals(t, expected, got)
 }
 
-func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefinition, got *placement.Bundle) {
-	if def.PlacementPolicyRef == nil && def.DirectPlacementOpts == nil {
-		c.Assert(got, IsNil)
+func (s *metaBundleSuite) checkPartitionBundle(t *testing.T, def model.PartitionDefinition, got *placement.Bundle) {
+	if def.PlacementPolicyRef == nil {
+		require.Nil(t, got)
 		return
 	}
 
@@ -327,7 +323,7 @@ func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefi
 		ID:       fmt.Sprintf("TiDB_DDL_%d", def.ID),
 		Index:    placement.RuleIndexPartition,
 		Override: true,
-		Rules:    s.expectedRules(c, def.PlacementPolicyRef, def.DirectPlacementOpts),
+		Rules:    s.expectedRules(t, def.PlacementPolicyRef),
 	}
 
 	for idx, rule := range expected.Rules {
@@ -338,42 +334,31 @@ func (s *testMetaBundleSuite) checkPartitionBundle(c *C, def model.PartitionDefi
 		rule.EndKeyHex = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(def.ID+1)))
 	}
 
-	s.checkTwoJSONObjectEquals(c, expected, got)
+	s.checkTwoJSONObjectEquals(t, expected, got)
 }
 
-func (s *testMetaBundleSuite) expectedRules(c *C, ref *model.PolicyRefInfo, direct *model.PlacementSettings) []*placement.Rule {
-	c.Assert(ref != nil && direct != nil, IsFalse)
-
-	var settings *model.PlacementSettings
-	if ref != nil {
-		var policy *model.PolicyInfo
-		switch ref.ID {
-		case s.policy1.ID:
-			policy = s.policy1
-		case s.policy2.ID:
-			policy = s.policy2
-		default:
-			c.FailNow()
-		}
-		c.Assert(ref.Name, Equals, policy.Name)
-		settings = policy.PlacementSettings
-	}
-
-	if direct != nil {
-		settings = direct
-	}
-
-	if settings == nil {
+func (s *metaBundleSuite) expectedRules(t *testing.T, ref *model.PolicyRefInfo) []*placement.Rule {
+	if ref == nil {
 		return []*placement.Rule{}
 	}
 
-	bundle, err := placement.NewBundleFromOptions(settings)
-	c.Assert(err, IsNil)
-	return bundle.Rules
-}
+	var policy *model.PolicyInfo
+	switch ref.ID {
+	case s.policy1.ID:
+		policy = s.policy1
+	case s.policy2.ID:
+		policy = s.policy2
+	case s.policy3.ID:
+		policy = s.policy3
+	default:
+		t.FailNow()
+	}
 
-func newMockStore(c *C) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	return store
+	require.Equal(t, policy.Name, ref.Name)
+	settings := policy.PlacementSettings
+
+	bundle, err := placement.NewBundleFromOptions(settings)
+	require.NoError(t, err)
+
+	return bundle.Rules
 }

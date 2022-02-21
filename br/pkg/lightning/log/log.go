@@ -91,7 +91,7 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	}
 	filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		// Filter logs from TiDB and PD.
-		return NewFilterCore(core, "github.com/tikv/pd/")
+		return NewFilterCore(core, "github.com/pingcap/tidb/br/")
 	})
 	// "-" is a special config for log to stdout.
 	if len(cfg.File) > 0 && cfg.File != "-" {

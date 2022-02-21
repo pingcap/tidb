@@ -36,7 +36,6 @@ import (
 )
 
 func TestRowDecoder(t *testing.T) {
-	t.Parallel()
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
@@ -62,7 +61,7 @@ func TestRowDecoder(t *testing.T) {
 		decodeColsMap2[col.ID] = tpExpr
 		if col.GeneratedExprString != "" {
 			expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, col.GeneratedExprString, tblInfo, &col.FieldType)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			tpExpr.GenExpr = expr
 		}
 		decodeColsMap[col.ID] = tpExpr
@@ -71,7 +70,7 @@ func TestRowDecoder(t *testing.T) {
 	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
@@ -79,15 +78,15 @@ func TestRowDecoder(t *testing.T) {
 	})
 
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = time3.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	t3 := types.NewTimeDatum(time3)
 
 	testRows := []struct {
@@ -118,11 +117,11 @@ func TestRowDecoder(t *testing.T) {
 			c7.Flag |= mysql.UnsignedFlag
 		}
 		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.NotNil(t, bs)
 
 		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
 		// So when decode, we can't get the primary-key value from raw data, then ignore check the value of the
@@ -140,7 +139,7 @@ func TestRowDecoder(t *testing.T) {
 		}
 		// test decode with no generated column.
 		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		for k, v := range r2 {
 			v1, ok := r[k]
 			require.True(t, ok)
@@ -152,7 +151,6 @@ func TestRowDecoder(t *testing.T) {
 }
 
 func TestClusterIndexRowDecoder(t *testing.T) {
-	t.Parallel()
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
@@ -180,7 +178,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	testRows := []struct {
 		cols   []int64
@@ -196,11 +194,11 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	rd := rowcodec.Encoder{Enable: true}
 	for _, row := range testRows {
 		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.NotNil(t, bs)
 
 		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 
 		for i, col := range cols {
 			v, ok := r[col.ID]

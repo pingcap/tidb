@@ -226,7 +226,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			}
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			failpoint.Inject("ChaosBrokenMySQLConn", func(_ failpoint.Value) {
+			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 				failpoint.Return(0, errors.New("connection is closed"))
 			})
 
