@@ -2182,8 +2182,7 @@ func TestIssue30100(t *testing.T) {
 	tk.MustExec("set @a=0;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	// If the plan contains the tableDual, it can not be cached.
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestPartitionTable(t *testing.T) {

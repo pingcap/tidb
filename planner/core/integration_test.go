@@ -2521,7 +2521,7 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int,c varchar(11),d datetime,b double)")
+	tk.MustExec("create table t(id int signed, id2 int unsigned ,c varchar(11), d datetime, b double)")
 	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
@@ -2530,8 +2530,22 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
+
 	rows[1][2] = "left(test.t.c, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "mod(test.t.id, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id2);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id);").
+		CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "mod(test.t.id2, test.t.id2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id2);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "sin(cast(test.t.id, double BINARY))"
@@ -3612,6 +3626,28 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk.MustQuery(`select * from tx PARTITION(p0)`).Check(testkit.Rows())
 	tk.MustQuery(`select * from tx`).Check(testkit.Rows())
 	tk.MustExec(`rollback`)
+}
+
+func (s *testIntegrationSuite) TestIssue32428(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `t1` (`a` enum('aa') DEFAULT NULL, KEY `k` (`a`))")
+	tk.MustExec("insert into t1 values('aa')")
+	tk.MustExec("insert into t1 values(null)")
+	tk.MustQuery("select a from t1 where a<=>'aa'").Check(testkit.Rows("aa"))
+	tk.MustQuery("select a from t1 where a<=>null").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec(`CREATE TABLE IDT_MULTI15860STROBJSTROBJ (
+	  COL1 enum('aa') DEFAULT NULL,
+	  COL2 int(41) DEFAULT NULL,
+	  COL3 year(4) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2),
+	  KEY U_M_COL5 (COL3,COL2))`)
+	tk.MustExec(`insert into IDT_MULTI15860STROBJSTROBJ  values("aa", 1013610488, 1982)`)
+	tk.MustQuery(`SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = "aa"`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`prepare stmt from "SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = ?"`)
+	tk.MustExec(`set @a="aa"`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows()) // empty result
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
@@ -5500,6 +5536,38 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 		"TableReader 10000.00 root  data:TableFullScan",
 		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database natural_join_update")
+	defer tk.MustExec("drop database natural_join_update")
+	tk.MustExec("use natural_join_update")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("update t1 as a natural join t1 b SET a.a = 2, b.b = 3")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2 3", "2 3"))
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int primary key, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 b SET a.a = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int, b int) partition by hash (a) partitions 3")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 b SET a.a = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (A int, b int) partition by hash (b) partitions 3")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	_, err := tk.Exec(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".planner:1706.Primary key/partition key update is not allowed since the table is updated both as 'a' and 'B'.")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE)")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
+	tk.MustExec("drop table t1")
 }
 
 func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
