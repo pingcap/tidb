@@ -237,6 +237,7 @@ func (helper extractHelper) extractLikePatternCol(
 	predicates []expression.Expression,
 	extractColName string,
 	toLower bool,
+	needLike2Regexp bool,
 ) (
 	remained []expression.Expression,
 	patterns []string,
@@ -263,13 +264,13 @@ func (helper extractHelper) extractLikePatternCol(
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
-		if fn.FuncName.L == ast.LogicOr {
-			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
+		if fn.FuncName.L == ast.LogicOr && !toLower {
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		}
 		if canBuildPattern && toLower {
-			pattern = "(?i)" + pattern
+			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
@@ -284,6 +285,7 @@ func (helper extractHelper) extractOrLikePattern(
 	orFunc *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -300,7 +302,7 @@ func (helper extractHelper) extractOrLikePattern(
 			return false, ""
 		}
 
-		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		if !ok {
 			return false, ""
 		}
@@ -313,6 +315,7 @@ func (helper extractHelper) extractLikePattern(
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -328,7 +331,10 @@ func (helper extractHelper) extractLikePattern(
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 		case ast.Like:
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			if needLike2Regexp {
+				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			}
+			return true, datums[0].GetString()
 		case ast.Regexp:
 			return true, datums[0].GetString()
 		default:
@@ -682,7 +688,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false)
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false, true)
 	e.Patterns = patterns
 	return remained
 }
@@ -1506,9 +1512,9 @@ func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
 	if e.SkipRequest {
 		return
 	}
-	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true)
-	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true)
-	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true)
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true, false)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true, false)
+	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true, false)
 
 	e.ColumnName = columnName
 	e.TableName = tableName

@@ -1598,23 +1598,23 @@ func TestColumns(t *testing.T) {
 		},
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
-			tableNamePattern: []string{"(?i)T.*"},
+			tableNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
-			columnNamePattern: []string{"(?i)T.*"},
+			columnNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
-			columnNamePattern: []string{"(?i)i.*"},
+			columnNamePattern: []string{"i%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
-			columnNamePattern: []string{"(?i)abc.*|def.*"},
+			columnNamePattern: []string{},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
-			columnNamePattern: []string{"(?i)abc.*", "(?i).*def"},
+			columnNamePattern: []string{"abc%", "%def"},
 		},
 	}
 	parser := parser.New()
@@ -1659,15 +1659,17 @@ func TestPredicateQuery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, abclmn int);")
+	tk.MustExec("create table t(id int, abclmn int,DATETIME_PRECISION int);")
 	tk.MustExec("create table abclmn(a int);")
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'I%' or column_name like '%D')").Check(testkit.Rows("id"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'i%' or column_name like '%d')").Check(testkit.Rows("id"))
 	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%lmn')").Check(testkit.Rows("abclmn"))
-	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+	result := tk.MustQuery("select TABLE_NAME, column_name from information_schema.columns where table_schema = 'TEST' and column_name like '%time';")
+	require.Len(t, result.Rows(), 0)
+	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
 	tk.MustQuery("describe t id").Check(testkit.Rows("id int(11) YES  <nil> "))
 	tk.MustQuery("describe t ID").Check(testkit.Rows("id int(11) YES  <nil> "))
 	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
@@ -1689,7 +1691,7 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
 
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
 	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
