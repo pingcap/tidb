@@ -43,12 +43,22 @@ func (b *builtinLowerSig) vectorized() bool {
 }
 
 func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
 		return err
 	}
-
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(b.encoding.ToLower(result.GetString(i)))
+		}
 	}
 
 	return nil
@@ -143,12 +153,22 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 }
 
 func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
 		return err
 	}
-
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(b.encoding.ToUpper(result.GetString(i)))
+		}
 	}
 	return nil
 }
