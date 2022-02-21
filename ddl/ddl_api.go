@@ -245,12 +245,9 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		if err != nil {
 			oneFail = tbl.ID
 			fail += 1
-		} else {
-			succ += 1
-		}
-		if err != nil {
 			logutil.BgLogger().Warn("processing schema table error", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.Error(err))
 		} else {
+			succ += 1
 			logutil.BgLogger().Info("processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.Error(err))
 		}
 	}
