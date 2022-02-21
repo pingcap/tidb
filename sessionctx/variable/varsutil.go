@@ -505,4 +505,5 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.MD5:        {},
 	ast.Reverse:    {},
 	ast.VitessHash: {},
+	ast.TiDBShard:  {},
 }
