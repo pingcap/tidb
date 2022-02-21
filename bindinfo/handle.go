@@ -132,7 +132,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 
-	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
 	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
@@ -696,7 +696,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		tables:    make(map[stmtctx.TableEntry]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {

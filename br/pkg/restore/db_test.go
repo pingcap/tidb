@@ -158,10 +158,10 @@ func TestCreateTablesInDb(t *testing.T) {
 		ddlJobMap[restore.UniqueTableName{dbSchema.Name.String(), tables[i].Info.Name.String()}] = false
 	}
 	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = db.CreateTables(context.Background(), tables, ddlJobMap)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 }
 

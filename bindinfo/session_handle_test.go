@@ -106,7 +106,7 @@ func TestSessionBinding(t *testing.T) {
 		metrics.BindMemoryUsage.Reset()
 
 		_, err := tk.Exec("create session " + testSQL.createSQL)
-		require.Nil(t, err, "err %v", err)
+		require.NoError(t, err, "err %v", err)
 
 		if testSQL.overlaySQL != "" {
 			_, err = tk.Exec("create session " + testSQL.overlaySQL)

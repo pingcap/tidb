@@ -180,10 +180,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	return nil
 }
 
-func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (new []*util.ByItems,
+func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
-	new = make([]*util.ByItems, 0, len(old))
+	byItems = make([]*util.ByItems, 0, len(old))
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
@@ -196,14 +196,14 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (n
 		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				pruned = false
-				new = append(new, byItem)
+				byItems = append(byItems, byItem)
 			}
 		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false
 			parentUsedCols = append(parentUsedCols, cols...)
-			new = append(new, byItem)
+			byItems = append(byItems, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)
@@ -310,6 +310,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
+			// If ds has a shard index, and the column is generated column by `tidb_shard()`
+			// it can't prune the generated column of shard index
+			if ds.containExprPrefixUk &&
+				expression.GcColumnExprIsTidbShard(ds.schema.Columns[i].VirtualExpr) {
+				continue
+			}
 			prunedColumns = append(prunedColumns, ds.schema.Columns[i])
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
