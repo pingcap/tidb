@@ -16,14 +16,14 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/table"
-	"github.com/stretchr/testify/require"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 const (
