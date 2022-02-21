@@ -401,6 +401,62 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
+<<<<<<< HEAD
+=======
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+	res := make([]*point, 0, len(ft.Elems)*2)
+	appendPointFunc := func(d types.Datum) {
+		res = append(res, &point{value: d, excl: false, start: true})
+		res = append(res, &point{value: d, excl: false, start: false})
+	}
+
+	if op == ast.NullEQ && val.IsNull() {
+		res = append(res, &point{start: true}, &point{}) // null point
+	}
+
+	tmpEnum := types.Enum{}
+	for i := 0; i <= len(ft.Elems); i++ {
+		if i == 0 {
+			tmpEnum = types.Enum{}
+		} else {
+			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Value = uint64(i)
+		}
+
+		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
+		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.Collate)); err == nil {
+			switch op {
+			case ast.LT:
+				if v < 0 {
+					appendPointFunc(d)
+				}
+			case ast.LE:
+				if v <= 0 {
+					appendPointFunc(d)
+				}
+			case ast.GT:
+				if v > 0 {
+					appendPointFunc(d)
+				}
+			case ast.GE:
+				if v >= 0 {
+					appendPointFunc(d)
+				}
+			case ast.EQ, ast.NullEQ:
+				if v == 0 {
+					appendPointFunc(d)
+				}
+			case ast.NE:
+				if v != 0 {
+					appendPointFunc(d)
+				}
+			}
+		}
+	}
+	return res
+}
+
+>>>>>>> 1b04c3b05... planner: fix wrong range calculation for Nulleq function on Enum values (#32440)
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []*point {
 	if isNot == 1 {
 		if keepNull {
