@@ -55,7 +55,11 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	result.ReserveString(n)
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
-		result.AppendString(enc.ToLower(buf.GetString(i)))
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(enc.ToLower(buf.GetString(i)))
+		}
 	}
 	return nil
 }
@@ -163,7 +167,11 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	result.ReserveString(n)
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
-		result.AppendString(enc.ToUpper(buf.GetString(i)))
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(enc.ToUpper(buf.GetString(i)))
+		}
 	}
 	return nil
 }
