@@ -31,7 +31,6 @@ import (
 )
 
 func TestDatum(t *testing.T) {
-	t.Parallel()
 	values := []interface{}{
 		int64(1),
 		uint64(1),
@@ -62,7 +61,6 @@ func testDatumToBool(t *testing.T, in interface{}, res int) {
 }
 
 func TestToBool(t *testing.T) {
-	t.Parallel()
 	testDatumToBool(t, 0, 0)
 	testDatumToBool(t, int64(0), 0)
 	testDatumToBool(t, uint64(0), 0)
@@ -123,7 +121,6 @@ func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 }
 
 func TestToInt64(t *testing.T) {
-	t.Parallel()
 	testDatumToInt64(t, "0", int64(0))
 	testDatumToInt64(t, 0, int64(0))
 	testDatumToInt64(t, int64(0), int64(0))
@@ -152,8 +149,39 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
+func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
+	d := NewDatum(val)
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+
+	ft := NewFieldType(mysql.TypeLong)
+	ft.Flag |= mysql.UnsignedFlag
+	converted, err := d.ConvertTo(sc, ft)
+
+	if hasError {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, KindUint64, converted.Kind())
+	require.Equal(t, uint64(expect), converted.GetUint64())
+}
+
+func TestToUint32(t *testing.T) {
+	// test overflow
+	testDatumToUInt32(t, 5000000000, 4294967295, true)
+	testDatumToUInt32(t, int64(-1), 4294967295, true)
+	testDatumToUInt32(t, "5000000000", 4294967295, true)
+
+	testDatumToUInt32(t, 12345, 12345, false)
+	testDatumToUInt32(t, int64(0), 0, false)
+	testDatumToUInt32(t, 2147483648, 2147483648, false)
+	testDatumToUInt32(t, Enum{Name: "a", Value: 1}, 1, false)
+	testDatumToUInt32(t, Set{Name: "a", Value: 1}, 1, false)
+}
+
 func TestConvertToFloat(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		d      Datum
 		tp     byte
@@ -196,7 +224,7 @@ func TestConvertToFloat(t *testing.T) {
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
-func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
@@ -206,7 +234,6 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 }
 
 func TestToJSON(t *testing.T) {
-	t.Parallel()
 	ft := NewFieldType(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
@@ -221,6 +248,7 @@ func TestToJSON(t *testing.T) {
 		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
+		{NewBinaryLiteralDatum([]byte{0x81}), ``, false},
 
 		// can not parse JSON from this string, so error occurs.
 		{NewStringDatum("hello, 世界"), "", false},
@@ -246,7 +274,6 @@ func TestToJSON(t *testing.T) {
 }
 
 func TestIsNull(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		data   interface{}
 		isnull bool
@@ -269,7 +296,6 @@ func testIsNull(t *testing.T, data interface{}, isnull bool) {
 }
 
 func TestToBytes(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -290,7 +316,6 @@ func TestToBytes(t *testing.T) {
 }
 
 func TestComputePlusAndMinus(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
@@ -319,7 +344,6 @@ func TestComputePlusAndMinus(t *testing.T) {
 }
 
 func TestCloneDatum(t *testing.T) {
-	t.Parallel()
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -366,7 +390,6 @@ func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 }
 
 func TestEstimatedMemUsage(t *testing.T) {
-	t.Parallel()
 	b := []byte{'a', 'b', 'c', 'd'}
 	enum := Enum{Name: "a", Value: 1}
 	datumArray := []Datum{
@@ -386,7 +409,6 @@ func TestEstimatedMemUsage(t *testing.T) {
 }
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	sc.OverflowAsWarning = true
@@ -501,7 +523,6 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 }
 
 func TestStringToMysqlBit(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte

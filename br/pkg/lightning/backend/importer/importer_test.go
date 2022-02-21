@@ -79,7 +79,6 @@ func (s *importerSuite) tearDownTest() {
 }
 
 func TestWriteRows(t *testing.T) {
-	t.Parallel()
 	s := createImportSuite(t)
 	defer s.tearDownTest()
 
@@ -117,7 +116,6 @@ func TestWriteRows(t *testing.T) {
 }
 
 func TestWriteHeadSendFailed(t *testing.T) {
-	t.Parallel()
 	s := createImportSuite(t)
 	defer s.tearDownTest()
 
@@ -142,7 +140,6 @@ func TestWriteHeadSendFailed(t *testing.T) {
 }
 
 func TestWriteBatchSendFailed(t *testing.T) {
-	t.Parallel()
 	s := createImportSuite(t)
 	defer s.tearDownTest()
 
@@ -174,7 +171,6 @@ func TestWriteBatchSendFailed(t *testing.T) {
 }
 
 func TestWriteCloseFailed(t *testing.T) {
-	t.Parallel()
 	s := createImportSuite(t)
 	defer s.tearDownTest()
 
@@ -206,7 +202,6 @@ func TestWriteCloseFailed(t *testing.T) {
 }
 
 func TestCloseImportCleanupEngine(t *testing.T) {
-	t.Parallel()
 	s := createImportSuite(t)
 	defer s.tearDownTest()
 

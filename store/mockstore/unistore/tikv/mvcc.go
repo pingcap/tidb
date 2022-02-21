@@ -122,7 +122,7 @@ type lockEntryHdr struct {
 
 func (store *MVCCStore) dumpMemLocks() error {
 	tmpFileName := store.dir + "/lock_store.tmp"
-	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -293,17 +293,23 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 		resp.Value = val
 		resp.CommitTs = dbMeta.CommitTS()
 	}
-	if req.ReturnValues {
+	if req.ReturnValues || req.CheckExistence {
 		for _, item := range items {
 			if item == nil {
-				resp.Values = append(resp.Values, nil)
+				if req.ReturnValues {
+					resp.Values = append(resp.Values, nil)
+				}
+				resp.NotFounds = append(resp.NotFounds, true)
 				continue
 			}
 			val, err1 := item.ValueCopy(nil)
 			if err1 != nil {
 				return nil, err1
 			}
-			resp.Values = append(resp.Values, val)
+			if req.ReturnValues {
+				resp.Values = append(resp.Values, val)
+			}
+			resp.NotFounds = append(resp.NotFounds, len(val) == 0)
 		}
 	}
 	return nil, err
@@ -852,6 +858,36 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		Primary:     req.PrimaryLock,
 		Value:       m.Value,
 		Secondaries: req.Secondaries,
+	}
+	// Note that this is not fully consistent with TiKV. TiKV doesn't always get the value from Write CF. In
+	// AssertionLevel_Fast, TiKV skips checking assertion if Write CF is not read, in order not to harm the performance.
+	// However, unistore can always check it. It's better not to assume the store's behavior about assertion when the
+	// mode is set to AssertionLevel_Fast.
+	if req.AssertionLevel != kvrpcpb.AssertionLevel_Off {
+		if item == nil || item.IsEmpty() {
+			if m.Assertion == kvrpcpb.Assertion_Exist {
+				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
+				return nil, &ErrAssertionFailed{
+					StartTS:          req.StartVersion,
+					Key:              m.Key,
+					Assertion:        m.Assertion,
+					ExistingStartTS:  0,
+					ExistingCommitTS: 0,
+				}
+			}
+		} else {
+			if m.Assertion == kvrpcpb.Assertion_NotExist {
+				log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
+				userMeta := mvcc.DBUserMeta(item.UserMeta())
+				return nil, &ErrAssertionFailed{
+					StartTS:          req.StartVersion,
+					Key:              m.Key,
+					Assertion:        m.Assertion,
+					ExistingStartTS:  userMeta.StartTS(),
+					ExistingCommitTS: userMeta.CommitTS(),
+				}
+			}
+		}
 	}
 	var err error
 	lock.Op = uint8(m.Op)
@@ -1410,33 +1446,43 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 
 // Get implements the MVCCStore interface.
 func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
-	lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
-	if err != nil {
-		return nil, err
-	}
-	if len(lockPairs) != 0 {
-		return getValueFromLock(lockPairs[0].lock), nil
+	if reqCtx.isSnapshotIsolation() {
+		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		if err != nil {
+			return nil, err
+		}
+		if len(lockPairs) != 0 {
+			return getValueFromLock(lockPairs[0].lock), nil
+		}
 	}
 	val, err := reqCtx.getDBReader().Get(key, version)
+	if val == nil {
+		return nil, err
+	}
 	return safeCopy(val), err
 }
 
 // BatchGet implements the MVCCStore interface.
 func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint64) []*kvrpcpb.KvPair {
 	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
-	remain := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
-		if err != nil {
-			pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
-		} else if len(lockPairs) != 0 {
-			value := getValueFromLock(lockPairs[0].lock)
-			if value != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+	var remain [][]byte
+	if reqCtx.isSnapshotIsolation() {
+		remain = make([][]byte, 0, len(keys))
+		for _, key := range keys {
+			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+			if err != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
+			} else if len(lockPairs) != 0 {
+				value := getValueFromLock(lockPairs[0].lock)
+				if value != nil {
+					pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+				}
+			} else {
+				remain = append(remain, key)
 			}
-		} else {
-			remain = append(remain, key)
 		}
+	} else {
+		remain = keys
 	}
 	batchGetFunc := func(key, value []byte, err error) {
 		if len(value) != 0 {
@@ -1532,7 +1578,9 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
 	if req.SampleStep == 0 {
-		lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		if reqCtx.isSnapshotIsolation() {
+			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		}
 	} else {
 		limit = req.SampleStep * limit
 	}

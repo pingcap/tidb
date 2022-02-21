@@ -28,6 +28,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -85,7 +86,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	var t TableCommon
 	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		ret, err := NewCachedTable(&t)
+		ret, err := newCachedTable(&t)
 		if err != nil {
 			return nil
 		}
@@ -153,7 +154,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			return nil, err
 		}
 		if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return NewCachedTable(&t)
+			return newCachedTable(&t)
 		}
 		return &t, nil
 	}
@@ -428,6 +429,27 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
+	}
+
+	failpoint.Inject("updateRecordForceAssertNotExist", func() {
+		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
+		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
+		// override it.
+		if sctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Info("[failpoint] force asserting not exist on UpdateRecord", zap.Uint64("startTS", txn.StartTS()))
+			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+				failpoint.Return(err)
+			}
+		}
+	})
+	if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+		return err
+	}
+
+	if sessVars.EnableMutationChecker {
+		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
@@ -829,6 +851,26 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return nil, err
 	}
 
+	failpoint.Inject("addRecordForceAssertExist", func() {
+		// Assert the key exists while it actually doesn't. This is helpful to test if assertion takes effect.
+		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
+		// override it.
+		if sctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Info("[failpoint] force asserting exist on AddRecord", zap.Uint64("startTS", txn.StartTS()))
+			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+				failpoint.Return(nil, err)
+			}
+		}
+	})
+	if setPresume && !txn.IsPessimistic() {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -842,6 +884,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	h, err := t.addIndices(sctx, recordID, r, txn, createIdxOpts)
 	if err != nil {
 		return h, err
+	}
+
+	if sessVars.EnableMutationChecker {
+		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	memBuffer.Release(sh)
@@ -1055,15 +1103,20 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	err := t.removeRowData(ctx, h)
-	if err != nil {
-		return err
-	}
-
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
+
+	memBuffer := txn.GetMemBuffer()
+	sh := memBuffer.Staging()
+	defer memBuffer.Cleanup(sh)
+
+	err = t.removeRowData(ctx, h)
+	if err != nil {
+		return err
+	}
+
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
 			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
@@ -1091,6 +1144,15 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
+	sessVars := ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	if sessVars.EnableMutationChecker {
+		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	memBuffer.Release(sh)
+
 	if shouldWriteBinlog(ctx, t.meta) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -1116,7 +1178,6 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return nil
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
-	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
 		if err != nil {
@@ -1206,6 +1267,21 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	}
 
 	key := t.RecordKey(h)
+	failpoint.Inject("removeRecordForceAssertNotExist", func() {
+		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
+		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
+		// override it.
+		if ctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Info("[failpoint] force asserting not exist on RemoveRecord", zap.Uint64("startTS", txn.StartTS()))
+			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+				failpoint.Return(err)
+			}
+		}
+	})
+	err = txn.SetAssertion(key, kv.SetAssertExist)
+	if err != nil {
+		return err
+	}
 	return txn.Delete(key)
 }
 

@@ -30,8 +30,6 @@ import (
 )
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
-	t.Parallel()
-
 	ret := &types.FieldType{}
 	a := &types.FieldType{
 		Decimal: 1,
@@ -96,7 +94,6 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 }
 
 func TestArithmeticPlus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -193,7 +190,6 @@ func TestArithmeticPlus(t *testing.T) {
 }
 
 func TestArithmeticMinus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -272,7 +268,6 @@ func TestArithmeticMinus(t *testing.T) {
 }
 
 func TestArithmeticMultiply(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -329,7 +324,6 @@ func TestArithmeticMultiply(t *testing.T) {
 }
 
 func TestArithmeticDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	testCases := []struct {
@@ -399,7 +393,6 @@ func TestArithmeticDivide(t *testing.T) {
 }
 
 func TestArithmeticIntDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -515,7 +508,6 @@ func TestArithmeticIntDivide(t *testing.T) {
 }
 
 func TestArithmeticMod(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -668,7 +660,6 @@ func TestArithmeticMod(t *testing.T) {
 }
 
 func TestDecimalErrOverflow(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []float64

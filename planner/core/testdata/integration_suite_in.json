@@ -381,5 +381,51 @@
       "select a from ta group by @n:=@n+1",
       "select a from ta group by @n:=@n+a"
     ]
+  },
+  {
+	  "name": "TestIssue30200",
+	  "cases": [
+		// to_base64 and from_base64 has not been pushed to TiKV or TiFlash.
+		// We expect a Selection will be added above IndexMerge.
+		"select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';",
+
+		// `left` has not been pushed to TiKV, but it has been pushed to TiFlash.
+		// We expect a Selection will be added above IndexMerge.
+		"select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;",
+		
+		// c3 is part of idx_1, so it will be put in partial_path's IndexFilters instead of TableFilters.
+		// But it still cannot be pushed to TiKV. This case cover code in DataSource.buildIndexMergeOrPath.
+		"select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';",
+
+		// to_base64(left(pk, 5)) is in partial_path's TableFilters. But it cannot be pushed to TiKV.
+		// So it should be executed in TiDB. This case cover code in DataSource.buildIndexMergeOrPath.
+		"select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));",
+
+		// This case covert expression index.
+		"select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';",
+		
+		// If no hint, we cannot use index merge if filter cannot be pushed to any storage.
+		"select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';"
+	  ]
+  },
+  {
+    "name": "TestIndexMergeWithCorrelatedColumns",
+    "cases": [
+	"select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+	"select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;",
+	"select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+	// Test correlated column in IndexPath.TableFilters.
+	"select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;",
+	// Test correlated column in TablePath.TableFilters.
+	"select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;"
+    ]
+  },
+  {
+    "name": "TestIssue31240",
+    "cases": [
+      "explain format = 'brief' select count(*) from t31240;",
+      "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
+      "explain format = 'brief' select count(*) from t31240;"
+    ]
   }
 ]

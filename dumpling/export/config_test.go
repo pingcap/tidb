@@ -3,16 +3,14 @@
 package export
 
 import (
-	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateExternalStorage(t *testing.T) {
-	t.Parallel()
 	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
@@ -20,7 +18,6 @@ func TestCreateExternalStorage(t *testing.T) {
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		serverInfo version.ServerInfo
 		expected   bool

@@ -103,6 +103,16 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
+// TryToFixFlenOfDatetime try to fix flen of Datetime for specific func or other field merge cases
+func TryToFixFlenOfDatetime(resultTp *FieldType) {
+	if resultTp.Tp == mysql.TypeDatetime {
+		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if resultTp.Decimal > 0 {
+			resultTp.Flen += resultTp.Decimal + 1
+		}
+	}
+}
+
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
 func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	var (
@@ -276,18 +286,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
 			if x.Fsp() > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen += int(x.Fsp()) + 1
+				tp.Flen += x.Fsp() + 1
 			}
-			tp.Decimal = int(x.Fsp())
+			tp.Decimal = x.Fsp()
 		}
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
 		tp.Flen = len(x.String())
 		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-			tp.Flen = int(x.Fsp) + 1
+			tp.Flen = x.Fsp + 1
 		}
-		tp.Decimal = int(x.Fsp)
+		tp.Decimal = x.Fsp
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal

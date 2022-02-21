@@ -26,8 +26,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
@@ -35,7 +37,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -70,7 +72,7 @@ func TestTopology(t *testing.T) {
 
 	topology, err := info.getTopologyFromEtcd(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
@@ -95,7 +97,7 @@ func TestTopology(t *testing.T) {
 
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 	require.Equal(t, info.getTopologyInfo(), *topology)
 
 	// check ttl key
@@ -144,4 +146,129 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 		return false, errors.New("too many arguments in resp.Kvs")
 	}
 	return len(resp.Kvs) == 1, nil
+}
+
+func TestPutBundlesRetry(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	require.NoError(t, err)
+
+	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
+	require.NoError(t, err)
+	bundle = bundle.Reset(placement.RuleIndexTable, []int64{1024})
+
+	t.Run("serviceErrorShouldNotRetry", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "1*return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
+
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.Error(t, err)
+		require.Equal(t, "[domain:8243]mock service error", err.Error())
+
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
+		require.True(t, got.IsEmpty())
+	})
+
+	t.Run("nonServiceErrorShouldRetry", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "3*return(false)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
+
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.NoError(t, err)
+
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
+
+		gotJSON, err := json.Marshal(got)
+		require.NoError(t, err)
+
+		expectJSON, err := json.Marshal(bundle)
+		require.NoError(t, err)
+
+		require.Equal(t, expectJSON, gotJSON)
+	})
+
+	t.Run("nonServiceErrorRetryAndFail", func(t *testing.T) {
+		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError", "4*return(false)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/putRuleBundlesError"))
+		}()
+
+		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
+		require.Error(t, err)
+		require.Equal(t, "mock other error", err.Error())
+
+		got, err := GetRuleBundle(context.TODO(), bundle.ID)
+		require.NoError(t, err)
+		require.True(t, got.IsEmpty())
+	})
+}
+
+func TestTiFlashManager(t *testing.T) {
+	ctx := context.Background()
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, false)
+	tiflash := NewMockTiFlash()
+	SetMockTiFlash(tiflash)
+
+	require.NoError(t, err)
+
+	// SetTiFlashPlacementRule/GetTiFlashGroupRules
+	rule := MakeNewRule(1, 2, []string{"a"})
+	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+	require.Equal(t, "table-1-r", rules[0].ID)
+	require.Equal(t, 2, rules[0].Count)
+	require.Equal(t, []string{"a"}, rules[0].LocationLabels)
+	require.Equal(t, false, rules[0].Override, false)
+	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
+
+	// PostTiFlashAccelerateSchedule
+	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
+	z, ok := tiflash.SyncStatus[1]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	// GetTiFlashStoresStat
+	stats, err := GetTiFlashStoresStat(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Count)
+
+	// DeleteTiFlashPlacementRule
+	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 0, len(rules))
+
+	// ConfigureTiFlashPDForTable
+	require.Nil(t, ConfigureTiFlashPDForTable(1, 2, &[]string{"a"}))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+
+	// ConfigureTiFlashPDForPartitions
+	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
+		{
+			ID:       2,
+			Name:     model.NewCIStr("p"),
+			LessThan: []string{},
+		},
+	}, 3, &[]string{})
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	// Have table 1 and 2
+	require.Equal(t, 2, len(rules))
+	z, ok = tiflash.SyncStatus[2]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	CloseTiFlashManager(ctx)
 }

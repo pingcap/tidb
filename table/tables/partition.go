@@ -353,7 +353,7 @@ func (p *listPartitionLocationHelper) Intersect(location ListPartitionLocation) 
 		return true
 	}
 	currPgs := p.location
-	var remainPgs []ListPartitionGroup
+	remainPgs := make([]ListPartitionGroup, 0, len(location))
 	for _, pg := range location {
 		idx := currPgs.findByPartitionIdx(pg.PartIdx)
 		if idx < 0 {
@@ -823,6 +823,8 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+	var err error
+	var lowKey, highKey []byte
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.ExprCol.GetType())
@@ -831,23 +833,24 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	if r.HighVal[0].Kind() == types.KindMaxValue {
 		highVal = types.GetMaxValue(lp.ExprCol.GetType())
 	}
-	lowKey, err := lp.genKey(sc, lowVal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	highKey, err := lp.genKey(sc, highVal)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
+	// so it's unnecessary to invoke genKey to encode them.
+	if lp.ExprCol.GetType().EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
+		lowKey = (&lowVal).GetBytes()
+	} else {
+		lowKey, err = lp.genKey(sc, lowVal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	if lp.ExprCol.GetType().EvalType() == types.ETString {
-		// for string type, values returned by GetMinValue and GetMaxValue are already encoded,
-		// so it's unnecessary to invoke genKey to encode them.
-		if r.LowVal[0].Kind() == types.KindMinNotNull {
-			lowKey = (&lowVal).GetBytes()
-		}
-		if r.HighVal[0].Kind() == types.KindMaxValue {
-			highKey = (&highVal).GetBytes()
+	if lp.ExprCol.GetType().EvalType() == types.ETString && r.HighVal[0].Kind() == types.KindMaxValue {
+		highKey = (&highVal).GetBytes()
+	} else {
+		highKey, err = lp.genKey(sc, highVal)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -901,6 +904,29 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
+}
+
+func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+	// PARTITION BY {LIST|RANGE} COLUMNS uses columns directly without expressions
+	pi := t.Meta().Partition
+	if len(pi.Columns) > 0 {
+		return pi.Columns
+	}
+
+	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
+	colIDs := make([]int64, 0, len(partitionCols))
+	for _, col := range partitionCols {
+		colIDs = append(colIDs, col.ID)
+	}
+	colNames := make([]model.CIStr, 0, len(partitionCols))
+	for _, colID := range colIDs {
+		for _, col := range t.Cols() {
+			if col.ID == colID {
+				colNames = append(colNames, col.Name)
+			}
+		}
+	}
+	return colNames
 }
 
 // PartitionRecordKey is exported for test.
@@ -964,7 +990,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
-					valueMsg = fmt.Sprintf("%d", val)
+					valueMsg = strconv.FormatInt(val, 10)
 				}
 			}
 		} else {

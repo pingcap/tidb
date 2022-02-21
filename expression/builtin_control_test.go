@@ -27,7 +27,6 @@ import (
 )
 
 func TestCaseWhen(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -60,7 +59,6 @@ func TestCaseWhen(t *testing.T) {
 }
 
 func TestIf(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -109,7 +107,6 @@ func TestIf(t *testing.T) {
 }
 
 func TestIfNull(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg1     interface{}

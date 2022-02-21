@@ -25,6 +25,6 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	goleak.VerifyTestMain(m, opts...)
 }

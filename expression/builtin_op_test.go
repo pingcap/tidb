@@ -28,7 +28,6 @@ import (
 )
 
 func TestUnary(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -69,7 +68,6 @@ func TestUnary(t *testing.T) {
 }
 
 func TestLogicAnd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -133,7 +131,6 @@ func TestLogicAnd(t *testing.T) {
 }
 
 func TestLeftShift(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -166,7 +163,6 @@ func TestLeftShift(t *testing.T) {
 }
 
 func TestRightShift(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -206,7 +202,6 @@ func TestRightShift(t *testing.T) {
 }
 
 func TestBitXor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -246,7 +241,6 @@ func TestBitXor(t *testing.T) {
 }
 
 func TestBitOr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -293,7 +287,6 @@ func TestBitOr(t *testing.T) {
 }
 
 func TestLogicOr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -361,7 +354,6 @@ func TestLogicOr(t *testing.T) {
 }
 
 func TestBitAnd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -401,7 +393,6 @@ func TestBitAnd(t *testing.T) {
 }
 
 func TestBitNeg(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -448,7 +439,6 @@ func TestBitNeg(t *testing.T) {
 }
 
 func TestUnaryNot(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -501,7 +491,6 @@ func TestUnaryNot(t *testing.T) {
 }
 
 func TestIsTrueOrFalse(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -609,7 +598,6 @@ func TestIsTrueOrFalse(t *testing.T) {
 }
 
 func TestLogicXor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate

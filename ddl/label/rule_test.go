@@ -22,8 +22,6 @@ import (
 )
 
 func TestApplyAttributesSpec(t *testing.T) {
-	t.Parallel()
-
 	// valid case
 	spec := &ast.AttributesSpec{Attributes: "key=value,key1=value1"}
 	rule := NewRule()
@@ -51,8 +49,6 @@ func TestApplyAttributesSpec(t *testing.T) {
 }
 
 func TestDefaultOrEmpty(t *testing.T) {
-	t.Parallel()
-
 	specs := []*ast.AttributesSpec{{Attributes: ""}, {Default: true}}
 	for i := range specs {
 		rule := NewRule()
@@ -65,8 +61,6 @@ func TestDefaultOrEmpty(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	t.Parallel()
-
 	spec := &ast.AttributesSpec{Attributes: "key=value"}
 	rule := NewRule()
 	require.NoError(t, rule.ApplyAttributesSpec(spec))

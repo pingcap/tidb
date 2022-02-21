@@ -9,38 +9,39 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func (r *testStorageSuite) TestExternalFileWriter(c *C) {
-	dir := c.MkDir()
+func TestExternalFileWriter(t *testing.T) {
+	dir := t.TempDir()
 
 	type testcase struct {
 		name    string
 		content []string
 	}
-	testFn := func(test *testcase, c *C) {
-		c.Log(test.name)
+	testFn := func(test *testcase, t *testing.T) {
+		t.Log(test.name)
 		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ctx := context.Background()
 		storage, err := Create(ctx, backend, true)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt"
 		writer, err := storage.Create(ctx, fileName)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
-			c.Assert(err2, IsNil)
-			c.Assert(written, Equals, len(p))
+			require.Nil(t, err2)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		content, err := os.ReadFile(filepath.Join(dir, fileName))
-		c.Assert(err, IsNil)
-		c.Assert(string(content), Equals, strings.Join(test.content, ""))
+		require.NoError(t, err)
+		require.Equal(t, strings.Join(test.content, ""), string(content))
 	}
 	tests := []testcase{
 		{
@@ -82,57 +83,57 @@ func (r *testStorageSuite) TestExternalFileWriter(c *C) {
 		},
 	}
 	for i := range tests {
-		testFn(&tests[i], c)
+		testFn(&tests[i], t)
 	}
 }
 
-func (r *testStorageSuite) TestCompressReaderWriter(c *C) {
-	dir := c.MkDir()
+func TestCompressReaderWriter(t *testing.T) {
+	dir := t.TempDir()
 
 	type testcase struct {
 		name         string
 		content      []string
 		compressType CompressType
 	}
-	testFn := func(test *testcase, c *C) {
-		c.Log(test.name)
+	testFn := func(test *testcase, t *testing.T) {
+		t.Log(test.name)
 		backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ctx := context.Background()
 		storage, err := Create(ctx, backend, true)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		storage = WithCompression(storage, Gzip)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt.gz"
 		writer, err := storage.Create(ctx, fileName)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
-			c.Assert(err2, IsNil)
-			c.Assert(written, Equals, len(p))
+			require.Nil(t, err2)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// make sure compressed file is written correctly
 		file, err := os.Open(filepath.Join(dir, fileName))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		r, err := newCompressReader(test.compressType, file)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var bf bytes.Buffer
 		_, err = bf.ReadFrom(r)
-		c.Assert(err, IsNil)
-		c.Assert(bf.String(), Equals, strings.Join(test.content, ""))
-		c.Assert(r.Close(), IsNil)
+		require.NoError(t, err)
+		require.Equal(t, strings.Join(test.content, ""), bf.String())
+		require.Nil(t, r.Close())
 
 		// test withCompression Open
 		r, err = storage.Open(ctx, fileName)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		content, err := io.ReadAll(r)
-		c.Assert(err, IsNil)
-		c.Assert(string(content), Equals, strings.Join(test.content, ""))
+		require.NoError(t, err)
+		require.Equal(t, strings.Join(test.content, ""), string(content))
 
-		c.Assert(file.Close(), IsNil)
+		require.Nil(t, file.Close())
 	}
 	compressTypeArr := []CompressType{Gzip}
 	tests := []testcase{
@@ -162,7 +163,7 @@ func (r *testStorageSuite) TestCompressReaderWriter(c *C) {
 	for i := range tests {
 		for _, compressType := range compressTypeArr {
 			tests[i].compressType = compressType
-			testFn(&tests[i], c)
+			testFn(&tests[i], t)
 		}
 	}
 }

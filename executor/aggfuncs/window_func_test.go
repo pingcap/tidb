@@ -171,8 +171,6 @@ func buildWindowMemTesterWithArgs(funcName string, tp byte, args []expression.Ex
 }
 
 func TestWindowFunctions(t *testing.T) {
-	t.Parallel()
-
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 0, 2, 1, 1),
