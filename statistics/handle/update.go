@@ -434,7 +434,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			delete(deltaMap, id)
+			delete(h.globalMap, id)
 			return errors.Trace(err)
 		}
 		if updated {
