@@ -2171,6 +2171,16 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	if future == nil {
 		return nil
 	}
+	// Not retry.
+	if b.ctx.GetSessionVars().RcReadCheckTS && b.ctx.GetSessionVars().ConnectionID > 0 &&
+		b.ctx.GetSessionVars().RetryInfo.AsyncTsFuture == nil {
+		b.ctx.GetSessionVars().RetryInfo.AsyncTsFuture = future
+		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
+		if rcReadTS == 0 {
+			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
+		}
+		return UpdateForUpdateTS(b.ctx, rcReadTS)
+	}
 	newForUpdateTS, waitErr := future.Wait()
 	if waitErr != nil {
 		logutil.BgLogger().Warn("wait tso failed",

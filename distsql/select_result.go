@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -225,6 +226,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {
+			if strings.Contains(err.Msg, "conflict") {
+				logutil.Logger(ctx).Info("RC read check ts failed for select response")
+				return kv.ErrWriteConflict
+			}
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()

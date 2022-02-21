@@ -972,6 +972,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
+		if strings.Contains(err.Error(), "conflict") {
+			logutil.Logger(bo.GetCtx()).Info("RC read check ts failed for select response")
+			return nil, kv.ErrWriteConflict
+		}
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.
@@ -1317,6 +1321,8 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_RC
 	case kv.SI:
 		return kvrpcpb.IsolationLevel_SI
+	case kv.RCCheckTS:
+		return kvrpcpb.IsolationLevel_RCCheckTS
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}

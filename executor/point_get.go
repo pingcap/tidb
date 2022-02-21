@@ -155,6 +155,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}

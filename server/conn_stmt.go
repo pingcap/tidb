@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
@@ -204,7 +206,14 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	}
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	cc.ctx.GetSessionVars().RetryInfo.AsyncTsFuture = nil
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if cc.ctx.GetSessionVars().StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict) {
+		logutil.Logger(ctx).Info("RC read using start_ts has failed, retry RC read", zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+		cc.ctx.GetSessionVars().RetryInfo.AsyncTsFuture = cc.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		return err
+	}
 	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash

@@ -1829,6 +1829,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
+		if ctx.GetSessionVars().IsPessimisticReadConsistency() && ctx.GetSessionVars().ConnectionID > 0 &&
+			ctx.GetSessionVars().RetryInfo.AsyncTsFuture == nil {
+			sc.RCCheckTS = true
+		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true

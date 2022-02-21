@@ -234,6 +234,8 @@ type StatementContext struct {
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
+
+	RCCheckTS bool
 }
 
 // StmtHints are SessionVars related sql hints.

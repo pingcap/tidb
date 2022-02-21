@@ -353,12 +353,15 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
 		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
-	data, err := proto.Marshal(selResp)
-	if err != nil {
-		resp.OtherError = err.Error()
+	data, mErr := proto.Marshal(selResp)
+	if mErr != nil {
+		resp.OtherError = mErr.Error()
 		return resp
 	}
 	resp.Data = data
+	if err != nil {
+		resp.OtherError = err.Error()
+	}
 	return resp
 }
 

@@ -644,6 +644,8 @@ const (
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
+	//
+	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 )
 
 // TiDB intentional limits
@@ -803,6 +805,7 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefRCReadCheckTS                      = true
 )
 
 // Process global variables.
