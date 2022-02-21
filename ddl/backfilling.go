@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -536,6 +537,19 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 	return decodeColMap, nil
 }
 
+func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
+	// It is set to SystemLocation to be compatible with nil LocationInfo.
+	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
+	if info.ReorgMeta.Location != nil {
+		loc, err := info.ReorgMeta.Location.GetLocation()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		*sctx.GetSessionVars().TimeZone = *loc
+	}
+	return nil
+}
+
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
@@ -606,6 +620,13 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
+<<<<<<< HEAD
+=======
+			if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
+				return errors.Trace(err)
+			}
+
+>>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()

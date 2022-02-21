@@ -195,6 +195,31 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+<<<<<<< HEAD
+=======
+	Location      *TimeZoneLocation                `json:"location"`
+}
+
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
+>>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.

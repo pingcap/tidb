@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1048,7 +1047,6 @@ var mockNotOwnerErrOnce uint32
 // getIndexRecord gets index columns values use w.rowDecoder, and generate indexRecord.
 func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
 	cols := w.table.WritableCols()
-	sysZone := timeutil.SystemLocation()
 	failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 		if valStr, ok := val.(string); ok {
 			switch valStr {
@@ -1082,16 +1080,6 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 			return nil, errors.Trace(err)
 		}
 
-		if idxColumnVal.Kind() == types.KindMysqlTime {
-			t := idxColumnVal.GetMysqlTime()
-			if t.Type() == mysql.TypeTimestamp && sysZone != time.UTC {
-				err := t.ConvertTimeZone(sysZone, time.UTC)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				idxColumnVal.SetMysqlTime(t)
-			}
-		}
 		idxVal[j] = idxColumnVal
 	}
 
@@ -1117,9 +1105,9 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	return taskRange.endKey.Next()
 }
 
-func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, rawRecord []byte) error {
-	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
+func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
+	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, w.rowMap)
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", err))
 	}
@@ -1153,7 +1141,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 
 			// Decode one row, generate records of this row.
-			err := w.updateRowDecoder(handle, recordKey, rawRow)
+			err := w.updateRowDecoder(handle, rawRow)
 			if err != nil {
 				return false, err
 			}

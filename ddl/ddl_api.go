@@ -33,7 +33,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/ddl/placement"
+=======
+	ddlutil "github.com/pingcap/tidb/ddl/util"
+>>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -4244,6 +4248,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -4254,6 +4259,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args: []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
@@ -4496,6 +4502,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -4508,6 +4516,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
@@ -5296,6 +5305,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -5308,6 +5319,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -5493,6 +5505,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -5503,6 +5517,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,

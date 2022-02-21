@@ -19,7 +19,11 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+<<<<<<< HEAD
 	"time"
+=======
+	"strings"
+>>>>>>> 1624123b8... *: fix time zone problems encountered when changing the other type columns to timestamp type columns (#31843)
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
@@ -466,7 +470,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
