@@ -1960,9 +1960,9 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = mysql.MaxIntWidth
 		// For TypeBit, castAsString will make length as int(( bit_len + 7 ) / 8) bytes due to
 		// TiKV needs the bit's real len during calculating, eg: ascii(bit).
-		//if exprTp.Tp == mysql.TypeBit {
-		//	argLen = (exprTp.Flen + 7) / 8
-		//}
+		if exprTp.Tp == mysql.TypeBit {
+			argLen = (exprTp.Flen + 7) / 8
+		}
 	}
 
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
