@@ -339,8 +339,8 @@ func TestCBOPointGet(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	statsSuiteData := core.GetPointGetPlanData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	pointGetPlanData := core.GetPointGetPlanData()
+	pointGetPlanData.GetTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
@@ -827,8 +827,8 @@ func TestCBOShouldNotUsePointGet(t *testing.T) {
 		Res  []string
 	}
 
-	statsSuiteData := core.GetPointGetPlanData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	pointGetPlanData := core.GetPointGetPlanData()
+	pointGetPlanData.GetTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
