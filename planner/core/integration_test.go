@@ -4790,36 +4790,7 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
 			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
 		))
-<<<<<<< HEAD
-=======
-}
 
-func (s *testIntegrationSuite) TestIssue27313(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
-	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
-	// no warning indicates that idx2 is not pruned by idx1.
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-}
-
-func (s *testIntegrationSuite) TestIssue30094(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t30094;`)
-	tk.MustExec(`create table t30094(a varchar(10));`)
-	tk.MustQuery(`explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
-		"└─Selection 8000.00 cop[tikv]  cast(test.t30094.a, float BINARY), cast(test.t30094.a, var_string(5))",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
-	))
-	tk.MustQuery(`explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;`).Check(testkit.Rows(
-		"TableReader 8000.00 root  data:Selection",
-		"└─Selection 8000.00 cop[tikv]  eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe59388e59388e59388\"), eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe598bfe598bfe598bf\")",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
-	))
 }
 
 func (s *testIntegrationSuite) TestIssue29705(c *C) {
@@ -4836,18 +4807,4 @@ func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	tk.MustExec("insert into t values(1);")
 	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
 	result.Check(testkit.Rows("1"))
-}
-
-func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
-	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
->>>>>>> 4785dc4a6... planner: fix inconsistent schema between UnionAll and child operator (#30231)
-
 }
