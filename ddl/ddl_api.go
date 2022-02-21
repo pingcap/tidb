@@ -211,10 +211,12 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	failTableID := make([]int64, 0)
-	succ := 0
 	total := len(dbInfo.Tables)
+	succ := 0
 	skip := 0
+	fail := 0
+	oneFail := int64(0)
+
 	for _, tbl := range dbInfo.Tables {
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
@@ -233,7 +235,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		err := d.doDDLJob(ctx, job)
 		err = d.callHookOnChanged(err)
 		if err != nil {
-			failTableID = append(failTableID, tbl.ID)
+			oneFail = tbl.ID
+			fail += 1
 		} else {
 			succ += 1
 		}
@@ -243,10 +246,9 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 			logutil.BgLogger().Info("processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.Error(err))
 		}
 	}
-	fail := len(failTableID)
 	failStmt := ""
 	if fail > 0 {
-		failStmt = fmt.Sprintf("(including table %v)", failTableID[0])
+		failStmt = fmt.Sprintf("(including table %v)", oneFail)
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
 	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
