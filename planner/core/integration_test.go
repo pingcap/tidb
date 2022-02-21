@@ -2557,7 +2557,6 @@ func (s *testIntegrationSuite) TestBitColumnPushDown(c *C) {
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
-
 	rows[1][2] = `eq(cast(test.t1.a, binary(1)), "A")`
 	sql = "select a from t1 where binary a='A'"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
