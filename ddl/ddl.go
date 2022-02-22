@@ -393,6 +393,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
+		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			globalSeqNum, err = t.GetHistoryDDLCount()
+			return err
+		})
+		if err != nil {
+			return err
+		}
+
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
 			d.wg.Add(1)
