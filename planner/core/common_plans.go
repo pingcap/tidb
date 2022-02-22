@@ -769,11 +769,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				v, err := param.Eval(chunk.Row{})
+				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
 				if err != nil {
 					return err
 				}
-				iv, err := v.ToInt64(sc)
+				iv, err := dVal.ToInt64(sc)
 				if err != nil {
 					return err
 				}

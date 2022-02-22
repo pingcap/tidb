@@ -281,6 +281,7 @@ type BatchPointGetPlan struct {
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handles          []kv.Handle
+	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
@@ -625,6 +626,7 @@ func newBatchPointGetPlan(
 			TblInfo:       tbl,
 			Handles:       handles,
 			HandleParams:  handleParams,
+			HandleType:    &handleCol.FieldType,
 			PartitionExpr: partitionExpr,
 		}.Init(ctx, statsInfo, schema, names, 0)
 	}
