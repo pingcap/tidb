@@ -46,6 +46,20 @@ func TestTableCodec(t *testing.T) {
 	require.Equal(t, int64(2), h.IntValue())
 }
 
+// https://github.com/pingcap/tidb/issues/27687.
+func TestTableCodecInvalid(t *testing.T) {
+	tableID := int64(100)
+	buf := make([]byte, 0, 11)
+	buf = append(buf, 't')
+	buf = codec.EncodeInt(buf, tableID)
+	buf = append(buf, '_', 'r')
+	buf = codec.EncodeInt(buf, -9078412423848787968)
+	buf = append(buf, '0')
+	_, err := DecodeRowKey(buf)
+	require.NotNil(t, err)
+	require.Equal(t, "invalid encoded key", err.Error())
+}
+
 // column is a structure used for test
 type column struct {
 	id int64
