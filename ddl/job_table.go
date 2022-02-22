@@ -32,6 +32,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	addingDDLJobGeneral = "/tidb/ddl/add_ddl_job_general"
+	addingDDLJobReorg   = "/tidb/ddl/add_ddl_job_reorg"
+)
+
 func (d *ddl) insertRunningReorgJobMap(id int) {
 	d.runningReorgJobMapMu.Lock()
 	defer d.runningReorgJobMapMu.Unlock()

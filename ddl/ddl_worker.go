@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -149,6 +150,11 @@ func (w *worker) typeStr() string {
 		str = "unknown"
 	}
 	return str
+}
+
+func (w *worker) getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+	//TODO: remove getReorgInfo code, after refactor the old ddl test.
+	return getReorgInfo(d, t, job, tbl, elements, w)
 }
 
 func (w *worker) String() string {
