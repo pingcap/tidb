@@ -53,9 +53,6 @@ var (
 	ddlWorkerID = int32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
-
-	ddlSeqNumMu  sync.Mutex
-	globalSeqNum uint64
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -97,6 +94,7 @@ type worker struct {
 	logCtx          context.Context
 	lockSeqNum      bool
 
+	*ddlCtx
 	ddlJobCache
 }
 
@@ -109,7 +107,7 @@ type ddlJobCache struct {
 	cacheDigest        *parser.Digest
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
@@ -121,6 +119,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 			cacheNormalizedSQL: "",
 			cacheDigest:        nil,
 		},
+		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -450,10 +449,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
-	ddlSeqNumMu.Lock()
+	w.ddlSeqNumMu.Lock()
+	w.ddlSeqNumMu.seqNum++
 	w.lockSeqNum = true
-	globalSeqNum++
-	job.SeqNum = globalSeqNum
+	job.SeqNum = w.ddlSeqNumMu.seqNum
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
@@ -606,9 +605,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if err != nil {
 			if w.lockSeqNum {
 				// txn commit failed, we should reset globalSeqNum
-				globalSeqNum--
+				w.ddlSeqNumMu.seqNum--
 				w.lockSeqNum = false
-				ddlSeqNumMu.Unlock()
+				w.ddlSeqNumMu.Unlock()
 			}
 			return errors.Trace(err)
 		} else if job == nil {
@@ -617,7 +616,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 		if w.lockSeqNum {
 			w.lockSeqNum = false
-			ddlSeqNumMu.Unlock()
+			d.ddlSeqNumMu.Unlock()
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
