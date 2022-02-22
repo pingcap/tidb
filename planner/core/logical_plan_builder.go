@@ -1800,7 +1800,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
-		param, err := expression.ParamMarkerExpression(ctx, v)
+		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
 			return 0, false, false
 		}

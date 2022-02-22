@@ -135,14 +135,39 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
-	start := time.Now()
+func (svr *mockAgentServer) RecordsCnt() int {
 	svr.Lock()
-	old := len(svr.records)
-	svr.Unlock()
+	defer svr.Unlock()
+	return len(svr.records)
+}
+
+func (svr *mockAgentServer) SQLMetaCnt() int {
+	svr.Lock()
+	defer svr.Unlock()
+	return len(svr.sqlMetas)
+}
+
+func (svr *mockAgentServer) WaitCollectCnt(old, cnt int, timeout time.Duration) {
+	start := time.Now()
 	for {
 		svr.Lock()
 		if len(svr.records)-old >= cnt {
+			svr.Unlock()
+			return
+		}
+		svr.Unlock()
+		if time.Since(start) > timeout {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func (svr *mockAgentServer) WaitCollectCntOfSQLMeta(old, cnt int, timeout time.Duration) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		if len(svr.sqlMetas)-old >= cnt {
 			svr.Unlock()
 			return
 		}

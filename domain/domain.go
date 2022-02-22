@@ -57,8 +57,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -363,12 +364,9 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
-// NotifyGlobalConfigChange notify global config syncer to store the global config into PD(etcd).
+// NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
-	if do.globalCfgSyncer == nil {
-		return
-	}
-	do.globalCfgSyncer.Notify(name, value)
+	do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
 }
 
 // GetGlobalConfigSyncer exports for testing.
@@ -817,7 +815,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	if err != nil {
 		return err
 	}
-	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(do.etcdClient)
+
+	var pdClient pd.Client
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		pdClient = store.GetPDClient()
+	}
+	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdClient)
+
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
