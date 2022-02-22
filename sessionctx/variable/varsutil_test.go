@@ -89,6 +89,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupReader), vars.MemQuotaIndexLookupReader)
 	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupJoin), vars.MemQuotaIndexLookupJoin)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
+	require.Equal(t, int64(DefTiDBMemQuotaBindCache), vars.MemQuotaBindCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
 	require.Equal(t, DefTiDBUseFastAnalyze, vars.EnableFastAnalyze)

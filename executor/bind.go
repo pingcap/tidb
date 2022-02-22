@@ -117,5 +117,5 @@ func (e *SQLBindExec) evolveBindings() error {
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.ctx).BindHandle().ReloadBindings()
+	return domain.GetDomain(e.ctx).BindHandle().ReloadBindings(e.ctx.GetSessionVars().MemQuotaBindCache)
 }

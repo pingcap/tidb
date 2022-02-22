@@ -26,8 +26,9 @@ import (
 
 func TestBindCache(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuotaBindCache = 100
-	bindCache := newBindCache(ctx)
+	memCapacity := int64(100)
+	ctx.GetSessionVars().MemQuotaBindCache = memCapacity
+	bindCache := newBindCache(memCapacity)
 
 	value := make([][]*BindRecord, 3)
 	key := make([]bindCacheKey, 3)

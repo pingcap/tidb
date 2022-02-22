@@ -16,7 +16,6 @@ package bindinfo
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
@@ -26,7 +25,6 @@ import (
 // The key of the LRU cache is original sql, the value is a slice of BindRecord.
 // Note: The bindCache is not thread-safe.
 type bindCache struct {
-	ctx         sessionctx.Context
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
@@ -46,8 +44,21 @@ func bindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	return int64(len(key.Hash())) + valMem
 }
 
+func newBindCache(memCapacity int64) *bindCache {
+	// since bindCache controls the memory usage by itself, set the capacity of
+	// the underlying LRUCache to max to close its memory control
+	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
+	c := bindCache{
+		cache:       cache,
+		memCapacity: memCapacity,
+		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
+	}
+	return &c
+}
+
 // get gets a cache item according to cache key. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
+// The return value is not read-only, but it is only can be used in other functions which are also in the bind_cache.go.
 func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 	value, hit := c.cache.Get(key)
 	if !hit {
@@ -93,20 +104,19 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 	return true
 }
 
-func newBindCache(ctx sessionctx.Context) *bindCache {
-	// since bindCache controls the memory usage by itself, set the capacity of
-	// the underlying LRUCache to max to close its memory control
-	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
-	c := bindCache{
-		ctx:         ctx,
-		cache:       cache,
-		memCapacity: ctx.GetSessionVars().MemQuotaBindCache,
-		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
+// The return value is not read-only, but it shouldn't be changed in the caller functions.
+func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
+	bindRecords := c.get(bindCacheKey(hash))
+	for _, bindRecord := range bindRecords {
+		if bindRecord.OriginalSQL == normdOrigSQL {
+			return bindRecord
+		}
 	}
-	return &c
+	return nil
 }
 
 // getAllBindRecords return all the bindRecords from the bindCache.
+// The return value is not read-only, but it shouldn't be changed in the caller functions.
 func (c *bindCache) getAllBindRecords() []*BindRecord {
 	values := c.cache.Values()
 	var bindRecords []*BindRecord
@@ -114,6 +124,17 @@ func (c *bindCache) getAllBindRecords() []*BindRecord {
 		bindRecords = append(bindRecords, vals.([]*BindRecord)...)
 	}
 	return bindRecords
+}
+
+func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
+	cacheKey := bindCacheKey(hash)
+	metas := c.get(cacheKey)
+	for i := range metas {
+		if metas[i].OriginalSQL == meta.OriginalSQL {
+			metas[i] = meta
+		}
+	}
+	c.set(cacheKey, []*BindRecord{meta})
 }
 
 // removeDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
@@ -138,29 +159,18 @@ func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 	c.set(bindCacheKey(hash), metas)
 }
 
-func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
-	cacheKey := bindCacheKey(hash)
-	metas := c.get(cacheKey)
-	for i := range metas {
-		if metas[i].OriginalSQL == meta.OriginalSQL {
-			metas[i] = meta
-		}
-	}
-	c.set(cacheKey, []*BindRecord{meta})
+func (c *bindCache) setMemCapacity(capacity int64) {
+	// Only change the capacity size without affecting the cached bindRecord
+	c.memCapacity = capacity
+	return
 }
 
-func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := c.get(bindCacheKey(hash))
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
-			return bindRecord
-		}
-	}
-	return nil
+func (c *bindCache) getMemCapacity() int64 {
+	return c.memCapacity
 }
 
 func (c bindCache) copy() *bindCache {
-	newCache := newBindCache(c.ctx)
+	newCache := newBindCache(c.memCapacity)
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
