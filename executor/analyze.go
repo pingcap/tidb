@@ -1383,8 +1383,7 @@ workLoop:
 				b := make([]byte, 0, 8)
 				for _, col := range idx.Columns {
 					// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
-					if (col.Length != types.UnspecifiedLength && col.Length > statistics.MaxSampleValueLength) ||
-						len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+					if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
 						continue indexSampleCollectLoop
 					}
 					if col.Length != types.UnspecifiedLength {
