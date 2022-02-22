@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -37,7 +38,6 @@ import (
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestDirNotExist(t *testing.T) {
