@@ -1629,6 +1629,16 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	// test _tidb_rowid for batch point get
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9), (1, 10);")
+	tk.MustExec(`prepare stmt from 'select * from t where _tidb_rowid in (1, ?, ?)'`)
+	tk.MustExec(`set @a2=2, @a3=3`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
+	tk.MustExec(`set @a2=4, @a3=2`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestIssue29565(t *testing.T) {
