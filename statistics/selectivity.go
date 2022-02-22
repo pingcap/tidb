@@ -317,6 +317,34 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 	}
 
+	// Try to cover Constants
+	if mask > 0 {
+		for i, expr := range remainedExprs {
+			if mask&(1<<uint64(i)) == 0 {
+				continue
+			}
+			if c, ok := expr.(*expression.Constant); ok {
+				if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{c}) {
+					continue
+				}
+				if c.Value.IsNull() {
+					// c is null
+					ret *= 0
+					mask &^= 1 << uint64(i)
+				} else if isTrue, err := c.Value.ToBool(sc); err == nil {
+					if isTrue == 0 {
+						// c is false
+						ret *= 0
+					}
+					// c is true, no need to change ret
+					mask &^= 1 << uint64(i)
+				}
+				// Not expected to come here:
+				// err != nil, no need to do anything.
+			}
+		}
+	}
+
 	// Now we try to cover those still not covered DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
