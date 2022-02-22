@@ -74,7 +74,8 @@ const (
 	longBlobMaxLength     = 4294967295
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
-	defaultPlacementPolicyName = "default"
+	defaultPlacementPolicyName             = "default"
+	tiflashCheckTotalPendingTablesInterval = 2000 * time.Millisecond
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -205,6 +206,21 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
+func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
+	sessionVars := ctx.GetSessionVars()
+	count, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBBatchPendingTiFlashCount)
+	if err != nil {
+		logutil.BgLogger().Error("can not get TiDBBatchPendingTiFlashCount", zap.Error(err))
+		return variable.DefTiDBBatchPendingTiFlashCount
+	}
+	c, err := strconv.ParseUint(count, 10, 64)
+	if err != nil {
+		logutil.BgLogger().Error("can not parse TiDBBatchPendingTiFlashCount", zap.Error(err))
+		return variable.DefTiDBBatchPendingTiFlashCount
+	}
+	return uint32(c)
+}
+
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -227,12 +243,29 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	}
 
 	for _, tbl := range dbInfo.Tables {
+		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
+			time.Sleep(time.Second * time.Duration(val.(int)))
+		})
+
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
 			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip += 1
 			continue
 		}
+
+		for {
+			pendingCount := d.tiflashManager.TotalSize.Load()
+			threshold := getBatchPendingTiFlashCount(ctx)
+			if pendingCount >= threshold {
+				logutil.BgLogger().Info("too many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
+				time.Sleep(tiflashCheckTotalPendingTablesInterval)
+			} else {
+				logutil.BgLogger().Info("no many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
+				break
+			}
+		}
+
 		job := &model.Job{
 			SchemaID:   dbInfo.ID,
 			SchemaName: dbInfo.Name.L,

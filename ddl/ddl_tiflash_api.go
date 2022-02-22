@@ -302,6 +302,9 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 					return false, err
 				}
 			}
+			failpoint.Inject("skipUpdateTableReplicaInfoInLoop", func() {
+				failpoint.Continue()
+			})
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {
@@ -313,6 +316,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		}
 	}
+	logutil.BgLogger().Info(fmt.Sprintf("update totalTableCount to %v", totalTableCount))
 	pollTiFlashContext.TotalSize.Store(totalTableCount)
 
 	return allReplicaReady, nil
@@ -423,7 +427,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 }
 
 func (d *ddl) PollTiFlashRoutine() {
-	pollTiflashContext := NewTiFlashManagementContext()
+	pollTiflashContext := d.tiflashManager
 	for {
 		select {
 		case <-d.ctx.Done():

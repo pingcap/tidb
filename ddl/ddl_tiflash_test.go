@@ -447,6 +447,13 @@ func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels 
 	CheckTableAvailableWithTableName(dom, t, count, labels, "test", "ddltiflash")
 }
 
+func CheckTableNoReplica(dom *domain.Domain, t *testing.T, db string, table string) {
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	require.NoError(t, err)
+	replica := tb.Meta().TiFlashReplica
+	require.Nil(t, replica)
+}
+
 // Truncate table shall not block.
 func TestTiFlashTruncateTable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
@@ -678,4 +685,56 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 
 	tk.MustGetErrMsg("set GLOBAL tidb_batch_pending_tiflash_count=1.5", "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
 	checkNum("global", "6", true)
+}
+
+func mustTimeout(tk *testkit.TestKit, sql string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*4)
+	defer cancel()
+	go func(c context.Context) {
+		stmts, _ := tk.Session().Parse(context.Background(), sql)
+		for _, stmt := range stmts {
+			tk.Session().ExecuteStmt(ctx, stmt)
+		}
+	}(ctx)
+	select {
+	case <-ctx.Done():
+		return
+	}
+}
+
+func TestTiFlashBasicRateLimiter(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	threshold := 2
+	tk.MustExec("drop database if exists tiflash_ddl_limit")
+	tk.MustExec("create database tiflash_ddl_limit")
+	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
+	for i := 0; i < threshold+1; i++ {
+		tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", i))
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp", `return(2)`))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp")
+	}()
+
+	mustTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+
+	cnt := 0
+	for i := 0; i < threshold+1; i++ {
+		tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		if tb.Meta().TiFlashReplica != nil {
+			cnt += 1
+		}
+	}
+	require.Equal(t, threshold, cnt)
 }

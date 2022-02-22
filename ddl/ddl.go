@@ -194,6 +194,7 @@ type ddl struct {
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
+	tiflashManager    *TiFlashManagementContext
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -332,6 +333,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		tiflashManager:    NewTiFlashManagementContext(),
 	}
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
