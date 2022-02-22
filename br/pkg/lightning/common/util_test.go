@@ -152,11 +152,13 @@ func TestConnect(t *testing.T) {
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
 	}
-	_, err := param.Connect()
+	db, err := param.Connect()
 	require.NoError(t, err)
+	require.NoError(t, db.Close())
 	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
-	_, err = param.Connect()
+	db, err = param.Connect()
 	require.NoError(t, err)
+	require.NoError(t, db.Close())
 }
 
 func TestIsContextCanceledError(t *testing.T) {
