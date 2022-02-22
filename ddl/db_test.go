@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
