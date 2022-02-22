@@ -61,10 +61,8 @@ const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
-	addingDDLJobPrefix  = "/tidb/ddl/add_ddl_job_"
-	ddlPrompt           = "ddl"
-	addingDDLJobGeneral = "/tidb/ddl/add_ddl_job_general"
-	addingDDLJobReorg   = "/tidb/ddl/add_ddl_job_reorg"
+	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
+	ddlPrompt          = "ddl"
 
 	shardRowIDBitsMax = 15
 
@@ -210,7 +208,7 @@ type ddl struct {
 	sessForAddDDL     sessionctx.Context
 	enableTiFlashPoll *atomicutil.Bool
 
-	// they are used in the concurrency ddl.
+	// used in the concurrency ddl.
 	ddlJobCh             chan struct{}
 	runningReorgJobMap   map[int]struct{}
 	runningReorgJobMapMu sync.RWMutex
