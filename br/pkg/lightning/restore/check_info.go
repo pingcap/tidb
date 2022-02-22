@@ -454,33 +454,31 @@ func (rc *Controller) localResource(sourceSize int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	localAvailable := storageSize.Available
+	localAvailable := int64(storageSize.Available)
 
 	var message string
 	var passed bool
 	switch {
-	case localAvailable > uint64(sourceSize):
+	case localAvailable > sourceSize:
 		message = fmt.Sprintf("local disk resources are rich, estimate sorted data size %s, local available is %s",
 			units.BytesSize(float64(sourceSize)), units.BytesSize(float64(localAvailable)))
 		passed = true
+	case int64(rc.cfg.TikvImporter.DiskQuota) > localAvailable:
+		message = fmt.Sprintf("local disk space may not enough to finish import, estimate sorted data size is %s,"+
+			" but local available is %s, please set `tikv-importer.disk-quota` to a smaller value than %s"+
+			" or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
+		passed = false
+		log.L().Error(message)
 	default:
-		if int64(rc.cfg.TikvImporter.DiskQuota) > int64(localAvailable) {
-			message = fmt.Sprintf("local disk space may not enough to finish import"+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"you need a smaller number for tikv-importer.disk-quota (%s) to finish imports",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = false
-			log.L().Error(message)
-		} else {
-			message = fmt.Sprintf("local disk space may not enough to finish import, "+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"we will use disk-quota (size: %s) to finish imports, which may slow down import",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = true
-			log.L().Warn(message)
-		}
+		message = fmt.Sprintf("local disk space may not enough to finish import, "+
+			"estimate sorted data size is %s, but local available is %s,"+
+			"we will use disk-quota (size: %s) to finish imports, which may slow down import",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
+		passed = true
+		log.L().Warn(message)
 	}
 	rc.checkTemplate.Collect(Critical, passed, message)
 	return nil
@@ -631,14 +629,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return msgs, nil
 	}
 
-	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range igCol.Columns {
-		igCols[col] = struct{}{}
-	}
+	igCols := igCol.ColumnsMap()
 
 	if len(tableInfo.DataFiles) == 0 {
 		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
@@ -816,7 +811,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}

@@ -101,7 +101,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -471,6 +471,14 @@ type IgnoreColumns struct {
 	Table       string   `toml:"table" json:"table"`
 	TableFilter []string `toml:"table-filter" json:"table-filter"`
 	Columns     []string `toml:"columns" json:"columns"`
+}
+
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
 }
 
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
