@@ -697,7 +697,7 @@ func (tr *TableRestore) postProcess(
 	}
 
 	// tidb backend don't need checksum & analyze
-	if !rc.backend.ShouldPostProcess() {
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 		tr.logger.Debug("skip checksum & analyze, not supported by this backend")
 		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
