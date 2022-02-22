@@ -596,18 +596,23 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-func TestAlterDatabaseErrorGrammar(t *testing.T) {
+func createStoreWithoutMockTiFlash(t *testing.T) (*kv.Storage, *domain.Domain, func()) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	defer dom.Close()
+	return &store, dom, func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}
+}
 
-	tk := testkit.NewTestKit(t, store)
+func TestAlterDatabaseErrorGrammar(t *testing.T) {
+	store, _, tear := createStoreWithoutMockTiFlash(t)
+	defer tear()
+
+	tk := testkit.NewTestKit(t, *store)
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
@@ -648,4 +653,29 @@ func TestAlterDatabaseBasic(t *testing.T) {
 
 	// There is less TiFlash store
 	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
+}
+
+func TestTiFlashBatchAddVariables(t *testing.T) {
+	store, _, tear := createStoreWithoutMockTiFlash(t)
+	defer tear()
+
+	tk := testkit.NewTestKit(t, *store)
+	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
+	tk.MustExec("set GLOBAL tidb_batch_pending_tiflash_count=6")
+
+	checkNum := func(level string, value string, ok bool) {
+		l := len(tk.MustQuery(fmt.Sprintf("show %v variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='%v'", level, value)).Rows())
+		if ok {
+			require.Equal(t, 1, l)
+		} else {
+			require.Equal(t, 0, l)
+		}
+	}
+
+	checkNum("session", "5", true)
+	checkNum("global", "6", true)
+	checkNum("global", "1.5", false)
+
+	tk.MustGetErrMsg("set GLOBAL tidb_batch_pending_tiflash_count=1.5", "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
+	checkNum("global", "6", true)
 }
