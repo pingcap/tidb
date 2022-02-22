@@ -432,6 +432,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.preCheckRequirements,
+		rc.initCheckpoint,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.cleanCheckpoints,
@@ -497,11 +498,7 @@ type schemaJob struct {
 	dbName   string
 	tblName  string // empty for create db jobs
 	stmtType schemaStmtType
-	stmts    []*schemaStmt
-}
-
-type schemaStmt struct {
-	sql string
+	stmts    []string
 }
 
 type restoreSchemaWorker struct {
@@ -512,6 +509,15 @@ type restoreSchemaWorker struct {
 	wg    sync.WaitGroup
 	glue  glue.Glue
 	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		return err
+	}
+	job.stmts = stmts
+	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
@@ -525,15 +531,15 @@ func (worker *restoreSchemaWorker) makeJobs(
 	var err error
 	// 1. restore databases, execute statements concurrency
 	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName:   dbMeta.Name,
-			stmtType: schemaCreateDatabase,
-			stmts:    make([]*schemaStmt, 0, 1),
+		sql, err := dbMeta.GetSchema(worker.ctx, worker.store)
+		if err != nil {
+			return err
 		}
-		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		err = worker.addJob(sql, &schemaJob{
+			dbName:   dbMeta.Name,
+			tblName:  "",
+			stmtType: schemaCreateDatabase,
 		})
-		err = worker.appendJob(restoreSchemaJob)
 		if err != nil {
 			return err
 		}
@@ -559,29 +565,18 @@ func (worker *restoreSchemaWorker) makeJobs(
 				return errors.Errorf("table `%s`.`%s` schema not found", dbMeta.Name, tblMeta.Name)
 			}
 			sql, err := tblMeta.GetSchema(worker.ctx, worker.store)
+			if err != nil {
+				return err
+			}
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  tblMeta.Name,
 					stmtType: schemaCreateTable,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
-			}
-			if err != nil {
-				return err
 			}
 		}
 	}
@@ -594,22 +589,11 @@ func (worker *restoreSchemaWorker) makeJobs(
 		for _, viewMeta := range dbMeta.Views {
 			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  viewMeta.Name,
 					stmtType: schemaCreateView,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
@@ -670,8 +654,8 @@ loop:
 				DB:     session,
 			}
 			for _, stmt := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt.sql)
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
+				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
@@ -731,7 +715,7 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 	case <-worker.ctx.Done():
 		// cancel the job
 		worker.wg.Done()
-		return worker.ctx.Err()
+		return errors.Trace(worker.ctx.Err())
 	case worker.jobCh <- job:
 		return nil
 	}
@@ -771,14 +755,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		if err = rc.DataCheck(ctx); err != nil {
-			return errors.Trace(err)
-		}
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
 	}
+	rc.sysVars = sysVars
 
+	return nil
+}
+
+// initCheckpoint initializes all tables' checkpoint data
+func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	// Load new checkpoints
-	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
+	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -789,20 +779,8 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
-	rc.sysVars = sysVars
-
 	// Estimate the number of chunks for progress reporting
-	err = rc.estimateChunkCountIntoMetrics(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return rc.estimateChunkCountIntoMetrics(ctx)
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -1486,6 +1464,9 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if cp.Status < checkpoints.CheckpointStatusAllWritten && len(tableMeta.DataFiles) == 0 {
+				continue
+			}
 			igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbInfo.Name, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 			if err != nil {
 				return errors.Trace(err)
@@ -1551,7 +1532,6 @@ func (tr *TableRestore) restoreTable(
 	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
 	// 1. Load the table info.
-
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -1812,7 +1792,10 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 		return nil
 	}
 	// set new collation flag base on tidb config
-	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	enabled, err := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	if err != nil {
+		return err
+	}
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
@@ -1865,6 +1848,10 @@ func (rc *Controller) isTiDBBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	if err := rc.DataCheck(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if rc.cfg.App.CheckRequirements {
 		if err := rc.ClusterIsAvailable(ctx); err != nil {
 			return errors.Trace(err)
@@ -1926,8 +1913,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			rc.taskMgr.CleanupTask(ctx)
 		}
-		return errors.Errorf("tidb-lightning check failed."+
-			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
+		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }
@@ -2379,7 +2365,7 @@ func (cr *chunkRestore) encodeLoop(
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				hasIgnoredEncodeErr = true
