@@ -554,6 +554,20 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
+func (s *testStateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into tt values();")
+
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert into tt values();", nil}
+	modifyColumnSQL := "alter table tt modify column c1 bigint;"
+	expectQuery := &expectQuery{"select c1 from tt", []string{"20200710010508", "20200710010508"}}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
+}
+
 type idxType byte
 
 const (
@@ -732,20 +746,48 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
-// TestDeleteOnlyForDropColumnWithIndexes test for delete data when a middle-state column with indexes in it.
-func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
+// TestSchemaChangeForDropColumnWithIndexes test for modify data when a middle-state column with indexes in it.
+func (s *testStateChangeSuite) TestSchemaChangeForDropColumnWithIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
-	sqls := make([]sqlWithErr, 2)
+	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
 	sqls[1] = sqlWithErr{"delete from t1 where b=1", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	sqls[2] = sqlWithErr{"insert into t1(a) values(1);", nil}
+	sqls[3] = sqlWithErr{"update t1 set a = 2 where a=1;", nil}
+	sqls[4] = sqlWithErr{"delete from t1", nil}
 	prepare := func() {
 		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t1(a int key, b int, c int, index idx(b));")
+		tk.MustExec("create table t1(a bigint unsigned not null primary key, b int, c int, index idx(b));")
 		tk.MustExec("insert into t1 values(1,1,1);")
 	}
 	prepare()
 	dropColumnSQL := "alter table t1 drop column b"
+	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+}
+
+// TestSchemaChangeForDropColumnWithIndexes test for modify data when some middle-state columns with indexes in it.
+func (s *testStateChangeSuite) TestSchemaChangeForDropColumnsWithIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	sqls := make([]sqlWithErr, 5)
+	sqls[0] = sqlWithErr{"delete from t1", nil}
+	sqls[1] = sqlWithErr{"delete from t1 where b=1", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	sqls[2] = sqlWithErr{"insert into t1(a) values(1);", nil}
+	sqls[3] = sqlWithErr{"update t1 set a = 2 where a=1;", nil}
+	sqls[4] = sqlWithErr{"delete from t1", nil}
+	prepare := func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a bigint unsigned not null primary key, b int, c int, d int, index idx(b), index idx2(d));")
+		tk.MustExec("insert into t1 values(1,1,1,1);")
+	}
+	prepare()
+	dropColumnSQL := "alter table t1 drop column b, drop column d"
 	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
