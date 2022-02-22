@@ -35,8 +35,6 @@ import (
 	"modernc.org/mathutil"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/tikv/pd/server/api"
-	pdconfig "github.com/tikv/pd/server/config"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"

@@ -118,8 +118,15 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 					fmt.Sprintf("column count mismatch, expect %d, got %d", columnCount, len(row.Row)))
 			}
 
-			for _, col := range row.Row {
-				// for non-string column, it returns empty string
+			for colIdx, col := range row.Row {
+				if colIdx >= columnCount {
+					break
+				}
+				// we only check non-binary string types here
+				colType := fileInfo.TableInfo.Columns[colIdx].FieldType
+				if !types.IsNonBinaryStr(&colType) {
+					continue
+				}
 				colStr := col.GetString()
 				if !utf8.ValidString(colStr) || strings.Contains(colStr, config.DefaultCSVDataInvalidCharReplace) {
 					invalidCharRows++

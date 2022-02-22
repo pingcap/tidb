@@ -82,7 +82,7 @@ check_contains "s: 0"
 
 echo ">>> check-only sample for csv files and table schema already exists in tidb"
 run_sql "create database test_check;"
-run_sql "create table test_check.tbl1(id int);"
+run_sql "create table test_check.tbl1(id varchar(100));"
 run_lightning --config "tests/$TEST_NAME/config_gbk.toml" -d "tests/$TEST_NAME/data_csv" --check-only sample=1,3 > $out_file_name
 check_contains "Total sample of 3 rows of data checked, 2 errors found."
 check_contains "Some checks failed, please check the log for more information."

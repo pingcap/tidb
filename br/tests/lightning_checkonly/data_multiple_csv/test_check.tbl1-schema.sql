@@ -1,1 +1,1 @@
-create table tbl1(id int);
+create table tbl1(id varchar(100));

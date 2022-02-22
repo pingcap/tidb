@@ -77,14 +77,14 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		fakeTableName := fmt.Sprintf("tbl%d", i)
 		fakeFileName := fmt.Sprintf("%s.%s-schema.sql", fakeDBName, fakeTableName)
-		fakeFileContent := fmt.Sprintf("CREATE TABLE %s(i int);", fakeTableName)
+		fakeFileContent := fmt.Sprintf("CREATE TABLE %s(i varchar(100), j varbinary(100), k int);", fakeTableName)
 		err = store.WriteFile(ctx, fakeFileName, []byte(fakeFileContent))
 		require.NoError(t, err)
 	}
 	tbl1 := "tbl1"
 	tbl1FileZero := fmt.Sprintf("%s.%s.000000000.sql", fakeDBName, tbl1)
-	// 3 lines, 1 ok, 2 invalid utf-8, 3 column mismatch
-	fakeFileContent := fmt.Sprintf("insert into `%s` values\n(1),\n('\xd6\xd0'),\n(2,2);\n", tbl1)
+	// 4 lines, 1 ok, 2 invalid utf-8, 3 more column, 4 less column
+	fakeFileContent := fmt.Sprintf("insert into `%s` values\n('1', '1', 1),\n('\xd6\xd0', x'd6d0', 2),\n('2','2', 2, 2),\n('2','2');\n", tbl1)
 	err = store.WriteFile(ctx, tbl1FileZero, []byte(fakeFileContent))
 	require.NoError(t, err)
 
@@ -128,9 +128,9 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
 	require.False(t, check.checkTemplate.Success())
-	require.Equal(t, int64(3), check.totalRows.Load())
+	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
-	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
+	require.Equal(t, int64(2), check.totalColumnCountMismatchRows.Load())
 
 	//
 	// write a invalid sql file
@@ -157,8 +157,8 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	cfg.Mydumper.DataCharacterSet = "gbk"
 
 	tbl1FileZero = fmt.Sprintf("%s.%s.000000000.csv", fakeDBName, tbl1)
-	// 3 lines, 1 ok, 2 invalid gbk, 3 column mismatch
-	err = store.WriteFile(ctx, tbl1FileZero, []byte("1\n中\n2,2\n"))
+	// 4 lines, 1 ok, 2 invalid gbk, 3 binary string contains utf-8 encoded str, 4 more column
+	err = store.WriteFile(ctx, tbl1FileZero, []byte("\"1\",\"1\",1\n\"中\",\"x\",1\n\"x\",\"中\",1\n\"2\",\"2\",2,2\n"))
 	require.NoError(t, err)
 
 	mydumpLoader, err = mydump.NewMyDumpLoaderWithStore(ctx, rc.cfg, store)
@@ -191,6 +191,15 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, check.checkTemplate.Success())
 	require.Equal(t, int64(3), check.totalRows.Load())
+	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
+
+	cfg.CheckOnly.Rows = 4
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.False(t, check.checkTemplate.Success())
+	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 }
