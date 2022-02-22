@@ -459,7 +459,7 @@ func (rc *Client) createTables(
 				table.Info.IsCommonHandle,
 				newTableInfo.IsCommonHandle)
 		}
-		rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+		rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
 		ct := CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,

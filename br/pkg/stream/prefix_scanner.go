@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	kvutil "github.com/tikv/client-go/v2/kv"
-	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/client/v3"
 )
 
 // etcdSource is the adapter for etcd client and the `Source` interface.
