@@ -136,6 +136,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
+// MaxSampleValueLength defines the max length of the useful samples. If one sample value exceeds the max length, we drop it before building the stats.
 const MaxSampleValueLength = mysql.MaxFieldVarCharLength / 2
 
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
