@@ -18,34 +18,28 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-=======
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testPlanNormalize{})
@@ -654,70 +648,6 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
 	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
 }
-<<<<<<< HEAD
-=======
-
-func TestCopPaging(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set session tidb_enable_paging = 1")
-	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
-	defer tk.MustExec("drop table t")
-	for i := 0; i < 1024; i++ {
-		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
-	}
-	tk.MustExec("analyze table t")
-
-	// limit 960 should go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:960",
-			"└─IndexLookUp 4.00 root  paging:true",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// selection between limit and indexlookup, limit 960 should also go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:960",
-			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
-			"  └─IndexLookUp 3.20 root  paging:true",
-			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
-			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
-	}
-
-	// limit 961 exceeds the threshold, it should not go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:961",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// selection between limit and indexlookup, limit 961 should not go paging too
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:961",
-			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
-			"  └─IndexLookUp 3.20 root  ",
-			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
-			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
-	}
-}
 
 func TestBuildFinalModeAggregation(t *testing.T) {
 	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
@@ -864,4 +794,3 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)

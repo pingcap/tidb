@@ -53,11 +53,7 @@ require (
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-<<<<<<< HEAD
-	github.com/pingcap/tipb v0.0.0-20211105090418-71142a4d40e3
-=======
 	github.com/pingcap/tipb v0.0.0-20220110031732-29e23c62eeac
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
