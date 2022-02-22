@@ -93,8 +93,8 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 		// Filter logs from TiDB and PD.
 		return NewFilterCore(core, "github.com/tikv/pd/")
 	})
-
-	if len(cfg.File) > 0 {
+	// "-" is a special config for log to stdout.
+	if len(cfg.File) > 0 && cfg.File != "-" {
 		logCfg.File = pclog.FileLogConfig{
 			Filename:   cfg.File,
 			MaxSize:    cfg.FileMaxSize,
