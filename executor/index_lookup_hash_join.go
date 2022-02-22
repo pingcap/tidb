@@ -212,7 +212,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
-			e.IndexLookUpJoin.ctxCancelReason.Store(err)
 			e.cancelFunc()
 		}
 	}
@@ -249,9 +248,6 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
-		if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-			return err.(error)
-		}
 		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
@@ -281,9 +277,6 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
-			if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-				return err.(error)
-			}
 			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
@@ -563,6 +556,9 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
+		if iw.lookup.finished.Load().(bool) {
+			return
+		}
 	OUTER:
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
@@ -599,10 +595,13 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 }
 
 func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}) {
+	defer func() {
+		iw.wg.Done()
+		iw.lookup.workerWg.Done()
+	}()
 	if r != nil {
 		iw.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
 	}
-	iw.wg.Done()
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
@@ -622,7 +621,12 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
-	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task, h) }, iw.handleHashJoinInnerWorkerPanic)
+	go util.WithRecovery(
+		func() {
+			iw.lookup.workerWg.Add(1)
+			iw.buildHashTableForOuterResult(ctx, task, h)
+		},
+		iw.handleHashJoinInnerWorkerPanic)
 	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
 	iw.wg.Wait()
 	if err != nil {
@@ -656,9 +660,6 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
-					if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-						return err.(error)
-					}
 					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
@@ -807,9 +808,6 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
-						if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-							return err.(error)
-						}
 						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)
