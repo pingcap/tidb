@@ -212,7 +212,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
-			e.IndexLookUpJoin.ctxCancelReason.Store(err)
 			e.cancelFunc()
 		}
 	}
@@ -249,9 +248,6 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
-		if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-			return err.(error)
-		}
 		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
@@ -281,9 +277,6 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
-			if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
-				return err.(error)
-			}
 			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
@@ -576,6 +569,9 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
+		if iw.lookup.finished.Load().(bool) {
+			return
+		}
 	OUTER:
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
@@ -619,7 +615,6 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(resultCh chan
 	if err != nil {
 		resultCh <- &indexHashJoinResult{err: err}
 	}
-	iw.wg.Done()
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
@@ -697,9 +692,6 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
-					if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-						return err.(error)
-					}
 					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
@@ -850,9 +842,6 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
-						if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-							return err.(error)
-						}
 						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)
