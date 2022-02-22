@@ -1346,7 +1346,7 @@ workLoop:
 					continue
 				}
 				val := row.Columns[task.slicePos]
-				// If this value is to very big, we think that it not a value that can occur many times. So we don't record it.
+				// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
 				if len(val.GetBytes()) > statistics.MaxSampleValueLength {
 					continue
 				}
