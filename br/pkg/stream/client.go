@@ -15,7 +15,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
-	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/client/v3"
 )
 
 // MetaDataClient is the client for operations over metadata.

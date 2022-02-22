@@ -220,7 +220,6 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 		opts := storage.ExternalStorageOptions{
 			NoCredentials:   cfg.NoCreds,
 			SendCredentials: cfg.SendCreds,
-			SkipCheckPath:   cfg.SkipCheckPath,
 		}
 		client, err := backup.NewBackupClient(ctx, mgr)
 		if err != nil {
@@ -624,7 +623,6 @@ func RunStreamRestore(
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
