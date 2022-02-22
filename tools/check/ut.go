@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	// Set the correct when it runs inside docker.
+	// Set the correct value when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
 	"golang.org/x/tools/cover"
 )
@@ -76,6 +76,10 @@ type task struct {
 	pkg  string
 	test string
 	old  bool
+}
+
+func (t *task) String() string {
+	return t.pkg + " " + t.test
 }
 
 var P int
@@ -254,6 +258,37 @@ func cmdRun(args ...string) bool {
 		}
 		tasks = tmp
 	}
+
+	if except != "" {
+		list, err := parseCaseListFromFile(except)
+		if err != nil {
+			fmt.Println("parse --except file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; !ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
+	if only != "" {
+		list, err := parseCaseListFromFile(only)
+		if err != nil {
+			fmt.Println("parse --only file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
 	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
@@ -298,6 +333,25 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
+func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return nil, withTrace(err)
+	}
+	defer f.Close()
+
+	ret := make(map[string]struct{})
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Bytes()
+		ret[string(line)] = struct{}{}
+	}
+	if err := s.Err(); err != nil {
+		return nil, withTrace(err)
+	}
+	return ret, nil
+}
+
 // handleFlags strip the '--flag xxx' from the command line os.Args
 // Example of the os.Args changes
 // Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
@@ -334,9 +388,14 @@ var junitfile string
 var coverprofile string
 var coverFileTempDir string
 
+var except string
+var only string
+
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
+	except = handleFlags("--except")
+	only = handleFlags("--only")
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -356,14 +415,13 @@ func main() {
 		fmt.Println("os.Getwd() error", err)
 	}
 
+	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		cmdRun()
-		return
+		isSucceed = cmdRun()
 	}
 
 	if len(os.Args) >= 2 {
-		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
 			isSucceed = cmdList(os.Args[2:]...)
@@ -374,9 +432,9 @@ func main() {
 		default:
 			isSucceed = usage()
 		}
-		if !isSucceed {
-			os.Exit(1)
-		}
+	}
+	if !isSucceed {
+		os.Exit(1)
 	}
 }
 

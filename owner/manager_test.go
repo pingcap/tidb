@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.etcd.io/etcd/integration"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
+	"go.etcd.io/etcd/tests/v3/integration"
 	goctx "golang.org/x/net/context"
 )
 
@@ -41,6 +41,7 @@ func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTest(t)
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -100,6 +101,7 @@ func TestCluster(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTest(t)
 
 	originalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = 3
