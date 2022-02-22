@@ -972,11 +972,11 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 	cpdb.fileName = fileName
 	cpdb.exStorage = s
 
-	isExists, err := cpdb.exStorage.FileExists(ctx, fileName)
+	exist, err := cpdb.exStorage.FileExists(ctx, fileName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !isExists {
+	if !exist {
 		log.L().Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
 			log.ShortError(err),
