@@ -786,7 +786,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = param.Datum
+					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					if err != nil {
+						return err
+					}
+					x.IndexValues[i][j] = *dVal
 				}
 			}
 		}

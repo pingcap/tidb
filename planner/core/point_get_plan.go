@@ -284,7 +284,8 @@ type BatchPointGetPlan struct {
 	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
 	IndexValues      [][]types.Datum
-	IndexValueParams [][]*driver.ParamMarkerExpr
+	IndexValueParams [][]*expression.Constant // record all Parameters for Plan-Cache
+	IndexColTypes    []*types.FieldType
 	AccessConditions []expression.Expression
 	IdxCols          []*expression.Column
 	IdxColLens       []int
@@ -681,14 +682,15 @@ func newBatchPointGetPlan(
 	}
 
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
-	indexValueParams := make([][]*driver.ParamMarkerExpr, len(patternInExpr.List))
+	indexValueParams := make([][]*expression.Constant, len(patternInExpr.List))
+	var indexTypes []*types.FieldType
 	for i, item := range patternInExpr.List {
 		// SELECT * FROM t WHERE (key) in ((1), (2))
 		if p, ok := item.(*ast.ParenthesesExpr); ok {
 			item = p.Expr
 		}
 		var values []types.Datum
-		var valuesParams []*driver.ParamMarkerExpr
+		var valuesParams []*expression.Constant
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
@@ -696,7 +698,10 @@ func newBatchPointGetPlan(
 				return nil
 			}
 			values = make([]types.Datum, len(x.Values))
-			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
+			valuesParams = make([]*expression.Constant, len(x.Values))
+			if i == 0 { // only initialize it once
+				indexTypes = make([]*types.FieldType, len(x.Values))
+			}
 			for index, inner := range x.Values {
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
@@ -707,12 +712,23 @@ func newBatchPointGetPlan(
 					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
-					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
+					if err != nil {
+						return nil
+					}
+					d, err := con.Eval(chunk.Row{})
+					if err != nil {
+						return nil
+					}
+					dval := getPointGetValue(stmtCtx, colInfos[index], &d)
 					if dval == nil {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
-					valuesParams[permIndex] = innerX
+					valuesParams[permIndex] = con
+					if i == 0 {
+						indexTypes[permIndex] = &colInfos[index].FieldType
+					}
 				default:
 					return nil
 				}
@@ -732,12 +748,23 @@ func newBatchPointGetPlan(
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			con, err := expression.ParamMarkerExpression(ctx, x, true)
+			if err != nil {
+				return nil
+			}
+			d, err := con.Eval(chunk.Row{})
+			if err != nil {
+				return nil
+			}
+			dval := getPointGetValue(stmtCtx, colInfos[0], &d)
 			if dval == nil {
 				return nil
 			}
 			values = []types.Datum{*dval}
-			valuesParams = []*driver.ParamMarkerExpr{x}
+			valuesParams = []*expression.Constant{con}
+			if i == 0 {
+				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
+			}
 		default:
 			return nil
 		}
@@ -749,6 +776,7 @@ func newBatchPointGetPlan(
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
 		IndexValueParams: indexValueParams,
+		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
 	}.Init(ctx, statsInfo, schema, names, 0)
