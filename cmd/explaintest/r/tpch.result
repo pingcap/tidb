@@ -124,7 +124,7 @@ Sort	2.94	root		tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus
   └─HashAgg	2.94	root		group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(tpch.lineitem.l_returnflag)->tpch.lineitem.l_returnflag, funcs:firstrow(tpch.lineitem.l_linestatus)->tpch.lineitem.l_linestatus
     └─TableReader	2.94	root		data:HashAgg
       └─HashAgg	2.94	cop[tikv]		group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(tpch.lineitem.l_quantity)->Column#26, funcs:sum(tpch.lineitem.l_extendedprice)->Column#27, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)))->Column#28, funcs:sum(mul(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), plus(1, tpch.lineitem.l_tax)))->Column#29, funcs:count(tpch.lineitem.l_quantity)->Column#30, funcs:sum(tpch.lineitem.l_quantity)->Column#31, funcs:count(tpch.lineitem.l_extendedprice)->Column#32, funcs:sum(tpch.lineitem.l_extendedprice)->Column#33, funcs:count(tpch.lineitem.l_discount)->Column#34, funcs:sum(tpch.lineitem.l_discount)->Column#35, funcs:count(1)->Column#36
-        └─Selection	293795345.00	cop[tikv]		le(tpch.lineitem.l_shipdate, 1998-08-15 00:00:00.000000)
+        └─Selection	293683189.00	cop[tikv]		le(tpch.lineitem.l_shipdate, 1998-08-15 00:00:00.000000)
           └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q2 Minimum Cost Supplier Query
@@ -392,7 +392,7 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#20)->Column#18
 └─TableReader	1.00	root		data:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:sum(mul(tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount))->Column#20
-    └─Selection	3713857.91	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
+    └─Selection	3713858.13	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q7 Volume Shipping Query
@@ -1095,13 +1095,13 @@ and l_shipinstruct = 'DELIVER IN PERSON'
 );
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#28)->Column#27
-└─Projection	733887.82	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#28
-  └─HashJoin	733887.82	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
-    ├─TableReader(Build)	24323.12	root		data:Selection
-    │ └─Selection	24323.12	cop[tikv]		ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
+└─Projection	665420.27	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#28
+  └─HashJoin	665420.27	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
+    ├─TableReader(Build)	22053.91	root		data:Selection
+    │ └─Selection	22053.91	cop[tikv]		ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
     │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-    └─TableReader(Probe)	6286493.79	root		data:Selection
-      └─Selection	6286493.79	cop[tikv]		eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
+    └─TableReader(Probe)	6286493.57	root		data:Selection
+      └─Selection	6286493.57	cop[tikv]		eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
         └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q20 Potential Part Promotion Query

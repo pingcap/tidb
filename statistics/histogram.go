@@ -496,10 +496,7 @@ func (hg *Histogram) bucketIsPoint(idx int) bool {
 		return false
 	}
 	cmp := chunk.GetCompareFunc(hg.Tp)
-	if cmp(hg.Bounds.GetRow(idx*2), 0, hg.Bounds.GetRow(idx*2+1), 0) == 0 {
-		return true
-	}
-	return false
+	return cmp(hg.Bounds.GetRow(idx*2), 0, hg.Bounds.GetRow(idx*2+1), 0) == 0
 }
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
@@ -1438,20 +1435,24 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			if expBackoffSuccess {
 				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
 
-				// Use the multi-column histogram to calculate the max possible row count of [l, r)
-				_, lowerBkt, _, _ := idx.locateBucket(l)
-				_, upperBkt, _, _ := idx.locateBucket(r)
-				preCount := float64(0)
-				if lowerBkt > 0 {
-					preCount = float64(idx.Buckets[lowerBkt-1].Count)
+				upperLimit := expBackoffCnt
+				// Use the multi-column stats to calculate the max possible row count of [l, r)
+				if idx.Len() > 0 {
+					_, lowerBkt, _, _ := idx.locateBucket(l)
+					_, upperBkt, _, _ := idx.locateBucket(r)
+					preCount := float64(0)
+					if lowerBkt > 0 {
+						preCount = float64(idx.Buckets[lowerBkt-1].Count)
+					}
+					upperCnt := float64(idx.Buckets[upperBkt].Count)
+					upperLimit = upperCnt - preCount
+					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
 				}
-				upperCnt := float64(idx.Buckets[upperBkt].Count)
-				maxPossibleCnt := upperCnt - preCount
 
-				// If the result of exponential backoff strategy is larger than the result from multi-column histogram,
+				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
 				// 	use the upper limit from multi-column histogram instead.
-				if expBackoffCnt > maxPossibleCnt {
-					expBackoffCnt = maxPossibleCnt
+				if expBackoffCnt > upperLimit {
+					expBackoffCnt = upperLimit
 				}
 				totalCount += expBackoffCnt
 			}
@@ -1727,9 +1728,9 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 	return true
 }
 
-func clampRowCount(rowCount, maxPossibleRowCount float64) (clampedRowCount float64) {
-	if rowCount > maxPossibleRowCount {
-		return maxPossibleRowCount
+func clampRowCount(rowCount, upperLimit float64) (clampedRowCount float64) {
+	if rowCount > upperLimit {
+		return upperLimit
 	}
 	if rowCount < 0 {
 		return 0
