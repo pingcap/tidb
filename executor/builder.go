@@ -2307,50 +2307,44 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func describeV2AnalyzeJobInfo(autoAnalyze string, v2Options *plannercore.V2AnalyzeOptions, sampleRate *float64) string {
+func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, sampleRate float64) string {
 	var b strings.Builder
 	b.WriteString(autoAnalyze)
 	b.WriteString("analyze table")
-	if v2Options == nil {
-		return b.String()
-	}
-	switch v2Options.ColChoice {
-	case model.AllColumns:
-		b.WriteString(" all columns")
-	case model.PredicateColumns:
-		b.WriteString(" predicate columns")
-	case model.ColumnList:
+	if len(task.ColsInfo) < len(task.TblInfo.Columns) {
 		b.WriteString(" columns ")
-		for i, col := range v2Options.ColumnList {
+		for i, col := range task.ColsInfo {
 			if i > 0 {
 				b.WriteString(", ")
 			}
 			b.WriteString(col.Name.O)
 		}
+	} else {
+		b.WriteString(" all columns")
 	}
 	var needComma bool
 	b.WriteString(" with ")
-	printOption := func(optionType ast.AnalyzeOptionType) {
-		if val, ok := v2Options.RawOpts[optionType]; ok {
+	printOption := func(optType ast.AnalyzeOptionType) {
+		if val, ok := opts[optType]; ok {
 			if needComma {
 				b.WriteString(", ")
 			} else {
 				needComma = true
 			}
-			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optionType])))
+			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
 		}
 	}
 	printOption(ast.AnalyzeOptNumBuckets)
 	printOption(ast.AnalyzeOptNumTopN)
-	printOption(ast.AnalyzeOptNumSamples)
-	if sampleRate != nil {
-		// Even if we don't set the sample rate option, an adjusted sample rate is chosen. Hence we always print the sample rate for convenience.
+	if opts[ast.AnalyzeOptNumSamples] != 0 {
+		printOption(ast.AnalyzeOptNumSamples)
+	} else {
 		if needComma {
 			b.WriteString(", ")
 		} else {
 			needComma = true
 		}
-		b.WriteString(fmt.Sprintf("%v samplerate", *sampleRate))
+		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
 	}
 	return b.String()
 }
@@ -2423,7 +2417,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		DBName:        task.DBName,
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
-		JobInfo:       describeV2AnalyzeJobInfo(autoAnalyze, task.V2Options, sampleRate),
+		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, *sampleRate),
 	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
