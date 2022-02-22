@@ -250,12 +250,9 @@ func (d *dataSampleCheck) getRandomDataFiles() []*sampledDataFileInfo {
 		return allFiles
 	}
 
-	currSlice := allFiles
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
-	for i := 0; i < count; i++ {
-		j := rnd.Int() % len(currSlice)
-		currSlice[0], currSlice[j] = currSlice[j], currSlice[0]
-		currSlice = currSlice[1:]
-	}
+	rnd.Shuffle(len(allFiles), func(i, j int) {
+		allFiles[i], allFiles[j] = allFiles[j], allFiles[i]
+	})
 	return allFiles[:count]
 }
