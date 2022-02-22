@@ -61,8 +61,8 @@
         "EnablePseudoForOutdatedStats": true,
         "RatioOfPseudoEstimate": 10,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
           "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -81,8 +81,8 @@
         "EnablePseudoForOutdatedStats": false,
         "RatioOfPseudoEstimate": 10,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
           "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -91,8 +91,8 @@
         "EnablePseudoForOutdatedStats": false,
         "RatioOfPseudoEstimate": 0.7,
         "Plan": [
-          "TableReader 28.80 root  data:Selection",
-          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
           "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
         ]
       }
