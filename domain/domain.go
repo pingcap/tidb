@@ -1504,7 +1504,10 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 			if owner.IsOwner() {
 				const DaysToKeep = 7
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
-				statsHandle.DeleteAnalyzeJobs(updateTime)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Debug("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return
