@@ -536,7 +536,6 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 // It will not affect already cached BindRecords.
 func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
 	h.bindInfo.Load().(*bindCache).setMemCapacity(capacity)
-	return
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.

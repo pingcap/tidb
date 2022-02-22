@@ -162,7 +162,6 @@ func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 func (c *bindCache) setMemCapacity(capacity int64) {
 	// Only change the capacity size without affecting the cached bindRecord
 	c.memCapacity = capacity
-	return
 }
 
 func (c *bindCache) getMemCapacity() int64 {
