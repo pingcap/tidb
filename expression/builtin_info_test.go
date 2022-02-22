@@ -192,9 +192,9 @@ func TestCharset(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.Nil(t, f)
-	require.Error(t, err)
-	require.Regexp(t, "FUNCTION CHARSET does not exist$", err.Error())
+	require.NotNil(t, f)
+	require.NoError(t, err)
+	require.Equal(t, 64, f.getRetTp().Flen)
 }
 
 func TestCoercibility(t *testing.T) {
