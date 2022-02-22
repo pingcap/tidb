@@ -962,7 +962,7 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length < 0 {
+	if length <= 0 {
 		return 0, errors.New("invalid encoded key")
 	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+
