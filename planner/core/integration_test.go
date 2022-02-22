@@ -3074,7 +3074,7 @@ func (s *testIntegrationSuite) TestIssue14481(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
 	plan := tk.MustQuery("explain format = 'brief' select * from t where a = 1 and a = 2")
-	plan.Check(testkit.Rows("TableDual 8000.00 root  rows:0"))
+	plan.Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustExec("drop table t")
 }
 
