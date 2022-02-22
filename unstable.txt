@@ -1,0 +1,10 @@
+ddl TestTiFlashReplicaPartitionTableNormal
+ddl TestTestSerialStatSuite
+ddl testSerialDBSuite.TestModifyColumnTypeWhenInterception
+session testPessimisticSuite.TestSelectForUpdateNoWait
+server TestGetSchemaStorage
+server TestUptime
+executor TestSpillToDisk
+executor TestHashRowContainer
+executor TestExplainAnalyzeCTEMemoryAndDiskInfo
+statistics/handle TestAnalyzeGlobalStatsWithOpts1
