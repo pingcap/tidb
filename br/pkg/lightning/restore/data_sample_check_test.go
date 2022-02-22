@@ -202,6 +202,15 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
+
+	cfg.CheckOnly.Rows = -1
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.False(t, check.checkTemplate.Success())
+	require.Equal(t, int64(4), check.totalRows.Load())
+	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 }
 
 func Test_dataSampleCheck_getRandomDataFiles(t *testing.T) {

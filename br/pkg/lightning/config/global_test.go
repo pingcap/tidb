@@ -37,7 +37,7 @@ func Test_extractCheckOnlyCfg(t *testing.T) {
 	require.Error(t, err)
 	_, err = extractCheckOnlyCfg("normal=2,1")
 	require.Error(t, err)
-	_, err = extractCheckOnlyCfg("normal=1,-1")
+	_, err = extractCheckOnlyCfg("normal=1,-2")
 	require.Error(t, err)
 
 	// normal case
@@ -48,10 +48,15 @@ func Test_extractCheckOnlyCfg(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CheckModeSample, cfg.Mode)
 	require.Equal(t, DefaultSampleRate, cfg.Rate)
-	require.Equal(t, DefaultCheckRows, cfg.Rows)
+	require.Equal(t, int64(DefaultCheckRows), cfg.Rows)
 	cfg, err = extractCheckOnlyCfg("sample=1,200")
 	require.NoError(t, err)
 	require.Equal(t, CheckModeSample, cfg.Mode)
 	require.Equal(t, float64(1), cfg.Rate)
-	require.Equal(t, 200, cfg.Rows)
+	require.Equal(t, int64(200), cfg.Rows)
+	cfg, err = extractCheckOnlyCfg("sample=1,-1")
+	require.NoError(t, err)
+	require.Equal(t, CheckModeSample, cfg.Mode)
+	require.Equal(t, float64(1), cfg.Rate)
+	require.Equal(t, int64(CheckAllRows), cfg.Rows)
 }

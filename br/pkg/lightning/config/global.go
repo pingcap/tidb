@@ -36,6 +36,7 @@ const (
 
 	DefaultSampleRate = 0.01
 	DefaultCheckRows  = 1000
+	CheckAllRows      = -1 // -1 means we need to check all rows
 )
 
 type GlobalLightning struct {
@@ -100,7 +101,7 @@ type CheckOnly struct {
 
 	// take effects when Mode=CheckModeSample
 	Rate float64 `toml:"-" json:"-"`
-	Rows int     `toml:"-" json:"-"`
+	Rows int64   `toml:"-" json:"-"`
 }
 
 func NewGlobalConfig() *GlobalConfig {
@@ -338,9 +339,9 @@ func extractCheckOnlyCfg(str string) (*CheckOnly, error) {
 		if rate > 1 || rate <= 0 {
 			return nil, errors.Wrap(invalidCfg, "rate should be in range (0, 1]")
 		}
-		if rows <= 0 {
-			return nil, errors.Wrap(invalidCfg, "rows should be greater than 0")
+		if rows != CheckAllRows && rows <= 0 {
+			return nil, errors.Wrap(invalidCfg, "rows should be positive or -1(represent all)")
 		}
-		return &CheckOnly{Mode: CheckModeSample, Rate: rate, Rows: int(rows)}, nil
+		return &CheckOnly{Mode: CheckModeSample, Rate: rate, Rows: rows}, nil
 	}
 }

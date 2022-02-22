@@ -96,7 +96,12 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 
 		var rowsChecked, columnCountMismatchRows, invalidCharRows, lastOffset int64
 		columnCount := len(fileInfo.TableInfo.Columns)
-		for i := 0; i < d.checkCfg.Rows; i++ {
+		var i int64
+		for {
+			i++
+			if d.checkCfg.Rows != config.CheckAllRows && i > d.checkCfg.Rows {
+				break
+			}
 			err = fileParser.ReadRow()
 			if err != nil {
 				if errors.Cause(err) == io.EOF {

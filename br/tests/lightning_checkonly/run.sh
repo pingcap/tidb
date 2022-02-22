@@ -31,7 +31,7 @@ check_contains "rate should be in range (0, 1]"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=,1000 > $out_file_name 2>&1 || true
 check_contains "invalid check-only config"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1,-1000 > $out_file_name 2>&1 || true
-check_contains "rows should be greater than 0"
+check_contains "rows should be positive or -1"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1, > $out_file_name 2>&1 || true
 check_contains "invalid check-only config"
 
@@ -55,6 +55,9 @@ check_contains "Total sample of 2 rows of data checked, 1 errors found."
 check_contains "Some checks failed, please check the log for more information."
 check_contains "Log file location: /tmp/backup_restore_test/lightning.log"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1,3 > $out_file_name
+check_contains "Total sample of 3 rows of data checked, 2 errors found."
+check_contains "Some checks failed, please check the log for more information."
+run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1,-1 > $out_file_name
 check_contains "Total sample of 3 rows of data checked, 2 errors found."
 check_contains "Some checks failed, please check the log for more information."
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only sample=1,100 > $out_file_name
