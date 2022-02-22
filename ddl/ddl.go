@@ -204,12 +204,13 @@ type ddl struct {
 	*ddlCtx
 	workers           map[workerType]*worker
 	reorgWorker       *workerPool
-	generalWorker     *workerPool
+	generalDDLWorker  *workerPool
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	sessForAddDDL     sessionctx.Context
 	enableTiFlashPoll *atomicutil.Bool
 
+	// they are used in the concurrency ddl.
 	ddlJobCh             chan struct{}
 	runningReorgJobMap   map[int]struct{}
 	runningReorgJobMapMu sync.RWMutex
@@ -431,7 +432,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				return wk, nil
 			}
 			d.reorgWorker = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, 10, 10, 3*time.Minute))
-			d.generalWorker = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
+			d.generalDDLWorker = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
 			d.sessForAddDDL, err = d.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
@@ -501,8 +502,8 @@ func (d *ddl) close() {
 		if d.reorgWorker != nil {
 			d.reorgWorker.close()
 		}
-		if d.generalWorker != nil {
-			d.generalWorker.close()
+		if d.generalDDLWorker != nil {
+			d.generalDDLWorker.close()
 		}
 	} else {
 		for _, worker := range d.workers {

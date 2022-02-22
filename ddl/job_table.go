@@ -313,7 +313,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 		defer func() {
 			d.deleteRunningReorgJobMap(int(job.ID))
 		}()
-		wk, err := d.generalWorker.get()
+		wk, err := d.generalDDLWorker.get()
 		if err != nil {
 			log.Warn("fail to get generalWorker", zap.Error(err))
 			return
@@ -321,7 +321,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
 			log.Warn("[ddl] handle General DDL job failed", zap.Error(err))
 		}
-		d.generalWorker.put(wk)
+		d.generalDDLWorker.put(wk)
 	})
 }
 
