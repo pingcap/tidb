@@ -1346,6 +1346,10 @@ workLoop:
 					continue
 				}
 				val := row.Columns[task.slicePos]
+				// If this value is to very big, we think that it not a value that can occur many times. So we don't record it.
+				if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+					continue
+				}
 				ft := e.colsInfo[task.slicePos].FieldType
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
@@ -1370,6 +1374,7 @@ workLoop:
 			var err error
 			idx := e.indexes[task.slicePos-colLen]
 			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+		indexSampleCollectLoop:
 			for _, row := range task.rootRowCollector.Base().Samples {
 				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 					continue
@@ -1377,6 +1382,11 @@ workLoop:
 
 				b := make([]byte, 0, 8)
 				for _, col := range idx.Columns {
+					// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
+					if (col.Length != types.UnspecifiedLength && col.Length > statistics.MaxSampleValueLength) ||
+						len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+						continue indexSampleCollectLoop
+					}
 					if col.Length != types.UnspecifiedLength {
 						row.Columns[col.Offset].Copy(&tmpDatum)
 						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
