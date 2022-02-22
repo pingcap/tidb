@@ -633,14 +633,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return msgs, nil
 	}
 
-	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range igCol.Columns {
-		igCols[col] = struct{}{}
-	}
+	igCols := igCol.ColumnsMap()
 
 	if len(tableInfo.DataFiles) == 0 {
 		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
@@ -818,7 +815,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}

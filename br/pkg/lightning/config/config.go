@@ -473,6 +473,14 @@ type IgnoreColumns struct {
 	Columns     []string `toml:"columns" json:"columns"`
 }
 
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
+}
+
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
 func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSensitive bool) (*IgnoreColumns, error) {
 	if !caseSensitive {
