@@ -604,7 +604,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 		if err != nil {
 			if w.lockSeqNum {
-				// txn commit failed, we should reset globalSeqNum
+				// txn commit failed, we should reset seqNum.
 				w.ddlSeqNumMu.seqNum--
 				w.lockSeqNum = false
 				w.ddlSeqNumMu.Unlock()
