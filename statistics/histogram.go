@@ -1121,7 +1121,10 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
-			HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			// In some tests, the c.Info is not set, so we add this check here.
+			if c.Info != nil {
+				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			}
 		}
 	}
 	return c.TotalRowCount() == 0 || !c.Loaded
@@ -1258,7 +1261,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
-		if !rg.HighExclude && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
+		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1701,6 +1704,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
+		newCol.Loaded = oldCol.Loaded
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
