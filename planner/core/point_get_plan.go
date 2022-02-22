@@ -281,7 +281,7 @@ type BatchPointGetPlan struct {
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handles          []kv.Handle
-	HandleConstants  []*expression.Constant // record all Parameters for Plan-Cache
+	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
 	AccessConditions []expression.Expression
@@ -587,7 +587,7 @@ func newBatchPointGetPlan(
 	}
 	if handleCol != nil {
 		var handles = make([]kv.Handle, len(patternInExpr.List))
-		var handleConstants = make([]*expression.Constant, len(patternInExpr.List))
+		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -619,13 +619,13 @@ func newBatchPointGetPlan(
 				return nil
 			}
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
-			handleConstants[i] = con
+			handleParams[i] = con
 		}
 		return BatchPointGetPlan{
-			TblInfo:         tbl,
-			Handles:         handles,
-			HandleConstants: handleConstants,
-			PartitionExpr:   partitionExpr,
+			TblInfo:       tbl,
+			Handles:       handles,
+			HandleParams:  handleParams,
+			PartitionExpr: partitionExpr,
 		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 

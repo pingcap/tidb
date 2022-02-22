@@ -767,7 +767,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
-		for i, param := range x.HandleConstants {
+		for i, param := range x.HandleParams {
 			if param != nil {
 				v, err := param.Eval(chunk.Row{})
 				if err != nil {
