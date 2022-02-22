@@ -18,11 +18,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/tidb/util"
->>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"

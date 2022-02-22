@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -89,11 +89,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 				zap.String("stmt", originalSQL))
 		}
 	}
-<<<<<<< HEAD
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
-=======
-
-	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	option := &kv.ClientSendOption{
 		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
@@ -101,7 +96,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
->>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
@@ -162,14 +156,8 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
-<<<<<<< HEAD
-	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false, nil)
-=======
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
->>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

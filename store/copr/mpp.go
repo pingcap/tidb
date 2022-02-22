@@ -477,15 +477,6 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-<<<<<<< HEAD
-		store:      c.store,
-		tasks:      dispatchReqs,
-		finishCh:   make(chan struct{}),
-		cancelFunc: cancelFunc,
-		respChan:   make(chan *mppResponse, 4096),
-		startTs:    dispatchReqs[0].StartTs,
-		vars:       vars,
-=======
 		store:                      c.store,
 		tasks:                      dispatchReqs,
 		finishCh:                   make(chan struct{}),
@@ -493,9 +484,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		respChan:                   make(chan *mppResponse, 4096),
 		startTs:                    dispatchReqs[0].StartTs,
 		vars:                       vars,
-		needTriggerFallback:        needTriggerFallback,
 		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
->>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	}
 	go iter.run(ctxChild)
 	return iter

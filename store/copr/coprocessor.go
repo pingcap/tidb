@@ -408,19 +408,6 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-<<<<<<< HEAD
-			taskCh:          taskCh,
-			wg:              &it.wg,
-			store:           it.store,
-			req:             it.req,
-			respChan:        it.respChan,
-			finishCh:        it.finishCh,
-			vars:            it.vars,
-			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, false),
-			memTracker:      it.memTracker,
-			replicaReadSeed: it.replicaReadSeed,
-			actionOnExceed:  it.actionOnExceed,
-=======
 			taskCh:                     taskCh,
 			wg:                         &it.wg,
 			store:                      it.store,
@@ -428,12 +415,11 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			respChan:                   it.respChan,
 			finishCh:                   it.finishCh,
 			vars:                       it.vars,
-			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, false),
 			memTracker:                 it.memTracker,
 			replicaReadSeed:            it.replicaReadSeed,
 			actionOnExceed:             it.actionOnExceed,
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
->>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 		}
 		go worker.run(ctx)
 	}
