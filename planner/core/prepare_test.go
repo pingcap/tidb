@@ -1854,15 +1854,6 @@ func (s *testPrepareSerialSuite) TestIssue28246(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-<<<<<<< HEAD
-=======
-
-	tk.MustExec(`prepare stmt from 'SELECT * FROM t t1 JOIN t t2 ON t1.col1 = t2.col1 WHERE t1.col1 <=> NULL and t2.col2 > ?';`)
-	tk.MustExec("set @a=0;")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
->>>>>>> 1b04c3b05... planner: fix wrong range calculation for Nulleq function on Enum values (#32440)
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
