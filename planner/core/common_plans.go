@@ -767,10 +767,13 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
-		for i, param := range x.HandleParams {
+		for i, param := range x.HandleConstants {
 			if param != nil {
-				var iv int64
-				iv, err = param.Datum.ToInt64(sc)
+				v, err := param.Eval(chunk.Row{})
+				if err != nil {
+					return err
+				}
+				iv, err := v.ToInt64(sc)
 				if err != nil {
 					return err
 				}
