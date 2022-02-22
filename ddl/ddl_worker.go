@@ -53,6 +53,9 @@ var (
 	ddlWorkerID = int32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
+
+	ddlSeqNumMu  sync.Mutex
+	globalSeqNum uint64
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -92,6 +95,7 @@ type worker struct {
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+	lockSeqNum      bool
 
 	ddlJobCache
 }
@@ -440,34 +444,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
-	err = writeDDLSeqNum(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	w.writeDDLSeqNum(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
-func writeDDLSeqNum(t *meta.Meta, job *model.Job) error {
-	it, err := t.GetLastHistoryDDLJobsIterator()
-	if err != nil {
-		return err
-	}
-	lastJob, err := it.GetLastJobs(1, nil)
-	if err != nil {
-		return err
-	}
-	if len(lastJob) > 0 && lastJob[0].SeqNum > 0 {
-		job.SeqNum = lastJob[0].SeqNum + 1
-	} else {
-		job.SeqNum, err = t.GetHistoryDDLCount()
-		// Make it start from 1.
-		job.SeqNum += 1
-	}
-	if err != nil {
-		return err
-	}
-	return nil
+func (w *worker) writeDDLSeqNum(job *model.Job) {
+	ddlSeqNumMu.Lock()
+	w.lockSeqNum = true
+	globalSeqNum++
+	job.SeqNum = globalSeqNum
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
@@ -618,10 +604,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		if err != nil {
+			if w.lockSeqNum {
+				// txn commit failed, we should reset globalSeqNum
+				globalSeqNum--
+				w.lockSeqNum = false
+				ddlSeqNumMu.Unlock()
+			}
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
+		}
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			ddlSeqNumMu.Unlock()
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
