@@ -231,6 +231,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBSuperReadOnly:
+		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
