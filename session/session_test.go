@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"runtime"
@@ -689,6 +690,50 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+}
+
+func (s *testSessionSuite) TestMatchIdentity(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("CREATE USER `useridentity`@`%`")
+	tk.MustExec("CREATE USER `useridentity`@`localhost`")
+	tk.MustExec("CREATE USER `useridentity`@`192.168.1.1`")
+	tk.MustExec("CREATE USER `useridentity`@`example.com`")
+
+	// The MySQL matching rule is most specific to least specific.
+	// So if I log in from 192.168.1.1 I should match that entry always.
+	identity, err := tk.Se.MatchIdentity("useridentity", "192.168.1.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "192.168.1.1")
+
+	// If I log in from localhost, I should match localhost
+	identity, err = tk.Se.MatchIdentity("useridentity", "localhost")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// If I log in from 192.168.1.2 I should match wildcard.
+	identity, err = tk.Se.MatchIdentity("useridentity", "192.168.1.2")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "%")
+
+	identity, err = tk.Se.MatchIdentity("useridentity", "127.0.0.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// This uses the lookup of example.com to get an IP address.
+	// We then login with that IP address, but expect it to match the example.com
+	// entry in the privileges table (by reverse lookup).
+	ips, err := net.LookupHost("example.com")
+	c.Assert(err, IsNil)
+	identity, err = tk.Se.MatchIdentity("useridentity", ips[0])
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	// FIXME: we *should* match example.com instead
+	// as long as skip-name-resolve is not set (DEFAULT)
+	c.Assert(identity.Hostname, Equals, "%")
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
