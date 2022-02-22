@@ -699,8 +699,10 @@ func newBatchPointGetPlan(
 			}
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*expression.Constant, len(x.Values))
-			if i == 0 { // only initialize it once
+			initTypes := false
+			if indexTypes == nil { // only init once
 				indexTypes = make([]*types.FieldType, len(x.Values))
+				initTypes = true
 			}
 			for index, inner := range x.Values {
 				permIndex := permutations[index]
@@ -726,7 +728,7 @@ func newBatchPointGetPlan(
 					}
 					values[permIndex] = innerX.Datum
 					valuesParams[permIndex] = con
-					if i == 0 {
+					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
 				default:
@@ -762,7 +764,7 @@ func newBatchPointGetPlan(
 			}
 			values = []types.Datum{*dval}
 			valuesParams = []*expression.Constant{con}
-			if i == 0 {
+			if indexTypes == nil { // only init once
 				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
 			}
 		default:
