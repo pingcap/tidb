@@ -16,11 +16,18 @@ package restore
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/mysql"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
@@ -28,6 +35,142 @@ import (
 var _ = Suite(&checkInfoSuite{})
 
 type checkInfoSuite struct{}
+
+func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
+	dir := c.MkDir()
+	cfg := config.NewConfig()
+	cfg.Checkpoint.Enable = false
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name: "test1",
+			Tables: []*mydump.MDTableMeta{
+				{
+					DB:   "test1",
+					Name: "tbl1",
+				},
+				{
+					DB:   "test1",
+					Name: "tbl2",
+				},
+			},
+		},
+		{
+			Name: "test2",
+			Tables: []*mydump.MDTableMeta{
+				{
+					DB:   "test2",
+					Name: "tbl1",
+				},
+			},
+		},
+	}
+
+	rc := &Controller{
+		cfg:           cfg,
+		dbMetas:       dbMetas,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+	}
+
+	ctx := context.Background()
+
+	// test tidb will do nothing
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	err := rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+
+	// test incremental mode
+	rc.cfg.TikvImporter.Backend = config.BackendLocal
+	rc.cfg.TikvImporter.IncrementalImport = true
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+
+	rc.cfg.TikvImporter.IncrementalImport = false
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	mock.MatchExpectationsInOrder(false)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	// not error, need not to init check template
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	// single table contains data
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	rc.checkTemplate = NewSimpleTemplate()
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	tmpl := rc.checkTemplate.(*SimpleTemplate)
+	c.Assert(len(tmpl.criticalMsgs), Equals, 1)
+	c.Assert(tmpl.criticalMsgs[0], Matches, "table\\(s\\) \\[`test2`.`tbl1`\\] are not empty")
+
+	// multi tables contains data
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	rc.checkTemplate = NewSimpleTemplate()
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	c.Assert(len(tmpl.criticalMsgs), Equals, 1)
+	c.Assert(tmpl.criticalMsgs[0], Matches, "table\\(s\\) \\[`test1`.`tbl1`, `test2`.`tbl1`\\] are not empty")
+
+	// init checkpoint with only two of the three tables
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"test1": {
+			Name: "test1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"tbl1": {
+					Name: "tbl1",
+				},
+			},
+		},
+		"test2": {
+			Name: "test2",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"tbl1": {
+					Name: "tbl1",
+				},
+			},
+		},
+	}
+	rc.cfg.Checkpoint.Enable = true
+	rc.checkpointsDB = checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
+	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
+	c.Check(err, IsNil)
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	// only need to check the one that is not in checkpoint
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
 
 func (s *checkInfoSuite) TestLocalResource(c *C) {
 	dir := c.MkDir()
