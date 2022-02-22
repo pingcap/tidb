@@ -525,11 +525,11 @@ func (ts *testSuite) TestIssue31629(c *C) {
 	defer tk.MustExec("drop database Issue31629")
 	tk.MustExec("use Issue31629")
 	// Test following partition types:
-	// HASH, RANGE, LIST:
+	// HASH, RANGE:
 	// - directly on a single int column
 	// - with expression on multiple columns
-	// RANGE/LIST COLUMNS single column
-	// RANGE/LIST COLUMNS -- Verify that only single column is allowed and no expression
+	// RANGE COLUMNS single column
+	// RANGE COLUMNS -- Verify that only single column is allowed and no expression
 	tests := []struct {
 		create string
 		fail   bool
