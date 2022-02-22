@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
 	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
+	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
@@ -77,4 +78,8 @@ func GetPointGetPlanData() testdata.TestData {
 
 func GetEnforceMPPSuiteData() testdata.TestData {
 	return testDataMap["enforce_mpp_suite"]
+}
+
+func GetExpressionRewriterSuiteData() testdata.TestData {
+	return testDataMap["expression_rewriter_suite"]
 }
