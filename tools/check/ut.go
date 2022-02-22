@@ -25,12 +25,14 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	// Set the correct when it runs inside docker.
+	// Set the correct value when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
+	"golang.org/x/tools/cover"
 )
 
 func usage() bool {
@@ -74,6 +76,10 @@ type task struct {
 	pkg  string
 	test string
 	old  bool
+}
+
+func (t *task) String() string {
+	return t.pkg + " " + t.test
 }
 
 var P int
@@ -252,6 +258,37 @@ func cmdRun(args ...string) bool {
 		}
 		tasks = tmp
 	}
+
+	if except != "" {
+		list, err := parseCaseListFromFile(except)
+		if err != nil {
+			fmt.Println("parse --except file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; !ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
+	if only != "" {
+		list, err := parseCaseListFromFile(only)
+		if err != nil {
+			fmt.Println("parse --only file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
 	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
@@ -296,6 +333,25 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
+func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return nil, withTrace(err)
+	}
+	defer f.Close()
+
+	ret := make(map[string]struct{})
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Bytes()
+		ret[string(line)] = struct{}{}
+	}
+	if err := s.Err(); err != nil {
+		return nil, withTrace(err)
+	}
+	return ret, nil
+}
+
 // handleFlags strip the '--flag xxx' from the command line os.Args
 // Example of the os.Args changes
 // Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
@@ -332,9 +388,14 @@ var junitfile string
 var coverprofile string
 var coverFileTempDir string
 
+var except string
+var only string
+
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
+	except = handleFlags("--except")
+	only = handleFlags("--only")
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -354,14 +415,13 @@ func main() {
 		fmt.Println("os.Getwd() error", err)
 	}
 
+	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		cmdRun()
-		return
+		isSucceed = cmdRun()
 	}
 
 	if len(os.Args) >= 2 {
-		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
 			isSucceed = cmdList(os.Args[2:]...)
@@ -372,9 +432,9 @@ func main() {
 		default:
 			isSucceed = usage()
 		}
-		if !isSucceed {
-			os.Exit(1)
-		}
+	}
+	if !isSucceed {
+		os.Exit(1)
 	}
 }
 
@@ -394,26 +454,137 @@ func collectCoverProfileFile() {
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
+	result := make(map[string]*cover.Profile)
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
+		collectOneCoverProfileFile(result, file)
+	}
 
-		f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
-		if err != nil {
-			fmt.Println("open temp cover file error:", err)
+	w1 := bufio.NewWriter(w)
+	for _, prof := range result {
+		for _, block := range prof.Blocks {
+			fmt.Fprintf(w1, "%s:%d.%d,%d.%d %d %d\n",
+				prof.FileName,
+				block.StartLine,
+				block.StartCol,
+				block.EndLine,
+				block.EndCol,
+				block.NumStmt,
+				block.Count,
+			)
+		}
+		if err := w1.Flush(); err != nil {
+			fmt.Println("flush data to cover profile file error:", err)
 			os.Exit(-1)
 		}
-		defer f.Close()
+	}
+}
 
-		r := bufio.NewReader(f)
-		line, _, err := r.ReadLine()
-		if err != nil || string(line) != "mode: set" {
+func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
+	f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+	if err != nil {
+		fmt.Println("open temp cover file error:", err)
+		os.Exit(-1)
+	}
+	defer f.Close()
+
+	profs, err := cover.ParseProfilesFromReader(f)
+	if err != nil {
+		fmt.Println("parse cover profile file error:", err)
+		os.Exit(-1)
+	}
+	mergeProfile(result, profs)
+}
+
+func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
+	for _, prof := range profs {
+		sort.Sort(blocksByStart(prof.Blocks))
+		old, ok := m[prof.FileName]
+		if !ok {
+			m[prof.FileName] = prof
 			continue
 		}
 
-		io.Copy(w, r)
+		// Merge samples from the same location.
+		// The data has already been sorted.
+		tmp := old.Blocks[:0]
+		var i, j int
+		for i < len(old.Blocks) && j < len(prof.Blocks) {
+			v1 := old.Blocks[i]
+			v2 := prof.Blocks[j]
+
+			switch compareProfileBlock(v1, v2) {
+			case -1:
+				tmp = appendWithReduce(tmp, v1)
+				i++
+			case 1:
+				tmp = appendWithReduce(tmp, v2)
+				j++
+			default:
+				tmp = appendWithReduce(tmp, v1)
+				tmp = appendWithReduce(tmp, v2)
+				i++
+				j++
+			}
+		}
+		for ; i < len(old.Blocks); i++ {
+			tmp = appendWithReduce(tmp, old.Blocks[i])
+		}
+		for ; j < len(prof.Blocks); j++ {
+			tmp = appendWithReduce(tmp, prof.Blocks[j])
+		}
+
+		m[prof.FileName] = old
 	}
+}
+
+// appendWithReduce works like append(), but it merge the duplicated values.
+func appendWithReduce(input []cover.ProfileBlock, b cover.ProfileBlock) []cover.ProfileBlock {
+	if len(input) >= 1 {
+		last := &input[len(input)-1]
+		if b.StartLine == last.StartLine &&
+			b.StartCol == last.StartCol &&
+			b.EndLine == last.EndLine &&
+			b.EndCol == last.EndCol {
+			if b.NumStmt != last.NumStmt {
+				panic(fmt.Errorf("inconsistent NumStmt: changed from %d to %d", last.NumStmt, b.NumStmt))
+			}
+			// Merge the data with the last one of the slice.
+			last.Count |= b.Count
+			return input
+		}
+	}
+	return append(input, b)
+}
+
+type blocksByStart []cover.ProfileBlock
+
+func compareProfileBlock(x, y cover.ProfileBlock) int {
+	if x.StartLine < y.StartLine {
+		return -1
+	}
+	if x.StartLine > y.StartLine {
+		return 1
+	}
+
+	// Now x.StartLine == y.StartLine
+	if x.StartCol < y.StartCol {
+		return -1
+	}
+	if x.StartCol > y.StartCol {
+		return 1
+	}
+
+	return 0
+}
+
+func (b blocksByStart) Len() int      { return len(b) }
+func (b blocksByStart) Swap(i, j int) { b[i], b[j] = b[j], b[i] }
+func (b blocksByStart) Less(i, j int) bool {
+	bi, bj := b[i], b[j]
+	return bi.StartLine < bj.StartLine || bi.StartLine == bj.StartLine && bi.StartCol < bj.StartCol
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
@@ -560,7 +731,7 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
-	// args = append(args, []string{"-test.timeout", "20s"}...)
+	args = append(args, []string{"-test.timeout", "2m"}...)
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)

@@ -49,7 +49,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -329,11 +329,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:               ctx,
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
+	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
 }
@@ -364,7 +364,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -392,6 +391,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
+		}
+
+		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			globalSeqNum, err = t.GetHistoryDDLCount()
+			return err
+		})
+		if err != nil {
+			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -571,6 +579,14 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 	return time.NewTicker(chooseLeaseTime(lease, interval))
 }
 
+func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
+	if job == nil {
+		return
+	}
+	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
+	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
+}
+
 // doDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
@@ -606,6 +622,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		ticker.Stop()
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
 	for {
