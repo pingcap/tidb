@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
@@ -757,8 +758,8 @@ func TestToDatum(t *testing.T) {
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 1, len(datums))
-	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
-	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
+	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
+	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
@@ -988,11 +989,9 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 
 	threads := 8
 	loops := 20
-	wg := sync.WaitGroup{}
-	wg.Add(threads + 1)
+	var wg tidbutil.WaitGroupWrapper
 
 	addStmtFunc := func() {
-		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
@@ -1002,23 +1001,25 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		}
 	}
 	for i := 0; i < threads; i++ {
-		go addStmtFunc()
+		wg.Run(addStmtFunc)
 	}
 
 	defer func() {
-		require.Nil(t, ssMap.SetMaxStmtCount(3000))
+		require.NoError(t, ssMap.SetMaxStmtCount(3000))
 	}()
 
 	setStmtCountFunc := func() {
-		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
 		for i := 10; i > 0; i-- {
-			require.Nil(t, ssMap.SetMaxStmtCount(uint(i)))
+			require.NoError(t, ssMap.SetMaxStmtCount(uint(i)))
 		}
 	}
-	go setStmtCountFunc()
+	wg.Run(setStmtCountFunc)
 
 	wg.Wait()
+
+	// add stmt again to make sure evict occurs after SetMaxStmtCount.
+	addStmtFunc()
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
