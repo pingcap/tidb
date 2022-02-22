@@ -507,7 +507,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
-		if err != nil {
+		if err != nil && !task.keepOuterOrder {
+			// Only need check non-keep-outer-order case because the
+			// `joinResult` had been sent to the `resultCh` when err != nil.{
 			joinResult.err = err
 			break
 		}
