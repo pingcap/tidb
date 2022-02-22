@@ -149,6 +149,40 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
+func TestPreparedNullParam(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int not null, KEY id (id))")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		tk.MustExec("prepare stmt from 'select * from t where id = ?'")
+		tk.MustExec("set @a= null")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"TableDual_5 8000.00 root  rows:0"))
+	}
+}
+
 func TestIssue29850(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)

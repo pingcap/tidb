@@ -40,6 +40,8 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
 	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
+	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
+	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
@@ -82,4 +84,12 @@ func GetEnforceMPPSuiteData() testdata.TestData {
 
 func GetExpressionRewriterSuiteData() testdata.TestData {
 	return testDataMap["expression_rewriter_suite"]
+}
+
+func GetPartitionPrunerData() testdata.TestData {
+	return testDataMap["partition_pruner"]
+}
+
+func GetPlanSuiteData() testdata.TestData {
+	return testDataMap["plan_suite"]
 }
