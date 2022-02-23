@@ -662,6 +662,15 @@ func TestAlterDatabaseBasic(t *testing.T) {
 	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
 }
 
+func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, value string, ok bool) {
+	l := len(tkx.MustQuery(fmt.Sprintf("show %v variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='%v'", level, value)).Rows())
+	if ok {
+		require.Equal(t, 1, l)
+	} else {
+		require.Equal(t, 0, l)
+	}
+}
+
 func TestTiFlashBatchAddVariables(t *testing.T) {
 	store, _, tear := createStoreWithoutMockTiFlash(t)
 	defer tear()
@@ -670,35 +679,35 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
 	tk.MustExec("set GLOBAL tidb_batch_pending_tiflash_count=6")
 
-	checkNum := func(level string, value string, ok bool) {
-		l := len(tk.MustQuery(fmt.Sprintf("show %v variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='%v'", level, value)).Rows())
-		if ok {
-			require.Equal(t, 1, l)
-		} else {
-			require.Equal(t, 0, l)
-		}
-	}
-
-	checkNum("session", "5", true)
-	checkNum("global", "6", true)
-	checkNum("global", "1.5", false)
+	checkBatchPandingNum(t, tk, "session", "5", true)
+	checkBatchPandingNum(t, tk, "global", "6", true)
+	checkBatchPandingNum(t, tk, "global", "1.5", false)
 
 	tk.MustGetErrMsg("set GLOBAL tidb_batch_pending_tiflash_count=1.5", "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
-	checkNum("global", "6", true)
+	checkBatchPandingNum(t, tk, "global", "6", true)
+
+	tk2 := testkit.NewTestKit(t, *store)
+	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
-func mustTimeout(tk *testkit.TestKit, sql string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*6)
+func execWithTimeout(tk *testkit.TestKit, sql string) (error, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 	defer cancel()
+	doneCh := make(chan error, 1)
+
 	go func(c context.Context) {
 		stmts, _ := tk.Session().Parse(context.Background(), sql)
 		for _, stmt := range stmts {
-			tk.Session().ExecuteStmt(ctx, stmt)
+			_, err := tk.Session().ExecuteStmt(ctx, stmt)
+			doneCh <- err
 		}
+		doneCh <- nil
 	}(ctx)
 	select {
+	case e := <- doneCh:
+		return e, false
 	case <-ctx.Done():
-		return
+		return nil, true
 	}
 }
 
@@ -711,7 +720,7 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	tk.MustExec("drop database if exists tiflash_ddl_limit")
 	tk.MustExec("create database tiflash_ddl_limit")
 	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
-	for i := 0; i < threshold+1; i++ {
+	for i := 0; i < threshold; i++ {
 		tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", i))
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
@@ -722,19 +731,30 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp")
 	}()
-	mustTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	cnt := 0
-	for i := 0; i < threshold+1; i++ {
-		tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
-		require.NoError(t, err)
-		if tb.Meta().TiFlashReplica != nil {
-			cnt += 1
-		}
-	}
-	require.Equal(t, threshold, cnt)
+	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 
-	se2, err := session.CreateSessionWithDomain(s.store, s.dom)
+	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
+	err, timeOut := execWithTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
-	s
+	require.True(t, timeOut)
+
+	// Validate
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	check := func(expected int) {
+		cnt := 0
+		for i := 0; i < threshold+1; i++ {
+			tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+			require.NoError(t, err)
+			if tb.Meta().TiFlashReplica != nil {
+				cnt += 1
+			}
+		}
+		require.Equal(t, expected, cnt)
+	}
+	check(2)
+
+	tk2 := testkit.NewTestKit(t, s.store)
+	tk2.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 1)
+	check(3)
 }

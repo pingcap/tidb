@@ -64,7 +64,6 @@ type TiFlashManagementContext struct {
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
 	TotalSize                 atomicutil.Uint32
-	BackoffSize               atomicutil.Uint32
 }
 
 // NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
