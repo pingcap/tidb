@@ -735,11 +735,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSignForInteger()
 		}
-	case mysql.TypeFloat, mysql.TypeDouble:
-		switch newCol.Tp {
-		case mysql.TypeFloat, mysql.TypeDouble:
-			return needTruncationOrToggleSign()
-		}
+		// conversion between float and double needs reorganization, see issue #31372
 	}
 
 	return true
