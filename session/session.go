@@ -2769,7 +2769,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	meta.InitMetaTable(store)
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)

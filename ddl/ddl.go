@@ -200,18 +200,18 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers           map[workerType]*worker
-	reorgWorker       *workerPool
-	generalDDLWorker  *workerPool
-	sessPool          *sessionPool
-	delRangeMgr       delRangeManager
-	sessForAddDDL     sessionctx.Context
-	enableTiFlashPoll *atomicutil.Bool
+	workers              map[workerType]*worker
+	reorgWorkerPool      *workerPool
+	generalDDLWorkerPool *workerPool
+	sessPool             *sessionPool
+	delRangeMgr          delRangeManager
+	sessForAddDDL        sessionctx.Context
+	enableTiFlashPoll    *atomicutil.Bool
 
 	// used in the concurrency ddl.
-	ddlJobCh             chan struct{}
-	runningReorgJobMap   map[int]struct{}
-	runningReorgJobMapMu sync.RWMutex
+	ddlJobCh           chan struct{}
+	runningReorgJobMap map[int]struct{}
+	runningDDLMapMu    sync.RWMutex
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -429,8 +429,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				asyncNotify(wk.ddlJobCh)
 				return wk, nil
 			}
-			d.reorgWorker = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, 10, 10, 3*time.Minute))
-			d.generalDDLWorker = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
+			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, 10, 10, 3*time.Minute))
+			d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
 			d.sessForAddDDL, err = d.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
@@ -497,11 +497,11 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
 	if AllowConcurrentDDL.Load() {
-		if d.reorgWorker != nil {
-			d.reorgWorker.close()
+		if d.reorgWorkerPool != nil {
+			d.reorgWorkerPool.close()
 		}
-		if d.generalDDLWorker != nil {
-			d.generalDDLWorker.close()
+		if d.generalDDLWorkerPool != nil {
+			d.generalDDLWorkerPool.close()
 		}
 	} else {
 		for _, worker := range d.workers {
