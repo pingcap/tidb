@@ -691,10 +691,6 @@ func TestTiFlashBackoff(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
 	ddl.EnableTiFlashPoll(s.dom.DDL())
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
-	}()
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
 	// 1, 1.5, 2.25, 3.375, 5.5625
