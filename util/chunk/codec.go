@@ -140,6 +140,9 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 
 	// decode data.
 	col.data = buffer[:numDataBytes:numDataBytes]
+	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
+	// this column. Thus, we set `avoidReusing` to true.
+	col.avoidReusing = true
 	return buffer[numDataBytes:]
 }
 
