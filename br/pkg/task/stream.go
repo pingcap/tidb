@@ -692,7 +692,7 @@ func RunStreamRestore(
 	err = withProgress(pi, func(p glue.Progress) error {
 		for _, table := range fullBackupTables {
 			if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
-				return errors.Annotatef(err, "failed to fix index for table %s", table.FullName())
+				return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
 			}
 		}
 		return nil

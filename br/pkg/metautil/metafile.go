@@ -146,12 +146,6 @@ func (tbl *Table) NoChecksum() bool {
 	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
 }
 
-// FullName generates the full table name like schema.table.
-func (tbl *Table) FullName() string {
-	// we cannot use `utils.EncloseDBAndTable(tbl.DB.Name.L, tbl.Info.Name.L)` because of cyclic requirement...
-	return fmt.Sprintf("`%s`.`%s`", tbl.DB.Name, tbl.Info.Name)
-}
-
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
 	storage    storage.ExternalStorage
