@@ -395,6 +395,7 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 			}
 		}
 
+<<<<<<< HEAD
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
 			args := fn.GetArgs()
@@ -405,6 +406,15 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 						col = c
 					}
 				}
+=======
+		fn = raw
+		monotonous = getMonotoneMode(raw.FuncName.L)
+		// Check the partitionExpr is in the form: fn(col, ...)
+		// There should be only one column argument, and it should be the first parameter.
+		if expression.ExtractColumnSet(args...).Len() == 1 {
+			if col1, ok := args[0].(*expression.Column); ok {
+				col = col1
+>>>>>>> 991132080... planner: don't decorrelate the APPLY when the inner's projection reference no column (#32370)
 			}
 		}
 	case *expression.Column:

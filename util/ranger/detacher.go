@@ -145,6 +145,85 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	return -1
 }
 
+<<<<<<< HEAD
+=======
+// extractIndexPointRangesForCNF extracts a CNF item from the input CNF expressions, such that the CNF item
+// is totally composed of point range filters.
+// e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
+// ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
+func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column, lengths []int) (*DetachRangeResult, int, []*valueInfo, error) {
+	if len(conds) < 2 {
+		return nil, -1, nil, nil
+	}
+	var r *DetachRangeResult
+	columnValues := make([]*valueInfo, len(cols))
+	maxNumCols := int(0)
+	offset := int(-1)
+	for i, cond := range conds {
+		tmpConds := []expression.Expression{cond}
+		colSets := expression.ExtractColumnSet(cond)
+		if colSets.Len() == 0 {
+			continue
+		}
+		res, err := DetachCondAndBuildRangeForIndex(sctx, tmpConds, cols, lengths)
+		if err != nil {
+			return nil, -1, nil, err
+		}
+		if len(res.Ranges) == 0 {
+			return &DetachRangeResult{}, -1, nil, nil
+		}
+		// take the union of the two columnValues
+		columnValues = unionColumnValues(columnValues, res.ColumnValues)
+		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+			continue
+		}
+		sameLens, allPoints := true, true
+		numCols := int(0)
+		for j, ran := range res.Ranges {
+			if !ran.IsPoint(sctx) {
+				allPoints = false
+				break
+			}
+			if j == 0 {
+				numCols = len(ran.LowVal)
+			} else if numCols != len(ran.LowVal) {
+				sameLens = false
+				break
+			}
+		}
+		if !allPoints || !sameLens {
+			continue
+		}
+		if numCols > maxNumCols {
+			r = res
+			offset = i
+			maxNumCols = numCols
+		}
+	}
+	if r != nil {
+		r.IsDNFCond = false
+	}
+	return r, offset, columnValues, nil
+}
+
+func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
+	if lhs == nil {
+		return rhs
+	}
+	if rhs != nil {
+		for i, valInfo := range lhs {
+			if i >= len(rhs) {
+				break
+			}
+			if valInfo == nil && rhs[i] != nil {
+				lhs[i] = rhs[i]
+			}
+		}
+	}
+	return lhs
+}
+
+>>>>>>> 991132080... planner: don't decorrelate the APPLY when the inner's projection reference no column (#32370)
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
