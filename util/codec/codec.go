@@ -156,9 +156,9 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindMysqlDecimal:
 		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
 	case types.KindMysqlEnum:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val, err := val.GetBinaryLiteral().ToInt(sc)
 		terror.Log(errors.Trace(err))
@@ -350,10 +350,27 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			return
 		}
 	case mysql.TypeEnum:
+<<<<<<< HEAD
 		flag = compactBytesFlag
 		v := uint64(row.GetEnum(idx).ToNumber())
 		str := tp.Elems[v-1]
 		b = ConvertByCollation(hack.Slice(str), tp)
+=======
+		if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+			flag = uvarintFlag
+			v := row.GetEnum(idx).Value
+			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+		} else {
+			flag = compactBytesFlag
+			v := row.GetEnum(idx).Value
+			str := ""
+			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+				// str will be empty string if v out of definition of enum.
+				str = enum.Name
+			}
+			b = ConvertByCollation(hack.Slice(str), tp)
+		}
+>>>>>>> cc789d078... codec: Don't convert set or enum datum to float64 (#32372)
 	case mysql.TypeSet:
 		flag = compactBytesFlag
 		s, err := types.ParseSetValue(tp.Elems, row.GetSet(idx).Value)
@@ -553,11 +570,27 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
+<<<<<<< HEAD
 				isNull[i] = true
 			} else {
 				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
 				str := tp.Elems[v-1]
+=======
+				isNull[i] = !ignoreNull
+			} else if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+				buf[0] = uvarintFlag
+				v := column.GetEnum(i).Value
+				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+			} else {
+				buf[0] = compactBytesFlag
+				v := column.GetEnum(i).Value
+				str := ""
+				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+					// str will be empty string if v out of definition of enum.
+					str = enum.Name
+				}
+>>>>>>> cc789d078... codec: Don't convert set or enum datum to float64 (#32372)
 				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
@@ -1265,3 +1298,60 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 	collator := collate.GetCollator(tp.Collate)
 	return string(hack.String(collator.Key(str)))
 }
+<<<<<<< HEAD
+=======
+
+// HashCode encodes a Datum into a unique byte slice.
+// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
+// 	to make the encoding lossless.
+func HashCode(b []byte, d types.Datum) []byte {
+	switch d.Kind() {
+	case types.KindInt64:
+		b = encodeSignedInt(b, d.GetInt64(), false)
+	case types.KindUint64:
+		b = encodeUnsignedInt(b, d.GetUint64(), false)
+	case types.KindFloat32, types.KindFloat64:
+		b = append(b, floatFlag)
+		b = EncodeFloat(b, d.GetFloat64())
+	case types.KindString:
+		b = encodeString(b, d, false)
+	case types.KindBytes:
+		b = encodeBytes(b, d.GetBytes(), false)
+	case types.KindMysqlTime:
+		b = append(b, uintFlag)
+		t := d.GetMysqlTime().CoreTime()
+		b = encodeUnsignedInt(b, uint64(t), true)
+	case types.KindMysqlDuration:
+		// duration may have negative value, so we cannot use String to encode directly.
+		b = append(b, durationFlag)
+		b = EncodeInt(b, int64(d.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal:
+		b = append(b, decimalFlag)
+		decStr := d.GetMysqlDecimal().ToString()
+		b = encodeBytes(b, decStr, false)
+	case types.KindMysqlEnum:
+		b = encodeUnsignedInt(b, d.GetMysqlEnum().Value, false)
+	case types.KindMysqlSet:
+		b = encodeUnsignedInt(b, d.GetMysqlSet().Value, false)
+	case types.KindMysqlBit, types.KindBinaryLiteral:
+		val := d.GetBinaryLiteral()
+		b = encodeBytes(b, val, false)
+	case types.KindMysqlJSON:
+		b = append(b, jsonFlag)
+		j := d.GetMysqlJSON()
+		b = append(b, j.TypeCode)
+		b = append(b, j.Value...)
+	case types.KindNull:
+		b = append(b, NilFlag)
+	case types.KindMinNotNull:
+		b = append(b, bytesFlag)
+	case types.KindMaxValue:
+		b = append(b, maxFlag)
+	default:
+		logutil.BgLogger().Warn("trying to calculate HashCode of an unexpected type of Datum",
+			zap.Uint8("Datum Kind", d.Kind()),
+			zap.Stack("stack"))
+	}
+	return b
+}
+>>>>>>> cc789d078... codec: Don't convert set or enum datum to float64 (#32372)
