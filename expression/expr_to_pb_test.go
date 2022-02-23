@@ -1352,6 +1352,31 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn, dateColumn},
 		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.InsertFunc,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Greatest,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Least,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
 	}
 
 	for _, tc := range testcases {

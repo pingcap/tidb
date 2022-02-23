@@ -2596,9 +2596,9 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where month(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	//rows[1][2] = "dayname(test.t.d)"
-	//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayname(d);").
-	//	CheckAt([]int{0, 3, 6}, rows)
+	rows[1][2] = "dayname(test.t.d)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayname(d);").
+		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "dayofmonth(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
@@ -2726,6 +2726,26 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "lower(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where lower(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "upper(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where upper(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "insert_func(test.t.c, 1, 1, \"c\")"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where insert(c,1,1,'c')").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "greatest(test.t.id, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where greatest(id, 1)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "least(test.t.id, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where least(id, 1)").
 		CheckAt([]int{0, 3, 6}, rows)
 }
 

@@ -1006,6 +1006,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLocate3ArgsSig{base}
 	case tipb.ScalarFuncSig_Lower:
 		f = &builtinLowerSig{base}
+	case tipb.ScalarFuncSig_LowerUTF8:
+		f = &builtinLowerUTF8Sig{base}
 	case tipb.ScalarFuncSig_LpadUTF8:
 		f = &builtinLpadUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Lpad:
@@ -1064,6 +1066,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_UpperUTF8:
+		f = &builtinUpperUTF8Sig{base}
 	case tipb.ScalarFuncSig_ToBinary:
 		f = &builtinInternalToBinarySig{base}
 	case tipb.ScalarFuncSig_FromBinary:
