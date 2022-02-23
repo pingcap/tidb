@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -130,4 +131,20 @@ func TestTestSerialStatSuite(t *testing.T) {
 	defer clean()
 
 	ddl.ExportTestSerialStatSuite(t)
+}
+
+func TestMultiSchemaChange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int, c int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = true;")
+	tk.MustExec("alter table t add column b int, modify column c varchar(255), add index idx_a(a), add index idx_c(c);")
+	dom := domain.GetDomain(tk.Session())
+	tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(tt.Meta().Columns))
+	require.Equal(t, 2, len(tt.Meta().Indices))
 }
