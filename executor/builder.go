@@ -2307,7 +2307,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, sampleRate float64) string {
+func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
 	var b strings.Builder
 	b.WriteString(autoAnalyze)
 	b.WriteString("analyze table")
@@ -2417,7 +2417,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		DBName:        task.DBName,
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
-		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, *sampleRate),
+		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, opts, *sampleRate),
 	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
