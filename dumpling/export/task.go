@@ -34,6 +34,14 @@ type TaskViewMeta struct {
 	CreateViewSQL  string
 }
 
+// TaskSequenceMeta is a dumping sequence metadata task
+type TaskSequenceMeta struct {
+	Task
+	DatabaseName      string
+	SequenceName      string
+	CreateSequenceSQL string
+}
+
 // TaskPolicyMeta is a dumping view metadata task
 type TaskPolicyMeta struct {
 	Task

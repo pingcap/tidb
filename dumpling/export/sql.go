@@ -174,6 +174,23 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 	return createTableSQL.String(), createViewSQL.String(), nil
 }
 
+// ShowCreateTable constructs the create table SQL for a specified table
+// returns (createTableSQL, error)
+func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`", escapeString(sequence))
+	err := db.QuerySQL(tctx, handleOneRow, func() {
+		oneRow[0], oneRow[1] = "", ""
+	}, query)
+	if err != nil {
+		return "", err
+	}
+	return oneRow[1], nil
+}
+
 // SetCharset builds the set charset SQLs
 func SetCharset(w *strings.Builder, characterSet, collationConnection string) {
 	w.WriteString("SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\n")

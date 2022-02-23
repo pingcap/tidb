@@ -1151,6 +1151,16 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		meta.showCreateView = createViewSQL
 		return meta, nil
 	}
+	if table.Type == TableTypeSequence {
+		sequenceName := table.Name
+		createSequenceSQL, err2 := ShowCreateSequence(tctx, conn, db, sequenceName)
+		if err2 != nil {
+			return meta, err2
+		}
+		meta.showCreateSequence = createSequenceSQL
+		return meta, nil
+	}
+
 	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
 	if err != nil {
 		return nil, err
