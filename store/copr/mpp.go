@@ -470,7 +470,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, startTs uint64) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
@@ -479,7 +479,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		finishCh:   make(chan struct{}),
 		cancelFunc: cancelFunc,
 		respChan:   make(chan *mppResponse, 4096),
-		startTs:    dispatchReqs[0].StartTs,
+		startTs:    startTs,
 		vars:       vars,
 	}
 	go iter.run(ctxChild)
