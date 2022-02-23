@@ -108,9 +108,10 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 	return true
 }
 
+// GetBindRecord gets the BindRecord from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
+func (c *bindCache) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	bindRecords := c.get(bindCacheKey(hash))
@@ -122,10 +123,10 @@ func (c *bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
-// getAllBindRecords return all the bindRecords from the bindCache.
+// GetAllBindRecords return all the bindRecords from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) getAllBindRecords() []*BindRecord {
+func (c *bindCache) GetAllBindRecords() []*BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
@@ -136,8 +137,9 @@ func (c *bindCache) getAllBindRecords() []*BindRecord {
 	return bindRecords
 }
 
+// SetBindRecord sets the BindRecord to the cache.
 // The function is thread-safe.
-func (c *bindCache) setBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(hash)
@@ -150,9 +152,9 @@ func (c *bindCache) setBindRecord(hash string, meta *BindRecord) {
 	c.set(cacheKey, []*BindRecord{meta})
 }
 
-// removeDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
+// RemoveDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) RemoveDeletedBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	metas := c.get(bindCacheKey(hash))
@@ -175,23 +177,26 @@ func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 	c.set(bindCacheKey(hash), metas)
 }
 
+// SetMemCapacity sets the memory capacity for the cache.
 // The function is thread-safe.
-func (c *bindCache) setMemCapacity(capacity int64) {
+func (c *bindCache) SetMemCapacity(capacity int64) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindRecord
 	c.memCapacity = capacity
 }
 
+// GetMemCapacity get the memory capacity for the cache.
 // The function is thread-safe.
-func (c *bindCache) getMemCapacity() int64 {
+func (c *bindCache) GetMemCapacity() int64 {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.memCapacity
 }
 
+// Copy copys a new bindCache from the origin cache.
 // The function is thread-safe.
-func (c *bindCache) copy() *bindCache {
+func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	newCache := newBindCache(c.memCapacity)

@@ -143,7 +143,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		return err
 	}
 
-	newCache := h.bindInfo.Value.Load().(*bindCache).copy()
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
 	defer func() {
 		h.bindInfo.lastUpdateTime = lastUpdateTime
 		h.bindInfo.Value.Store(newCache)
@@ -168,14 +168,14 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			continue
 		}
 
-		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+		oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta).removeDeletedBindings()
 		if len(newRecord.Bindings) > 0 {
-			newCache.setBindRecord(hash, newRecord)
+			newCache.SetBindRecord(hash, newRecord)
 		} else {
-			newCache.removeDeletedBindRecord(hash, newRecord)
+			newCache.RemoveDeletedBindRecord(hash, newRecord)
 		}
-		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), true)
+		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), true)
 	}
 	return nil
 }
@@ -518,24 +518,24 @@ func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
 
 // Size returns the size of bind info cache.
 func (h *BindHandle) Size() int {
-	size := len(h.bindInfo.Load().(*bindCache).getAllBindRecords())
+	size := len(h.bindInfo.Load().(*bindCache).GetAllBindRecords())
 	return size
 }
 
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
 func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.bindInfo.Load().(*bindCache).getBindRecord(hash, normdOrigSQL, db)
+	return h.bindInfo.Load().(*bindCache).GetBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord returns all bind records in cache.
 func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	return h.bindInfo.Load().(*bindCache).getAllBindRecords()
+	return h.bindInfo.Load().(*bindCache).GetAllBindRecords()
 }
 
 // SetBindCacheCapacity reset the capacity for the bindCache.
 // It will not affect already cached BindRecords.
 func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
-	h.bindInfo.Load().(*bindCache).setMemCapacity(capacity)
+	h.bindInfo.Load().(*bindCache).SetMemCapacity(capacity)
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.
@@ -565,9 +565,9 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
 // it will be overridden.
 func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.setBindRecord(hash, meta)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache.SetBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
 }
@@ -575,21 +575,21 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 // appendBindRecord addes the BindRecord to the cache, all the stale BindRecords are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	newCache.setBindRecord(hash, newRecord)
+	newCache.SetBindRecord(hash, newRecord)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
 
 // removeBindRecord removes the BindRecord from the cache.
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.removeDeletedBindRecord(hash, meta)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache.RemoveDeletedBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), false)
+	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), false)
 }
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
@@ -915,7 +915,7 @@ const (
 
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
-	for _, bindRecord := range cache.getAllBindRecords() {
+	for _, bindRecord := range cache.GetAllBindRecords() {
 		for _, bind := range bindRecord.Bindings {
 			if bind.Status == PendingVerify {
 				return bindRecord.OriginalSQL, bindRecord.Db, bind
@@ -1043,7 +1043,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
-	memCapacity := h.bindInfo.Value.Load().(*bindCache).getMemCapacity()
+	memCapacity := h.bindInfo.Value.Load().(*bindCache).GetMemCapacity()
 	h.bindInfo.Store(newBindCache(memCapacity))
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()

@@ -42,8 +42,8 @@ func NewSessionBindHandle(ctx sessionctx.Context, parser *parser.Parser) *Sessio
 // appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	oldRecord := h.ch.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	h.ch.setBindRecord(hash, meta)
+	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	h.ch.SetBindRecord(hash, meta)
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
@@ -81,24 +81,24 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(hash, newRecord)
+	h.ch.SetBindRecord(hash, newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.ch.getBindRecord(hash, normdOrigSQL, db)
+	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all session bind info.
 func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	return h.ch.getAllBindRecords()
+	return h.ch.GetAllBindRecords()
 }
 
 // Close closes the session handle.
 func (h *SessionHandle) Close() {
-	for _, bindRecord := range h.ch.getAllBindRecords() {
+	for _, bindRecord := range h.ch.GetAllBindRecords() {
 		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 	}
 }
