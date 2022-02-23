@@ -599,7 +599,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	rows = tk2.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1) // can capture the stmt
 
-	// use user-filter with other types of tiler together
+	// use user-filter with other types of filter together
 	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
