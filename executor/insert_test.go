@@ -1813,4 +1813,3 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
 }
-
