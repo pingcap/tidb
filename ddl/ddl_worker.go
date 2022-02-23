@@ -798,7 +798,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(d, t, job)
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
