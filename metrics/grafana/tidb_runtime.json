@@ -134,7 +134,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "process_resident_memory_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "process_resident_memory_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -142,7 +142,7 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
+              "expr": "go_memstats_next_gc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -150,7 +150,7 @@
               "refId": "H"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_next_gc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
+              "expr": "go_memstats_heap_alloc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_next_gc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -158,7 +158,7 @@
               "refId": "C"
             },
             {
-              "expr": "go_memstats_heap_idle_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_released_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_heap_inuse_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_alloc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_memstats_heap_idle_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_released_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_heap_inuse_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_alloc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -166,7 +166,7 @@
               "refId": "B"
             },
             {
-              "expr": "go_memstats_stack_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mspan_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mcache_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_buck_hash_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_gc_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_other_sys_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_memstats_stack_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mspan_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mcache_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_buck_hash_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_gc_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_other_sys_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -174,7 +174,7 @@
               "refId": "D"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_memstats_next_gc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -182,7 +182,7 @@
               "refId": "E"
             },
             {
-              "expr": "(clamp_max(idelta(go_memstats_last_gc_time_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]), 1) * go_memstats_next_gc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) > 0",
+              "expr": "(clamp_max(idelta(go_memstats_last_gc_time_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]), 1) * go_memstats_next_gc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) > 0",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -287,7 +287,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "irate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "irate(process_cpu_seconds_total{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -297,14 +297,14 @@
               "step": 40
             },
             {
-              "expr": "(idelta((go_memstats_gc_cpu_fraction{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - process_start_time_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) * tidb_server_maxprocs{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})[30s:]) > 0) / 15",
+              "expr": "(idelta((go_memstats_gc_cpu_fraction{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - process_start_time_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) * tidb_server_maxprocs{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})[30s:]) > 0) / 15",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "gc-cpu",
               "refId": "C"
             },
             {
-              "expr": "tidb_server_maxprocs{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "tidb_server_maxprocs{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -405,7 +405,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "go_memstats_heap_objects{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_memstats_heap_objects{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -502,7 +502,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "go_gc_duration_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile=\"0\"}",
+              "expr": "go_gc_duration_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile=\"0\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -512,7 +512,7 @@
               "step": 40
             },
             {
-              "expr": "go_gc_duration_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile!~\"0|1\"}",
+              "expr": "go_gc_duration_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile!~\"0|1\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 1,
@@ -520,7 +520,7 @@
               "refId": "B"
             },
             {
-              "expr": "go_gc_duration_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile=\"1\"}",
+              "expr": "go_gc_duration_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", quantile=\"1\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 1,
@@ -624,28 +624,28 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "irate(go_memstats_alloc_bytes_total{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "irate(go_memstats_alloc_bytes_total{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "alloc",
               "refId": "A"
             },
             {
-              "expr": "irate((go_memstats_alloc_bytes_total{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_alloc_bytes{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})[30s:])",
+              "expr": "irate((go_memstats_alloc_bytes_total{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_alloc_bytes{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"})[30s:])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "sweep",
               "refId": "B"
             },
             {
-              "expr": "irate(go_memstats_mallocs_total{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "irate(go_memstats_mallocs_total{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "alloc-ops",
               "refId": "C"
             },
             {
-              "expr": "irate(go_memstats_frees_total{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "irate(go_memstats_frees_total{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "swepp-ops",
@@ -739,14 +739,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": " go_goroutines{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": " go_goroutines{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "goroutines",
               "refId": "A"
             },
             {
-              "expr": "go_threads{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_threads{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "threads",
@@ -833,14 +833,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{tidb_cluster=\"$tidb_cluster\", store!=\"0\",instance=~\"$instance\"}[30s])) by (le, store))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", store!=\"0\",instance=~\"$instance\"}[30s])) by (le, store))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "tidb-to-store{{store}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tikv_grpc_msg_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!=\"kv_gc\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.99, sum(rate(tikv_grpc_msg_duration_seconds_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", type!=\"kv_gc\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "tikv-{{instance}}-side",
@@ -926,14 +926,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[30s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[30s])) by (le))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "tidb-side",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(pd_server_handle_tso_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[30s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(pd_server_handle_tso_duration_seconds_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\"}[30s])) by (le))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "pd-side",
@@ -1024,7 +1024,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_requests_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_requests_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -1117,7 +1117,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_pending_requests_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_pending_requests_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
               "format": "heatmap",
               "interval": "",
               "intervalFactor": 1,
@@ -1210,7 +1210,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "999",
@@ -1218,7 +1218,7 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "99",
@@ -1226,7 +1226,7 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "95",
@@ -1319,7 +1319,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.9999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "9999",
@@ -1327,7 +1327,7 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "999",
@@ -1335,7 +1335,7 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_send_latency_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_send_latency_bucket{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "99",
@@ -1399,25 +1399,20 @@
     "list": [
       {
         "allValue": null,
-        "current": {
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
-        "label": "tidb_cluster",
+        "label": "Kubernetes",
         "multi": false,
-        "name": "tidb_cluster",
-        "options": [
-
-        ],
-        "query": "label_values(pd_cluster_status, tidb_cluster)",
+        "name": "kubernetes",
+        "options": [],
+        "query": "label_values(pd_cluster_status, kubernetes)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
         "tagValuesQuery": "",
-        "tags": [
-
-        ],
+        "tags": [],
         "tagsQuery": "",
         "type": "query",
         "useTags": false
@@ -1426,14 +1421,34 @@
         "allValue": null,
         "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
-        "definition": "label_values(process_start_time_seconds{tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}, instance)",
+        "hide": 2,
+        "includeAll": false,
+        "label": "tidb_cluster",
+        "multi": false,
+        "name": "tidb_cluster",
+        "options": [],
+        "query": "label_values(pd_cluster_status{kubernetes=\"$kubernetes\"}, tidb_cluster)",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      },
+      {
+        "allValue": null,
+        "current": {},
+        "datasource": "${DS_TEST-CLUSTER}",
+        "definition": "label_values(process_start_time_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}, instance)",
         "hide": 0,
         "includeAll": true,
         "label": "instance",
         "multi": false,
         "name": "instance",
         "options": [],
-        "query": "label_values(process_start_time_seconds{tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}, instance)",
+        "query": "label_values(process_start_time_seconds{kubernetes=\"$kubernetes\",tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}, instance)",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,

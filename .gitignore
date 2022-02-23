@@ -29,3 +29,4 @@ export-20*/
 *-junit-report.xml
 # Files generated when testing
 out
+metrics/grafana/grafonnet-lib
