@@ -4680,6 +4680,12 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 
 func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t27797")
 	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
@@ -4809,6 +4815,44 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 
 }
 
+func (s *testIntegrationSuite) TestIssue31202(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31202(a int primary key, b int);")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestIssue29705(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4;")
+	tk.MustExec("insert into t values(1);")
+	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
+	result.Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
@@ -4819,5 +4863,4 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
-
 }
