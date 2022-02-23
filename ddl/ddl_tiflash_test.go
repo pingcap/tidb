@@ -714,7 +714,6 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	for i := 0; i < threshold+1; i++ {
 		tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", i))
 	}
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
@@ -723,11 +722,8 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp")
 	}()
-
 	mustTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-
 	cnt := 0
 	for i := 0; i < threshold+1; i++ {
 		tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("tiflash_ddl_limit"), model.NewCIStr(fmt.Sprintf("t%v", i)))
@@ -737,4 +733,8 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 		}
 	}
 	require.Equal(t, threshold, cnt)
+
+	se2, err := session.CreateSessionWithDomain(s.store, s.dom)
+	require.NoError(t, err)
+	s
 }
