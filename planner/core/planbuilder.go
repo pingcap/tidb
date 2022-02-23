@@ -3549,7 +3549,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			RetType: &x.Type,
 		}
 	case *driver.ParamMarkerExpr:
-		outExpr, err = expression.ParamMarkerExpression(b.ctx, x)
+		outExpr, err = expression.ParamMarkerExpression(b.ctx, x, false)
 	default:
 		b.curClause = fieldList
 		// subquery in insert values should not reference upper scope
