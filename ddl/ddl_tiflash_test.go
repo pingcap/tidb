@@ -596,7 +596,6 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-<<<<<<< HEAD
 // Test standalone backoffer
 func TestTiFlashBackoffer(t *testing.T) {
 	var maxTick ddl.TiFlashTick = 10
