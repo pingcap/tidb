@@ -2771,10 +2771,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
-		err := meta.InitMetaTable(store)
-		if err != nil {
-			logutil.BgLogger().Fatal("check bootstrap error",
-				zap.Error(err))
+		if ddl.AllowConcurrentDDL.Load() {
+			err := meta.InitMetaTable(store)
+			if err != nil {
+				logutil.BgLogger().Fatal("check bootstrap error",
+					zap.Error(err))
+			}
 		}
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
