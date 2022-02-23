@@ -523,7 +523,7 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, md5, reverse, upper, vitess_hash
+lower, md5, reverse, tidb_shard, upper, vitess_hash
 CREATE TABLE `PK_S_MULTI_30_tmp` (
 `COL1` double NOT NULL,
 `COL2` double NOT NULL,
