@@ -361,19 +361,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 
-<<<<<<< HEAD
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() {
-		allowed, err := allowInReadOnlyMode(sctx, node)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if !allowed {
-			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
-		}
-	}
-
-=======
->>>>>>> 221801b55... planner: fix tidb can point update data even if tidb_super_read_only is on (#32547)
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
