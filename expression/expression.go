@@ -950,7 +950,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// compare functions.
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
-		ast.Greatest, ast.Least,
+		ast.Greatest, ast.Least, ast.Interval,
 
 		// arithmetical functions.
 		ast.PI, ast.Truncate,

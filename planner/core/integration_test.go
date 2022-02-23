@@ -2737,7 +2737,7 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "insert_func(test.t.c, 1, 1, \"c\")"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where insert(c,1,1,'c')").
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where insert_func(c, 1, 1,'c')").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "greatest(test.t.id, 1)"
@@ -2746,6 +2746,10 @@ func (s *testIntegrationSuite) TestScalarFunctionPushDown(c *C) {
 
 	rows[1][2] = "least(test.t.id, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where least(id, 1)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "interval(test.t.id, 1, 2)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where interval(id, 1, 2)").
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
