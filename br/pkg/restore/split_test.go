@@ -464,26 +464,35 @@ FindRegion:
 }
 
 func TestNeedSplit(t *testing.T) {
-	regions := []*restore.RegionInfo{
-		{
-			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+	for _, isRawKv := range []bool{false, true} {
+		encode := func(in []byte) []byte {
+			if isRawKv {
+				return in
+			}
+			return codec.EncodeBytes([]byte{}, in)
+		}
+
+		regions := []*restore.RegionInfo{
+			{
+				Region: &metapb.Region{
+					StartKey: encode([]byte("b")),
+					EndKey:   encode([]byte("d")),
+				},
 			},
-		},
+		}
+		// Out of region
+		require.Nil(t, restore.NeedSplit([]byte("a"), regions, isRawKv))
+		// Region start key
+		require.Nil(t, restore.NeedSplit([]byte("b"), regions, isRawKv))
+		// In region
+		region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+		require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))))
+		require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))))
+		// Region end key
+		require.Nil(t, restore.NeedSplit([]byte("d"), regions, isRawKv))
+		// Out of region
+		require.Nil(t, restore.NeedSplit([]byte("e"), regions, isRawKv))
 	}
-	// Out of region
-	require.Nil(t, restore.NeedSplit([]byte("a"), regions))
-	// Region start key
-	require.Nil(t, restore.NeedSplit([]byte("b"), regions))
-	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))))
-	require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))))
-	// Region end key
-	require.Nil(t, restore.NeedSplit([]byte("d"), regions))
-	// Out of region
-	require.Nil(t, restore.NeedSplit([]byte("e"), regions))
 }
 
 func TestRegionConsistency(t *testing.T) {
