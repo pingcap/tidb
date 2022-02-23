@@ -1157,10 +1157,10 @@ func TestIssue32516(t *testing.T) {
 		" PARTITION p4 VALUES LESS THAN (MAXVALUE));")
 	tk.MustExec("insert into pt values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14),(15,15),(16,16);")
 	tk.MustQuery("SELECT COUNT(*) FROM (SELECT * FROM pt WHERE a BETWEEN 1 AND 15 LIMIT 2) as t;").Check(testkit.Rows("2"))
-	tk.MustQuery("EXPLAIN SELECT * FROM pt WHERE a BETWEEN 1 AND 15 LIMIT 2;").Check(testkit.Rows(
-		"Limit_9 2.00 root  offset:0, count:2",
-		"└─IndexLookUp_17 2.00 root partition:all ",
-		"  ├─Limit_16(Build) 2.00 cop[tikv]  offset:0, count:2",
-		"  │ └─IndexRangeScan_14 2.00 cop[tikv] table:pt, index:a(a) range:[1,15], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_15(Probe) 2.00 cop[tikv] table:pt keep order:false, stats:pseudo"))
+	tk.MustQuery("EXPLAIN format='brief' SELECT * FROM pt WHERE a BETWEEN 1 AND 15 LIMIT 2;").Check(testkit.Rows(
+		"Limit 2.00 root  offset:0, count:2",
+		"└─IndexLookUp 2.00 root partition:all ",
+		"  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
+		"  │ └─IndexRangeScan 2.00 cop[tikv] table:pt, index:a(a) range:[1,15], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:pt keep order:false, stats:pseudo"))
 }

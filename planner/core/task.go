@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -1259,10 +1258,8 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	}
 	// We can't sink Limit into IndexLookUpReader when it scans a partition table in dynamic prune mode
 	// https://github.com/pingcap/tidb/issues/32516
-	if table, ok := p.ctx.GetInfoSchema().(infoschema.InfoSchema).TableByID(ts.Table.ID); ok {
-		if p.ctx.GetSessionVars().UseDynamicPartitionPrune() && table.Meta().Partition != nil {
-			return false
-		}
+	if p.ctx.GetSessionVars().UseDynamicPartitionPrune() && ts.Table.Partition != nil {
+		return false
 	}
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
