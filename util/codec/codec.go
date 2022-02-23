@@ -156,9 +156,9 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindMysqlDecimal:
 		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
 	case types.KindMysqlEnum:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlEnum().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
-		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
+		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val, err := val.GetBinaryLiteral().ToInt(sc)
 		terror.Log(errors.Trace(err))
@@ -351,7 +351,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		}
 	case mysql.TypeEnum:
 		flag = compactBytesFlag
-		v := uint64(row.GetEnum(idx).ToNumber())
+		v := row.GetEnum(idx).Value
 		str := tp.Elems[v-1]
 		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeSet:
@@ -556,7 +556,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = true
 			} else {
 				buf[0] = compactBytesFlag
-				v := uint64(column.GetEnum(i).ToNumber())
+				v := column.GetEnum(i).Value
 				str := tp.Elems[v-1]
 				b = ConvertByCollation(hack.Slice(str), tp)
 			}
