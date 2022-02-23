@@ -1529,6 +1529,78 @@ func TestIssue28867(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestParamMarker4FastPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	// test handle
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
+	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
+
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test indexValues
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int, unique index idx(pk))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk = ?'`)
+	tk.MustExec(`set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0'`)
+
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a2`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a3`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a4`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test _tidb_rowid
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9);")
+	tk.MustExec(`prepare stmt from 'select * from t where _tidb_rowid = ?'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 8"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 7"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestIssue29565(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
