@@ -1783,45 +1783,6 @@ func (s *testSuite13) TestIssue26762(c *C) {
 	_, err = tk.Exec("insert into t1 values('2020-02-31');")
 	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite10) TestStringtoDecimal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id decimal(10))")
-	tk.MustGetErrCode("insert into t values('1sdf')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1edf')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('12Ea')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1E')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1e')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1.2A')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1.2.3.4.5')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
-	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
-	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
-	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
-	tk.MustExec("drop table if exists t")
-}
-
-func (s *testSuite13) TestIssue17745(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec("drop table if exists tt1")
-	tk.MustExec("create table tt1 (c1 decimal(64))")
-	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
-	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
-	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
-	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
-	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
-	tk.MustExec("drop table if exists tt1")
-	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
-	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
-}
 
 // TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
 func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
@@ -1852,4 +1813,4 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
 }
->>>>>>> 51f53f337... insert: fix the auto id retry won't cast the datum to origin type (#29997)
+
