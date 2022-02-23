@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -53,6 +53,9 @@ var (
 	ddlWorkerID = int32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
+
+	ddlSeqNumMu  sync.Mutex
+	globalSeqNum uint64
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -92,6 +95,7 @@ type worker struct {
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+	lockSeqNum      bool
 
 	ddlJobCache
 }
@@ -440,8 +444,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
+	w.writeDDLSeqNum(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func (w *worker) writeDDLSeqNum(job *model.Job) {
+	ddlSeqNumMu.Lock()
+	w.lockSeqNum = true
+	globalSeqNum++
+	job.SeqNum = globalSeqNum
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
@@ -592,10 +604,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		if err != nil {
+			if w.lockSeqNum {
+				// txn commit failed, we should reset globalSeqNum
+				globalSeqNum--
+				w.lockSeqNum = false
+				ddlSeqNumMu.Unlock()
+			}
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
+		}
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			ddlSeqNumMu.Unlock()
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
@@ -736,6 +758,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
+	if job.RealStartTS == 0 {
+		job.RealStartTS = t.StartTS
+	}
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
@@ -774,7 +799,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(d, t, job)
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
