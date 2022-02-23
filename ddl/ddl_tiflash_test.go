@@ -688,7 +688,7 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 }
 
 func mustTimeout(tk *testkit.TestKit, sql string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*4)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*6)
 	defer cancel()
 	go func(c context.Context) {
 		stmts, _ := tk.Session().Parse(context.Background(), sql)

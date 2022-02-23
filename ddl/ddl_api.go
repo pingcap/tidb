@@ -221,9 +221,9 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 	return uint32(c)
 }
 
-func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
@@ -237,7 +237,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	err := checkTiFlashReplicaCount(ctx, tiflashReplica.Count)
+	err := checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,8 +255,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		}
 
 		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+
+			}
 			pendingCount := d.tiflashManager.TotalSize.Load()
-			threshold := getBatchPendingTiFlashCount(ctx)
+			threshold := getBatchPendingTiFlashCount(sctx)
 			if pendingCount >= threshold {
 				logutil.BgLogger().Info("too many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
 				time.Sleep(tiflashCheckTotalPendingTablesInterval)
@@ -274,7 +280,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 			BinlogInfo: &model.HistoryInfo{},
 			Args:       []interface{}{*tiflashReplica},
 		}
-		err := d.doDDLJob(ctx, job)
+		err := d.doDDLJob(sctx, job)
 		err = d.callHookOnChanged(err)
 		if err != nil {
 			oneFail = tbl.ID
@@ -289,7 +295,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		failStmt = fmt.Sprintf("(including table %v)", oneFail)
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
-	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	sctx.GetSessionVars().StmtCtx.SetMessage(msg)
 	return nil
 }
 
@@ -367,7 +373,7 @@ func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption)
 	return nil
 }
 
-func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (d *ddl) AlterSchema(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
 		toCharset, toCollate                                         string
@@ -376,7 +382,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
 
-	err = checkMultiSchemaSpecs(ctx, stmt.Options)
+	err = checkMultiSchemaSpecs(sctx, stmt.Options)
 	if err != nil {
 		return err
 	}
@@ -412,17 +418,17 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	}
 
 	if isAlterCharsetAndCollate {
-		if err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate); err != nil {
+		if err = d.ModifySchemaCharsetAndCollate(sctx, stmt, toCharset, toCollate); err != nil {
 			return err
 		}
 	}
 	if isAlterPlacement {
-		if err = d.ModifySchemaDefaultPlacement(ctx, stmt, placementPolicyRef); err != nil {
+		if err = d.ModifySchemaDefaultPlacement(sctx, stmt, placementPolicyRef); err != nil {
 			return err
 		}
 	}
 	if isTiFlashReplica {
-		if err = d.ModifySchemaSetTiFlashReplica(ctx, stmt, tiflashReplica); err != nil {
+		if err = d.ModifySchemaSetTiFlashReplica(ctx, sctx, stmt, tiflashReplica); err != nil {
 			return err
 		}
 	}
