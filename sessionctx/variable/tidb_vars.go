@@ -713,7 +713,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaBindCache              = 32 << 21 // 64MB
+	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB
 	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                   = 32 << 30 // 32GB.
