@@ -773,8 +773,6 @@ func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
 	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
-<<<<<<< HEAD
-=======
 func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -818,7 +816,6 @@ func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk.MustExec("drop table if exists td;")
 }
 
->>>>>>> e3c56b75e... executor: buildWindow cannot call typeInfer twice (#30773)
 func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
