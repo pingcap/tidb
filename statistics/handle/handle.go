@@ -2017,6 +2017,8 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2025,8 +2027,6 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 }
 
 func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
@@ -2039,6 +2039,8 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 	}
 
 	ctx := context.Background()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	rows, _, err := h.execRestrictedSQL(ctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
 	if err != nil {
 		return errors.Trace(err)
