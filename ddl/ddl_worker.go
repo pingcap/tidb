@@ -595,6 +595,15 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
+func (w *worker) unlockSeqNum() {
+	if w.lockSeqNum {
+		// txn commit failed, we should reset seqNum.
+		w.ddlSeqNumMu.seqNum--
+		w.lockSeqNum = false
+		w.ddlSeqNumMu.Unlock()
+	}
+}
+
 var schemaVersionMu sync.Mutex
 
 func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
@@ -623,6 +632,7 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 
 		err = w.finishDDLJob(t, job)
 		if err != nil {
+			w.unlockSeqNum()
 			return err
 		}
 		w.sessForJob.StmtCommit()
@@ -630,6 +640,7 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			schemaVersionMu.Lock()
 			err := t.SetSchemaDiff(d.store)
 			if err != nil {
+				w.unlockSeqNum()
 				return err
 			}
 		}
@@ -638,12 +649,17 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			if t.Diff != nil {
 				schemaVersionMu.Unlock()
 			}
+			w.unlockSeqNum()
 			return err
 		}
 		if t.Diff != nil {
 			schemaVersionMu.Unlock()
 		}
 		asyncNotify(d.ddlJobDoneCh)
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			d.ddlSeqNumMu.Unlock()
+		}
 		return nil
 	}
 
@@ -658,6 +674,7 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		txn.Reset()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
+			w.unlockSeqNum()
 			return err
 		}
 		w.sessForJob.StmtCommit()
@@ -680,6 +697,7 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 
 	err = w.updateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
+		w.unlockSeqNum()
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
@@ -689,12 +707,14 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		err = t.SetSchemaDiff(d.store)
 		w.sessForJob.StmtCommit()
 		if err != nil {
+			w.unlockSeqNum()
 			return err
 		}
 		schemaVer = t.Diff.Version
 	}
 	err = txn.Commit(w.ctx)
 	if err != nil {
+		w.unlockSeqNum()
 		return err
 	}
 	if t.Diff != nil {
@@ -731,6 +751,10 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		asyncNotify(d.ddlJobDoneCh)
 	} else {
 		asyncNotify(ch)
+	}
+	if w.lockSeqNum {
+		w.lockSeqNum = false
+		d.ddlSeqNumMu.Unlock()
 	}
 	return nil
 }
