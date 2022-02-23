@@ -621,14 +621,13 @@ func (s *testPrepareSerialSuite) TestIssue31280(c *C) {
 	tk.MustExec(`prepare stmt from 'select * from UK_MU15569 where col2 >= ? and col1 is not null and col3 = ?;';`)
 
 	tk.MustExec("set @a=-32373, @b='545:50:46.85487';")
-	// The tableDual plan can not be cached.
 	res := tk.MustQuery("execute stmt using @a,@b;")
 	c.Assert(len(res.Rows()), Equals, 0)
 
 	tk.MustExec("set @a=-27225, @b='-836:46:08';")
 	res = tk.MustQuery("execute stmt using @a,@b;")
 	c.Assert(len(res.Rows()), Equals, 1)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b;")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
@@ -668,12 +667,11 @@ func (s *testPrepareSerialSuite) TestIssue31375(c *C) {
 	tk.MustExec(`prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM IDT_MULTI15844STROBJSTROBJ t1 LEFT JOIN IDT_MULTI15844STROBJSTROBJ t2 ON t1.col1 = t2.col1 WHERE t1.col2 BETWEEN ? AND ? AND t1.col1 >= ?;';`)
 
 	tk.MustExec("set @a=752400293960, @b=258241896853, @c='none';")
-	// The tableDual plan can not be cached.
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 
 	tk.MustExec("set @a=-170756280585, @b=3756, @c='aa';")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("bb -16994 1987"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b,@c;")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
