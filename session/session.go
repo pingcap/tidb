@@ -1014,6 +1014,11 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+<<<<<<< HEAD
+=======
+		// Internal session uses default format to prevent memory leak problem.
+		se.sessionVars.EnableChunkRPC = false
+>>>>>>> cce1ebdeb... util: avoid column allocator reuse the column hold huge memory (#32554)
 		return se, nil
 	}
 }
@@ -1034,6 +1039,11 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+<<<<<<< HEAD
+=======
+		// Internal session uses default format to prevent memory leak problem.
+		se.sessionVars.EnableChunkRPC = false
+>>>>>>> cce1ebdeb... util: avoid column allocator reuse the column hold huge memory (#32554)
 		return se, nil
 	}
 }

@@ -66,6 +66,8 @@ type Column struct {
 	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
 	data       []byte
 	elemBuf    []byte
+
+	avoidReusing bool // avoid reusing the Column by allocator
 }
 
 // NewColumn creates a new column with the specific type and capacity.
