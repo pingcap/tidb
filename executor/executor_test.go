@@ -9426,7 +9426,6 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 	}
 }
 
-
 // Details at https://github.com/pingcap/tidb/issues/31038
 func (s *testSerialSuite) TestFix31038(c *C) {
 	defer config.RestoreFunc()()
