@@ -78,7 +78,7 @@ func (sg *workerPool) close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("[ddl] closing sessionPool")
+	logutil.BgLogger().Info("[ddl] closing workerPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }
