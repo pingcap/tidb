@@ -2165,7 +2165,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 
 	// test PointGet + non cluster index
@@ -2193,7 +2193,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 }
 
