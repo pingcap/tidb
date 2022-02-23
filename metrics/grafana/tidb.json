@@ -10079,17 +10079,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "irate(tidb_ddl_add_index_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"add_index\"}[1m])",
+              "expr": "tidb_ddl_backfill_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"add_index\"}",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}}--{{type}}",
               "refId": "A"
             },
             {
-              "expr": "irate(tidb_ddl_add_index_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"modify_column\"}[1m])",
+              "expr": "tidb_ddl_backfill_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"modify_column\"}",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}}--{{type}}",
               "refId": "B"
             }
           ],
