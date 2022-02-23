@@ -37,25 +37,25 @@ var (
 	addingDDLJobReorg   = "/tidb/ddl/add_ddl_job_reorg"
 )
 
-func (d *ddl) insertRunningReorgJobMap(id int) {
-	d.runningReorgJobMapMu.Lock()
-	defer d.runningReorgJobMapMu.Unlock()
+func (d *ddl) insertRunningDDLJobMap(id int) {
+	d.runningDDLMapMu.Lock()
+	defer d.runningDDLMapMu.Unlock()
 	d.runningReorgJobMap[id] = struct{}{}
 }
 
 func (d *ddl) deleteRunningReorgJobMap(id int) {
-	d.runningReorgJobMapMu.Lock()
-	defer d.runningReorgJobMapMu.Unlock()
+	d.runningDDLMapMu.Lock()
+	defer d.runningDDLMapMu.Unlock()
 	delete(d.runningReorgJobMap, id)
 }
 
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
-	d.runningReorgJobMapMu.RLock()
+	d.runningDDLMapMu.RLock()
 	for id := range d.runningReorgJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
-	d.runningReorgJobMapMu.RUnlock()
+	d.runningDDLMapMu.RUnlock()
 	var sql string
 	ts := time.Now()
 	if len(runningOrBlockedIDs) == 0 {
@@ -160,11 +160,11 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 
 func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
-	d.runningReorgJobMapMu.RLock()
+	d.runningDDLMapMu.RLock()
 	for id := range d.runningReorgJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
-	d.runningReorgJobMapMu.RUnlock()
+	d.runningDDLMapMu.RUnlock()
 	var sql string
 	if len(runningOrBlockedIDs) == 0 {
 		sql = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id order by min(job_id) limit 1)"
@@ -313,11 +313,11 @@ func (d *ddl) startDispatchLoop() {
 }
 
 func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
-	d.insertRunningReorgJobMap(int(job.ID))
+	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer d.deleteRunningReorgJobMap(int(job.ID))
 
-		wk, err := d.generalDDLWorker.get()
+		wk, err := d.generalDDLWorkerPool.get()
 		if err != nil {
 			log.Warn("fail to get generalWorker", zap.Error(err))
 			return
@@ -325,15 +325,15 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
 			log.Warn("[ddl] handle General DDL job failed", zap.Error(err))
 		}
-		d.generalDDLWorker.put(wk)
+		d.generalDDLWorkerPool.put(wk)
 	})
 }
 
 func (d *ddl) doReorgDDLJobWoker(job *model.Job) {
-	d.insertRunningReorgJobMap(int(job.ID))
+	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer d.deleteRunningReorgJobMap(int(job.ID))
-		wk, err := d.reorgWorker.get()
+		wk, err := d.reorgWorkerPool.get()
 		if err != nil {
 			log.Warn("fail to get addIdxWorker", zap.Error(err))
 			return
@@ -341,7 +341,7 @@ func (d *ddl) doReorgDDLJobWoker(job *model.Job) {
 		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
 			log.Warn("[ddl] handle Reorg DDL job failed", zap.Error(err))
 		}
-		d.reorgWorker.put(wk)
+		d.reorgWorkerPool.put(wk)
 	})
 }
 

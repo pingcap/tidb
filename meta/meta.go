@@ -147,6 +147,7 @@ func InitMetaTable(store kv.Storage) error {
 			return err
 		}
 		err = t.CreateDDLJobTable(id)
+
 		return err
 	})
 }
@@ -429,7 +430,10 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 	if err == nil && v != nil {
 		return nil
 	}
-	id, _ := m.GenGlobalID()
+	id, err := m.GenGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	col := &model.ColumnInfo{
 		ID:      1,
 		Name:    model.NewCIStr("job_id"),
