@@ -13,6 +13,7 @@ import (
 )
 
 var (
+<<<<<<< HEAD
 	logLevel       = flag.String("L", "info", "test log level")
 	serverLogLevel = flag.String("server_log_level", "info", "server log level")
 	tmpPath        = flag.String("tmp", "/tmp/tidb_globalkilltest", "temporary files path")
@@ -26,6 +27,16 @@ var (
 	tidbStatusPort   = flag.Int("tidb_status_port", 8000, "first tidb server status port")
 
 	ReadOnlyErrMsg = "Error 1836: Running in read-only mode"
+=======
+	tidbRootPassword       = flag.String("passwd", "", "tidb root password")
+	tidbAPort              = flag.Int("tidb_a_port", 4001, "first tidb server listening port")
+	tidbBPort              = flag.Int("tidb_b_port", 4002, "second tidb server listening port")
+	ReadOnlyErrMsg         = "Error 1836: Running in read-only mode"
+	ConflictErrMsg         = "Error 1105: can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
+	PriviledgedErrMsg      = "Error 1227: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation"
+	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+	TiDBSuperReadOnly      = "tidb_super_read_only"
+>>>>>>> 221801b55... planner: fix tidb can point update data even if tidb_super_read_only is on (#32547)
 )
 
 func TestReadOnly(t *testing.T) {
@@ -87,15 +98,88 @@ func (s *TestReadOnlySuit) SetUpSuite(c *C) {
 	s.rdb, err = sql.Open("mysql", fmt.Sprintf("r1:password@(%s:%d)/test", "127.0.0.1", *tidbStartPort+2))
 }
 
+<<<<<<< HEAD
 func (s *TestReadOnlySuit) TestRestriction(c *C) {
 	_, err := s.db.Exec("set global tidb_restricted_read_only=1")
 	c.Assert(err, IsNil)
+=======
+func TestRestriction(t *testing.T) {
+	s, clean := createReadOnlySuite(t)
+	defer clean()
+
+	var err error
+	_, err = s.db.Exec("drop table if exists t")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("create table t (a int primary key, b int)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("insert into t values (1, 1)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.NoError(t, err)
+
+	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
+>>>>>>> 221801b55... planner: fix tidb can point update data even if tidb_super_read_only is on (#32547)
 	time.Sleep(1)
 	checkVariable(c, s.udb, true)
 
+<<<<<<< HEAD
 	_, err = s.udb.Exec("create table t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, ReadOnlyErrMsg)
+=======
+	checkVariable(t, s.udb, TiDBRestrictedReadOnly, true)
+	checkVariable(t, s.udb, TiDBSuperReadOnly, true)
+
+	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, true)
+	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
+
+	// can't create table
+	_, err = s.udb.Exec("create table t(a int)")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't do point update when tidb_restricted_read_only is on
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't insert
+	_, err = s.udb.Exec("insert into t values (2, 3)")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err = setVariable(t, s.db, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ConflictErrMsg)
+
+	// can't change global variable
+	err = setVariable(t, s.udb, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), PriviledgedErrMsg)
+
+	err = setVariable(t, s.rdb, TiDBSuperReadOnly, 0)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), PriviledgedErrMsg)
+
+	// turn off tidb_restricted_read_only does not affect tidb_super_read_only
+	setVariableNoError(t, s.db, TiDBRestrictedReadOnly, 0)
+
+	checkVariable(t, s.udb, TiDBRestrictedReadOnly, false)
+	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, false)
+
+	checkVariable(t, s.udb, TiDBSuperReadOnly, true)
+	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
+
+	// it is now allowed to turn off tidb_super_read_only
+	setVariableNoError(t, s.db, TiDBSuperReadOnly, 0)
+
+	checkVariable(t, s.udb, TiDBRestrictedReadOnly, false)
+	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, false)
+
+	checkVariable(t, s.udb, TiDBSuperReadOnly, false)
+	checkVariable(t, s.rdb, TiDBSuperReadOnly, false)
+>>>>>>> 221801b55... planner: fix tidb can point update data even if tidb_super_read_only is on (#32547)
 }
 
 func (s *TestReadOnlySuit) TestRestrictionWithConnectionPool(c *C) {
