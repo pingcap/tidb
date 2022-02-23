@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1674,22 +1673,22 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
 	tk.MustGetErrCode("describe t I%", errno.ErrParse)
 
-	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABC%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abc%'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABC%'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%lmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%LMN'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%lmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%LMN'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%lmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%LMN'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 
-	tk.MustQuery("show columns from t where field like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t where field like '%lmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testkit.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
 
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)

@@ -3014,6 +3014,22 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec("admin check table t")
 	tk.MustExec(`set time_zone = '+05:00'`)
 	tk.MustExec("admin check table t")
+
+	// 1. add a timestamp general column
+	// 2. add the index
+	tk.MustExec(`drop table if exists t`)
+	// change timezone
+	tk.MustExec(`set time_zone = 'Asia/Shanghai'`)
+	tk.MustExec(`create table t(a timestamp default current_timestamp)`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add column b timestamp as (a+1) virtual;`)
+	// change timezone
+	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add index(b);`)
+	tk.MustExec("admin check table t")
+	tk.MustExec(`set time_zone = '-03:00'`)
+	tk.MustExec("admin check table t")
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
