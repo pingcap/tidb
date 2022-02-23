@@ -2025,6 +2025,8 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 }
 
 func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
@@ -2046,8 +2048,6 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
