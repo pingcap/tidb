@@ -140,6 +140,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 
 	// decode data.
 	col.data = buffer[:numDataBytes:numDataBytes]
+	// the column reference the data of grpc, so need set col.avoidReusing to avoid reusing it.
 	col.avoidReusing = true
 	return buffer[numDataBytes:]
 }

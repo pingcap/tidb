@@ -67,7 +67,7 @@ type Column struct {
 	data       []byte
 	elemBuf    []byte
 
-	avoidReusing bool // avoid reusing the memory, because the column holds grpc message which takes up huge memory
+	avoidReusing bool // avoid reusing the Column by allocator
 }
 
 // ColumnAllocator defines an allocator for Column.
