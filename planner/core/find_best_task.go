@@ -1425,15 +1425,15 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var filterConds []expression.Expression
-	for i := len(conds) - 1; i >= 0; i-- {
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (withoutVirt []expression.Expression, withVirt []expression.Expression) {
+	for i := range conds {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
-			filterConds = append(filterConds, conds[i])
-			conds = append(conds[:i], conds[i+1:]...)
+			withVirt = append(withVirt, conds[i])
+		} else {
+			withoutVirt = append(withoutVirt, conds[i])
 		}
 	}
-	return conds, filterConds
+	return withoutVirt, withVirt
 }
 
 func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
