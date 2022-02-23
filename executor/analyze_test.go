@@ -2612,3 +2612,44 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	// 5. historical stats must be equal to the current stats
 	require.JSONEq(t, string(jsOrigin), string(jsCur))
 }
+
+func TestKillAutoAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	resChan := make(chan bool)
+	go func() {
+		res := h.HandleAutoAnalyze(is)
+		resChan <- res
+	}()
+	time.Sleep(time.Second)
+	rows := tk.MustQuery("show processlist").Rows()
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		if row[0] == "1" {
+			tk.MustExec(fmt.Sprintf("kill tidb %s", rows[0]))
+		}
+	}
+	res := <- resChan
+	require.False(t, res)
+}
