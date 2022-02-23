@@ -25,7 +25,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -463,46 +462,6 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
-	defer config.RestoreFunc()()
-	flags := []bool{false, true}
-	for _, flag := range flags {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.PreparedPlanCache.Enabled = flag
-			conf.PreparedPlanCache.Capacity = 100
-		})
-		testKit := testkit.NewTestKit(c, store)
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t (id int not null, KEY id (id))")
-		testKit.MustExec("insert into t values (1), (2), (3)")
-
-		sql := "select * from t where id = ?"
-		best := "Dual"
-
-		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(ctx, sql)
-		c.Assert(err, IsNil)
-		stmt := stmts[0]
-
-		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(ctx, stmt, core.InPrepare, core.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
-		c.Assert(err, IsNil)
-
-		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
 	}
 }
 
