@@ -107,8 +107,15 @@ func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
 func TestRestriction(t *testing.T) {
 	s, clean := createReadOnlySuite(t)
 	defer clean()
-	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
 
+	_, err = s.udb.Exec("create table t (a int primary key, b int)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("insert into t values (1, 1)")
+	require.NoError(t, err)
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.Error(t, err)
+
+	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
 	time.Sleep(1)
 
 	checkVariable(t, s.udb, TiDBRestrictedReadOnly, true)
@@ -117,7 +124,18 @@ func TestRestriction(t *testing.T) {
 	checkVariable(t, s.rdb, TiDBRestrictedReadOnly, true)
 	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
 
+	// can't create table
 	_, err := s.udb.Exec("create table t(a int)")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't do point update when tidb_restricted_read_only is on
+	_, err = s.udb.Exec("update t set b = 2 where a = 1")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+
+	// can't insert
+	_, err = s.udb.Exec("insert into t values (2, 3)")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 
