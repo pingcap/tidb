@@ -194,9 +194,14 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 	offset := int(-1)
 	for i, cond := range conds {
 		tmpConds := []expression.Expression{cond}
+<<<<<<< HEAD
 		colSets := expression.ExtractColumnSet(tmpConds)
 		origColNum := colSets.Len()
 		if origColNum == 0 {
+=======
+		colSets := expression.ExtractColumnSet(cond)
+		if colSets.Len() == 0 {
+>>>>>>> 991132080... planner: don't decorrelate the APPLY when the inner's projection reference no column (#32370)
 			continue
 		}
 		if l := len(cols); origColNum > l {
