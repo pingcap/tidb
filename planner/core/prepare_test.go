@@ -2059,7 +2059,6 @@ func (s *testPrepareSerialSuite) TestIssue30100(c *C) {
 	tk.MustExec("set @a=0;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
