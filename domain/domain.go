@@ -794,7 +794,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	}
 	var capacity int
 	if ddl.AllowConcurrentDDL.Load() {
-		capacity = 310
+		capacity = 11
 	} else {
 		capacity = 2
 	}

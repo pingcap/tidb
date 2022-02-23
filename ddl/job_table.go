@@ -315,9 +315,8 @@ func (d *ddl) startDispatchLoop() {
 func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	d.insertRunningReorgJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer func() {
-			d.deleteRunningReorgJobMap(int(job.ID))
-		}()
+		defer d.deleteRunningReorgJobMap(int(job.ID))
+
 		wk, err := d.generalDDLWorker.get()
 		if err != nil {
 			log.Warn("fail to get generalWorker", zap.Error(err))
@@ -333,9 +332,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 func (d *ddl) doReorgDDLJobWoker(job *model.Job) {
 	d.insertRunningReorgJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer func() {
-			d.deleteRunningReorgJobMap(int(job.ID))
-		}()
+		defer d.deleteRunningReorgJobMap(int(job.ID))
 		wk, err := d.reorgWorker.get()
 		if err != nil {
 			log.Warn("fail to get addIdxWorker", zap.Error(err))
