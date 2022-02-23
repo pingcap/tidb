@@ -28,8 +28,8 @@ import (
 
 var (
 	tidbRootPassword       = flag.String("passwd", "", "tidb root password")
-	tidbAPort              = flag.Int("tidb_a_port", 4000, "first tidb server listening port")
-	tidbBPort              = flag.Int("tidb_b_port", 4001, "second tidb server listening port")
+	tidbAPort              = flag.Int("tidb_a_port", 4001, "first tidb server listening port")
+	tidbBPort              = flag.Int("tidb_b_port", 4002, "second tidb server listening port")
 	ReadOnlyErrMsg         = "Error 1836: Running in read-only mode"
 	ConflictErrMsg         = "Error 1105: can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
 	PriviledgedErrMsg      = "Error 1227: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation"
@@ -108,12 +108,15 @@ func TestRestriction(t *testing.T) {
 	s, clean := createReadOnlySuite(t)
 	defer clean()
 
+	var err error
+	_, err = s.db.Exec("drop table if exists t")
+	require.NoError(t, err)
 	_, err = s.udb.Exec("create table t (a int primary key, b int)")
 	require.NoError(t, err)
 	_, err = s.udb.Exec("insert into t values (1, 1)")
 	require.NoError(t, err)
 	_, err = s.udb.Exec("update t set b = 2 where a = 1")
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	setVariable(t, s.db, TiDBRestrictedReadOnly, 1)
 	time.Sleep(1)
@@ -125,7 +128,7 @@ func TestRestriction(t *testing.T) {
 	checkVariable(t, s.rdb, TiDBSuperReadOnly, true)
 
 	// can't create table
-	_, err := s.udb.Exec("create table t(a int)")
+	_, err = s.udb.Exec("create table t(a int)")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 
