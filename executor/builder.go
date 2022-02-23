@@ -1851,6 +1851,17 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 }
 
 func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executor {
+	// A quick fix for avoiding a race mentioned in issue #30468.
+	// Fetch the snapshot ts to make the transaction's state ready. Otherwise, multiple threads in the Union executor
+	// may change the transaction's state concurrently, which causes race.
+	// This fix is a hack, but with minimal change to the current code and works. Actually, the usage of the transaction
+	// states and the logic to access the snapshot ts should all be refactored.
+	_, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
