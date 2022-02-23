@@ -330,6 +330,7 @@ func RunStreamCommand(
 	cfg *StreamConfig,
 ) error {
 	cfg.adjust()
+	defer summary.Summary(cmdName)
 	commandFn, exist := StreamCommandMap[cmdName]
 	if !exist {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s", cmdName)
@@ -337,9 +338,11 @@ func RunStreamCommand(
 
 	if err := commandFn(ctx, g, cmdName, cfg); err != nil {
 		log.Error("failed to stream", zap.String("command", cmdName), zap.Error(err))
+		summary.SetSuccessStatus(false)
+		summary.CollectFailureUnit(cmdName, err)
 		return err
 	}
-
+	summary.SetSuccessStatus(true)
 	return nil
 }
 
@@ -677,18 +680,43 @@ func RunStreamRestore(
 	}
 
 	// perform restore kv files
-	if err := client.RestoreKVFiles(ctx, rewriteRules, datas); err != nil {
-		return errors.Trace(err)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(datas)), cfg.LogProgress)
+	err = withProgress(pd, func(p glue.Progress) error {
+		return client.RestoreKVFiles(ctx, rewriteRules, datas, p.Inc)
+	})
+	if err != nil {
+		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	for _, table := range fullBackupTables {
-		if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info); err != nil {
-			return errors.Annotate(err, "failed to fix index for table")
+	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
+	err = withProgress(pi, func(p glue.Progress) error {
+		for _, table := range fullBackupTables {
+			if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
+				return errors.Annotatef(err, "failed to fix index for table %s", table.FullName())
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return errors.Annotate(err, "failed to fix index for some table")
 	}
 
 	// TODO split put and delete files
 	return nil
+}
+
+// withProgress execute some logic with the progress, and close it once the execution done.
+func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
+	defer p.Close()
+	return cc(p)
+}
+
+func countIndices(ts map[string]*metautil.Table) int64 {
+	result := int64(0)
+	for _, t := range ts {
+		result += int64(len(t.Info.Indices))
+	}
+	return result
 }
 
 func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
