@@ -176,6 +176,7 @@ var tokenMap = map[string]int{
 	"BIGINT":                   bigIntType,
 	"BINARY":                   binaryType,
 	"BINDING":                  binding,
+	"BINDING_CACHE":            bindingCache,
 	"BINDINGS":                 bindings,
 	"BINLOG":                   binlog,
 	"BIT_AND":                  bitAnd,

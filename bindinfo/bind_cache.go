@@ -194,6 +194,14 @@ func (c *bindCache) GetMemCapacity() int64 {
 	return c.memCapacity
 }
 
+// GetMemUsage get the memory Usage for the cache.
+// The function is thread-safe.
+func (c *bindCache) GetMemUsage() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.memTracker.BytesConsumed()
+}
+
 // Copy copys a new bindCache from the origin cache.
 // The function is thread-safe.
 func (c *bindCache) Copy() *bindCache {

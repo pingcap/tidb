@@ -1134,6 +1134,8 @@ func TestDBAStmt(t *testing.T) {
 		// for show pump/drainer status.
 		{"show pump status", true, "SHOW PUMP STATUS"},
 		{"show drainer status", true, "SHOW DRAINER STATUS"},
+		// for show binding_cache status
+		{"show binding_cache status", true, "SHOW BINDING_CACHE STATUS"},
 		{"show analyze status", true, "SHOW ANALYZE STATUS"},
 		{"show analyze status where table_name = 't'", true, "SHOW ANALYZE STATUS WHERE `table_name`=_UTF8MB4't'"},
 		{"show analyze status where table_name like '%'", true, "SHOW ANALYZE STATUS WHERE `table_name` LIKE _UTF8MB4'%'"},
