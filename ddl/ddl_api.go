@@ -2805,10 +2805,6 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
 			return errRunMultiSchemaChanges
 		}
-	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
-			return errRunMultiSchemaChanges
-		}
 	}
 	return nil
 }
@@ -2829,21 +2825,18 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		return err
 	}
 
-	if len(validSpecs) > 1 {
+	if len(validSpecs) > 1 && isSameTypeMultiSpecs(validSpecs) {
 		switch validSpecs[0].Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumns(sctx, ident, validSpecs)
+			return errors.Trace(err)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumns(sctx, ident, validSpecs)
+			return errors.Trace(err)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			err = d.DropIndexes(sctx, ident, validSpecs)
-		default:
-			return errRunMultiSchemaChanges
-		}
-		if err != nil {
 			return errors.Trace(err)
 		}
-		return nil
 	}
 
 	for _, spec := range validSpecs {
