@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"sync"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -23,8 +25,9 @@ import (
 
 // bindCache uses the LRU cache to store the bindRecord.
 // The key of the LRU cache is original sql, the value is a slice of BindRecord.
-// Note: The bindCache is not thread-safe.
+// Note: The bindCache is thread-safe.
 type bindCache struct {
+	lock        sync.Mutex
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
@@ -57,7 +60,8 @@ func newBindCache(memCapacity int64) *bindCache {
 }
 
 // get gets a cache item according to cache key. It's not thread-safe.
-// Only other functions of the bindCache can use this function.
+// Note: Only other functions of the bindCache file can use this function.
+// Don't use this function directly in other files in bindinfo package.
 // The return value is not read-only, but it is only can be used in other functions which are also in the bind_cache.go.
 func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 	value, hit := c.cache.Get(key)
@@ -105,7 +109,10 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 }
 
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
-func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
+// The function is thread-safe.
+func (c *bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	bindRecords := c.get(bindCacheKey(hash))
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {
@@ -117,7 +124,10 @@ func (c bindCache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 // getAllBindRecords return all the bindRecords from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
+// The function is thread-safe.
 func (c *bindCache) getAllBindRecords() []*BindRecord {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	values := c.cache.Values()
 	var bindRecords []*BindRecord
 	for _, vals := range values {
@@ -126,7 +136,10 @@ func (c *bindCache) getAllBindRecords() []*BindRecord {
 	return bindRecords
 }
 
-func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
+// The function is thread-safe.
+func (c *bindCache) setBindRecord(hash string, meta *BindRecord) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(hash)
 	metas := c.get(cacheKey)
 	for i := range metas {
@@ -138,7 +151,10 @@ func (c bindCache) setBindRecord(hash string, meta *BindRecord) {
 }
 
 // removeDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
+// The function is thread-safe.
 func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	metas := c.get(bindCacheKey(hash))
 	if metas == nil {
 		return
@@ -159,16 +175,25 @@ func (c *bindCache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 	c.set(bindCacheKey(hash), metas)
 }
 
+// The function is thread-safe.
 func (c *bindCache) setMemCapacity(capacity int64) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindRecord
 	c.memCapacity = capacity
 }
 
+// The function is thread-safe.
 func (c *bindCache) getMemCapacity() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	return c.memCapacity
 }
 
-func (c bindCache) copy() *bindCache {
+// The function is thread-safe.
+func (c *bindCache) copy() *bindCache {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	newCache := newBindCache(c.memCapacity)
 	keys := c.cache.Keys()
 	for _, key := range keys {
