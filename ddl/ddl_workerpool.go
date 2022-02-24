@@ -15,24 +15,22 @@
 package ddl
 
 import (
-	"sync"
-
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 )
 
 // workerPool is used to new worker.
 type workerPool struct {
-	mu struct {
-		sync.Mutex
-		closed bool
-	}
+	exit    atomic.Bool
 	resPool *pools.ResourcePool
 }
 
 func newDDLWorkerPool(resPool *pools.ResourcePool) *workerPool {
-	return &workerPool{resPool: resPool}
+	return &workerPool{
+		exit:    *atomic.NewBool(false),
+		resPool: resPool}
 }
 
 // get gets workerPool from context resource pool.
@@ -42,12 +40,9 @@ func (sg *workerPool) get() (*worker, error) {
 		return nil, nil
 	}
 
-	sg.mu.Lock()
-	if sg.mu.closed {
-		sg.mu.Unlock()
+	if sg.exit.Load() {
 		return nil, errors.Errorf("workerPool is closed.")
 	}
-	sg.mu.Unlock()
 
 	// no need to protect sg.resPool
 	resource, err := sg.resPool.Get()
@@ -72,13 +67,11 @@ func (sg *workerPool) put(wk *worker) {
 
 // close clean up the workerPool.
 func (sg *workerPool) close() {
-	sg.mu.Lock()
-	defer sg.mu.Unlock()
 	// prevent closing resPool twice.
-	if sg.mu.closed || sg.resPool == nil {
+	if sg.exit.Load() || sg.resPool == nil {
 		return
 	}
+	sg.exit.Store(true)
 	logutil.BgLogger().Info("[ddl] closing workerPool")
 	sg.resPool.Close()
-	sg.mu.closed = true
 }
