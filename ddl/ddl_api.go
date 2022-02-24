@@ -223,12 +223,12 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 	return uint32(c)
 }
 
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64) (uint32, int64, bool) {
+func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion *int64, pendingCount *uint32) {
 	is := d.infoCache.GetLatest()
 	dbInfos := is.AllSchemas()
 	// If there are no schema change since last time(can be weird)
-	if is.SchemaMetaVersion() == originVersion {
-		return 0, originVersion, false
+	if is.SchemaMetaVersion() == *originVersion {
+		return
 	}
 	cnt := uint32(0)
 	for _, dbInfo := range dbInfos {
@@ -241,7 +241,8 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 			}
 		}
 	}
-	return cnt, is.SchemaMetaVersion(), true
+	*originVersion = is.SchemaMetaVersion()
+	*pendingCount = cnt
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -266,7 +267,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	}
 
 	var originVersion int64 = 0
-	var originCount uint32 = 0
+	var pendingCount uint32 = 0
 	for _, tbl := range dbInfo.Tables {
 		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
 			du := time.Second * time.Duration(int16(val.(int)))
@@ -282,15 +283,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 		forceCheck := false
 		// When handled some tables, we need to wait some tables become available.
 		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 || forceCheck {
+			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
+			forceCheck = !forceCheck
 			for retry := 0; retry < tiflashCheckPendingTablesRetry; retry += 1 {
-				pendingCount, newVersion, ok := d.getPendingTiFlashTableCount(sctx, originVersion)
-				if ok {
-					originCount = pendingCount
-					originVersion = newVersion
-				} else {
-					// Schema change not happen, rarely happens
-					pendingCount = originCount
-				}
+				d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
 				threshold := getBatchPendingTiFlashCount(sctx)
 				if pendingCount >= threshold {
 					logutil.BgLogger().Info("too many not available tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
@@ -306,8 +302,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 				default:
 				}
 			}
-			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
-			forceCheck = !forceCheck
 		}
 
 		job := &model.Job{
