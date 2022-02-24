@@ -50,6 +50,11 @@ func (d *ddl) deleteRunningReorgJobMap(id int) {
 	delete(d.runningReorgJobMap, id)
 }
 
+const (
+	getGeneralJobSQL               = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg"
+	getGeneralJobWithoutRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg and job_id not in (%s)"
+)
+
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningDDLMapMu.RLock()
@@ -58,11 +63,10 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	}
 	d.runningDDLMapMu.RUnlock()
 	var sql string
-	ts := time.Now()
 	if len(runningOrBlockedIDs) == 0 {
-		sql = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg"
+		sql = getGeneralJobSQL
 	} else {
-		sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg and job_id not in (%s)", strings.Join(runningOrBlockedIDs, ", "))
+		sql = fmt.Sprintf(getGeneralJobWithoutRunningSQL, strings.Join(runningOrBlockedIDs, ", "))
 	}
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
@@ -86,7 +90,6 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Warn("get ddl job from table", zap.String("time", time.Since(ts).String()), zap.String("job", job.String()))
 		if job.Type == model.ActionDropSchema {
 			for {
 				canRun, err := d.checkDropSchemaJobIsRunnable(sess, &job)
@@ -94,7 +97,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 					return nil, err
 				}
 				if canRun {
-					log.Warn("get ddl job from table", zap.String("time", time.Since(ts).String()), zap.String("job", job.String()))
+					log.Info("get ddl job from table", zap.String("job", job.String()))
 					jobs = append(jobs, &job)
 					break
 				}
@@ -119,6 +122,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 				}
 			}
 		} else {
+			log.Info("get ddl job from table", zap.String("job", job.String()))
 			return &job, nil
 		}
 	}
