@@ -222,12 +222,12 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 	return uint32(c)
 }
 
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64) (uint32, bool) {
+func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64) (uint32, int64, bool) {
 	is := d.infoCache.GetLatest()
 	dbInfos := is.AllSchemas()
 	// If there are no schema change since last time(can be weird)
 	if is.SchemaMetaVersion() == originVersion {
-		return 0, false
+		return 0, originVersion, false
 	}
 	cnt := uint32(0)
 	for _, dbInfo := range dbInfos {
@@ -240,7 +240,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 			}
 		}
 	}
-	return cnt, true
+	return cnt, is.SchemaMetaVersion(), true
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -277,20 +277,23 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
+		// When handled some tables, we need to wait some tables become available.
 		if (succ + fail) % tiflashCheckTotalPendingTablesTick == 0 {
 			for {
-				pendingCount, ok := d.getPendingTiFlashTableCount(sctx, originVersion)
-				if !ok {
-					pendingCount = originCount
-				} else {
+				pendingCount, newVersion, ok := d.getPendingTiFlashTableCount(sctx, originVersion)
+				if ok {
 					originCount = pendingCount
+					originVersion = newVersion
+				} else {
+					// Schema change not happen, rarely happens
+					pendingCount = originCount
 				}
 				threshold := getBatchPendingTiFlashCount(sctx)
 				if pendingCount >= threshold {
-					logutil.BgLogger().Info("too many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
+					logutil.BgLogger().Info("too many not available tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
 					time.Sleep(tiflashCheckTotalPendingTablesInterval)
 				} else {
-					logutil.BgLogger().Info("no many pending tables are not available", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
+					logutil.BgLogger().Info("no many not available tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
 					break
 				}
 				select {
