@@ -361,31 +361,17 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 		return nil
 	})
 	if err == nil {
-		switch len(tasks) {
-		case 0:
-			return
-		case 1:
-			job := tasks[0].job
+		jobTasks := make([]*model.Job, len(tasks))
+		for i, task := range tasks {
+			job := task.job
 			job.Version = currentVersion
 			job.StartTS = startTs
-			job.ID = ids[0]
-			err = d.addDDLJob(job)
-			if err != nil {
-				log.Error("[ddl] addConcurrencyDDLJobs", zap.Error(err))
-			}
-		default:
-			jobTasks := make([]*model.Job, len(tasks))
-			for i, task := range tasks {
-				job := task.job
-				job.Version = currentVersion
-				job.StartTS = startTs
-				job.ID = ids[i]
-				jobTasks[i] = job
-			}
-			err = d.addDDLJobs(jobTasks)
-			if err != nil {
-				log.Error("[ddl] addConcurrencyDDLJobs", zap.Error(err))
-			}
+			job.ID = ids[i]
+			jobTasks[i] = job
+		}
+		err = d.addDDLJobs(jobTasks)
+		if err != nil {
+			log.Error("[ddl] addConcurrencyDDLJobs", zap.Error(err))
 		}
 	}
 	var jobs strings.Builder
