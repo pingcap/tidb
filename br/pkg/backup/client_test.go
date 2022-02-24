@@ -19,8 +19,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -42,6 +44,7 @@ type testBackup struct {
 
 	cluster *mock.Cluster
 	storage storage.ExternalStorage
+	dom     *domain.Domain
 }
 
 func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
@@ -62,9 +65,14 @@ func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
 	s.storage, err = storage.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.cluster.Start())
+	dom, err := session.BootstrapSession(s.cluster.Storage)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
 
 	clean = func() {
 		mockMgr.Close()
+		dom.Close()
 		s.cluster.Stop()
 		tikvClient.Close()
 		pdClient.Close()
