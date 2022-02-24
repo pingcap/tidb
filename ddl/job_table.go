@@ -45,7 +45,7 @@ func (d *ddl) insertRunningDDLJobMap(id int) {
 	d.runningJobMap[id] = struct{}{}
 }
 
-func (d *ddl) deleteRunningReorgJobMap(id int) {
+func (d *ddl) deleteRunningDDLJobMap(id int) {
 	d.runningDDLMapMu.Lock()
 	defer d.runningDDLMapMu.Unlock()
 	delete(d.runningJobMap, id)
@@ -59,11 +59,11 @@ const (
 
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
-	d.runningDDLMapMu.Lock()
+	d.runningDDLMapMu.RLock()
 	for id := range d.runningJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
-	d.runningDDLMapMu.Unlock()
+	d.runningDDLMapMu.RUnlock()
 	var sql string
 	if len(runningOrBlockedIDs) == 0 {
 		sql = getGeneralJobSQL
@@ -165,6 +165,11 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 	return len(rows) == 0, nil
 }
 
+const (
+	getReorgJobSQL            = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id order by min(job_id) limit 1)"
+	getReorgJobWithRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id not in (%s) order by min(job_id) limit 1)"
+)
+
 func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningDDLMapMu.RLock()
@@ -174,9 +179,9 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	d.runningDDLMapMu.RUnlock()
 	var sql string
 	if len(runningOrBlockedIDs) == 0 {
-		sql = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id order by min(job_id) limit 1)"
+		sql = getReorgJobSQL
 	} else {
-		sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id not in (%s) order by min(job_id) limit 1)", strings.Join(runningOrBlockedIDs, ", "))
+		sql = fmt.Sprintf(getReorgJobWithRunningSQL, strings.Join(runningOrBlockedIDs, ", "))
 	}
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
@@ -251,39 +256,27 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	var ok bool
 	for {
+		if !d.isOwner() {
+			log.Warn("[ddl] not owner, continue dispatch loop")
+			time.Sleep(time.Second)
+			continue
+		}
 		select {
 		case <-d.ddlJobCh:
+			count := 0
 			for {
-				job, err := d.getGeneralJob(sess)
-				if err != nil {
-					log.Error("fail to getGeneralJob", zap.Error(err))
+				retry := d.generalDDLJob(sess)
+				if retry && count < 5 {
+					count = count + 1
 					continue
 				}
-				if job == nil {
-					continue
-				}
-				d.doGeneralDDLJobWorker(job)
 				break
 			}
 		case <-ticker.C:
 			for {
-				job, err := d.getGeneralJob(sess)
-				if err != nil {
-					log.Error("getGeneralJob", zap.Error(err))
-					break
-				}
-				if job != nil {
-					d.doGeneralDDLJobWorker(job)
-				}
-				reorgJob, err := d.getReorgJob(sess)
-				if err != nil {
-					logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
-					break
-				}
-				if reorgJob != nil {
-					d.doReorgDDLJobWoker(reorgJob)
-				}
-				if job == nil && reorgJob == nil {
+				job := d.generalDDLJob(sess)
+				reorgJob := d.reorgDDLJob(sess)
+				if job && reorgJob {
 					continue
 				}
 				break
@@ -295,15 +288,7 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			job, err := d.getGeneralJob(sess)
-			if err != nil {
-				logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
-				continue
-			}
-			if job == nil {
-				continue
-			}
-			d.doGeneralDDLJobWorker(job)
+			d.generalDDLJob(sess)
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -311,25 +296,30 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			job, err := d.getReorgJob(sess)
-			if err != nil {
-				logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
-				continue
-			}
-			if job == nil {
-				continue
-			}
-			d.doReorgDDLJobWoker(job)
+			d.reorgDDLJob(sess)
 		case <-d.ctx.Done():
 			return
 		}
 	}
 }
 
+func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
+	job, err := d.getGeneralJob(sctx)
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
+		return true
+	}
+	if job == nil {
+		return true
+	}
+	d.doGeneralDDLJobWorker(job)
+	return false
+}
+
 func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer d.deleteRunningReorgJobMap(int(job.ID))
+		defer d.deleteRunningDDLJobMap(int(job.ID))
 
 		wk, err := d.generalDDLWorkerPool.get()
 		if err != nil {
@@ -343,10 +333,23 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	})
 }
 
-func (d *ddl) doReorgDDLJobWoker(job *model.Job) {
+func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
+	job, err := d.getReorgJob(sctx)
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
+		return true
+	}
+	if job == nil {
+		return true
+	}
+	d.doReorgDDLJobWorker(job)
+	return false
+}
+
+func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer d.deleteRunningReorgJobMap(int(job.ID))
+		defer d.deleteRunningDDLJobMap(int(job.ID))
 		wk, err := d.reorgWorkerPool.get()
 		if err != nil {
 			log.Warn("fail to get addIdxWorker", zap.Error(err))

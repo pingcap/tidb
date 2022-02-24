@@ -429,7 +429,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				asyncNotify(wk.ddlJobCh)
 				return wk, nil
 			}
-			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, 10, 10, 3*time.Minute))
+			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
 			d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
 			d.sessForAddDDL, err = d.sessPool.get()
 			if err != nil {
