@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -272,7 +273,7 @@ func (d *ddl) startDispatchLoop() {
 				}
 				reorgJob, err := d.getReorgJob(sess)
 				if err != nil {
-					log.Error("[ddl] getReorgJob", zap.Error(err))
+					logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
 					break
 				}
 				if reorgJob != nil {
@@ -284,11 +285,14 @@ func (d *ddl) startDispatchLoop() {
 			}
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
-				panic("notifyDDLJobByEtcdChGeneral in trouble")
+				logutil.BgLogger().Error("notifyDDLJobByEtcdChGeneral channel closed")
+				notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(context.Background(), addingDDLJobGeneral)
+				time.Sleep(time.Duration(1) * time.Second)
+				continue
 			}
 			job, err := d.getGeneralJob(sess)
 			if err != nil {
-				log.Error("[ddl] getGeneralJob", zap.Error(err))
+				logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
 				continue
 			}
 			if job != nil {
@@ -296,11 +300,14 @@ func (d *ddl) startDispatchLoop() {
 			}
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			if !ok {
-				panic("notifyDDLJobByEtcdChReorg in trouble")
+				logutil.BgLogger().Error("notifyDDLJobByEtcdChGeneral channel closed")
+				notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(context.Background(), addingDDLJobReorg)
+				time.Sleep(time.Duration(1) * time.Second)
+				continue
 			}
 			job, err := d.getReorgJob(sess)
 			if err != nil {
-				log.Error("[ddl] getReorgJob", zap.Error(err))
+				logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
 				continue
 			}
 			if job != nil {
@@ -383,14 +390,14 @@ func (d *ddl) addDDLJob(job *model.Job) error {
 
 	sess, err := d.sessPool.get()
 	if err != nil {
-		log.Error("[ddl] get session from sessPool", zap.Error(err))
+		logutil.BgLogger().Error("[ddl] get session from sessPool", zap.Error(err))
 		return err
 	}
 	defer d.sessPool.put(sess)
 
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
-		log.Error("[ddl] add ddl job to table", zap.Error(err))
+		logutil.BgLogger().Error("[ddl] add ddl job to table", zap.Error(err))
 		return err
 	}
 	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
@@ -441,11 +448,11 @@ func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, p
 		sess, _ = w.sessPool.get()
 		defer w.sessPool.put(sess)
 		if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin"); err != nil {
-			log.Error("[ddl] fail to begin", zap.Error(err))
+			logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))
 		}
 		defer func() {
 			if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit"); err != nil {
-				log.Error("[ddl] fail to begin", zap.Error(err))
+				logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))
 			}
 		}()
 	}
