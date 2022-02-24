@@ -41,3 +41,20 @@ func TestBuiltinFunctionsUsage(t *testing.T) {
 	usage = telemetry.GlobalBuiltinFunctionsUsage.Dump()
 	require.Equal(t, map[string]uint32{"PlusInt": 1, "MinusInt": 1}, usage)
 }
+
+// https://github.com/pingcap/tidb/issues/32459.
+func TestBuiltinFunctionsUsageJoinViews(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create view vw_dict as " +
+		"select a.table_schema, a.table_name as name, a.column_name, " +
+		"a.column_type, a.column_default, a.is_nullable, b.column_comment from " +
+		"information_schema.columns a left join information_schema.columns b on " +
+		"(a.table_name = b.table_name and a.column_name = b.column_name and b.table_schema = 'accountdb') " +
+		"where (a.table_schema = 'query_account') order by a.table_name, a.ordinal_position;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("select * from vw_dict where name = 't'")
+}
