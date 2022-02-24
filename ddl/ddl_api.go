@@ -77,6 +77,7 @@ const (
 	defaultPlacementPolicyName             = "default"
 	tiflashCheckTotalPendingTablesInterval = 2000 * time.Millisecond
 	tiflashCheckTotalPendingTablesTick     = 100
+	tiflashCheckPendingTablesRetry         = 10
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -278,9 +279,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
+		forceCheck := false
 		// When handled some tables, we need to wait some tables become available.
-		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 {
-			for {
+		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 || forceCheck {
+			for retry := 0; retry < tiflashCheckPendingTablesRetry; retry += 1 {
 				pendingCount, newVersion, ok := d.getPendingTiFlashTableCount(sctx, originVersion)
 				if ok {
 					originCount = pendingCount
@@ -295,6 +297,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 					time.Sleep(tiflashCheckTotalPendingTablesInterval)
 				} else {
 					logutil.BgLogger().Info("no many not available tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
+					forceCheck = false
 					break
 				}
 				select {
@@ -303,6 +306,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 				default:
 				}
 			}
+			// If we have wait too long, trigger one force check, trigger one ddlJob to update current schema.
+			forceCheck = !forceCheck
 		}
 
 		job := &model.Job{
