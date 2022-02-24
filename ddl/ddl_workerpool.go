@@ -30,7 +30,8 @@ type workerPool struct {
 func newDDLWorkerPool(resPool *pools.ResourcePool) *workerPool {
 	return &workerPool{
 		exit:    *atomic.NewBool(false),
-		resPool: resPool}
+		resPool: resPool,
+	}
 }
 
 // get gets workerPool from context resource pool.
