@@ -152,6 +152,7 @@ func (b *BuiltinFunctionsUsage) Dump() map[string]uint32 {
 // GlobalBuiltinFunctionsUsage is used to collect builtin functions usage information
 var GlobalBuiltinFunctionsUsage = NewBuiltinFunctionsUsage()
 
+// BuiltinFunctionsUsageCollector is used to collect the usage of scalar function for telemetry.
 type BuiltinFunctionsUsageCollector interface {
 	CollectBuiltinFunctionsUsage(funcName string)
 }
