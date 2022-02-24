@@ -657,6 +657,7 @@ type captureFilter struct {
 	dbs       map[string]struct{}
 	frequency int64
 	tables    map[stmtctx.TableEntry]struct{}
+	users     map[string]struct{}
 
 	fail      bool
 	currentDB string
@@ -686,7 +687,7 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tables) == 0
+	return len(cf.dbs) == 0 && len(cf.tables) == 0 && len(cf.users) == 0
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
@@ -694,6 +695,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		dbs:       make(map[string]struct{}),
 		frequency: 1,
 		tables:    make(map[stmtctx.TableEntry]struct{}),
+		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
@@ -720,6 +722,8 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 				Table: strs[1],
 			}
 			filter.tables[tblEntry] = struct{}{}
+		case "user":
+			filter.users[valStr] = struct{}{}
 		case "frequency":
 			f, err := strconv.ParseInt(valStr, 10, 64)
 			if err != nil {
@@ -761,6 +765,19 @@ func (h *BindHandle) CaptureBaselines() {
 			stmt.Accept(captureFilter)
 			if captureFilter.fail {
 				continue
+			}
+
+			if len(captureFilter.users) > 0 {
+				filteredByUser := true
+				for user := range bindableStmt.Users {
+					if _, ok := captureFilter.users[user]; !ok {
+						filteredByUser = false // some user not in the black-list has processed this stmt
+						break
+					}
+				}
+				if filteredByUser {
+					continue
+				}
 			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)

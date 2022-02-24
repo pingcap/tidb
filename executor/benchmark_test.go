@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -2122,10 +2121,4 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
 
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		BenchmarkReadLastLinesOfHugeLine,
-	)
 }

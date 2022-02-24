@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -68,10 +70,11 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -256,6 +259,33 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
+}
+
+func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+	if *withTiKV {
+		initPdAddrs()
+		pdAddr := <-pdAddrChan
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		require.NoError(t, err)
+		err = clearStorage(store)
+		require.NoError(t, err)
+		err = clearETCD(store.(kv.EtcdBackend))
+		require.NoError(t, err)
+		session.ResetStoreForWithTiKVTest(store)
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		return store, func() {
+			dom.Close()
+			store.Close()
+			pdAddrChan <- pdAddr
+		}
+	}
+	return newTestkit.CreateMockStore(t)
 }
 
 type mockBinlogPump struct {
@@ -5974,4 +6004,14 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

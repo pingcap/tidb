@@ -61,7 +61,7 @@ func interestingGoroutines() (gs []string) {
 		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
-		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
+		"go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*KVStore).runSafePointChecker",
