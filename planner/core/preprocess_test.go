@@ -343,25 +343,27 @@ func TestErrKeyPart0(t *testing.T) {
 }
 
 // For issue #30328
-func (s *testValidatorSuite) TestLargeVarcharAutoConv(c *C) {
-	_, err := s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
 		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
 
-	_, err = s.se.Execute(context.Background(), "SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
-	c.Assert(err, IsNil)
-	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
-	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
-	warnCnt := s.se.GetSessionVars().StmtCtx.WarningCount()
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
 	// It is only 3. For the first stmt, ddl will append a warning for column b
-	c.Assert(warnCnt, Equals, uint16(3))
-	warns := s.se.GetSessionVars().StmtCtx.GetWarnings()
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	for i := range warns {
-		c.Assert(terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert), IsTrue)
+		require.True(t, terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert))
 	}
 
-	s.se.GetSessionVars().StmtCtx.SetWarnings(warns[:0])
-	_, err = s.se.Execute(context.Background(), "SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
-	c.Assert(err, IsNil)
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(warns[:0])
+	tk.MustExec("SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 }
