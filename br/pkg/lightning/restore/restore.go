@@ -379,14 +379,17 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case isSSTImport:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -498,11 +501,7 @@ type schemaJob struct {
 	dbName   string
 	tblName  string // empty for create db jobs
 	stmtType schemaStmtType
-	stmts    []*schemaStmt
-}
-
-type schemaStmt struct {
-	sql string
+	stmts    []string
 }
 
 type restoreSchemaWorker struct {
@@ -513,6 +512,15 @@ type restoreSchemaWorker struct {
 	wg    sync.WaitGroup
 	glue  glue.Glue
 	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		return err
+	}
+	job.stmts = stmts
+	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
@@ -526,15 +534,15 @@ func (worker *restoreSchemaWorker) makeJobs(
 	var err error
 	// 1. restore databases, execute statements concurrency
 	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName:   dbMeta.Name,
-			stmtType: schemaCreateDatabase,
-			stmts:    make([]*schemaStmt, 0, 1),
+		sql, err := dbMeta.GetSchema(worker.ctx, worker.store)
+		if err != nil {
+			return err
 		}
-		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		err = worker.addJob(sql, &schemaJob{
+			dbName:   dbMeta.Name,
+			tblName:  "",
+			stmtType: schemaCreateDatabase,
 		})
-		err = worker.appendJob(restoreSchemaJob)
 		if err != nil {
 			return err
 		}
@@ -560,29 +568,18 @@ func (worker *restoreSchemaWorker) makeJobs(
 				return errors.Errorf("table `%s`.`%s` schema not found", dbMeta.Name, tblMeta.Name)
 			}
 			sql, err := tblMeta.GetSchema(worker.ctx, worker.store)
+			if err != nil {
+				return err
+			}
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  tblMeta.Name,
 					stmtType: schemaCreateTable,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
-			}
-			if err != nil {
-				return err
 			}
 		}
 	}
@@ -595,22 +592,11 @@ func (worker *restoreSchemaWorker) makeJobs(
 		for _, viewMeta := range dbMeta.Views {
 			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  viewMeta.Name,
 					stmtType: schemaCreateView,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
@@ -671,8 +657,8 @@ loop:
 				DB:     session,
 			}
 			for _, stmt := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt.sql)
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
+				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
@@ -732,7 +718,7 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 	case <-worker.ctx.Done():
 		// cancel the job
 		worker.wg.Done()
-		return worker.ctx.Err()
+		return errors.Trace(worker.ctx.Err())
 	case worker.jobCh <- job:
 		return nil
 	}
@@ -1481,11 +1467,14 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if cp.Status < checkpoints.CheckpointStatusAllWritten && len(tableMeta.DataFiles) == 0 {
+				continue
+			}
 			igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbInfo.Name, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.Columns)
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1546,7 +1535,6 @@ func (tr *TableRestore) restoreTable(
 	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
 	// 1. Load the table info.
-
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -1677,12 +1665,10 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 }
 
 func (rc *Controller) switchToImportMode(ctx context.Context) {
-	log.L().Info("switch to import mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
 func (rc *Controller) switchToNormalMode(ctx context.Context) {
-	log.L().Info("switch to normal mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
 }
 
@@ -1691,6 +1677,8 @@ func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode)
 	if rc.isTiDBBackend() {
 		return
 	}
+
+	log.L().Info("switch import mode", zap.Stringer("mode", mode))
 
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.
@@ -1928,8 +1916,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			rc.taskMgr.CleanupTask(ctx)
 		}
-		return errors.Errorf("tidb-lightning check failed."+
-			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
+		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }
@@ -1980,6 +1967,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -2303,6 +2295,16 @@ func (cr *chunkRestore) encodeLoop(
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
+	// filteredColumns is column names that excluded ignored columns
+	// WARN: this might be not correct when different SQL statements contains different fields,
+	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
+	// so this should be ok.
+	var filteredColumns []string
+	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
+	if err1 != nil {
+		err = err1
+		return
+	}
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -2331,6 +2333,26 @@ func (cr *chunkRestore) encodeLoop(
 					if len(cr.chunk.ColumnPermutation) == 0 {
 						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
 							return
+						}
+					}
+					filteredColumns = columnNames
+					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
+						filteredColumns = make([]string, 0, len(columnNames))
+						ignoreColsMap := ignoreColumns.ColumnsMap()
+						if len(columnNames) > 0 {
+							for _, c := range columnNames {
+								if _, ok := ignoreColsMap[c]; !ok {
+									filteredColumns = append(filteredColumns, c)
+								}
+							}
+						} else {
+							// init column names by table schema
+							// after filtered out some columns, we must explicitly set the columns for TiDB backend
+							for _, col := range t.tableInfo.Core.Columns {
+								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
+									filteredColumns = append(filteredColumns, col.Name.O)
+								}
+							}
 						}
 					}
 					initializedColumns = true
@@ -2366,7 +2388,7 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))

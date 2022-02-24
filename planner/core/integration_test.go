@@ -3333,6 +3333,28 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk.MustExec(`rollback`)
 }
 
+func (s *testIntegrationSuite) TestIssue32428(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `t1` (`a` enum('aa') DEFAULT NULL, KEY `k` (`a`))")
+	tk.MustExec("insert into t1 values('aa')")
+	tk.MustExec("insert into t1 values(null)")
+	tk.MustQuery("select a from t1 where a<=>'aa'").Check(testkit.Rows("aa"))
+	tk.MustQuery("select a from t1 where a<=>null").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec(`CREATE TABLE IDT_MULTI15860STROBJSTROBJ (
+	  COL1 enum('aa') DEFAULT NULL,
+	  COL2 int(41) DEFAULT NULL,
+	  COL3 year(4) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2),
+	  KEY U_M_COL5 (COL3,COL2))`)
+	tk.MustExec(`insert into IDT_MULTI15860STROBJSTROBJ  values("aa", 1013610488, 1982)`)
+	tk.MustQuery(`SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = "aa"`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`prepare stmt from "SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = ?"`)
+	tk.MustExec(`set @a="aa"`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows()) // empty result
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4658,6 +4680,12 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 
 func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t27797")
 	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
@@ -4817,4 +4845,54 @@ func (s *testIntegrationSuite) TestNaturalJoinUpdateSameTable(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(2,2)")
 	tk.MustGetErrCode(`update t1 as a natural join t1 B SET a.A = 2, b.b = 3`, mysql.ErrMultiUpdateKeyConflict)
 	tk.MustExec("drop table t1")
+}
+
+func (s *testIntegrationSuite) TestIssue31202(c *C) {
+	store, dom := s.store, s.dom
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t31202(a int primary key, b int);")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format = 'brief' select * from t31202 use index (primary);").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestIssue29705(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4;")
+	tk.MustExec("insert into t values(1);")
+	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
+	result.Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
+	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 }

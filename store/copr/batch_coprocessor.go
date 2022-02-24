@@ -291,6 +291,10 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+	if len(originalTasks) == 0 {
+		log.Info("Batch cop task balancer got an empty task set.")
+		return originalTasks
+	}
 	isMPP := mppStoreLastFailTime != nil
 	// for mpp, we still need to detect the store availability
 	if len(originalTasks) <= 1 && !isMPP {
@@ -525,7 +529,6 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
-
 		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -617,7 +620,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -629,11 +632,12 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:     c.store.kvStore,
-		req:       req,
-		finishCh:  make(chan struct{}),
-		vars:      vars,
-		rpcCancel: tikv.NewRPCanceller(),
+		store:                      c.store.kvStore,
+		req:                        req,
+		finishCh:                   make(chan struct{}),
+		vars:                       vars,
+		rpcCancel:                  tikv.NewRPCanceller(),
+		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
@@ -661,6 +665,8 @@ type batchCopIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
+
+	enableCollectExecutionInfo bool
 }
 
 func (b *batchCopIterator) run(ctx context.Context) {
@@ -771,7 +777,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
@@ -874,22 +880,13 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 		return
 	}
 
-	resp := batchCopResponse{
+	resp := &batchCopResponse{
 		pbResp: response,
 		detail: new(CopRuntimeStats),
 	}
 
-	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	resp.detail.CalleeAddress = task.storeAddr
-
-	b.sendToRespCh(&resp)
+	b.handleCollectExecutionInfo(bo, resp, task)
+	b.sendToRespCh(resp)
 
 	return
 }
@@ -901,4 +898,19 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
+}
+
+func (b *batchCopIterator) handleCollectExecutionInfo(bo *Backoffer, resp *batchCopResponse, task *batchCopTask) {
+	if !b.enableCollectExecutionInfo {
+		return
+	}
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = task.storeAddr
 }
