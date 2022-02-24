@@ -48,13 +48,31 @@ import (
 	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
 )
+
+var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
+
+type testIntegrationSuite1 struct{ *testIntegrationSuite }
+type testIntegrationSuite2 struct{ *testIntegrationSuite }
+
+func (s *testIntegrationSuite2) TearDownTest(c *C) {
+	tearDownIntegrationSuiteTest(s.testIntegrationSuite, c)
+}
+
+type testIntegrationSuite3 struct{ *testIntegrationSuite }
+type testIntegrationSuite4 struct{ *testIntegrationSuite }
+type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -367,8 +385,6 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -900,6 +916,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		{
 			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((+1,1)));",
 			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,a) ( partition p values in ((1,1)));",
+			ddl.ErrSameNamePartitionField,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1,1)));",
+			ddl.ErrSameNamePartitionField,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list columns (id) (
@@ -3380,8 +3404,6 @@ func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -3547,6 +3569,13 @@ func TestTable(t *testing.T) {
 func TestRenameTables(t *testing.T) {
 	// Useless, but is required to initialize the global infoSync
 	// Otherwise this test throw a "infoSyncer is not initialized" error
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestRenameTables(t)
+}
+
+func TestCreateTables(t *testing.T) {
 	_, clean := ntestkit.CreateMockStore(t)
 	defer clean()
 

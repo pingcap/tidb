@@ -32,8 +32,9 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	Ctx       context.Context
-	Untouched bool // If true, the index key/value is no need to commit.
+	Ctx             context.Context
+	Untouched       bool // If true, the index key/value is no need to commit.
+	IgnoreAssertion bool
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -44,6 +45,11 @@ type CreateIdxOptFunc func(*CreateIdxOpt)
 // IndexIsUntouched uses to indicate the index kv is untouched.
 var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.Untouched = true
+}
+
+// WithIgnoreAssertion uses to indicate the process can ignore assertion.
+var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
+	opt.IgnoreAssertion = true
 }
 
 // WithCtx returns a CreateIdxFunc.
@@ -62,16 +68,10 @@ type Index interface {
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
-	// Drop supports drop table, drop index statements.
-	Drop(txn kv.Transaction) error
 	// Exist supports check index exists or not.
 	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key.
 	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
-	// Seek supports where clause.
-	Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
-	// SeekFirst supports aggregate min and ascend order by.
-	SeekFirst(r kv.Retriever) (iter IndexIterator, err error)
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.

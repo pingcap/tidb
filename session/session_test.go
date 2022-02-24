@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -61,18 +62,19 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -257,6 +259,33 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
+}
+
+func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+	if *withTiKV {
+		initPdAddrs()
+		pdAddr := <-pdAddrChan
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		require.NoError(t, err)
+		err = clearStorage(store)
+		require.NoError(t, err)
+		err = clearETCD(store.(kv.EtcdBackend))
+		require.NoError(t, err)
+		session.ResetStoreForWithTiKVTest(store)
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		return store, func() {
+			dom.Close()
+			store.Close()
+			pdAddrChan <- pdAddr
+		}
+	}
+	return newTestkit.CreateMockStore(t)
 }
 
 type mockBinlogPump struct {
@@ -4420,11 +4449,11 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParams(context.TODO(), true, "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParams(context.TODO(), true, "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4434,15 +4463,15 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParams(context.TODO(), true, "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()
@@ -4905,8 +4934,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5927,13 +5954,16 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 	tk.MustQuery("select * from ct1").Check(testkit.Rows())
 	tk.MustQuery("select * from ct2").Check(testkit.Rows())
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 50; i++ {
-		if tk.HasPlan("select * from ct1", "Union") {
-			if tk.HasPlan("select * from ct2", "Union") {
-				cached = true
-				break
-			}
+		tk.MustQuery("select * from ct1")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -5974,4 +6004,14 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

@@ -24,7 +24,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 2)
+var testDataMap = make(testdata.BookKeeper)
 var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
@@ -34,10 +34,21 @@ func TestMain(m *testing.M) {
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
+	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
+	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
+	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
+	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
+	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
+
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
@@ -51,4 +62,44 @@ func TestMain(m *testing.M) {
 
 func GetIntegrationPartitionSuiteData() testdata.TestData {
 	return testDataMap["integration_partition_suite"]
+}
+
+func GetPlanNormalizedSuiteData() testdata.TestData {
+	return testDataMap["plan_normalized_suite"]
+}
+
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
+}
+
+func GetOrderedResultModeSuiteData() testdata.TestData {
+	return testDataMap["ordered_result_mode_suite"]
+}
+
+func GetPointGetPlanData() testdata.TestData {
+	return testDataMap["point_get_plan"]
+}
+
+func GetEnforceMPPSuiteData() testdata.TestData {
+	return testDataMap["enforce_mpp_suite"]
+}
+
+func GetExpressionRewriterSuiteData() testdata.TestData {
+	return testDataMap["expression_rewriter_suite"]
+}
+
+func GetPartitionPrunerData() testdata.TestData {
+	return testDataMap["partition_pruner"]
+}
+
+func GetPlanSuiteData() testdata.TestData {
+	return testDataMap["plan_suite"]
+}
+
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
+}
+
+func GetAnalyzeSuiteData() testdata.TestData {
+	return testDataMap["analyze_suite"]
 }

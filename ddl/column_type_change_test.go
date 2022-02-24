@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -376,7 +375,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
 	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
-	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-11 00:00:00")) // the given number will be left-forward used.
+	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
@@ -440,8 +439,6 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarchar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("drop database if exists col_type_change_char;")
 	tk.MustExec("create database col_type_change_char;")
 	tk.MustExec("use col_type_change_char;")
@@ -2373,4 +2370,91 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c 
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 	tk.MustExec("alter table t modify a float(6,1)")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("alter table t modify c1 timestamp")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 17:05:08"))
+
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec(`set time_zone = '+00:00'`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone='+5:00'")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 12:05:08"))
+	tk.MustExec("admin check table t")
+	// test the timezone of "default" and "system"
+	// The current session.time_zone is '-8:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone= default")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='SYSTEM'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("admin check table t")
+
+	// tests DST
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '1990-04-15 18:00:00');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00"))
+	tk.MustExec("set @@session.time_zone='Asia/Shanghai'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 19900416030000"))
+	tk.MustExec("alter table t modify c1 timestamp default '1990-04-15 18:00:00'")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00", "2 1990-04-15 09:00:00"))
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2016-03-13 02:30:00', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2016-03-13 02:30:00"))
+	tk.MustExec("set @@session.time_zone='America/Los_Angeles'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustExec("admin check table t")
 }
