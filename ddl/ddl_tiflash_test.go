@@ -704,7 +704,7 @@ func execWithTimeout(tk *testkit.TestKit, sql string) (error, bool) {
 		doneCh <- nil
 	}(ctx)
 	select {
-	case e := <- doneCh:
+	case e := <-doneCh:
 		return e, false
 	case <-ctx.Done():
 		return nil, true
@@ -732,7 +732,6 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 		failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp")
 	}()
 	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
-
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
 	err, timeOut := execWithTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
