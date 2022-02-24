@@ -268,7 +268,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	var originCount uint32 = 0
 	for _, tbl := range dbInfo.Tables {
 		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
-			time.Sleep(time.Second * val.(int))
+			time.Sleep(time.Second * time.Duration(val.(int64)))
 		})
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
