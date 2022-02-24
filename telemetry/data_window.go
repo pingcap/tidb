@@ -92,59 +92,69 @@ type tiFlashUsageData struct {
 	ExchangePushDown uint64 `json:"exchangePushDown"`
 }
 
-// builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
-type builtinFunctionsUsageCollector struct {
-	sync.Mutex
-
-	// Should acquire lock to access this
-	usageData BuiltinFunctionsUsage
-}
-
-// Merge BuiltinFunctionsUsage data
-func (b *builtinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
-	// TODO(leiysky): use multi-worker to collect the usage information so we can make this asynchronous
-	b.Lock()
-	defer b.Unlock()
-	b.usageData.Merge(usageData)
-}
-
-// Dump BuiltinFunctionsUsage data
-func (b *builtinFunctionsUsageCollector) Dump() map[string]uint32 {
-	b.Lock()
-	ret := b.usageData
-	b.usageData = make(map[string]uint32)
-	b.Unlock()
-
-	return ret
-}
-
 // BuiltinFunctionsUsage is a map from ScalarFuncSig_name(string) to usage count(uint32)
-type BuiltinFunctionsUsage map[string]uint32
+type BuiltinFunctionsUsage struct {
+	usages map[string]uint32
+	sync.Mutex
+}
 
-// Inc will increase the usage count of scalar function by 1
-func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
-	v, ok := b[scalarFuncSigName]
-	if !ok {
-		b[scalarFuncSigName] = 1
-	} else {
-		b[scalarFuncSigName] = v + 1
+// NewBuiltinFunctionsUsage creates a BuiltinFunctionsUsage.
+func NewBuiltinFunctionsUsage() *BuiltinFunctionsUsage {
+	return &BuiltinFunctionsUsage{
+		usages: make(map[string]uint32),
 	}
 }
 
-// Merge BuiltinFunctionsUsage data
-func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
-	for k, v := range usageData {
-		prev, ok := b[k]
+// Inc will increase the usage count of scalar function by 1
+func (b *BuiltinFunctionsUsage) Inc(funcName string) {
+	b.Lock()
+	defer b.Unlock()
+	v, ok := b.usages[funcName]
+	if !ok {
+		b.usages[funcName] = 1
+	} else {
+		b.usages[funcName] = v + 1
+	}
+}
+
+func mergeUsageMap(m1, m2 map[string]uint32) {
+	for k, v := range m2 {
+		prev, ok := m1[k]
 		if !ok {
-			b[k] = v
+			m1[k] = v
 		} else {
-			b[k] = prev + v
+			m1[k] = prev + v
 		}
 	}
 }
 
+// Merge BuiltinFunctionsUsage data
+func (b *BuiltinFunctionsUsage) Merge(usageData *BuiltinFunctionsUsage) {
+	if usageData == nil {
+		return
+	}
+	b.Lock()
+	defer b.Unlock()
+	usageData.Lock()
+	defer usageData.Unlock()
+	mergeUsageMap(b.usages, usageData.usages)
+}
+
+// Dump BuiltinFunctionsUsage data
+func (b *BuiltinFunctionsUsage) Dump() map[string]uint32 {
+	b.Lock()
+	defer b.Unlock()
+	ret := b.usages
+	b.usages = make(map[string]uint32)
+	return ret
+}
+
 // GlobalBuiltinFunctionsUsage is used to collect builtin functions usage information
-var GlobalBuiltinFunctionsUsage = &builtinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
+var GlobalBuiltinFunctionsUsage = NewBuiltinFunctionsUsage()
+
+type BuiltinFunctionsUsageCollector interface {
+	CollectBuiltinFunctionsUsage(funcName string)
+}
 
 var (
 	rotatedSubWindows []*windowData
@@ -300,9 +310,7 @@ func getWindowData() []*windowData {
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
 			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
 
-			mergedBuiltinFunctionsUsage := BuiltinFunctionsUsage(thisWindow.BuiltinFunctionsUsage)
-			mergedBuiltinFunctionsUsage.Merge(BuiltinFunctionsUsage(rotatedSubWindows[i].BuiltinFunctionsUsage))
-			thisWindow.BuiltinFunctionsUsage = mergedBuiltinFunctionsUsage
+			mergeUsageMap(thisWindow.BuiltinFunctionsUsage, rotatedSubWindows[i].BuiltinFunctionsUsage)
 			aggregatedSubWindows++
 			i++
 		}

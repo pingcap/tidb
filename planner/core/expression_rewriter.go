@@ -1225,7 +1225,9 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 		return
 	}
 	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		telemetry.BuiltinFunctionsUsage(er.b.ctx.GetBuiltinFunctionUsage()).Inc(scalarFunc.Function.PbCode().String())
+		if collector, ok := er.b.ctx.(telemetry.BuiltinFunctionsUsageCollector); ok {
+			collector.CollectBuiltinFunctionsUsage(scalarFunc.Function.PbCode().String())
+		}
 	}
 	return
 }

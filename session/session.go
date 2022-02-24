@@ -234,7 +234,7 @@ type session struct {
 
 	cache [1]ast.StmtNode
 
-	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	builtinFunctionUsage *telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
@@ -2526,7 +2526,7 @@ func (s *session) Close() {
 	if s.idxUsageCollector != nil {
 		s.idxUsageCollector.Delete()
 	}
-	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
+	telemetry.GlobalBuiltinFunctionsUsage.Merge(s.builtinFunctionUsage)
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
@@ -2928,7 +2928,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		ddlOwnerChecker:      dom.DDL().OwnerManager(),
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		builtinFunctionUsage: telemetry.NewBuiltinFunctionsUsage(),
 		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -2962,7 +2962,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars:          variable.NewSessionVars(),
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		builtinFunctionUsage: telemetry.NewBuiltinFunctionsUsage(),
 		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -3415,8 +3415,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	}
 }
 
-func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return s.builtinFunctionUsage
+func (s *session) CollectBuiltinFunctionsUsage(funcName string) {
+	s.builtinFunctionUsage.Inc(funcName)
 }
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
