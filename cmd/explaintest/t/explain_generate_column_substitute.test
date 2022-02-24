@@ -266,4 +266,30 @@ create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_ge
 replace into t (c_int, c_str) values (9, "beautiful hermann");
 select reverse(c_str) from t use index(idx);
 
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, c_datetime datetime, c_timestamp timestamp, c_double double, c_decimal decimal(12, 6), c_enum enum('blue','green','red','yellow','white','orange','purple'), primary key (c_datetime) , key(c_int)  , key(c_datetime) , key((c_int + 1)), key((c_int -1)), key((lower(c_str))), key((md5(c_str))), key((reverse(c_str))), key((upper(c_str))));
+create table t2 like t1;
+insert into t1 values(11, 'loving grothendieck', '2020-02-02 19:25:49', '2020-03-27 15:17:14',     3.269, 1.851000, 'white' );
+insert into t1 values(11, 'quirky kapitsa'     , '2020-06-21 03:55:31', '2020-02-29 17:02:48',      6.94, 1.851000, 'yellow');
+insert into t1 values( 7, 'boring bouman'      , '2020-05-10 00:01:04', '2020-02-01 20:18:00', 84.096168, 6.996000, 'white' );
+insert into t2 values( 11, 'wizardly antonelli', '2020-01-30 17:27:17', '2020-01-01 10:05:31', 6.886177, 6.332000, 'green'   );
+insert into t2 values( 2, 'angry kapitsa'       , '2020-03-30 05:09:44', '2020-02-15 00:36:52', 95.798378, 3.118000, 'blue'  );
+insert into t2 values( 7, 'dreamy shamir'       , '2020-05-28 14:13:42', '2020-06-02 07:23:22', 26.623227, 3.105000, 'orange');
+begin;
+delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_decimal limit 1;
+desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+drop table t1, t2;
+
 drop table t;
+
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+
+drop table t1,t2;

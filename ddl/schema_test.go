@@ -141,7 +141,7 @@ func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state m
 	}
 }
 
-func TestSchema(t *testing.T) {
+func ExportTestSchema(t *testing.T) {
 	store := testCreateStore(t, "test_schema")
 	defer func() {
 		err := store.Close()

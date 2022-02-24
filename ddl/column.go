@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -450,24 +449,6 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteOnly:
 		// write only -> delete only
 		setColumnsState(colInfos, model.StateDeleteOnly)
-		setIndicesState(idxInfos, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		setColumnsState(colInfos, model.StateDeleteReorganization)
-		setIndicesState(idxInfos, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteReorganization
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		// All reorganization jobs are done, drop this column.
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -477,8 +458,23 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 			tblInfo.Indices = newIndices
 		}
-
-		indexIDs := indexInfosToIDList(idxInfos)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		setColumnsState(colInfos, model.StateDeleteReorganization)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		// All reorganization jobs are done, drop this column.
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
@@ -491,7 +487,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -508,7 +504,9 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 
 	var colNames []model.CIStr
 	var ifExists []bool
-	err = job.DecodeArgs(&colNames, &ifExists)
+	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIds []int64
+	err = job.DecodeArgs(&colNames, &ifExists, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, 0, nil, errors.Trace(err)
@@ -540,6 +538,9 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		indexInfos = append(indexInfos, idxInfos...)
 	}
 	job.Args = []interface{}{newColNames, newIfExists}
+	if len(indexIds) > 0 {
+		job.Args = append(job.Args, indexIds)
+	}
 	return tblInfo, colInfos, len(colInfos), indexInfos, nil
 }
 
@@ -589,24 +590,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteOnly:
 		// write only -> delete only
 		colInfo.State = model.StateDeleteOnly
-		setIndicesState(idxInfos, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		colInfo.State = model.StateDeleteReorganization
-		setIndicesState(idxInfos, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteReorganization
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		// All reorganization jobs are done, drop this column.
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -616,8 +599,23 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 			tblInfo.Indices = newIndices
 		}
-
-		indexIDs := indexInfosToIDList(idxInfos)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		colInfo.State = model.StateDeleteReorganization
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		// All reorganization jobs are done, drop this column.
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -631,7 +629,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -647,7 +645,9 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 
 	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
+	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIds []int64
+	err = job.DecodeArgs(&colName, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
@@ -992,12 +992,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), true, valStr)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
-				}
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1327,7 +1322,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
-	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, time.UTC, w.rowMap)
+	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
@@ -1350,7 +1346,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	val := w.rowMap[w.oldColInfo.ID]
 	col := w.newColInfo
 	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.Flag) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, int8(col.Decimal)); err == nil {
+		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, col.Decimal); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
 			w.rowMap[w.oldColInfo.ID] = v
 		}
@@ -1373,7 +1369,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
-	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, timeutil.SystemLocation(), w.rowMap)
+	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1703,11 +1699,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		}
 	}
 	buf.WriteString(" limit 1")
-	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, true, buf.String(), paramsList...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1881,9 +1873,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, col.Decimal).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, col.Decimal).String()
 		}
 	}
 	return odValue, nil

@@ -131,15 +131,11 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	}
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
-	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
-	if err != nil {
-		return err
-	}
 
-	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 
 	if err != nil {
 		h.bindInfo.Unlock()
@@ -661,6 +657,7 @@ type captureFilter struct {
 	dbs       map[string]struct{}
 	frequency int64
 	tables    map[stmtctx.TableEntry]struct{}
+	users     map[string]struct{}
 
 	fail      bool
 	currentDB string
@@ -690,7 +687,7 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tables) == 0
+	return len(cf.dbs) == 0 && len(cf.tables) == 0 && len(cf.users) == 0
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
@@ -698,16 +695,12 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		dbs:       make(map[string]struct{}),
 		frequency: 1,
 		tables:    make(map[stmtctx.TableEntry]struct{}),
+		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
-	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] failed to parse query for mysql.capture_plan_baselines_blacklist load", zap.Error(err))
-		return
-	}
-	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {
 		logutil.BgLogger().Warn("[sql-bind] failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
 		return
@@ -729,6 +722,8 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 				Table: strs[1],
 			}
 			filter.tables[tblEntry] = struct{}{}
+		case "user":
+			filter.users[valStr] = struct{}{}
 		case "frequency":
 			f, err := strconv.ParseInt(valStr, 10, 64)
 			if err != nil {
@@ -770,6 +765,19 @@ func (h *BindHandle) CaptureBaselines() {
 			stmt.Accept(captureFilter)
 			if captureFilter.fail {
 				continue
+			}
+
+			if len(captureFilter.users) > 0 {
+				filteredByUser := true
+				for user := range bindableStmt.Users {
+					if _, ok := captureFilter.users[user]; !ok {
+						filteredByUser = false // some user not in the black-list has processed this stmt
+						break
+					}
+				}
+				if filteredByUser {
+					continue
+				}
 			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
@@ -926,18 +934,14 @@ func (h *BindHandle) SaveEvolveTasksToStore() {
 }
 
 func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(
 		context.TODO(),
-		true,
+		nil,
 		"SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN (%?, %?, %?)",
 		variable.TiDBEvolvePlanTaskMaxTime,
 		variable.TiDBEvolvePlanTaskStartTime,
 		variable.TiDBEvolvePlanTaskEndTime,
 	)
-	if err != nil {
-		return 0, time.Time{}, time.Time{}, err
-	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, err
 	}
