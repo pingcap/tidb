@@ -306,7 +306,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 				default:
 				}
 			}
-			// If we have wait too long, trigger one force check, trigger one ddlJob to update current schema.
+			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
 			forceCheck = !forceCheck
 		}
 
