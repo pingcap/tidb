@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -58,11 +59,11 @@ const (
 
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
-	d.runningDDLMapMu.RLock()
+	d.runningDDLMapMu.Lock()
 	for id := range d.runningJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
-	d.runningDDLMapMu.RUnlock()
+	d.runningDDLMapMu.Unlock()
 	var sql string
 	if len(runningOrBlockedIDs) == 0 {
 		sql = getGeneralJobSQL
@@ -71,14 +72,14 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	}
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	var rows []chunk.Row
 	if rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if err = rs.Close(); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -89,13 +90,13 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 		job := model.Job{}
 		err = job.Decode(jobBinary)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if job.Type == model.ActionDropSchema {
 			for {
 				canRun, err := d.checkDropSchemaJobIsRunnable(sess, &job)
 				if err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 				if canRun {
 					log.Info("get ddl job from table", zap.String("job", job.String()))
@@ -105,13 +106,13 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 				runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.FormatInt(job.ID, 10))
 				sql = fmt.Sprintf(getGeneralJobWithoutRunningAgainSQL, strings.Join(runningOrBlockedIDs, ", "))
 				if rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql); err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 				if rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8); err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 				if err = rs.Close(); err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 				if len(rows) == 0 {
 					continue
@@ -119,7 +120,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 				jobBinary = rows[0].GetBytes(0)
 				job = model.Job{}
 				if err = job.Decode(jobBinary); err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 			}
 		} else {
@@ -252,25 +253,23 @@ func (d *ddl) startDispatchLoop() {
 	for {
 		select {
 		case <-d.ddlJobCh:
-			sleep := false
-			for !sleep {
+			for {
 				job, err := d.getGeneralJob(sess)
 				if err != nil {
-					log.Warn("err", zap.Error(err))
-				}
-				if job != nil {
-					d.doGeneralDDLJobWorker(job)
+					log.Error("fail to getGeneralJob", zap.Error(err))
+					continue
 				}
 				if job == nil {
-					sleep = true
+					continue
 				}
+				d.doGeneralDDLJobWorker(job)
+				break
 			}
 		case <-ticker.C:
-			sleep := false
-			for !sleep {
+			for {
 				job, err := d.getGeneralJob(sess)
 				if err != nil {
-					log.Warn("getGeneralJob", zap.Error(err))
+					log.Error("getGeneralJob", zap.Error(err))
 					break
 				}
 				if job != nil {
@@ -285,12 +284,13 @@ func (d *ddl) startDispatchLoop() {
 					d.doReorgDDLJobWoker(reorgJob)
 				}
 				if job == nil && reorgJob == nil {
-					sleep = true
+					continue
 				}
+				break
 			}
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
-				logutil.BgLogger().Error("notifyDDLJobByEtcdChGeneral channel closed")
+				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
 				notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(context.Background(), addingDDLJobGeneral)
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
@@ -300,12 +300,13 @@ func (d *ddl) startDispatchLoop() {
 				logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
 				continue
 			}
-			if job != nil {
-				d.doGeneralDDLJobWorker(job)
+			if job == nil {
+				continue
 			}
+			d.doGeneralDDLJobWorker(job)
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			if !ok {
-				logutil.BgLogger().Error("notifyDDLJobByEtcdChGeneral channel closed")
+				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
 				notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(context.Background(), addingDDLJobReorg)
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
@@ -315,9 +316,10 @@ func (d *ddl) startDispatchLoop() {
 				logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
 				continue
 			}
-			if job != nil {
-				d.doReorgDDLJobWoker(job)
+			if job == nil {
+				continue
 			}
+			d.doReorgDDLJobWoker(job)
 		case <-d.ctx.Done():
 			return
 		}
