@@ -931,7 +931,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		for i := 0; i < chk.NumRows(); i++ {
 			w.scannedKeys++
 			if checkLimit {
-				if w.PushedLimit.Offset >= w.scannedKeys {
+				if w.scannedKeys <= w.PushedLimit.Offset {
 					continue
 				}
 				if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
