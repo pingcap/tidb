@@ -908,10 +908,10 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
-			if w.PushedLimit.Count == 0 {
+			if w.PushedLimit.Offset+w.PushedLimit.Count <= w.scannedKeys {
 				return handles, nil, nil
 			}
-			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count
+			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys
 			if uint64(requiredRows) > leftCnt {
 				requiredRows = int(leftCnt)
 			}
