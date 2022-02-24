@@ -405,7 +405,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 		if AllowConcurrentDDL.Load() {
-			addIdxWorkerFunc := func() (pools.Resource, error) {
+			reorgWorkerFunc := func() (pools.Resource, error) {
 				wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 				if err != nil {
 					return wk, errors.Trace(err)
@@ -429,7 +429,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				asyncNotify(wk.ddlJobCh)
 				return wk, nil
 			}
-			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(addIdxWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
+			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
 			d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
 			d.sessForAddDDL, err = d.sessPool.get()
 			if err != nil {
