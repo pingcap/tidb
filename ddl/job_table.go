@@ -41,13 +41,13 @@ var (
 func (d *ddl) insertRunningDDLJobMap(id int) {
 	d.runningDDLMapMu.Lock()
 	defer d.runningDDLMapMu.Unlock()
-	d.runningReorgJobMap[id] = struct{}{}
+	d.runningJobMap[id] = struct{}{}
 }
 
 func (d *ddl) deleteRunningReorgJobMap(id int) {
 	d.runningDDLMapMu.Lock()
 	defer d.runningDDLMapMu.Unlock()
-	delete(d.runningReorgJobMap, id)
+	delete(d.runningJobMap, id)
 }
 
 const (
@@ -58,7 +58,7 @@ const (
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningDDLMapMu.RLock()
-	for id := range d.runningReorgJobMap {
+	for id := range d.runningJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
 	d.runningDDLMapMu.RUnlock()
@@ -166,7 +166,7 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningDDLMapMu.RLock()
-	for id := range d.runningReorgJobMap {
+	for id := range d.runningJobMap {
 		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(id))
 	}
 	d.runningDDLMapMu.RUnlock()
