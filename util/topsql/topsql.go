@@ -106,7 +106,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		if val.(bool) {
 			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
 				"commit", "analyze", "explain", "trace", "create", "set global"}
-			if MockHighCPULoad(normalizedSQL, sqlPrefixes) {
+			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
 				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
 			}
 		}
@@ -115,7 +115,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 // MockHighCPULoad mocks high cpu load, only use in failpoint test.
-func MockHighCPULoad(sql string, sqlPrefixs []string) bool {
+func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 	lowerSQL := strings.ToLower(sql)
 	if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
 		return false
@@ -132,7 +132,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string) bool {
 	}
 	start := time.Now()
 	for {
-		if time.Since(start) > 12*time.Millisecond {
+		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
 			break
 		}
 		for i := 0; i < 10e5; i++ {
