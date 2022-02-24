@@ -259,35 +259,20 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	var ok bool
 	for {
+		if isChanClosed(d.ctx.Done()) {
+			return
+		}
 		if !d.isOwner() {
-			if isChanClosed(d.ctx.Done()) {
-				return
-			}
 			time.Sleep(time.Second)
 			continue
 		}
+		var enableGeneralDDLJob, enableReorgDDLJob bool
 		select {
 		case <-d.ddlJobCh:
-			count := 0
-			for {
-				retry := d.generalDDLJob(sess)
-				if retry && count < 5 {
-					count = count + 1
-					continue
-				}
-				break
-			}
+			enableGeneralDDLJob = true
 		case <-ticker.C:
-			count := 0
-			for {
-				job := d.generalDDLJob(sess)
-				reorgJob := d.reorgDDLJob(sess)
-				if job && reorgJob && count < 5 {
-					count = count + 1
-					continue
-				}
-				break
-			}
+			enableGeneralDDLJob = true
+			enableReorgDDLJob = true
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -295,7 +280,7 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			d.generalDDLJob(sess)
+			enableGeneralDDLJob = true
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -303,9 +288,22 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			d.reorgDDLJob(sess)
-		case <-d.ctx.Done():
-			return
+			enableReorgDDLJob = true
+		}
+		var retryGeneral, retryReorgDDLJob bool
+		var cnt = 0
+		for {
+			if enableGeneralDDLJob {
+				retryGeneral = d.generalDDLJob(sess)
+			}
+			if enableReorgDDLJob {
+				retryReorgDDLJob = d.reorgDDLJob(sess)
+			}
+			if (retryGeneral || retryReorgDDLJob) && cnt < 5 {
+				cnt = cnt + 1
+				continue
+			}
+			break
 		}
 	}
 }

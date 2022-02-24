@@ -219,7 +219,8 @@ func TestUpgrade(t *testing.T) {
 			conf.OOMAction = oomAction
 		})
 	}()
-
+	ddl.AllowConcurrentDDL.Store(false)
+	defer ddl.AllowConcurrentDDL.Store(true)
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -751,6 +752,8 @@ func TestUpgradeVersion74(t *testing.T) {
 
 	for _, ca := range cases {
 		func() {
+			ddl.AllowConcurrentDDL.Store(false)
+			defer ddl.AllowConcurrentDDL.Store(true)
 			store, dom := createStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 
