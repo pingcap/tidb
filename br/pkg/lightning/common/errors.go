@@ -37,7 +37,7 @@ var (
 	ErrStorageUnknown       = errors.Normalize("unknown storage error", errors.RFCCodeText("Lightning:Storage:ErrStorageUnknown"))
 	ErrInvalidPermission    = errors.Normalize("invalid permission", errors.RFCCodeText("Lightning:Storage:ErrInvalidPermission"))
 	ErrInvalidStorageConfig = errors.Normalize("invalid data-source-dir", errors.RFCCodeText("Lightning:Storage:ErrInvalidStorageConfig"))
-	ErrEmptySourceDir       = errors.Normalize("data-source-dir '%s' is empty", errors.RFCCodeText("Lightning:Storage:ErrEmptySourceDir"))
+	ErrEmptySourceDir       = errors.Normalize("data-source-dir '%s' doesn't exist or contains no files", errors.RFCCodeText("Lightning:Storage:ErrEmptySourceDir"))
 
 	ErrTableRoute        = errors.Normalize("table route error", errors.RFCCodeText("Lightning:Loader:ErrTableRoute"))
 	ErrInvalidSchemaFile = errors.Normalize("invalid schema file", errors.RFCCodeText("Lightning:Loader:ErrInvalidSchemaFile"))

@@ -2381,7 +2381,9 @@ func (cr *chunkRestore) encodeLoop(
 			if encodeErr != nil {
 				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
-				err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
+				if encodeErr != nil {
+					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
+				}
 				hasIgnoredEncodeErr = true
 			}
 			cr.parser.RecycleRow(lastRow)

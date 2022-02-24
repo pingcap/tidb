@@ -473,7 +473,7 @@ unknown columns in header (%s) for table %s
 
 ["Lightning:Storage:ErrEmptySourceDir"]
 error = '''
-data-source-dir '%s' is empty
+data-source-dir '%s' doesn't exist or contains no files
 '''
 
 ["Lightning:Storage:ErrInvalidPermission"]
