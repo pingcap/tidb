@@ -257,7 +257,7 @@ func (d *ddl) startDispatchLoop() {
 	var ok bool
 	for {
 		if !d.isOwner() {
-			log.Warn("[ddl] not owner, continue dispatch loop")
+			log.Debug("[ddl] not owner, continue dispatch loop")
 			time.Sleep(time.Second)
 			continue
 		}
