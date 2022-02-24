@@ -5589,9 +5589,10 @@ func (s *testIntegrationSuite) TestAggPushToCopForCachedTable(c *C) {
 
 	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
 		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
-			"[└─TableReader 10.00 root  data:Selection]\n" +
-			"[  └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-			"[    └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+			"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
+			"[  └─TableReader 10.00 root  data:Selection]\n" +
+			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
+			"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 	var readFromCacheNoPanic bool
 	for i := 0; i < 10; i++ {
