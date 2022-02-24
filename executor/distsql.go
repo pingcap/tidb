@@ -573,9 +573,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			checkIndexValue: e.checkIndexValue,
 			maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
 			maxChunkSize:    e.maxChunkSize,
-		}
-		if e.PushedLimit != nil {
-			worker.PushedLimit = e.PushedLimit.Clone()
+			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
@@ -601,7 +599,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			if finished {
 				break
 			}
-			if worker.PushedLimit != nil && worker.PushedLimit.Count == 0 {
+			if worker.PushedLimit != nil && worker.scannedKeys >= worker.PushedLimit.Count+worker.PushedLimit.Offset {
 				break
 			}
 
@@ -823,6 +821,8 @@ type indexWorker struct {
 	*checkIndexValue
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
+	// scannedKeys indicates how many keys be scanned
+	scannedKeys uint64
 	// partitionTable indicates if this worker is accessing a particular partition table.
 	partitionTable table.PhysicalTable
 }
@@ -929,16 +929,15 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
+			w.scannedKeys++
 			if checkLimit {
-				if w.PushedLimit.Offset > 0 {
-					w.PushedLimit.Offset--
+				if w.PushedLimit.Offset >= w.scannedKeys {
 					continue
 				}
-				if w.PushedLimit.Count == 0 {
+				if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
 					// Skip the handles after Offset+Count.
 					return handles, nil, nil
 				}
-				w.PushedLimit.Count--
 			}
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
