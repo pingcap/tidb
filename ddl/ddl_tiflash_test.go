@@ -700,6 +700,7 @@ func execWithTimeout(tk *testkit.TestKit, sql string) (error, bool) {
 		for _, stmt := range stmts {
 			_, err := tk.Session().ExecuteStmt(ctx, stmt)
 			doneCh <- err
+			return
 		}
 		doneCh <- nil
 	}(ctx)
