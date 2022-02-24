@@ -427,7 +427,7 @@ func TestIssue32422(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	tk.MustExec("create table t (id int, c int);")
+	tk.MustExec("create table t (id int, c int, index(id));")
 	tk.MustExec("insert into t values (3,3), (4,4), (5,5);")
 	tk.MustExec("alter table t cache;")
 
@@ -443,6 +443,43 @@ func TestIssue32422(t *testing.T) {
 	require.True(t, cacheUsed)
 
 	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+
+	// Some extra tests.
+	// Since cached table use UnionScanExec utilities, check what happens when they work together.
+	// In these cases, the cache data serve as the snapshot, tikv is skipped, and txn membuffer works the same way.
+	tk.MustExec("begin")
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	tk.MustExec("insert into t values (6, 6)")
+	// Check for the new added data.
+	tk.HasPlan("select id+1, c from t where c = 6;", "UnionScan")
+	tk.MustQuery("select id+1, c from t where c = 6;").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	// Check for the old data.
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Point get
+	tk.HasPlan("select id+1, c from t where id = 6", "PointGet")
+	tk.MustQuery("select id+1, c from t where id = 6").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id+1, c from t where id = 4").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Index Lookup
+	tk.HasPlan("select id+1, c from t where id = 6", "IndexLookUp")
+	tk.MustQuery("select id+1, c from t use index(id) where id = 6").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id+1, c from t use index(id) where id = 4").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Index Reader
+	tk.HasPlan("select id from t where id = 6", "IndexReader")
+	tk.MustQuery("select id from t use index(id) where id = 6").Check(testkit.Rows("6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id from t use index(id) where id = 4").Check(testkit.Rows("4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	tk.MustExec("rollback")
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {
