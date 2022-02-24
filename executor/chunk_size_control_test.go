@@ -19,25 +19,22 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-)
-
-var (
-	_ = Suite(&testChunkSizeControlSuite{})
 )
 
 type testSlowClient struct {
@@ -121,8 +118,7 @@ type testChunkSizeControlSuite struct {
 	m map[string]*testChunkSizeControlKit
 }
 
-func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
-	c.Skip("not stable because coprocessor may result in goroutine leak")
+func (s *testChunkSizeControlSuite) SetUpSuite(t *testing.T) {
 	tableSQLs := map[string]string{}
 	tableSQLs["Limit&TableScan"] = "create table t (a int, primary key (a))"
 	tableSQLs["Limit&IndexScan"] = "create table t (a int, index idx_a(a))"
@@ -145,14 +141,15 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 				return kit.client
 			}),
 		)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// init domain
 		kit.dom, err = session.BootstrapSession(kit.store)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// create the test table
-		kit.tk = testkit.NewTestKitWithInit(c, kit.store)
+		kit.tk = testkit.NewTestKit(t, kit.store)
+		kit.tk.MustExec("use test")
 		kit.tk.MustExec(sql)
 	}
 }
@@ -163,11 +160,13 @@ func (s *testChunkSizeControlSuite) getKit(name string) (
 	return x.store, x.dom, x.tk, x.client, x.cluster
 }
 
-func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
+func TestLimitAndTableScan(t *testing.T) {
+	var s testChunkSizeControlSuite
+	s.SetUpSuite(t)
 	_, dom, tk, client, cluster := s.getKit("Limit&TableScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tid := tbl.Meta().ID
 
 	// construct two regions split by 100
@@ -181,24 +180,26 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	client.SetDelay(regionIDs[0], delayDuration)
 
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
-	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), delayThreshold) // have to wait for region1
+	cost := parseTimeCost(t, results.Rows()[0])
+	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait for region1
 
 	tk.MustExec("insert into t values (101)") // insert one record into region2
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
-	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noDelayThreshold) // region2 return quickly
+	cost = parseTimeCost(t, results.Rows()[0])
+	require.Less(t, cost, noDelayThreshold) // region2 return quickly
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
-	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), delayThreshold) // have to wait
+	cost = parseTimeCost(t, results.Rows()[0])
+	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait
 }
 
-func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
+func TestLimitAndIndexScan(t *testing.T) {
+	var s testChunkSizeControlSuite
+	s.SetUpSuite(t)
 	_, dom, tk, client, cluster := s.getKit("Limit&IndexScan")
 	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	idx := tbl.Meta().Indices[0].ID
 
@@ -213,28 +214,28 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	client.SetDelay(regionIDs[0], delayDuration)
 
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
-	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), delayThreshold) // have to wait for region1
+	cost := parseTimeCost(t, results.Rows()[0])
+	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait for region1
 
 	tk.MustExec("insert into t values (101)") // insert one record into region2
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
-	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noDelayThreshold) // region2 return quickly
+	cost = parseTimeCost(t, results.Rows()[0])
+	require.Less(t, cost, noDelayThreshold) // region2 return quickly
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
-	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), delayThreshold) // have to wait
+	cost = parseTimeCost(t, results.Rows()[0])
+	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait
 }
 
-func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
+func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
 	lineStr := fmt.Sprintf("%v", line)
 	idx := strings.Index(lineStr, "time:")
-	c.Assert(idx, Not(Equals), -1)
+	require.NotEqual(t, -1, idx)
 	lineStr = lineStr[idx+len("time:"):]
 	idx = strings.Index(lineStr, ",")
-	c.Assert(idx, Not(Equals), -1)
+	require.NotEqual(t, -1, idx)
 	timeStr := lineStr[:idx]
 	d, err := time.ParseDuration(timeStr)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return d
 }
