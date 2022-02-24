@@ -1041,7 +1041,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return cpdb.exStorage.AtomicWriteFile(cpdb.ctx, cpdb.fileName, serialized)
+	return cpdb.exStorage.WriteFile(cpdb.ctx, cpdb.fileName, serialized)
 }
 
 func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {

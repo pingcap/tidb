@@ -52,11 +52,6 @@ func (*noopStorage) Rename(ctx context.Context, oldFileName, newFileName string)
 	return nil
 }
 
-// AtomicWriteFile implements ExternalStorage interface.
-func (*noopStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	return nil
-}
-
 func newNoopStorage() *noopStorage {
 	return &noopStorage{}
 }

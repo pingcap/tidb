@@ -32,9 +32,16 @@ func (l *LocalStorage) DeleteFile(ctx context.Context, name string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	path := filepath.Join(l.base, name)
-	return os.WriteFile(path, data, localFilePerm)
-	// the backup meta file _is_ intended to be world-readable.
+	// because `os.WriteFile` is not atomic, directly write into it may reset the file
+	// to an empty file if write is not finished.
+	tmpPath := filepath.Join(l.base, name) + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // ReadFile reads the file from the storage and returns the contents.
@@ -108,21 +115,7 @@ func (l *LocalStorage) Create(ctx context.Context, name string) (ExternalFileWri
 
 // Rename implements ExternalStorage interface.
 func (l *LocalStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
-	return os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName))
-}
-
-// AtomicWriteFile implements ExternalStorage interface.
-func (l *LocalStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	// because `os.WriteFile` is not atomic, directly write into it may reset the file
-	// to an empty file if write is not finished.
-	tmpPath := filepath.Join(l.base, name) + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return errors.Trace(err)
-	}
-	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
 }
 
 func pathExists(_path string) (bool, error) {

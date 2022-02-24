@@ -71,7 +71,7 @@ type Writer interface {
 
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
-	// WriteFile writes a complete file to storage, similar to os.WriteFile
+	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
 	WriteFile(ctx context.Context, name string, data []byte) error
 	// ReadFile reads a complete file from storage, similar to os.ReadFile
 	ReadFile(ctx context.Context, name string) ([]byte, error)
@@ -96,8 +96,6 @@ type ExternalStorage interface {
 	Create(ctx context.Context, path string) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
-	// AtomicWriteFile like WriteFile, but it is atomic.
-	AtomicWriteFile(ctx context.Context, name string, data []byte) error
 }
 
 // ExternalFileReader represents the streaming external file reader.

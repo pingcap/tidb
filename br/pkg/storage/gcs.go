@@ -237,13 +237,6 @@ func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-// AtomicWriteFile implements ExternalStorage interface.
-func (s *gcsStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	// gcsStorage write is may already atomic
-	// https://pkg.go.dev/cloud.google.com/go/storage#ObjectHandle.NewWriter
-	return s.WriteFile(ctx, name, data)
-}
-
 func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {

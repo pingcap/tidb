@@ -130,8 +130,3 @@ func (s *HDFSStorage) Create(ctx context.Context, path string) (ExternalFileWrit
 func (s *HDFSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
-
-// AtomicWriteFile implements ExternalStorage interface.
-func (s *HDFSStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
-}

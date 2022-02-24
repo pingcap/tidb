@@ -37,20 +37,6 @@ func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 	return m.recorder
 }
 
-// AtomicWriteFile mocks base method.
-func (m *MockExternalStorage) AtomicWriteFile(arg0 context.Context, arg1 string, arg2 []byte) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AtomicWriteFile", arg0, arg1, arg2)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// AtomicWriteFile indicates an expected call of AtomicWriteFile.
-func (mr *MockExternalStorageMockRecorder) AtomicWriteFile(arg0, arg1, arg2 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AtomicWriteFile", reflect.TypeOf((*MockExternalStorage)(nil).AtomicWriteFile), arg0, arg1, arg2)
-}
-
 // Create mocks base method.
 func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string) (storage.ExternalFileWriter, error) {
 	m.ctrl.T.Helper()

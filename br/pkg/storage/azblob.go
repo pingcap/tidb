@@ -392,13 +392,6 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-// AtomicWriteFile implements ExternalStorage interface.
-func (s *AzureBlobStorage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	// AzureBlobStorage WriteFile use interface about BlockBlob Upload which may be atomic
-	// https://pkg.go.dev/github.com/Azure/azure-storage-blob-go/azblob#BlockBlobURL.Upload
-	return s.WriteFile(ctx, name, data)
-}
-
 type azblobObjectReader struct {
 	blobClient azblob.BlockBlobClient
 

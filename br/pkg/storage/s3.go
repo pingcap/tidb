@@ -756,13 +756,6 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
-// AtomicWriteFile implements ExternalStorage interface.
-func (rs *S3Storage) AtomicWriteFile(ctx context.Context, name string, data []byte) error {
-	// s3 write is already atomic
-	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel
-	return rs.WriteFile(ctx, name, data)
-}
-
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {
 	client.DefaultRetryer
