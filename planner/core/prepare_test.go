@@ -1747,7 +1747,7 @@ func TestPrepareForGroupByMultiItems(t *testing.T) {
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
 }
 
-func TestInvisibleIndex(t *testing.T) {
+func TestInvisibleIndexPrepare(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
