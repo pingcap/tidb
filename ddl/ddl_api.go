@@ -274,7 +274,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 		for {
-			pendingCount, ok := d.getPendingTiFlashTableCount(sctx, dbName, int64(originVersion))
+			pendingCount, ok := d.getPendingTiFlashTableCount(sctx, dbName, originVersion)
 			if !ok {
 				pendingCount = originCount
 			} else {
