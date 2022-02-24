@@ -690,7 +690,7 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
-func execWithTimeout(tk *testkit.TestKit, sql string) (error, bool) {
+func execWithTimeout(tk *testkit.TestKit, sql string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 	defer cancel()
 	doneCh := make(chan error, 1)
@@ -706,9 +706,9 @@ func execWithTimeout(tk *testkit.TestKit, sql string) (error, bool) {
 	}(ctx)
 	select {
 	case e := <-doneCh:
-		return e, false
+		return false, e
 	case <-ctx.Done():
-		return nil, true
+		return true, nil
 	}
 }
 
