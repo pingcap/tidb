@@ -836,7 +836,7 @@ var (
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
-	// MaxDDLReorgBatchSize exports for testing.
+	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
