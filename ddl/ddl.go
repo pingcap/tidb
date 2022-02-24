@@ -209,9 +209,9 @@ type ddl struct {
 	enableTiFlashPoll    *atomicutil.Bool
 
 	// used in the concurrency ddl.
-	ddlJobCh           chan struct{}
-	runningReorgJobMap map[int]struct{}
-	runningDDLMapMu    sync.RWMutex
+	ddlJobCh        chan struct{}
+	runningJobMap   map[int]struct{}
+	runningDDLMapMu sync.RWMutex
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -352,12 +352,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ddlCtx:             ddlCtx,
-		limitJobCh:         make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll:  atomicutil.NewBool(true),
-		ctx:                ctx,
-		ddlJobCh:           make(chan struct{}, 100),
-		runningReorgJobMap: make(map[int]struct{}),
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: atomicutil.NewBool(true),
+		ctx:               ctx,
+		ddlJobCh:          make(chan struct{}, 100),
+		runningJobMap:     make(map[int]struct{}),
 	}
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
