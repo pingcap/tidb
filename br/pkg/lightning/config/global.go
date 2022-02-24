@@ -177,7 +177,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 
 	if err := fs.Parse(args); err != nil {
-		return nil, common.ErrInvalidArgument.Wrap(err)
+		return nil, common.ErrInvalidArgument.Wrap(err).GenWithStackByArgs()
 	}
 	if *printVersion {
 		fmt.Println(build.Info())

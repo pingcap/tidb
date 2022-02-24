@@ -56,7 +56,7 @@ func TestRun(t *testing.T) {
 	require.NoError(t, err)
 	err = lightning.RunOnce(context.Background(), cfg, nil)
 	require.Error(t, err)
-	require.Regexp(t, "mydumper dir does not exist$", err.Error())
+	require.Regexp(t, "`mydumper.data-source-dir` does not exist$", err.Error())
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()

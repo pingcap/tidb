@@ -852,7 +852,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
 	if err1 != nil {
-		return common.ErrInvalidConfig.Wrap(err1).GenWithStackByArgs()
+		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
 	}
 	if charset == GBK || charset == GB18030 {
 		log.L().Warn(
@@ -1049,7 +1049,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		var err error
 		u, err = url.Parse(cfg.Mydumper.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse mydumper dir %s", cfg.Mydumper.SourceDir)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", cfg.Mydumper.SourceDir)
 		}
 	} else {
 		u = &url.URL{}
@@ -1058,10 +1058,10 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
 		if cfg.Mydumper.SourceDir == "" {
-			return common.ErrInvalidConfig.GenWithStack("mydumper dir is not set")
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
 		}
 		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
-			return common.ErrInvalidConfig.GenWithStack("'%s': mydumper dir does not exist", cfg.Mydumper.SourceDir)
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", cfg.Mydumper.SourceDir)
 		}
 		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
 		if err != nil {
