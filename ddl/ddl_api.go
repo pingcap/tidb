@@ -278,7 +278,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 		}
 
 		// When handled some tables, we need to wait some tables become available.
-		if (succ + fail) % tiflashCheckTotalPendingTablesTick == 0 {
+		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 {
 			for {
 				pendingCount, newVersion, ok := d.getPendingTiFlashTableCount(sctx, originVersion)
 				if ok {
