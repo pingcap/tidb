@@ -76,6 +76,7 @@ const (
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName             = "default"
 	tiflashCheckTotalPendingTablesInterval = 2000 * time.Millisecond
+	tiflashCheckTotalPendingTablesTick     = 100
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -221,20 +222,22 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 	return uint32(c)
 }
 
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, dbName model.CIStr, originVersion int64) (uint32, bool) {
+func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64) (uint32, bool) {
 	is := d.infoCache.GetLatest()
-	dbInfo, ok := is.SchemaByName(dbName)
-	if !ok {
-		return 0, false
-	}
+	dbInfos := is.AllSchemas()
 	// If there are no schema change since last time(can be weird)
 	if is.SchemaMetaVersion() == originVersion {
 		return 0, false
 	}
 	cnt := uint32(0)
-	for _, tbl := range dbInfo.Tables {
-		if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
-			cnt += 1
+	for _, dbInfo := range dbInfos {
+		if util.IsMemOrSysDB(dbInfo.Name.L) {
+			continue
+		}
+		for _, tbl := range dbInfo.Tables {
+			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
+				cnt += 1
+			}
 		}
 	}
 	return cnt, true
@@ -273,25 +276,28 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			skip += 1
 			continue
 		}
-		for {
-			pendingCount, ok := d.getPendingTiFlashTableCount(sctx, dbName, originVersion)
-			if !ok {
-				pendingCount = originCount
-			} else {
-				originCount = pendingCount
-			}
-			threshold := getBatchPendingTiFlashCount(sctx)
-			if pendingCount >= threshold {
-				logutil.BgLogger().Info("too many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
-				time.Sleep(tiflashCheckTotalPendingTablesInterval)
-			} else {
-				logutil.BgLogger().Info("no many pending tables are not available", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
+
+		if (succ + fail) % tiflashCheckTotalPendingTablesTick == 0 {
+			for {
+				pendingCount, ok := d.getPendingTiFlashTableCount(sctx, dbName, originVersion)
+				if !ok {
+					pendingCount = originCount
+				} else {
+					originCount = pendingCount
+				}
+				threshold := getBatchPendingTiFlashCount(sctx)
+				if pendingCount >= threshold {
+					logutil.BgLogger().Info("too many pending tables are not available, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
+					time.Sleep(tiflashCheckTotalPendingTablesInterval)
+				} else {
+					logutil.BgLogger().Info("no many pending tables are not available", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				default:
+				}
 			}
 		}
 
