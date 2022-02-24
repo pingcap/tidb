@@ -1250,17 +1250,12 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	if p.Schema().Len() != reader.Schema().Len() {
 		return false
 	}
-
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
-	// We can't sink Limit into IndexLookUpReader when it scans a partition table in dynamic prune mode
-	// https://github.com/pingcap/tidb/issues/32516
-	if !ts.isPartition && ts.Table.Partition != nil {
-		return false
-	}
+
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,

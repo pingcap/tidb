@@ -1136,31 +1136,3 @@ func TestIssue27532(t *testing.T) {
 	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
 	tk.MustExec(`drop table t2`)
 }
-
-func TestIssue32516(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database issue_32516")
-	defer tk.MustExec(`drop database issue_32516`)
-	tk.MustExec("use issue_32516")
-	tk.MustExec("set @@tidb_partition_prune_mode=dynamic")
-	tk.MustExec("CREATE TABLE pt (" +
-		"  `id` bigint(20) DEFAULT NULL," +
-		"  a int," +
-		"  KEY (a))" +
-		"PARTITION BY RANGE(id)" +
-		"(PARTITION p1 VALUES LESS THAN (4)," +
-		" PARTITION p2 VALUES LESS THAN (8)," +
-		" PARTITION p3 VALUES LESS THAN (12)," +
-		" PARTITION p4 VALUES LESS THAN (MAXVALUE))")
-	tk.MustExec("insert into pt values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14),(15,15),(16,16)")
-	tk.MustQuery("SELECT COUNT(*) FROM (SELECT * FROM pt WHERE a BETWEEN 1 AND 15 LIMIT 2) as t").Check(testkit.Rows("2"))
-	tk.MustQuery("EXPLAIN format='brief' SELECT * FROM pt WHERE a BETWEEN 1 AND 15 LIMIT 2").Check(testkit.Rows(
-		"Limit 2.00 root  offset:0, count:2",
-		"└─IndexLookUp 2.00 root partition:all ",
-		"  ├─Limit(Build) 2.00 cop[tikv]  offset:0, count:2",
-		"  │ └─IndexRangeScan 2.00 cop[tikv] table:pt, index:a(a) range:[1,15], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:pt keep order:false, stats:pseudo"))
-}

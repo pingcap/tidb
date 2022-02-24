@@ -573,7 +573,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			checkIndexValue: e.checkIndexValue,
 			maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
 			maxChunkSize:    e.maxChunkSize,
-			PushedLimit:     e.PushedLimit,
+		}
+		if e.PushedLimit != nil {
+			worker.PushedLimit = e.PushedLimit.Clone()
 		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
@@ -597,6 +599,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			default:
 			}
 			if finished {
+				break
+			}
+			if worker.PushedLimit != nil && worker.PushedLimit.Count == 0 {
 				break
 			}
 
@@ -904,10 +909,10 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
-			if w.PushedLimit.Offset+w.PushedLimit.Count <= scannedKeys+count {
+			if w.PushedLimit.Count == 0 {
 				return handles, nil, scannedKeys, nil
 			}
-			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count - scannedKeys - count
+			leftCnt := w.PushedLimit.Offset + w.PushedLimit.Count
 			if uint64(requiredRows) > leftCnt {
 				requiredRows = int(leftCnt)
 			}
@@ -927,14 +932,15 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		for i := 0; i < chk.NumRows(); i++ {
 			scannedKeys++
 			if checkLimit {
-				if (count + scannedKeys) <= w.PushedLimit.Offset {
-					// Skip the preceding Offset handles.
+				if w.PushedLimit.Offset > 0 {
+					w.PushedLimit.Offset--
 					continue
 				}
-				if (count + scannedKeys) > (w.PushedLimit.Offset + w.PushedLimit.Count) {
+				if w.PushedLimit.Count == 0 {
 					// Skip the handles after Offset+Count.
 					return handles, nil, scannedKeys, nil
 				}
+				w.PushedLimit.Count--
 			}
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
