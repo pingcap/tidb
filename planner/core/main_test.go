@@ -43,6 +43,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
@@ -97,4 +98,8 @@ func GetPlanSuiteData() testdata.TestData {
 
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
+}
+
+func GetAnalyzeSuiteData() testdata.TestData {
+	return testDataMap["analyze_suite"]
 }
