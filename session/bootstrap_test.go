@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -153,7 +154,10 @@ func TestBootstrapWithError(t *testing.T) {
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
+		if ddl.AllowConcurrentDDL.Load() {
+			err := meta.InitMetaTable(store)
+			require.NoError(t, err)
+		}
 		doDDLWorks(se)
 	}
 
