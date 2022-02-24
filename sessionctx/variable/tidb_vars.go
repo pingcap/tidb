@@ -82,8 +82,11 @@ const (
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
 
-	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	// TiDBLastQueryInfo is used to get the last query info within the current session.
 	TiDBLastQueryInfo = "tidb_last_query_info"
+
+	// TiDBLastDDLInfo is used to get the last ddl info within the current session.
+	TiDBLastDDLInfo = "tidb_last_ddl_info"
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -815,6 +818,7 @@ const (
 	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
+	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 )
@@ -850,4 +854,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	GlobalSysdateIsNow                    = atomic.NewBool(DefSysdateIsNow)
 )

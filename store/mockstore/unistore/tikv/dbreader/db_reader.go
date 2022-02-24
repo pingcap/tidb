@@ -198,13 +198,13 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
+	var err error
 	for iter.Seek(startKey); iter.Valid(); iter.Next() {
 		item := iter.Item()
 		key := item.Key()
 		if exceedEndKey(key, endKey) {
 			break
 		}
-		var err error
 		if item.IsEmpty() {
 			continue
 		}
