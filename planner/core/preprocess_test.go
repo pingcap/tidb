@@ -363,7 +363,4 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	for i := range warns {
 		require.True(t, terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert))
 	}
-
-	tk.Session().GetSessionVars().StmtCtx.SetWarnings(warns[:0])
-	tk.MustExec("SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 }
