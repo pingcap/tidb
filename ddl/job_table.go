@@ -362,8 +362,10 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 	})
 }
 
+const addDDLJobSQL = "insert into mysql.tidb_ddl_job values"
+
 func (d *ddl) addDDLJobs(job []*model.Job) error {
-	sql := "insert into mysql.tidb_ddl_job values"
+	var sql string
 	for i, job := range job {
 		b, err := job.Encode(true)
 		if err != nil {
@@ -374,53 +376,24 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 		}
 		sql += fmt.Sprintf("(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
 	}
-	log.Warn("add ddl job to table", zap.String("sql", sql))
-	//ts := time.Now()
-	sess, err := d.sessPool.get()
-	if err != nil {
-		return err
-	}
-	defer d.sessPool.put(sess)
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
-	}
-	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
-	return nil
-}
-
-func (d *ddl) addDDLJob(job *model.Job) error {
-	b, err := job.Encode(true)
-	if err != nil {
-		return err
-	}
-	//ts := time.Now()
-	sql := fmt.Sprintf("insert into mysql.tidb_ddl_job values(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
-	//log.Warn("add ddl job to table", zap.String("sql", sql))
-
+	logutil.BgLogger().Debug("add ddl job to table", zap.String("sql", sql))
 	sess, err := d.sessPool.get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] get session from sessPool", zap.Error(err))
 		return err
 	}
 	defer d.sessPool.put(sess)
-
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] add ddl job to table", zap.Error(err))
-		return err
+		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
 	}
-	//log.Warn("add ddl job to table", zap.String("sql", sql), zap.String("time", time.Since(ts).String()))
-	return nil
+	return err
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
 	_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (w *worker) updateDDLJobNew(job *model.Job, updateRawArgs bool) error {
