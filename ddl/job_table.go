@@ -243,6 +243,9 @@ func (d *ddl) startDispatchLoop() {
 	time.Sleep(2 * time.Second)
 	for !d.isOwner() {
 		time.Sleep(time.Second)
+		if isChanClosed(d.ctx.Done()) {
+			return
+		}
 	}
 	sess, _ := d.sessPool.get()
 	defer d.sessPool.put(sess)
@@ -258,6 +261,9 @@ func (d *ddl) startDispatchLoop() {
 	for {
 		if !d.isOwner() {
 			time.Sleep(time.Second)
+			if isChanClosed(d.ctx.Done()) {
+				return
+			}
 			continue
 		}
 		select {
