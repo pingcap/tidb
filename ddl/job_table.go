@@ -260,10 +260,10 @@ func (d *ddl) startDispatchLoop() {
 	var ok bool
 	for {
 		if !d.isOwner() {
-			time.Sleep(time.Second)
 			if isChanClosed(d.ctx.Done()) {
 				return
 			}
+			time.Sleep(time.Second)
 			continue
 		}
 		select {
@@ -278,10 +278,12 @@ func (d *ddl) startDispatchLoop() {
 				break
 			}
 		case <-ticker.C:
+			count := 0
 			for {
 				job := d.generalDDLJob(sess)
 				reorgJob := d.reorgDDLJob(sess)
-				if job && reorgJob {
+				if job && reorgJob && count < 5 {
+					count = count + 1
 					continue
 				}
 				break
