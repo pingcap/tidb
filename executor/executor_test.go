@@ -572,10 +572,46 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	c.Assert(row[10], Equals, "<nil>")
 
 	// Test the START_TIME and END_TIME field.
-	re = tk.MustQuery("admin show ddl jobs where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
+	re = tk.MustQuery("admin show ddl jobs where end_time is not NULL")
 	row = re.Rows()[0]
-	c.Assert(row[2], Equals, "t")
-	c.Assert(row[10], Equals, "<nil>")
+	createTime, err := types.ParseDatetime(nil, row[8].(string))
+	c.Assert(err, IsNil)
+	startTime, err := types.ParseDatetime(nil, row[9].(string))
+	c.Assert(err, IsNil)
+	endTime, err := types.ParseDatetime(nil, row[10].(string))
+	c.Assert(err, IsNil)
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	re = tk.MustQuery("admin show ddl jobs where end_time is not NULL")
+	row2 := re.Rows()[0]
+	c.Assert(row[8], Not(Equals), row2[8])
+	c.Assert(row[9], Not(Equals), row2[9])
+	c.Assert(row[10], Not(Equals), row2[10])
+	createTime2, err := types.ParseDatetime(nil, row2[8].(string))
+	c.Assert(err, IsNil)
+	startTime2, err := types.ParseDatetime(nil, row2[9].(string))
+	c.Assert(err, IsNil)
+	endTime2, err := types.ParseDatetime(nil, row2[10].(string))
+	c.Assert(err, IsNil)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	loc2, err := time.LoadLocation("Europe/Amsterdam")
+	c.Assert(err, IsNil)
+	t, err := createTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err := createTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
+	t, err = startTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err = startTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
+	t, err = endTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err = endTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
 }
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
@@ -3013,6 +3049,22 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec(`alter table t add index(b);`)
 	tk.MustExec("admin check table t")
 	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec("admin check table t")
+
+	// 1. add a timestamp general column
+	// 2. add the index
+	tk.MustExec(`drop table if exists t`)
+	// change timezone
+	tk.MustExec(`set time_zone = 'Asia/Shanghai'`)
+	tk.MustExec(`create table t(a timestamp default current_timestamp)`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add column b timestamp as (a+1) virtual;`)
+	// change timezone
+	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add index(b);`)
+	tk.MustExec("admin check table t")
+	tk.MustExec(`set time_zone = '-03:00'`)
 	tk.MustExec("admin check table t")
 }
 

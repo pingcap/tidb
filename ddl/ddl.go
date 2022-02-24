@@ -49,7 +49,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -215,6 +215,11 @@ type ddlCtx struct {
 		hook        Callback
 		interceptor Interceptor
 	}
+
+	ddlSeqNumMu struct {
+		sync.Mutex
+		seqNum uint64
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -377,8 +382,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -389,6 +394,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
+		}
+
+		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
+			return err
+		})
+		if err != nil {
+			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
