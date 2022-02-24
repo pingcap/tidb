@@ -1311,9 +1311,9 @@ func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
 }
 
 func TestAutoRandomBase(t *testing.T) {
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1404,7 +1404,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 274
+	const builtinFuncNum = 275
 	require.Equal(t, len(rows), builtinFuncNum)
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")

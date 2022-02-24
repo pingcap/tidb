@@ -22,7 +22,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	stderrs "errors"
 	"fmt"
 	"runtime/pprof"
 	"runtime/trace"
@@ -46,12 +48,15 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -599,7 +604,11 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
 	}
 
-	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	if err != nil {
+		err = s.handleAssertionFailure(ctx, err)
+	}
+	return err
 }
 
 type cachedTableRenewLease struct {
@@ -683,6 +692,62 @@ func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 		}
 	}
 	return true
+}
+
+// handleAssertionFailure extracts the possible underlying assertionFailed error,
+// gets the corresponding MVCC history and logs it.
+// If it's not an assertion failure, returns the original error.
+func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
+	var assertionFailure *tikverr.ErrAssertionFailed
+	if !stderrs.As(err, &assertionFailure) {
+		return err
+	}
+	key := assertionFailure.Key
+	newErr := kv.ErrAssertionFailed.GenWithStackByArgs(
+		hex.EncodeToString(key), assertionFailure.Assertion.String(), assertionFailure.StartTs,
+		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
+	)
+
+	if s.GetSessionVars().EnableRedactLog {
+		return newErr
+	}
+
+	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+	// if it's a record key or an index key, decode it
+	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
+		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
+		tableID := tablecodec.DecodeTableID(key)
+		if table, ok := infoSchema.TableByID(tableID); ok {
+			if tablecodec.IsRecordKey(key) {
+				decodeFunc = consistency.DecodeRowMvccData(table.Meta())
+			} else {
+				tableInfo := table.Meta()
+				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+				if e != nil {
+					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
+					return err
+				}
+				var indexInfo *model.IndexInfo
+				for _, idx := range tableInfo.Indices {
+					if idx.ID == indexID {
+						indexInfo = idx
+						break
+					}
+				}
+				if indexInfo == nil {
+					return err
+				}
+				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
+			}
+		} else {
+			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+		}
+	}
+	if store, ok := s.store.(helper.Storage); ok {
+		content := consistency.GetMvccByKey(store, key, decodeFunc)
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+	}
+	return newErr
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
@@ -1142,8 +1207,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
@@ -1165,8 +1229,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
@@ -2253,6 +2316,19 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
+// setTxnAssertionLevel sets assertion level of a transactin. Note that assertion level should be set only once just
+// after creating a new transaction.
+func setTxnAssertionLevel(txn kv.Transaction, assertionLevel variable.AssertionLevel) {
+	switch assertionLevel {
+	case variable.AssertionLevelOff:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Off)
+	case variable.AssertionLevelFast:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Fast)
+	case variable.AssertionLevelStrict:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Strict)
+	}
+}
+
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !active {
 		return &s.txn, nil
@@ -2291,6 +2367,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.GetSessionVars().StmtCtx.WeakConsistency {
 			s.txn.SetOption(kv.IsolationLevel, kv.RC)
 		}
+		setTxnAssertionLevel(&s.txn, s.sessionVars.AssertionLevel)
 	}
 	return &s.txn, nil
 }
@@ -2345,6 +2422,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if replicaReadType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, replicaReadType)
 	}
+	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -2388,6 +2466,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	txn.SetVars(s.sessionVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
+	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
 	is, err := getSnapshotInfoSchema(s, txn.StartTS())
 	if err != nil {
@@ -3004,7 +3083,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		ShardStep:  int(s.sessionVars.ShardAllocateStep),
 		TxnScope:   s.GetSessionVars().CheckAndGetTxnScope(),
 	}
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
+	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			s.sessionVars.TxnCtx.IsPessimistic = true
 		}
@@ -3070,6 +3150,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return err
 	}
 	txn.SetVars(s.sessionVars.KVVars)
+	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
