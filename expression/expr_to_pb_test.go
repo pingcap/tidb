@@ -1360,7 +1360,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		{
 			functionName: ast.InsertFunc,
 			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
+			args:         []Expression{stringColumn, intColumn, intColumn, stringColumn},
 		},
 		{
 			functionName: ast.Greatest,
@@ -1377,6 +1377,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn},
 		},
+		{
+			functionName: ast.Mod,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
 	}
 
 	for _, tc := range testcases {
@@ -1384,10 +1389,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		require.NoError(t, err)
 		exprs = append(exprs, function)
 	}
-
-	function, err = NewFunction(mock.NewContext(), ast.Mod, types.NewFieldType(mysql.TypeInt24), intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
