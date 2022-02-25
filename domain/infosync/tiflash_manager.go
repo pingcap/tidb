@@ -276,7 +276,6 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
-		logutil.BgLogger().Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))

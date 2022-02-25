@@ -315,7 +315,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		}
 	}
-	logutil.BgLogger().Info(fmt.Sprintf("update totalTableCount to %v", totalTableCount))
 	pollTiFlashContext.TotalSize.Store(totalTableCount)
 
 	return allReplicaReady, nil

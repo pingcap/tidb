@@ -271,7 +271,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	var pendingCount uint32 = 0
 	forceCheck := false
 
+	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	for _, tbl := range dbInfo.Tables {
+		select {
+		case <-ctx.Done():
+			logutil.BgLogger().Info("intermediate quit TiFlash", zap.Int64("schemaID", dbInfo.ID))
+			return nil
+		default:
+		}
 		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
 			du := time.Second * time.Duration(int16(val.(int)))
 			time.Sleep(du)
@@ -293,23 +300,31 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 		if (succ+fail)%tiflashCheckPendingTablesTick == 0 || forceCheck {
 			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
 			forceCheck = true
-			for retry := 0; retry < configRetry; retry += 1 {
-				d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
-				threshold := getBatchPendingTiFlashCount(sctx)
-				if pendingCount >= threshold {
-					logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
-					time.Sleep(configWaitTime)
-				} else {
-					// If there are not many unavailable tables, we will no longer need force check.
-					logutil.BgLogger().Info("no many unavailable tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
-					forceCheck = false
-					break
+			pendingFunc := func() bool {
+				for retry := 0; retry < configRetry; retry += 1 {
+					d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
+					threshold := getBatchPendingTiFlashCount(sctx)
+					if pendingCount >= threshold {
+						logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID))
+						time.Sleep(configWaitTime)
+					} else {
+						// If there are not many unavailable tables, we will no longer need force check.
+						logutil.BgLogger().Info("no many unavailable tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()), zap.Int64("tableID", tbl.ID))
+						forceCheck = false
+						return false
+					}
+					select {
+					case <-ctx.Done():
+						return true
+					default:
+					}
 				}
-				select {
-				case <-ctx.Done():
-					return nil
-				default:
-				}
+				logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
+				return false
+			}
+			if pendingFunc() {
+				logutil.BgLogger().Info("intermediate quit TiFlash", zap.Int64("schemaID", dbInfo.ID))
+				return nil
 			}
 		}
 
