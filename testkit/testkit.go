@@ -398,12 +398,11 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
-// TestGetTableByName gets table by name for test.
-func TestGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
+// GetTableByName gets table by name for test.
+func GetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
+	require.NoError(t, dom.Reload())
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	return tbl

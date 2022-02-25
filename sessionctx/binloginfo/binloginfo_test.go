@@ -403,7 +403,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable := testkit.TestGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable := testkit.GetTableByName(t, tk.Session(), "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -431,7 +431,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
-	sequenceTable = testkit.TestGetTableByName(t, tk.Session(), "test2", "seq2")
+	sequenceTable = testkit.GetTableByName(t, tk.Session(), "test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()

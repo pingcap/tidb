@@ -30,7 +30,7 @@ import (
 )
 
 func checkTableCacheStatus(t *testing.T, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testkit.TestGetTableByName(t, se, dbName, tableName)
+	tb := testkit.GetTableByName(t, se, dbName, tableName)
 	dom := domain.GetDomain(se)
 	err := dom.Reload()
 	require.NoError(t, err)
