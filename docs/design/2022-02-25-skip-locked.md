@@ -133,7 +133,7 @@ type LockCtx struct {
 +	AtomicGroups [][][]byte
 }
 
-+	func (ctx *LockCtx) SetAtomicGroup([][]byte) {...}
++func (ctx *LockCtx) SetAtomicGroup([][]byte) {...}
 ```
 
 The workflow of point-get and batch-point-get can be changed into the following description.
@@ -189,11 +189,11 @@ Because TiDB doesn’t have the pseudo primary keys for transactions yet. It’s
 ## Investigation & Alternatives
 
 - MySQL already supports this syntax.
-- CRDB does not support it, because of the violation of serializable, the discussion can be found in cockroachdb/cockroach#40476.
+- CRDB does not support it, because of the violation of serializable, the discussion can be found in [cockroachdb/cockroach#40476](https://github.com/cockroachdb/cockroach/issues/40476).
 
 ## Unresolved Questions
 
 The problem becomes more complex in distributed transaction systems, principally there are two unresolved questions:
 
 - TiDB uses the global index, and it’s not able to guarantee that the index key and handle key are locked atomically, `asyncPessimisticRollback` handles the failure case.
-- There are no pseudo primary keys for transactions yet, if  `SELECT ... FOR UPDATE SKIP LOCKED` is the first statement that acquires pessimistic locks in the transaction, it’ll increase the latency.
+- There are no pseudo primary keys for transactions yet, if `SELECT ... FOR UPDATE SKIP LOCKED` is the first statement that acquires pessimistic locks in the transaction, it’ll increase the latency.
