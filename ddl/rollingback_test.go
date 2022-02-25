@@ -49,7 +49,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError"))
 	}()
 
-	tbl := testkit.GetTableByName(t, tk.Session(), "test", "t_cancel_add_index")
+	tbl := tk.GetTableByName("test", "t_cancel_add_index")
 	require.NotNil(t, tbl)
 
 	d := dom.DDL()

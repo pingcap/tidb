@@ -29,9 +29,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func checkTableCacheStatus(t *testing.T, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testkit.GetTableByName(t, se, dbName, tableName)
-	dom := domain.GetDomain(se)
+func checkTableCacheStatus(t *testing.T, tk *testkit.TestKit, dbName, tableName string, status model.TableCacheStatusType) {
+	tb := tk.GetTableByName(dbName, tableName)
+	dom := domain.GetDomain(tk.Session())
 	err := dom.Reload()
 	require.NoError(t, err)
 	require.Equal(t, status, tb.Meta().TableCacheStatusType)
@@ -89,9 +89,9 @@ func TestAlterTableNoCache(t *testing.T) {
 	/* Test of cache table */
 	tk.MustExec("create table nocache_t1 ( n int auto_increment primary key)")
 	tk.MustExec("alter table nocache_t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table nocache_t1 nocache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusDisable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusDisable)
 	tk.MustExec("drop table if exists t1")
 	// Test if a table is not exists
 	tk.MustExec("drop table if exists nocache_t")
@@ -153,7 +153,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustGetErrCode("alter table t1 ca", errno.ErrParse)
 	tk.MustGetErrCode("alter table t2 cache", errno.ErrNoSuchTable)
 	tk.MustExec("alter table t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("drop table if exists t1")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")

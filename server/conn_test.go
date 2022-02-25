@@ -744,7 +744,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testkit.GetTableByName(t, tk.Session(), "test", "t")
+	tb := tk.GetTableByName("test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 

@@ -1804,7 +1804,7 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
 		  partition p2 values less than (15))`)
-	tb := testkit.GetTableByName(t, tk.Session(), "tiflash_partition_test", "t")
+	tb := tk.GetTableByName("tiflash_partition_test", "t")
 	for _, partition := range tb.Meta().GetPartitionInfo().Definitions {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.ID, true)
 		require.NoError(t, err)
