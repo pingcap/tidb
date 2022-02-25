@@ -594,7 +594,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, colCollate string, sessVars *variable.SessionVars) error {
 	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
@@ -618,9 +618,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 		}
 	} else {
 		// Adjust the field type for blob/text types if the flen is set.
-		err = adjustBlobTypesFlen(tp, colCharset)
+		if err = adjustBlobTypesFlen(tp, colCharset); err != nil {
+			return err
+		}
 	}
-	return err
+	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
@@ -652,10 +654,7 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	if err = checkTooBigFieldLengthAndTryAutoConvert(colDef.Tp, colDef.Name.Name.O, ctx.GetSessionVars()); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -4353,11 +4352,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkTooBigFieldLengthAndTryAutoConvert(&newCol.FieldType, newCol.Name.O, sctx.GetSessionVars()); err != nil {
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -6992,7 +6987,6 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARCHAR", "TEXT"))
 			}
 		}
-		return nil
 	}
 	return nil
 }

@@ -357,7 +357,7 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
 	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
 	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-	// It is only 3. For the first stmt, ddl will append a warning for column b
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
 	require.Equal(t, uint16(3), warnCnt)
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	for i := range warns {

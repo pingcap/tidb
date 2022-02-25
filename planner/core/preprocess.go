@@ -789,7 +789,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
 			// Try to convert to BLOB or TEXT, see issue #30328
-			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.tryAutoConvert(colDef) {
+			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.hasAutoConvertWarning(colDef) {
 				p.err = err
 				return
 			}
@@ -1764,10 +1764,9 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	})
 }
 
-func (p *preprocessor) tryAutoConvert(colDef *ast.ColumnDef) bool {
+func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	sessVars := p.ctx.GetSessionVars()
-	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar &&
-		colDef.Tp.Charset != "" {
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
 		colDef.Tp.Tp = mysql.TypeBlob
 		if colDef.Tp.Charset == charset.CharsetBin {
 			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
