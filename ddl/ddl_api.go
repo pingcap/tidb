@@ -268,6 +268,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 
 	var originVersion int64 = 0
 	var pendingCount uint32 = 0
+	forceCheck := false
+
 	for _, tbl := range dbInfo.Tables {
 		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
 			du := time.Second * time.Duration(int16(val.(int)))
@@ -280,7 +282,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
-		forceCheck := false
 		// When handled some tables, we need to wait some tables become available.
 		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 || forceCheck {
 			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
