@@ -1692,7 +1692,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
