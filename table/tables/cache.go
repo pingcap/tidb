@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,16 +33,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// RenewLeaseType define the type for renew lease.
-type RenewLeaseType int
-
-const (
-	// RenewReadLease means renew read lease.
-	RenewReadLease RenewLeaseType = iota + 1
-	// RenewWriteLease means renew write lease.
-	RenewWriteLease
-)
-
 var (
 	_ table.CachedTable = &cachedTable{}
 )
@@ -52,7 +43,6 @@ type cachedTable struct {
 	handle    StateRemote
 	totalSize int64
 
-	lockingForRead tokenLimit
 	renewReadLease tokenLimit
 }
 
@@ -91,10 +81,16 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
-		if distance >= 0 && distance <= leaseDuration/2 {
+
+		var triggerFailpoint bool
+		failpoint.Inject("mockRenewLeaseABA1", func(_ failpoint.Value) {
+			triggerFailpoint = true
+		})
+
+		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
 			select {
 			case c.renewReadLease <- struct{}{}:
-				go c.renewLease(ts, data, leaseDuration)
+				go c.renewLease(ts, data, data.Lease, leaseDuration)
 			default:
 			}
 		}
@@ -107,7 +103,6 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon:    *tbl,
-		lockingForRead: make(chan struct{}, 1),
 		renewReadLease: make(chan struct{}, 1),
 	}
 	return ret, nil
@@ -171,7 +166,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
 	select {
-	case c.lockingForRead <- struct{}{}:
+	case c.renewReadLease <- struct{}{}:
 		go c.updateLockForRead(ctx, store, ts, leaseDuration)
 	default:
 		// There is a inflight calling already.
@@ -185,7 +180,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
-		<-c.lockingForRead
+		<-c.renewReadLease
 	}()
 
 	// Load data from original table and the update lock information.
@@ -249,20 +244,31 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 
-func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.Duration) {
+// TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
+var TestMockRenewLeaseABA2 chan struct{}
+
+func (c *cachedTable) renewLease(ts uint64, data *cacheData, oldLease uint64, leaseDuration time.Duration) {
 	defer func() { <-c.renewReadLease }()
+
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
+		<-TestMockRenewLeaseABA2
+	})
 
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
-	succ, err := c.handle.RenewLease(context.Background(), tid, lease, RenewReadLease)
+	newLease, err := c.handle.RenewReadLease(context.Background(), tid, oldLease, lease)
 	if err != nil && !kv.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
-	if succ {
+	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
 			Start:     data.Start,
-			Lease:     lease,
+			Lease:     newLease,
 			MemBuffer: data.MemBuffer,
 		})
 	}
+
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
+		TestMockRenewLeaseABA2 <- struct{}{}
+	})
 }

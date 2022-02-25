@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/auth"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func lastReadFromCache(tk *testkit.TestKit) bool {
@@ -587,4 +589,62 @@ func TestMetrics(t *testing.T) {
 	counter.Write(pb)
 	hit := pb.GetCounter().GetValue()
 	require.Equal(t, i, hit)
+}
+
+func TestRenewLeaseABAFailPoint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tables.TestMockRenewLeaseABA2 = make(chan struct{})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_lease;")
+	tk.MustExec(`create table t_lease(a int, b int);`)
+	tk.MustExec(`insert into t_lease values (1, 1)`)
+	tk.MustExec(`alter table t_lease cache`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	// Load the cache data by this query.
+	var cacheUsed bool
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 1"))
+		if lastReadFromCache(tk) {
+			cacheUsed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cacheUsed)
+
+	// Renew lease by this query, mock the operation is delayed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/table/tables/mockRenewLeaseABA1", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/table/tables/mockRenewLeaseABA2", `return`))
+	tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 1"))
+
+	// Make the cache data stale after writing: read lock-> write lock
+	tk1.MustExec("update t_lease set b = 2 where a = 1")
+
+	// Mock reading from another TiDB instance: write lock -> read lock
+	is := tk2.Session().GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_lease"))
+	require.NoError(t, err)
+	lease := oracle.GoTimeToTS(time.Now().Add(20 * time.Second)) // A big enough future time
+	tk2.MustExec("update mysql.table_cache_meta set lock_type = 'READ', lease = ? where tid = ?", lease, tbl.Meta().ID)
+
+	// Then the stagnant renew lease operation finally arrive.
+	tables.TestMockRenewLeaseABA2 <- struct{}{}
+
+	<-tables.TestMockRenewLeaseABA2
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/table/tables/mockRenewLeaseABA1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/table/tables/mockRenewLeaseABA2"))
+
+	// The renew lease operation should not success,
+	// And the session should not read from a staled cache data.
+	tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 2"))
+	require.False(t, lastReadFromCache(tk))
 }
