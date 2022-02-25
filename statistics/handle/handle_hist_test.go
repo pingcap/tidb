@@ -126,7 +126,6 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 			break
 		}
 	}
-	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
