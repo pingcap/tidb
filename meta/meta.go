@@ -191,17 +191,12 @@ func DBkey(dbID int64) []byte {
 
 func ParseDBKey(dbkey []byte) (int64, error) {
 	if !IsDBkey(dbkey) {
-		return 0, ErrInvalidString.GenWithStack("fail to parse dbkey")
+		return 0, ErrInvalidString.GenWithStack("fail to parse dbKey")
 	}
 
-	var prefix string
-	var dbID int64
-	_, err := fmt.Sscanf(string(dbkey), "%s:%d", &prefix, &dbID)
-	if err != nil {
-		return 0, err
-	}
-
-	return dbID, nil
+	dbID := strings.TrimPrefix(string(dbkey), mDBPrefix+":")
+	id, err := strconv.Atoi(dbID)
+	return int64(id), errors.Trace(err)
 }
 
 func IsDBkey(dbkey []byte) bool {
@@ -228,19 +223,18 @@ func TableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
-func ParseTableKey(tableKey []byte) (int64, error) {
-	var prefix string
-	var tableID int64
-	_, err := fmt.Sscanf(string(tableKey), "%s:%d", prefix, tableID)
-	if err != nil {
-		return 0, err
-	}
+func IsTableKey(tableKey []byte) bool {
+	return strings.HasPrefix(string(tableKey), mTablePrefix+":")
+}
 
-	if prefix != mTableIDPrefix {
+func ParseTableKey(tableKey []byte) (int64, error) {
+	if !strings.HasPrefix(string(tableKey), mTablePrefix) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse tableKey")
 	}
 
-	return tableID, nil
+	tableID := strings.TrimPrefix(string(tableKey), mTablePrefix+":")
+	id, err := strconv.Atoi(tableID)
+	return int64(id), errors.Trace(err)
 }
 
 func (m *Meta) sequenceKey(sequenceID int64) []byte {

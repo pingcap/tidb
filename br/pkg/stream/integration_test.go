@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/kv"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/mvcc"
 )
@@ -92,7 +92,7 @@ func simpleTask(name string, tableCount int) stream.TaskInfo {
 }
 
 func keyIs(t *testing.T, key, value []byte, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.Background(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 1)
 	require.Equal(t, key, r.KVs[0].Key)
@@ -100,19 +100,19 @@ func keyIs(t *testing.T, key, value []byte, etcd *embed.Etcd) {
 }
 
 func keyExists(t *testing.T, key []byte, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.Background(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 1)
 }
 
 func keyNotExists(t *testing.T, key []byte, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.Background(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 0)
 }
 
 func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(ranges[0].StartKey, ranges[len(ranges)-1].EndKey, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.Background(), ranges[0].StartKey, ranges[len(ranges)-1].EndKey, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	if len(r.KVs) != len(ranges) {
 		t.Logf("len(ranges) not match len(response.KVs) [%d vs %d]", len(ranges), len(r.KVs))
@@ -126,7 +126,7 @@ func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
 }
 
 func rangeIsEmpty(t *testing.T, prefix []byte, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(prefix, kv.PrefixNextKey(prefix), mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.Background(), prefix, kv.PrefixNextKey(prefix), mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 0)
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -37,7 +38,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/rawkv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -679,7 +683,13 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	if err := client.RestoreMetaKVFiles(ctx, mFiles, &fullBackupTables); err != nil {
+	rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rawkvClient.Close()
+
+	if err := client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -766,4 +776,15 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 		)
 	}
 	return rules, nil
+}
+
+func newRawkvClient(ctx context.Context, pdAddrs []string, tlsConfig TLSConfig) (*rawkv.Client, error) {
+	security := config.Security{
+		ClusterSSLCA:   tlsConfig.CA,
+		ClusterSSLCert: tlsConfig.Cert,
+		ClusterSSLKey:  tlsConfig.Key,
+	}
+	return rawkv.NewClient(ctx, pdAddrs, security,
+		pd.WithCustomTimeoutOption(10*time.Second),
+		pd.WithMaxErrorRetry(3))
 }

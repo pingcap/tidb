@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
@@ -1491,16 +1490,16 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
-func (rc *Client) initRewriteRuleForDDL(tables *map[int64]*metautil.Table) (*stream.Schemas, error) {
-	schemaChange := stream.Schemas{
-		OldDBs:     make(map[int64]*model.DBInfo),
-		OldTables:  make(map[int64]*model.TableInfo),
-		NewSchemas: make(map[string]*stream.DbInfo, 0),
-	}
+func (rc *Client) initSchemasRepalceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
+	var (
+		oldDBs     = make(map[int64]*model.DBInfo)
+		oldTables  = make(map[int64]*model.TableInfo)
+		newSchemas = make(map[string]*stream.SchemasInfo)
+	)
 
 	for _, t := range *tables {
-		schemaChange.OldDBs[t.DB.ID] = t.DB
-		schemaChange.OldTables[t.Info.ID] = t.Info
+		oldDBs[t.DB.ID] = t.DB
+		oldTables[t.Info.ID] = t.Info
 
 		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), t.DB.Name)
 		if err != nil {
@@ -1511,40 +1510,50 @@ func (rc *Client) initRewriteRuleForDDL(tables *map[int64]*metautil.Table) (*str
 			return nil, errors.Trace(err)
 		}
 
-		db, exist := schemaChange.NewSchemas[newDBInfo.Name.String()]
+		db, exist := newSchemas[newDBInfo.Name.String()]
 		if !exist {
-			addDB := stream.DbInfo{
+			addDB := stream.SchemasInfo{
 				DbInfo: newDBInfo,
 				Tables: make(map[string]*model.TableInfo),
 			}
 
 			addDB.Tables[newTableInfo.Name.String()] = newTableInfo
-			schemaChange.NewSchemas[newDBInfo.Name.String()] = &addDB
+			newSchemas[newDBInfo.Name.String()] = &addDB
 		} else {
 			db.Tables[newTableInfo.Name.String()] = newTableInfo
 		}
 	}
-	return &schemaChange, nil
+
+	return stream.NewSchemasReplace(oldDBs, oldTables, newSchemas, rc.restoreTs), nil
 }
 
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
+	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
 	tables *map[int64]*metautil.Table,
 ) error {
-	pdAddrs := make([]string, 0)
-	pdAddrs = append(pdAddrs, rc.GetPDClient().GetLeaderAddr())
-	rawkvClient, err := rawkv.NewClient(ctx, pdAddrs, config.DefaultConfig().Security)
+	schemasReplace, err := rc.initSchemasRepalceForDDL(tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	schemasReplace, err := rc.initRewriteRuleForDDL(tables)
-	if err != nil {
-		return errors.Trace(err)
+	for id, db := range schemasReplace.OldDBs {
+		log.Info("old db", zap.Int64("id", id), zap.String("dbname", db.Name.String()), zap.Int64("dbID", db.ID))
+	}
+	for id, table := range schemasReplace.OldTables {
+		log.Info("old table", zap.Int64("id", id), zap.String("tabletame", table.Name.String()), zap.Int64("tableID", table.ID))
+	}
+
+	for dbname, db := range schemasReplace.NewSchemas {
+		log.Info("new db", zap.String("dbname", dbname), zap.String("dbname", db.DbInfo.Name.String()), zap.Int64("dbID", db.DbInfo.ID))
+		for tablename, table := range db.Tables {
+			log.Info("new table", zap.String("tablename", tablename), zap.String("tablename", table.Name.String()), zap.Int64("tableID", table.ID))
+		}
 	}
 
 	for _, f := range files {
+		log.Info("restore mfile", zap.String("file", f.Path), zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
@@ -1558,7 +1567,7 @@ func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	rawKVClient *rawkv.Client,
 	file *backuppb.DataFileInfo,
-	schemas *stream.Schemas,
+	sr *stream.SchemasReplace,
 ) error {
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
@@ -1567,17 +1576,24 @@ func (rc *Client) RestoreMetaKVFile(
 
 	iter := stream.NewEventIterator(buff)
 	for iter.Valid() {
-		orignalEntry := kv.Entry{
-			Key:   iter.Key(),
-			Value: iter.Value(),
-		}
-		newEntry, err := stream.RewriteKvEntry(&orignalEntry, file.Cf, schemas)
+		iter.Next()
+		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
+			log.Info("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
+				logutil.Key("txn-key", txnEntry.Key))
 			return errors.Trace(err)
+		} else if newEntry == nil {
+			continue
 		}
+
+		log.Debug("rewrite txn entry",
+			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key),
+			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
 
 		// to do...
 		// use BatchPut instead of put
+		rawKVClient.SetColumnFamily(file.Cf)
 		if err := rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
 			return errors.Trace(err)
 		}
