@@ -656,6 +656,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
@@ -698,7 +699,6 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.Error(t, err)
 		ch <- 2
-		clean()
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
@@ -707,6 +707,9 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	require.NoError(t, err)
 	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
 	require.Equal(t, 1, <-ch)
+
+	// Unrelated to the test logic, just wait for the goroutine to exit to avoid leak in test
+	require.Equal(t, 2, <-ch)
 }
 
 func TestViewColumns(t *testing.T) {
