@@ -2,21 +2,20 @@
 
 - Author(s): you06
 - Discussion PR: [https://github.com/pingcap/tidb/pull/XXX](https://github.com/pingcap/tidb/pull/XXX)
-- Tracking Issue: [https://github.com/pingcap/tidb/issues/XXX](https://github.com/pingcap/tidb/issues/32555)
+- Tracking Issue: [https://github.com/pingcap/tidb/issues/18207](https://github.com/pingcap/tidb/issues/18207)
 
 ## Table of Contents
 
-- [Introduction](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Motivation or Background](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Detailed Design](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Test Design](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-    - [Functional Tests](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-    - [Scenario Tests](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-    - [Compatibility Tests](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-    - [Benchmark Tests](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Impacts & Risks](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Investigation & Alternatives](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
-- [Unresolved Questions](https://www.notion.so/Skip-Locked-RFC-37a02a03d42a4a7fa4c6e114d4a01f5a)
+* [Introduction](#introduction)
+* [Motivation or Background](#motivation-or-background)
+* [Detailed Design](#detailed-design)
+* [Test Design](#test-design)
+    * [Functional Tests](#functional-tests)
+    * [Compatibility Tests](#compatibility-tests)
+    * [Benchmark Tests](#benchmark-tests)
+* [Impacts & Risks](#impacts--risks)
+* [Investigation & Alternatives](#investigation--alternatives)
+* [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -58,7 +57,7 @@ There are 3 ways TiDB acquires pessimistic locks.
 
 For the first and second cases, we just skip the locked rows in TiKV, however, for the third case, we may lock index keys successfully but meet some locks in row handles, so some locks on index keys need to be released. Will discuss the 3 situations in the protocol design section.
 
-Add a field in the `[LockCtx](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/kv/kv.go#L56-L78)`, which controls whether the transaction client acquiring pessimistic locks with `SKIP LOCKED` syntax.
+Add a field in the [`LockCtx`](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/kv/kv.go#L56-L78), which controls whether the transaction client acquiring pessimistic locks with `SKIP LOCKED` syntax.
 
 ```diff
 // LockCtx contains information for LockKeys method.
@@ -96,7 +95,7 @@ message PessimisticLockResponse {
 
 There will be no information for acquired locks, but each skipped key should be corresponding to a `KeyError`. e.g. a transaction tries to lock `key1`, `key2`, and `key3`, in which `key1` and `key2` are already locked by other transactions and should be skipped. The `errors` field in `PessimisticLockResponse` will contain `key1` and `key2` so that TiDB can infer `key3` is locked.
 
-In `[SelectLockExec](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L577-L750)` executor, such skipped keys should be handled and filtered.
+In [`SelectLockExec`](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L577-L750) executor, such skipped keys should be handled and filtered.
 
 #### Read and lock by common handles
 
@@ -122,7 +121,7 @@ Batch-point-get
 2. Lock all index and handle keys if no read consistency, else lock existing index and handle keys only.
 3. Read values from pessimistic lock cache.
 
-Once there are pessimistic lock failures, we need to roll back the related lock to make the lock consistent across the index and handle. The transaction of TiKV client offers `[asyncPessimisticRollback](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L768-L803)` method, however, it’s private and should not be exposed because 2 phase lock doesn’t allow to release locks in the growing phase, otherwise the correctness may be broken. We should use this method to roll back the pessimistic locks for the atomic between inside `[LockKeys](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L577-L750)`.
+Once there are pessimistic lock failures, we need to roll back the related lock to make the lock consistent across the index and handle. The transaction of TiKV client offers [`asyncPessimisticRollback`](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L768-L803) method, however, it’s private and should not be exposed because 2 phase lock doesn’t allow to release locks in the growing phase, otherwise the correctness may be broken. We should use this method to roll back the pessimistic locks for the atomic between inside [`LockKeys`](https://github.com/tikv/client-go/blob/df187fa79aa1dedc293a1eae37ef8b3a522dba46/txnkv/transaction/txn.go#L577-L750).
 
 We can add a concept called atomic group into `LockCtx`, so keys in each atomic group should be locked atomically, any of the keys suffer a locked failure, `asyncPessimisticRollback` will be called to roll back the else keys.
 
@@ -170,43 +169,31 @@ The primary key is the state of the transaction, however, with `SKIP LOCKED` syn
 
 ## Test Design
 
-A brief description of how the implementation will be tested. Both the integration test and the unit test should be considered.
-
 ### Functional Tests
 
-It's used to ensure the basic feature function works as expected. Both the integration test and the unit test should be considered.
-
-### Scenario Tests
-
-It's used to ensure this feature works as expected in some common scenarios.
+- Replace `SELECT FOR UPDATE` with `SELECT FOR UPDATE SKIP LOCKED` should pass Jepsen bank.
+- Port cases [locking_part.test](https://github.com/mysql/mysql-server/blob/6846e6b2f72931991cc9fd589dc9946ea2ab58c9/mysql-test/t/locking_part.test) and [locking_part.result](https://github.com/mysql/mysql-server/blob/6846e6b2f72931991cc9fd589dc9946ea2ab58c9/mysql-test/r/locking_part.result) from mysql-test.
 
 ### Compatibility Tests
 
-A checklist to test compatibility:
-
-- Compatibility with other features, like partition table, security & privilege, charset & collation, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
+- It should not affect deadlock detection, deadlock cases are required.
 
 ### Benchmark Tests
 
-The following two parts need to be measured:
-
-- The performance of this feature under different parameters
-- The performance influence on the online workload
+- Measure the latency of `SELECT ... FOR UPDATE SKIP LOCKED` syntax in high contention scenario.
 
 ## Impacts & Risks
 
-Describe the potential impacts & risks of the design on overall performance, security, k8s, and other aspects. List all the risks or unknowns by far.
-
-Please describe impacts and risks in two sections: Impacts could be positive or negative, and intentional. Risks are usually negative, unintentional, and may or may not happen. E.g., for performance, we might expect a new feature to improve latency by 10% (expected impact), there is a risk that latency in scenarios X and Y could degrade by 50%.
+Because TiDB doesn’t have the pseudo primary keys for transactions yet. It’s not able to infer a primary key in `SELECT ... FOR UPDATE SKIP LOCKED` syntax before acquiring locks. In this design, pessimistic locks are acquired in serial order before the primary key is decided. There may be some performance regression here.
 
 ## Investigation & Alternatives
 
-How do other systems solve this issue? What other designs have been considered and what is the rationale for not choosing them?
+- MySQL already supports this syntax.
+- CRDB does not support it, because of the violation of serializable, the discussion can be found in cockroachdb/cockroach#40476.
 
 ## Unresolved Questions
 
-What parts of the design are still to be determined?
+The problem becomes more complex in distributed transaction systems, principally there are two unresolved questions:
+
+- TiDB uses the global index, and it’s not able to guarantee that the index key and handle key are locked atomically, `asyncPessimisticRollback` handles the failure case.
+- There are no pseudo primary keys for transactions yet, if  `SELECT ... FOR UPDATE SKIP LOCKED` is the first statement that acquires pessimistic locks in the transaction, it’ll increase the latency.
