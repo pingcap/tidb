@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -581,7 +582,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 				var err1 error
-				if AllowConcurrentDDL.Load() {
+				if variable.AllowConcurrencyDDL.Load() {
 					err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
 				} else {
 					err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
@@ -683,7 +684,10 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 			if val.(bool) {
-				panic("panic test in cancelling add index")
+				// TODO: remove
+				if !variable.AllowConcurrencyDDL.Load() {
+					panic("panic test in cancelling add index")
+				}
 			}
 		})
 

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1000,7 +1001,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
-		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
+		// be updated in `UpdateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs)
@@ -1072,7 +1073,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, errors.Trace(err)
 			}
 			var err1 error
-			if AllowConcurrentDDL.Load() {
+			if variable.AllowConcurrencyDDL.Load() {
 				err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
 			} else {
 				err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)

@@ -365,14 +365,19 @@ func TestMeta(t *testing.T) {
 		TableID:    2,
 		OldTableID: 3,
 	}
+	if !variable.AllowConcurrencyDDL.Load() {
+		m.PreSetSchemaDiff(schemaDiff)
+	}
 	err = m.SetSchemaDiff(store)
 	require.NoError(t, err)
 	readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
 	require.NoError(t, err)
 	require.Equal(t, schemaDiff, readDiff)
 
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	if !variable.AllowConcurrencyDDL.Load() {
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
 
 	// Test for DDLJobHistoryKey.
 	key = meta.DDLJobHistoryKey(m, 888)

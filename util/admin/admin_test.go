@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,9 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func TestGetDDLJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -130,6 +134,9 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 

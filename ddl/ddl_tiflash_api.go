@@ -499,7 +499,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		}
 		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
 	}
-	if AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		err = admin.IterAllConcurrentDDLJobs(txn, fn, ctx)
 	} else {
 		err = admin.IterAllDDLJobs(txn, fn)

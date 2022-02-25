@@ -84,7 +84,6 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	jobs := make([]*model.Job, 0, 5)
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
 		job := model.Job{}
@@ -100,8 +99,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 				}
 				if canRun {
 					log.Info("get ddl job from table", zap.String("job", job.String()))
-					jobs = append(jobs, &job)
-					break
+					return &job, nil
 				}
 				runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.FormatInt(job.ID, 10))
 				sql = fmt.Sprintf(getGeneralJobWithoutRunningAgainSQL, strings.Join(runningOrBlockedIDs, ", "))
@@ -165,12 +163,11 @@ func (d *ddl) checkReorgJobIsRunnable(sess sessionctx.Context, job *model.Job) (
 	return len(rows) == 0, nil
 }
 
-const (
-	getReorgJobSQL            = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id order by min(job_id) limit 1)"
-	getReorgJobWithRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id not in (%s) order by min(job_id) limit 1)"
-)
-
 func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
+	const (
+		getReorgJobSQL            = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id order by min(job_id) limit 1)"
+		getReorgJobWithRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id not in (%s) order by min(job_id) limit 1)"
+	)
 	runningOrBlockedIDs := make([]string, 0, 10)
 	d.runningDDLMapMu.RLock()
 	for id := range d.runningJobMap {
@@ -190,6 +187,10 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
 	if err != nil {
+		err = rs.Close()
+		if err != nil {
+			log.Error("close RecordSet", zap.Error(err))
+		}
 		return nil, err
 	}
 	err = rs.Close()
@@ -325,16 +326,20 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer d.deleteRunningDDLJobMap(int(job.ID))
-
 		wk, err := d.generalDDLWorkerPool.get()
 		if err != nil {
-			log.Warn("fail to get generalWorker", zap.Error(err))
+			log.Error("fail to get generalDDLWorkerPool", zap.Error(err))
 			return
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("doGeneralDDLJobWorker panic", zap.Any("recover()", r), zap.Stack("stack"))
+			}
+			d.generalDDLWorkerPool.put(wk)
+		}()
 		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
-			log.Warn("[ddl] handle General DDL job failed", zap.Error(err))
+			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
 		}
-		d.generalDDLWorkerPool.put(wk)
 	})
 }
 
@@ -357,13 +362,19 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 		defer d.deleteRunningDDLJobMap(int(job.ID))
 		wk, err := d.reorgWorkerPool.get()
 		if err != nil {
-			log.Warn("fail to get addIdxWorker", zap.Error(err))
+			log.Error("fail to get reorgWorkerPool", zap.Error(err))
 			return
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("doReorgDDLJobWorker panic", zap.Any("recover()", r), zap.Stack("stack"))
+			}
+			d.reorgWorkerPool.put(wk)
+		}()
+
 		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
-			log.Warn("[ddl] handle Reorg DDL job failed", zap.Error(err))
+			log.Error("[ddl] handle Reorg DDL job failed", zap.Error(err))
 		}
-		d.reorgWorkerPool.put(wk)
 	})
 }
 
@@ -401,14 +412,20 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 	return err
 }
 
-func (w *worker) updateDDLJobNew(job *model.Job, updateRawArgs bool) error {
+const updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = 0x%x where job_id = %d"
+
+func (w *worker) updateConcurrencyDDLJob(job *model.Job, updateRawArgs bool) error {
+	return updateConcurrencyDDLJob(w.sessForJob, job, updateRawArgs)
+}
+
+func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
 	log.Warn("update ddl job", zap.String("job", job.String()))
-	sql := fmt.Sprintf("update mysql.tidb_ddl_job set job_meta = 0x%x where job_id = %d", b, job.ID)
-	_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return err
 	}
@@ -433,7 +450,11 @@ func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, p
 	var err error
 	sess := w.sessForJob
 	if newSess {
-		sess, _ = w.sessPool.get()
+		sess, err = w.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] fail to get sessPool", zap.Error(err))
+			return err
+		}
 		defer w.sessPool.put(sess)
 		if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin"); err != nil {
 			logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -262,7 +263,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
 		}
 		var err1 error
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
 		} else {
 			err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
@@ -293,7 +294,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
 		var err error
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			err = w.UpdateDDLReorgStartHandleNew(job, currentElement, doneKey)
 		} else {
 			err = t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
@@ -639,7 +640,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			err = wk.UpdateDDLReorgHandle(job, start, end, pid, elements[0], true)
 		} else {
 			err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
@@ -663,7 +664,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		})
 
 		var err error
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			element, start, end, pid, err = admin.GetDDLReorgHandle(job, wk.sessForJob)
 		} else {
 			element, start, end, pid, err = t.GetDDLReorgHandle(job)
@@ -716,7 +717,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			err = wk.UpdateDDLReorgHandle(job, start, end, pid, elements[0], true)
 		} else {
 			err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
@@ -729,7 +730,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		element = elements[0]
 	} else {
 		var err error
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			element, start, end, pid, err = admin.GetDDLReorgHandle(job, wk.sessForJob)
 		} else {
 			element, start, end, pid, err = t.GetDDLReorgHandle(job)

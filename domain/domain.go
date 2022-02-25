@@ -27,7 +27,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -282,12 +281,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			if len(diffs) > 0 {
-				log.Warn("partial reload", zap.Int64("lastGetVersion", usedVersion-1))
-				break
-			}
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -793,8 +787,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return sysExecutorFactory(do)
 	}
 	var capacity int
-	if ddl.AllowConcurrentDDL.Load() {
-		capacity = 11
+	if variable.AllowConcurrencyDDL.Load() {
+		// reorgWorker + generalWorker + sessForAddDDL + PollTiFlashRoutine + limitDDLJobs
+		capacity = (10+1)*2 + 1 + 1 + 1
 	} else {
 		capacity = 2
 	}

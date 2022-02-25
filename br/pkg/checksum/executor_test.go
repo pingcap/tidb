@@ -29,7 +29,6 @@ func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.Tab
 }
 
 func TestChecksum(t *testing.T) {
-	t.Skip("skip test. just for debug")
 	mock, err := mock.NewCluster()
 	require.NoError(t, err)
 	require.NoError(t, mock.Start())

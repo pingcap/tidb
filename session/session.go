@@ -1469,7 +1469,6 @@ func (s *session) ClearDiskFullOpt() {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
-	logutil.Logger(ctx).Debug("ExecuteInternal", zap.String("sql", sql))
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -2771,7 +2770,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
-		if ddl.AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			err := meta.InitMetaTable(store)
 			if err != nil {
 				logutil.BgLogger().Fatal("check bootstrap error",
