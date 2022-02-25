@@ -669,7 +669,7 @@ func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRe
 	physicalTime := oracle.GetTimeFromTS(oldLease)
 	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
 
-	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+	succ, err := handle.RenewWriteLease(ctx, tid, newLease)
 	if err != nil {
 		return errors.Trace(err)
 	}

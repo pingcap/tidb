@@ -32,16 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// RenewLeaseType define the type for renew lease.
-type RenewLeaseType int
-
-const (
-	// RenewReadLease means renew read lease.
-	RenewReadLease RenewLeaseType = iota + 1
-	// RenewWriteLease means renew write lease.
-	RenewWriteLease
-)
-
 var (
 	_ table.CachedTable = &cachedTable{}
 )
@@ -94,7 +84,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 		if distance >= 0 && distance <= leaseDuration/2 {
 			select {
 			case c.renewReadLease <- struct{}{}:
-				go c.renewLease(ts, data, leaseDuration)
+				go c.renewLease(ts, data, data.Lease, leaseDuration)
 			default:
 			}
 		}
@@ -249,19 +239,19 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 
-func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.Duration) {
+func (c *cachedTable) renewLease(ts uint64, data *cacheData, oldLease uint64, leaseDuration time.Duration) {
 	defer func() { <-c.renewReadLease }()
 
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
-	succ, err := c.handle.RenewLease(context.Background(), tid, lease, RenewReadLease)
+	newLease, err := c.handle.RenewReadLease(context.Background(), tid, oldLease, lease)
 	if err != nil && !kv.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
-	if succ {
+	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
 			Start:     data.Start,
-			Lease:     lease,
+			Lease:     newLease,
 			MemBuffer: data.MemBuffer,
 		})
 	}
