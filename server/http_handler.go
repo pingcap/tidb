@@ -894,7 +894,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	fn := func(jobs []*model.Job) (bool, error) {
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-	if ddl.AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		err = admin.IterAllConcurrentDDLJobs(txn, fn, s)
 	} else {
 		err = admin.IterAllDDLJobs(txn, fn)

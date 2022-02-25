@@ -20,8 +20,11 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,8 +51,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -93,9 +99,6 @@ var (
 	// region.
 	EnableSplitTableRegion = uint32(0)
 )
-
-// AllowConcurrentDDL works with Concurrent DDL feature.
-var AllowConcurrentDDL atomicutil.Bool = *atomicutil.NewBool(true)
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
@@ -184,6 +187,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// CancelConcurrencyJobs cancels the concurrent jobs.
+	CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error)
 }
 
 type limitJobTask struct {
@@ -216,18 +221,19 @@ type ddl struct {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
-	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
-	lease        time.Duration        // lease is schema lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache    *infoschema.InfoCache
-	statsHandle  *handle.Handle
-	tableLockCkr util.DeadTableLockChecker
-	etcdCli      *clientv3.Client
+	schemaVersionMu sync.Mutex
+	uuid            string
+	store           kv.Storage
+	ownerManager    owner.Manager
+	schemaSyncer    util.SchemaSyncer
+	ddlJobDoneCh    chan struct{}
+	ddlEventCh      chan<- *util.Event
+	lease           time.Duration        // lease is schema lease.
+	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache       *infoschema.InfoCache
+	statsHandle     *handle.Handle
+	tableLockCkr    util.DeadTableLockChecker
+	etcdCli         *clientv3.Client
 
 	// hook may be modified.
 	mu struct {
@@ -404,7 +410,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-		if AllowConcurrentDDL.Load() {
+		if variable.AllowConcurrencyDDL.Load() {
 			reorgWorkerFunc := func() (pools.Resource, error) {
 				wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 				if err != nil {
@@ -496,7 +502,7 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
-	if AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		if d.reorgWorkerPool != nil {
 			d.reorgWorkerPool.close()
 		}
@@ -643,7 +649,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	if !RunWorker {
 		return
 	}
-	if AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		key := ""
 		if mayNeedReorg(job) {
 			key = addingDDLJobReorg
@@ -922,4 +928,82 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 		}
 	}
 	return false, nil
+}
+
+func (d *ddl) CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var getJobSQL string
+	var jobSet = make(map[int64]int) // jobID -> error index
+	if len(ids) == 1 {
+		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d order by job_id", ids[0])
+		jobSet[ids[0]] = 0
+	} else {
+		var idsStr []string
+		for idx, id := range ids {
+			jobSet[ids[0]] = idx
+			idsStr = append(idsStr, strconv.FormatInt(id, 10))
+		}
+		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
+	}
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), getJobSQL)
+	defer func() {
+		err = rs.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close result set error", zap.Error(err))
+		}
+	}()
+	if err != nil {
+		return nil, err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	errs := make([]error, len(ids))
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := &model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return nil, err
+		}
+		i, ok := jobSet[job.ID]
+		if !ok {
+			continue
+		}
+		delete(jobSet, job.ID)
+		if job.IsDone() || job.IsSynced() {
+			errs[i] = admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+			continue
+		}
+		if !admin.IsJobRollbackable(job) {
+			errs[i] = admin.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		job.State = model.JobStateCancelling
+		// Make sure RawArgs isn't overwritten.
+		err := json.Unmarshal(job.RawArgs, &job.Args)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+			continue
+		}
+		err = updateConcurrencyDDLJob(sess, job, true)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+		}
+	}
+	for id, idx := range jobSet {
+		errs[idx] = admin.ErrDDLJobNotFound.GenWithStackByArgs(id)
+	}
+	return nil, nil
 }

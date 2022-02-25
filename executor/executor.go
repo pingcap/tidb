@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -324,6 +323,12 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
+	if variable.AllowConcurrencyDDL.Load() {
+		var err error
+		e.errs, err = domain.GetDomain(e.ctx).DDL().CancelConcurrencyJobs(e.ctx, e.jobIDs)
+		return err
+	}
+	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
 		return
@@ -482,7 +487,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		err  error
 	)
 	m := meta.NewMeta(txn)
-	if ddl.AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		sess.GetSessionVars().SetInTxn(true)
 		jobs, err = admin.GetConcurrencyDDLJobs(sess)
 		if err != nil {
@@ -594,7 +599,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if ddl.AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		jobs, err = admin.GetConcurrencyDDLJobs(e.ctx)
 	} else {
 		jobs, err = admin.GetDDLJobs(txn)

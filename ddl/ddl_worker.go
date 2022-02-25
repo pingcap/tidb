@@ -76,6 +76,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// adminWorker is the worker who handles all admin statements.
+	adminWorker workerType = 2
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
@@ -146,6 +148,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
+	case adminWorker:
+		str = "admin"
 	default:
 		str = "unknown"
 	}
@@ -285,7 +289,7 @@ func (d *ddl) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
-			if AllowConcurrentDDL.Load() {
+			if variable.AllowConcurrencyDDL.Load() {
 				d.addConcurrencyDDLJobs(tasks)
 			} else {
 				d.addBatchDDLJobs(tasks)
@@ -427,9 +431,9 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	return errors.Trace(err)
 }
 
-// updateDDLJob updates the DDL job information.
+// UpdateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+func (w *worker) UpdateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -444,10 +448,10 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 		updateRawArgs = false
 	}
 	var err error
-	if AllowConcurrentDDL.Load() {
-		err = w.updateDDLJobNew(job, updateRawArgs)
+	if variable.AllowConcurrencyDDL.Load() {
+		err = w.updateConcurrencyDDLJob(job, updateRawArgs)
 	} else {
-		err = w.updateDDLJobNew(job, updateRawArgs)
+		err = t.UpdateDDLJob(0, job, updateRawArgs)
 	}
 	return errors.Trace(err)
 }
@@ -498,7 +502,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if AllowConcurrentDDL.Load() {
+	if variable.AllowConcurrencyDDL.Load() {
 		err = w.deleteDDLJob(job)
 	} else {
 		_, err = t.DeQueueDDLJob()
@@ -590,15 +594,21 @@ func (w *worker) unlockSeqNum() {
 	}
 }
 
-var schemaVersionMu sync.Mutex
-
 func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		log.Error("panic handleDDLJob", zap.Any("recover()", r), zap.Stack("stack"))
+	}()
 	var (
 		schemaVer int64
 		runJobErr error
 	)
 	waitTime := 2 * d.lease
 
+	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
 		return err
@@ -609,23 +619,25 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		return err
 	}
 	w.sessForJob.GetSessionVars().SetInTxn(true)
-
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
 		if !job.IsRollbackDone() {
 			job.State = model.JobStateSynced
 		}
-
 		err = w.finishDDLJob(t, job)
 		if err != nil {
+			err1 := txn.Rollback()
+			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
 			return err
 		}
 		w.sessForJob.StmtCommit()
 		if t.Diff != nil {
-			schemaVersionMu.Lock()
+			d.schemaVersionMu.Lock()
 			err := t.SetSchemaDiff(d.store)
 			if err != nil {
+				err1 := txn.Rollback()
+				log.Error("Rollback", zap.Error(err1))
 				w.unlockSeqNum()
 				return err
 			}
@@ -633,13 +645,13 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		err := txn.Commit(w.ctx)
 		if err != nil {
 			if t.Diff != nil {
-				schemaVersionMu.Unlock()
+				d.schemaVersionMu.Unlock()
 			}
 			w.unlockSeqNum()
 			return err
 		}
 		if t.Diff != nil {
-			schemaVersionMu.Unlock()
+			d.schemaVersionMu.Unlock()
 		}
 		asyncNotify(d.ddlJobDoneCh)
 		if w.lockSeqNum {
@@ -652,7 +664,6 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
-
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
@@ -660,12 +671,13 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		txn.Reset()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
+			err1 := txn.Rollback()
+			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
 			return err
 		}
 		w.sessForJob.StmtCommit()
 		return txn.Commit(w.ctx)
-
 	}
 
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
@@ -675,24 +687,28 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		txn.Reset()
+		w.sessForJob.StmtRollback()
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
 	}
 
-	err = w.updateDDLJob(t, job, runJobErr != nil)
+	err = w.UpdateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
+		err1 := txn.Rollback()
+		log.Error("Rollback", zap.Error(err1))
 		w.unlockSeqNum()
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 
 	if t.Diff != nil {
-		schemaVersionMu.Lock()
+		d.schemaVersionMu.Lock()
 		err = t.SetSchemaDiff(d.store)
 		w.sessForJob.StmtCommit()
 		if err != nil {
+			err1 := txn.Rollback()
+			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
 			return err
 		}
@@ -700,11 +716,14 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	}
 	err = txn.Commit(w.ctx)
 	if err != nil {
+		if t.Diff != nil {
+			d.schemaVersionMu.Unlock()
+		}
 		w.unlockSeqNum()
 		return err
 	}
 	if t.Diff != nil {
-		schemaVersionMu.Unlock()
+		d.schemaVersionMu.Unlock()
 	}
 
 	if runJobErr != nil {
@@ -822,7 +841,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// Result in the retry duration is up to 2 * lease.
 				schemaVer = 0
 			}
-			err = w.updateDDLJob(t, job, runJobErr != nil)
+			err = w.UpdateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
 			}
@@ -1000,10 +1019,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
+		logutil.Logger(w.logCtx).Debug("[ddl] finish DDL job", zap.String("job", job.String()))
 		return
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
+		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 

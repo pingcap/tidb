@@ -213,12 +213,17 @@ const GetDDLJobID = "select job_meta from mysql.tidb_ddl_job order by job_id"
 // GetConcurrencyDDLJobs get all DDL jobs and sort by job.ID
 func GetConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), GetDDLJobID)
+	defer func() {
+		err = rs.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close result set error", zap.Error(err))
+		}
+	}()
 	if err != nil {
 		return nil, err
 	}
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
-	rs.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +240,7 @@ func GetConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
 		}
 		jobs = append(jobs, job)
 	}
+	sort.Sort(jobArray(jobs))
 	return jobs, nil
 }
 

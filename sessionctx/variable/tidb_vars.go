@@ -607,6 +607,9 @@ const (
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
+
+	// TiDBEnableConcurrencyDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrencyDDL = "tidb_enable_concurrency_ddl"
 )
 
 // TiDB vars that have only global scope
@@ -801,6 +804,7 @@ const (
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBBatchPendingTiFlashCount       = 4000
+	DefTiDBEnableConcurrencyDDL           = true
 )
 
 // Process global variables.
@@ -835,4 +839,5 @@ var (
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	AllowConcurrencyDDL                   = atomic.NewBool(DefTiDBEnableConcurrencyDDL)
 )

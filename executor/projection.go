@@ -316,6 +316,8 @@ func (e *ProjectionExec) Close() error {
 			e.drainInputCh(w.inputCh)
 			e.drainOutputCh(w.outputCh)
 		}
+	} else {
+		e.wg.Wait()
 	}
 	if e.baseExecutor.runtimeStats != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}

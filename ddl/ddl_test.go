@@ -19,12 +19,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -61,7 +63,16 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
-	err := d.Start(nil)
+	var err error
+	if variable.AllowConcurrencyDDL.Load() {
+		sysFac := func() (pools.Resource, error) {
+			return nil, nil
+		}
+		sysCtxPool := pools.NewResourcePool(sysFac, 200, 200, 3*time.Minute)
+		err = d.Start(sysCtxPool)
+	} else {
+		err = d.Start(nil)
+	}
 	return d, err
 }
 
