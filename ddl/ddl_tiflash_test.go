@@ -690,8 +690,8 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
-func execWithTimeout(tk *testkit.TestKit, sql string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+func execWithTimeout(tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), to)
 	defer cancel()
 	doneCh := make(chan error, 1)
 
@@ -726,19 +726,20 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp", `return(2)`))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/BeforeAddOneTiFlashReplicaInBatchOp"))
 	}()
 	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
-	timeOut, err := execWithTimeout(tk, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	// The following statement shall fail, because it reaches limit
+	timeOut, err := execWithTimeout(tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
 	require.True(t, timeOut)
 
-	// Validate
+	// There must be one table with no TiFlashReplica.
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	check := func(expected int) {
 		cnt := 0
@@ -753,8 +754,27 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	}
 	check(2)
 
+	// If we exec in another session, it will not trigger limit. Since DefTiDBBatchPendingTiFlashCount is more than 3.
 	tk2 := testkit.NewTestKit(t, s.store)
 	tk2.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 1)
 	check(3)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables"))
+	}()
+	// This DDL can finish in 3 seconds, since we will force trigger its DDL to update schema cache.
+	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
+	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	require.NoError(t, err)
+	require.False(t, timeOut)
+
+	// However, we still have force check next time.
+	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+2))
+	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(tk, time.Second*1, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	require.NoError(t, err)
+	require.True(t, timeOut)
 }

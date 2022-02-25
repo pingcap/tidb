@@ -74,10 +74,10 @@ const (
 	longBlobMaxLength     = 4294967295
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
-	defaultPlacementPolicyName             = "default"
-	tiflashCheckTotalPendingTablesInterval = 2000 * time.Millisecond
-	tiflashCheckTotalPendingTablesTick     = 100
-	tiflashCheckPendingTablesRetry         = 10
+	defaultPlacementPolicyName        = "default"
+	tiflashCheckPendingTablesWaitTime = 2500 * time.Millisecond
+	tiflashCheckPendingTablesTick     = 100
+	tiflashCheckPendingTablesRetry    = 8
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -243,6 +243,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 	}
 	*originVersion = is.SchemaMetaVersion()
 	*pendingCount = cnt
+	return
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -282,18 +283,25 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
+		configRetry := tiflashCheckPendingTablesRetry
+		configWaitTime := tiflashCheckPendingTablesWaitTime
+		failpoint.Inject("FastFailCheckTiFlashPendingTables", func() {
+			configRetry = 2
+			configWaitTime = time.Second
+		})
 		// When handled some tables, we need to wait some tables become available.
-		if (succ+fail)%tiflashCheckTotalPendingTablesTick == 0 || forceCheck {
+		if (succ+fail)%tiflashCheckPendingTablesTick == 0 || forceCheck {
 			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
-			forceCheck = !forceCheck
-			for retry := 0; retry < tiflashCheckPendingTablesRetry; retry += 1 {
+			forceCheck = true
+			for retry := 0; retry < configRetry; retry += 1 {
 				d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
 				threshold := getBatchPendingTiFlashCount(sctx)
 				if pendingCount >= threshold {
-					logutil.BgLogger().Info("too many not available tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
-					time.Sleep(tiflashCheckTotalPendingTablesInterval)
+					logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount))
+					time.Sleep(configWaitTime)
 				} else {
-					logutil.BgLogger().Info("no many not available tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
+					// If there are not many unavailable tables, we will no longer need force check.
+					logutil.BgLogger().Info("no many unavailable tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()))
 					forceCheck = false
 					break
 				}

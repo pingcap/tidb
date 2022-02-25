@@ -824,7 +824,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
-	DefTiDBBatchPendingTiFlashCount       = 1000
+	DefTiDBBatchPendingTiFlashCount       = 4000
 )
 
 // Process global variables.
