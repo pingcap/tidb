@@ -118,9 +118,11 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
 	// wait for timeout task to be handled
+	oldStat := stat
 	for {
 		time.Sleep(time.Millisecond * 100)
-		if len(h.StatsLoad.TimeoutColumnsCh)+len(h.StatsLoad.NeededColumnsCh) == 0 {
+		stat = h.GetTableStats(tableInfo)
+		if stat != oldStat {
 			break
 		}
 	}
