@@ -228,7 +228,10 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		s := store
 		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
-			logutil.BgLogger().Error("Update TiFlash status address failed", zap.Error(err))
+			// We issue no log in tests, since there are no etcd.
+			if d.lease > 0 {
+				logutil.BgLogger().Info("Update TiFlash status address failed", zap.Error(err))
+			}
 		}
 	}
 

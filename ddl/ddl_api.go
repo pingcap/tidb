@@ -243,7 +243,6 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 	}
 	*originVersion = is.SchemaMetaVersion()
 	*pendingCount = cnt
-	return
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -279,21 +278,19 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			return nil
 		default:
 		}
-		failpoint.Inject("BeforeAddOneTiFlashReplicaInBatchOp", func(val failpoint.Value) {
-			du := time.Second * time.Duration(int16(val.(int)))
-			time.Sleep(du)
-		})
+
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
 			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip += 1
 			continue
 		}
+		logutil.BgLogger().Info("start processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 
 		configRetry := tiflashCheckPendingTablesRetry
 		configWaitTime := tiflashCheckPendingTablesWaitTime
-		failpoint.Inject("FastFailCheckTiFlashPendingTables", func() {
-			configRetry = 2
+		failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+			configRetry = value.(int)
 			configWaitTime = time.Second
 		})
 		// When handled some tables, we need to wait some tables become available.
@@ -304,9 +301,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 				for retry := 0; retry < configRetry; retry += 1 {
 					d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
 					threshold := getBatchPendingTiFlashCount(sctx)
+					delay := time.Duration(0)
 					if pendingCount >= threshold {
-						logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID))
-						time.Sleep(configWaitTime)
+						logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
+						delay = configWaitTime
 					} else {
 						// If there are not many unavailable tables, we will no longer need force check.
 						logutil.BgLogger().Info("no many unavailable tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()), zap.Int64("tableID", tbl.ID))
@@ -316,7 +314,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 					select {
 					case <-ctx.Done():
 						return true
-					default:
+					case <-time.After(delay):
 					}
 				}
 				logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
@@ -352,6 +350,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
 	sctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	logutil.BgLogger().Info("finish normally", zap.Int64("schemaID", dbInfo.ID))
 	return nil
 }
 
