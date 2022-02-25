@@ -1,6 +1,6 @@
 # TiDB Design Documents
 
-- Author(s): you06
+- Author(s): [you06](https://github.com/you06)
 - Discussion PR: [https://github.com/pingcap/tidb/pull/XXX](https://github.com/pingcap/tidb/pull/XXX)
 - Tracking Issue: [https://github.com/pingcap/tidb/issues/18207](https://github.com/pingcap/tidb/issues/18207)
 
