@@ -1065,9 +1065,9 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		if err != nil {
 			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
-		cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
-		u.Path = absPath
+		u.Path = filepath.ToSlash(absPath)
 		u.Scheme = "file"
+		cfg.Mydumper.SourceDir = u.String()
 	}
 
 	found := false
