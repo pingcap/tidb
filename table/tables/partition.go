@@ -805,7 +805,7 @@ func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Dat
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return codec.EncodeKey(sc, nil, v)
+	return codec.EncodeValue(sc, nil, v)
 }
 
 // LocatePartition locates partition by the column value
