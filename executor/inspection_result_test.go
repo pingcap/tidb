@@ -39,7 +39,7 @@ import (
 func TestInspectionResult(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 
 	mockData := map[string]variable.TableSnapshot{}
 	// mock configuration inconsistent
@@ -251,7 +251,7 @@ func setupForInspection(t *testing.T, mockData map[string][][]types.Datum, confi
 func TestThresholdCheckInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 	datetime := func(str string) types.Time {
 		return parseTime(t, tk.Session(), str)
 	}
@@ -344,7 +344,7 @@ func TestThresholdCheckInspection(t *testing.T) {
 func TestThresholdCheckInspection2(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -428,7 +428,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 func TestThresholdCheckInspection3(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -519,7 +519,7 @@ func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
 func TestCriticalErrorInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 
 	testServers := setupClusterGRPCServer(t)
 	defer func() {
@@ -641,7 +641,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 func TestNodeLoadInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -718,7 +718,7 @@ func TestNodeLoadInspection(t *testing.T) {
 func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithInit(t, store)
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
