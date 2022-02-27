@@ -890,9 +890,12 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
-func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
+func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
+		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
+			return ErrQueryInterrupted
+		}
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
@@ -944,7 +947,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
 	}
-	if err = readDataAndSendTask(e.resultHandler, mergeTaskCh); err != nil {
+	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -1456,6 +1459,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, nil, ErrQueryInterrupted
+		}
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
