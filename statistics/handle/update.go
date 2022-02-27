@@ -1098,16 +1098,18 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + " index %n"
-			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
+			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			if tableStatsVer == statistics.Version1 {
+				sql += " index %n"
+				params = append(params, idx.Name.O)
+			}
+			escaped, err := sqlexec.EscapeSQL(sql, params...)
 			if err != nil {
 				return false
 			}
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
-			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			h.execAutoAnalyze(tableStatsVer, sql, params...)
 			return true
 		}
 	}

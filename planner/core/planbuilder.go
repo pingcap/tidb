@@ -2644,7 +2644,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if as.IndexFlag {
+	if as.IndexFlag && statsVersion == statsVersion {
 		if len(as.IndexNames) == 0 {
 			return b.buildAnalyzeAllIndex(as, opts, statsVersion)
 		}
