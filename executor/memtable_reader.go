@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1114,4 +1115,171 @@ func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 		rows = append(rows, records...)
 	}
 	return rows, nil
+}
+
+type tikvRegionStatusRetriever struct {
+	dummyCloser
+	isDrained   bool
+	extractor   *plannercore.TikvRegionStatusExtractor
+	rows        [][]types.Datum
+	regionsInfo helper.RegionsInfo
+	time        int64
+}
+
+func (e *tikvRegionStatusRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.isDrained {
+		return nil, nil
+	}
+	infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	dbNames := e.extractor.DBNames
+	tableNames := e.extractor.TableNames
+	indexNames := e.extractor.IndexNames
+	tableIDs := e.extractor.TableIDs
+	indexIDs := e.extractor.IndexIDs
+	tableInfos := e.genTableInfoWithKeyRange(dbNames, tableNames, indexNames, tableIDs, indexIDs, infoSchema)
+	sort.Sort(helper.ByTableStartKey(tableInfos))
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	var regions []*helper.RegionInfo
+	var preRegion *helper.RegionInfo
+	isAlreadyGet := func(tableInfo helper.TableInfoWithKeyRange) bool {
+		if preRegion == nil {
+			return false
+		}
+		if tableInfo.EndKey < preRegion.EndKey || preRegion.EndKey == "" {
+			return true
+		}
+		return false
+	}
+	for _, tableInfo := range tableInfos {
+		if isAlreadyGet(tableInfo) {
+			continue
+		}
+		startKey, _ := hex.DecodeString(strings.ToLower(tableInfo.StartKey))
+		endKey, _ := hex.DecodeString(strings.ToLower(tableInfo.EndKey))
+		regionsInfo, err := tikvHelper.GetRegionsInfoByRange(startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+		if len(regionsInfo.Regions) == 0 {
+			continue
+		}
+		tempRegions := make([]*helper.RegionInfo, 0, len(regionsInfo.Regions))
+		for i := range regionsInfo.Regions {
+			tempRegions = append(tempRegions, &regionsInfo.Regions[i])
+		}
+		sort.Sort(helper.ByRegionStartKey(tempRegions))
+		if preRegion != nil && preRegion.ID == tempRegions[0].ID {
+			tempRegions = tempRegions[1:]
+		}
+		regions = append(regions, tempRegions...)
+		preRegion = regions[len(regions)-1]
+	}
+	regionMapTable := tikvHelper.ParseRegionsTableInfos(regions, tableInfos)
+	for _, region := range regions {
+		tableList := regionMapTable[region.ID]
+		if len(tableList) == 0 {
+			e.setNewTiKVRegionStatusCol(region, nil)
+		}
+		for _, table := range tableList {
+			e.setNewTiKVRegionStatusCol(region, &table)
+		}
+	}
+	e.isDrained = true
+	return e.rows, nil
+}
+
+func (e *tikvRegionStatusRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
+	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
+	row[0].SetInt64(region.ID)
+	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
+	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
+	if table != nil {
+		row[3].SetInt64(table.Table.ID)
+		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
+		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
+		if table.IsIndex {
+			row[6].SetInt64(1)
+			row[7].SetInt64(table.Index.ID)
+			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[6].SetInt64(0)
+		}
+	}
+	row[9].SetInt64(region.Epoch.ConfVer)
+	row[10].SetInt64(region.Epoch.Version)
+	row[11].SetUint64(region.WrittenBytes)
+	row[12].SetUint64(region.ReadBytes)
+	row[13].SetInt64(region.ApproximateSize)
+	row[14].SetInt64(region.ApproximateKeys)
+	if region.ReplicationStatus != nil {
+		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[16].SetInt64(region.ReplicationStatus.StateID)
+	}
+	e.rows = append(e.rows, row)
+}
+
+func (e *tikvRegionStatusRetriever) genTableInfoWithKeyRange(dbNames, tableNames, indexNames set.StringSet,
+	tableIDs, indexIDs set.Int64Set, infoSchema infoschema.InfoSchema) []helper.TableInfoWithKeyRange {
+	var dbSchemas []*model.DBInfo
+	var tableInfos []helper.TableInfoWithKeyRange
+	if len(dbNames) == 0 {
+		dbSchemas = helper.FilterMemDBs(infoSchema.AllSchemas())
+	} else {
+		for dbName := range dbNames {
+			if dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr(dbName)); ok {
+				dbSchemas = append(dbSchemas, dbInfo)
+			}
+		}
+	}
+	tableIsExist := e.genExistFunc(tableNames, tableIDs)
+	indexIsExist := e.genExistFunc(indexNames, indexIDs)
+	for _, db := range dbSchemas {
+		for _, table := range db.Tables {
+			if tableIsExist(table.Name.L, table.ID) {
+				if len(indexNames) == 0 && len(indexIDs) == 0 {
+					if pi := table.GetPartitionInfo(); pi != nil {
+						for _, partition := range pi.Definitions {
+							tableInfos = append(tableInfos, helper.NewPartitionTableWithKeyRange(db, table, partition.ID))
+						}
+					} else {
+						tableInfos = append(tableInfos, helper.NewTableWithKeyRange(db, table))
+					}
+				}
+				for _, index := range table.Indices {
+					if indexIsExist(index.Name.L, index.ID) {
+						tableInfos = append(tableInfos, helper.NewIndexWithKeyRange(db, table, index))
+					}
+				}
+			}
+		}
+	}
+	return tableInfos
+}
+
+func (e *tikvRegionStatusRetriever) genExistFunc(names set.StringSet, ids set.Int64Set) func(string, int64) bool {
+	if len(names) != 0 && len(ids) != 0 {
+		return func(name string, id int64) bool {
+			return names.Exist(name) && ids.Exist(id)
+		}
+	}
+	if len(names) != 0 {
+		return func(name string, id int64) bool {
+			return names.Exist(name)
+		}
+	}
+	if len(ids) != 0 {
+		return func(name string, id int64) bool {
+			return ids.Exist(id)
+		}
+	}
+	return func(name string, id int64) bool {
+		return true
+	}
 }

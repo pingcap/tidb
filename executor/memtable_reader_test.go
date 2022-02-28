@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +44,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	pmodel "github.com/prometheus/common/model"
@@ -1439,6 +1443,316 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistoryError(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
+var regions []helper.RegionInfo
+
+func tikvRegionStatusHandler(w http.ResponseWriter, r *http.Request) {
+	startKey := r.URL.Query().Get("key")
+	endKey := r.URL.Query().Get("end_key")
+	regionsInfo := helper.RegionsInfo{
+		Count:   0,
+		Regions: make([]helper.RegionInfo, 0),
+	}
+	decodeHex := func(key string) []byte {
+		decodeKey, _ := hex.DecodeString(strings.ToLower(key))
+		return decodeKey
+	}
+	for _, region := range regions {
+		rStartKey := decodeHex(region.StartKey)
+		rEndKey := decodeHex(region.EndKey)
+		if startKey >= string(rStartKey) &&
+			endKey <= string(rEndKey) {
+			regionsInfo.Regions = append(regionsInfo.Regions, region)
+		}
+	}
+	jsonResp, err := json.Marshal(regionsInfo)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "unable to marshal resp", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonResp)
+}
+
+var _ = SerialSuites(&testTikvRegionStatusTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
+
+type testTikvRegionStatusTableSuite struct {
+	*testInfoschemaTableSuiteBase
+	httpServers []*httptest.Server
+	startTime   time.Time
+}
+
+func (s *testTikvRegionStatusTableSuite) SetUpSuite(c *C) {
+	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
+	httpServer, mockAddr := s.setUpMockPDHTTPServer(c)
+	store := &mockStore{
+		s.store.(helper.Storage),
+		mockAddr,
+	}
+	c.Assert(httpServer, NotNil)
+	s.httpServers = append(s.httpServers, httpServer)
+	store.host = mockAddr
+	s.store = store
+	s.startTime = time.Now()
+}
+
+func (s *testTikvRegionStatusTableSuite) setUpMockPDHTTPServer(c *C) (*httptest.Server, string) {
+	// mock PD http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	mockAddr := strings.TrimPrefix(server.URL, "http://")
+	// mock PD API
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			Version        string `json:"version"`
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			Version:        "4.0.0-alpha",
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
+	}))
+	// mock hisory hot regions response
+	router.HandleFunc(pdapi.RegionsInKeys, tikvRegionStatusHandler)
+	return server, mockAddr
+}
+
+func (s *testTikvRegionStatusTableSuite) TearDownSuite(c *C) {
+	for _, server := range s.httpServers {
+		server.Close()
+	}
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
+}
+
+func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	name2region := make(map[string][]helper.RegionInfo, 0)
+	name2id := make(map[string]int64, 0)
+	tk.MustExec("create database if not exists test")
+	// table has partition
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int,b int)" +
+		"PARTITION BY RANGE (b) (" +
+		"PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11))")
+	tk.MustExec("create index idx1t1 on t1(b)")
+	tk.MustExec("create index idx2t1 on t1(b)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(c int,d int)" +
+		"PARTITION BY RANGE (d) (" +
+		"PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p3 VALUES LESS THAN (11))")
+	tk.MustExec("create index idx1t2 on t2(d)")
+	tk.MustExec("create index idx2t2 on t2(d)")
+	tk.MustExec("create database if not exists test1")
+	tk.MustExec("use test1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int,b int)" +
+		"PARTITION BY RANGE (b) (" +
+		"PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11))")
+	s.genRegionInfo(c, tk.Se, "test", "t1", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test", "t2", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test1", "t1", name2region, false)
+	s.getName2ID(c, tk.Se, "test", "t1", name2id)
+	s.getName2ID(c, tk.Se, "test", "t2", name2id)
+	s.getName2ID(c, tk.Se, "test1", "t1", name2id)
+	// table without partition
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a int,b int)")
+	tk.MustExec("use test1")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(a int,b int)")
+	s.genRegionInfo(c, tk.Se, "test", "t3", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test1", "t4", name2region, false)
+	// table and index in same region
+	tk.MustExec("use test")
+	tk.MustExec("create table t5(a int,b int)")
+	tk.MustExec("create index idx1t5 on t5")
+	s.genRegionInfo(c, tk.Se, "test", "t5", name2region, true)
+
+	cases := []struct {
+		conditions []string
+		reqCount   int32
+		expected   []string
+	}{
+		{
+			conditions: []string{
+				"db_name='test'",
+				"table_name='t1'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][0].ID),
+				fmt.Sprint(name2region["test_t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][1].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"db_name='test'",
+				"index_name in ('idx1t1','idx2t1')",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t1_idx1t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][1].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"db_name='test'",
+				"table_name='t1'",
+				"index_name in ('idx1t2','idx2t2')",
+			},
+			expected: []string{},
+		},
+		{
+			conditions: []string{
+				"db_name='test'",
+				"table_name='t2'",
+				"index_name in ('idx1t2','idx2t1')",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t2_idx1t2"][0].ID),
+				fmt.Sprint(name2region["test_t2_idx1t2"][1].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"table_name='t1'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][0].ID),
+				fmt.Sprint(name2region["test_t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][1].ID),
+				fmt.Sprint(name2region["test1_t1"][0].ID),
+				fmt.Sprint(name2region["test1_t1"][1].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"table_name='t1'",
+				fmt.Sprintf("table_id='%d'", name2id["test_t1"]),
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][0].ID),
+				fmt.Sprint(name2region["test_t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
+				fmt.Sprint(name2region["test_t1_idx2t1"][1].ID),
+			},
+		},
+		// different table,index id may be same.
+		{
+			conditions: []string{
+				"index_name='idx1t1'",
+				fmt.Sprintf("index_id='%d'", name2id["test_t1_idx1t1"]),
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t1_idx1t1"][0].ID),
+				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
+			},
+		},
+		// table without partition
+		{
+			conditions: []string{
+				"table_name='t3'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t3"][0].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"table_name='t4'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test1_t4"][0].ID),
+			},
+		},
+	}
+	for _, cas := range cases {
+		sql := "select * from information_schema.tikv_region_status"
+		if len(cas.conditions) > 0 {
+			sql = fmt.Sprintf("%s where %s", sql, strings.Join(cas.conditions, " and "))
+		}
+		result := tk.MustQuery(sql)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
+		result.Sort()
+		rows := result.Rows()
+		c.Assert(len(cas.expected), Equals, len(rows))
+		for i := range rows {
+			id := rows[i][0].(string)
+			c.Assert(id, Equals, cas.expected[i], Commentf("error in sql: %+v", sql))
+		}
+	}
+}
+
+func (s *testTikvRegionStatusTableSuite) genRegionInfo(c *C, ctx sessionctx.Context, db,
+	table string, name2region map[string][]helper.RegionInfo, isSameRegion bool) {
+	tableInfo := testGetTableByName(c, ctx, db, table)
+	var ids []int64
+	if pi := tableInfo.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			ids = append(ids, def.ID)
+		}
+	} else {
+		ids = append(ids, tableInfo.Meta().ID)
+	}
+	toHex := func(key []byte) string {
+		return strings.ToUpper(hex.EncodeToString(codec.EncodeBytes(nil, key)))
+	}
+	for _, id := range ids {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
+		region := helper.RegionInfo{
+			ID:       id,
+			StartKey: toHex(startKey),
+			EndKey:   toHex(endKey),
+		}
+		name := db + "_" + table
+		name2region[name] = append(name2region[name], region)
+		regions = append(regions, region)
+		for i, indexInfo := range tableInfo.Indices() {
+			if isSameRegion {
+				name := db + "_" + table + "_" + indexInfo.Meta().Name.L
+				name2region[name] = append(name2region[name], region)
+			} else {
+				startKey, endKey := tablecodec.GetTableIndexKeyRange(tableInfo.Meta().ID, indexInfo.Meta().ID)
+				region := helper.RegionInfo{
+					ID:       id*10 + int64(i),
+					StartKey: toHex(startKey),
+					EndKey:   toHex(endKey),
+				}
+				regions = append(regions, region)
+				name := db + "_" + table + "_" + indexInfo.Meta().Name.L
+				name2region[name] = append(name2region[name], region)
+			}
+		}
+	}
+}
+
+func (s *testTikvRegionStatusTableSuite) getName2ID(c *C, ctx sessionctx.Context, db,
+	table string, name2id map[string]int64) {
+	tableInfo := testGetTableByName(c, ctx, db, table)
+	name := db + "_" + table
+	name2id[name] = tableInfo.Meta().ID
+	for _, indexInfo := range tableInfo.Indices() {
+		name := db + "_" + table + "_" + indexInfo.Meta().Name.L
+		name2id[name] = indexInfo.Meta().ID
+	}
+}
+
 var regionsInfo = map[uint64]helper.RegionInfo{
 	1: {
 		ID:     1,
@@ -1590,6 +1904,7 @@ func (s *testTikvRegionPeersTableSuite) TestTikvRegionPeers(c *C) {
 		},
 		{
 			conditions: []string{
+
 				"store_id in (1,2)",
 				"region_id=1",
 				"is_leader=0",

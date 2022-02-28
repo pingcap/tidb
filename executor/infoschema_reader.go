@@ -139,6 +139,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterProcessList(sctx)
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
+		case infoschema.TableTiKVRegionPeers:
+			err = e.setDataForTikVRegionPeers(sctx)
 		case infoschema.TableTiKVRegionStatus:
 			err = e.setDataForTiKVRegionStatus(sctx)
 		case infoschema.TableTiDBHotRegions:
@@ -1473,62 +1475,6 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
-	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for i := range regionsInfo.Regions {
-		tableList := tableInfos[regionsInfo.Regions[i].ID]
-		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
-		}
-		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
-		}
-	}
-	return nil
-}
-
-func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
-	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
-	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
-	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
-	if table != nil {
-		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
-		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
-		if table.IsIndex {
-			row[6].SetInt64(1)
-			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
-		} else {
-			row[6].SetInt64(0)
-		}
-	}
-	row[9].SetInt64(region.Epoch.ConfVer)
-	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetUint64(region.WrittenBytes)
-	row[12].SetUint64(region.ReadBytes)
-	row[13].SetInt64(region.ApproximateSize)
-	row[14].SetInt64(region.ApproximateKeys)
-	if region.ReplicationStatus != nil {
-		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
-		row[16].SetInt64(region.ReplicationStatus.StateID)
-	}
-	e.rows = append(e.rows, row)
-}
 
 const (
 	normalPeer  = "NORMAL"

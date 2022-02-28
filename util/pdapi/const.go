@@ -16,13 +16,14 @@ package pdapi
 
 // The following constants are the APIs of PD server.
 const (
-	HotRead      = "/pd/api/v1/hotspot/regions/read"
-	HotWrite     = "/pd/api/v1/hotspot/regions/write"
-	HotHistory   = "/pd/api/v1/hotspot/regions/history"
-	Regions      = "/pd/api/v1/regions"
-	RegionByID   = "/pd/api/v1/region/id"
-	StoreRegions = "/pd/api/v1/regions/store"
-	Stores       = "/pd/api/v1/stores"
-	Status       = "/pd/api/v1/status"
-	Config       = "/pd/api/v1/config"
+	HotRead       = "/pd/api/v1/hotspot/regions/read"
+	HotWrite      = "/pd/api/v1/hotspot/regions/write"
+	HotHistory    = "/pd/api/v1/hotspot/regions/history"
+	Regions       = "/pd/api/v1/regions"
+	RegionByID    = "/pd/api/v1/region/id"
+	StoreRegions  = "/pd/api/v1/regions/store"
+	Stores        = "/pd/api/v1/stores"
+	Status        = "/pd/api/v1/status"
+	Config        = "/pd/api/v1/config"
+	RegionsInKeys = "/pd/api/v1/regions/key"
 )

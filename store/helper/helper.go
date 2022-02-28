@@ -594,12 +594,17 @@ func isBehindKeyRange(x withKeyRange, startKey, endKey string) bool {
 func (r *RegionInfo) getStartKey() string { return r.StartKey }
 func (r *RegionInfo) getEndKey() string   { return r.EndKey }
 
-// for sorting
-type byRegionStartKey []*RegionInfo
+// ByRegionsStartKey is used for sorting.
+type ByRegionStartKey []*RegionInfo
 
-func (xs byRegionStartKey) Len() int      { return len(xs) }
-func (xs byRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs byRegionStartKey) Less(i, j int) bool {
+// Len return the length of ByRegionStartKey.
+func (xs ByRegionStartKey) Len() int { return len(xs) }
+
+// Swap will swap i and j value.
+func (xs ByRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+
+// Less return true if the startkey of index i smaller than the startkey of index j.
+func (xs ByRegionStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
@@ -613,21 +618,22 @@ type TableInfoWithKeyRange struct {
 func (t TableInfoWithKeyRange) getStartKey() string { return t.StartKey }
 func (t TableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
 
-// for sorting
-type byTableStartKey []TableInfoWithKeyRange
+// ByTableStartKey for sorting.
+type ByTableStartKey []TableInfoWithKeyRange
 
-func (xs byTableStartKey) Len() int      { return len(xs) }
-func (xs byTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs byTableStartKey) Less(i, j int) bool {
+// Len return the length of ByRegionStartKey.
+func (xs ByTableStartKey) Len() int { return len(xs) }
+
+// Swap will swap i and j value.
+func (xs ByTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+
+// Less return true if the startkey of index i smaller than the startkey of index j.
+func (xs ByTableStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
-// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
+// NewTableWithKeyRange return table info which has not partition by TableInfoWithKeyRange.
 func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	return newTableWithKeyRange(db, table)
-}
-
-func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
@@ -643,12 +649,8 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 	}
 }
 
-// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
+// NewIndexWithKeyRange return index info by TableInfoWithKeyRange.
 func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newIndexWithKeyRange(db, table, index)
-}
-
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
@@ -664,7 +666,8 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
-func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) TableInfoWithKeyRange {
+// NewPartitionTableWithKeyRange return table info which has partition by TableInfoWithKeyRange.
+func NewPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
@@ -713,21 +716,21 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 		for _, table := range db.Tables {
 			if table.Partition != nil {
 				for _, partition := range table.Partition.Definitions {
-					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+					tables = append(tables, NewPartitionTableWithKeyRange(db, table, partition.ID))
 				}
 			} else {
-				tables = append(tables, newTableWithKeyRange(db, table))
+				tables = append(tables, NewTableWithKeyRange(db, table))
 			}
 			for _, index := range table.Indices {
-				tables = append(tables, newIndexWithKeyRange(db, table, index))
+				tables = append(tables, NewIndexWithKeyRange(db, table, index))
 			}
 		}
 	}
-	sort.Sort(byTableStartKey(tables))
+	sort.Sort(ByTableStartKey(tables))
 	return tables
 }
 
-// ParseRegionsTableInfos parses the tables or indices in regions according to key range.
+// ParseRegionsTableInfos parse the tables or indices in regions according to key range.
 func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
@@ -735,7 +738,7 @@ func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []Tabl
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	sort.Sort(byRegionStartKey(regionsInfo))
+	sort.Sort(ByRegionStartKey(regionsInfo))
 
 	idx := 0
 OutLoop:
@@ -754,6 +757,17 @@ OutLoop:
 	}
 
 	return tableInfos
+}
+
+// FilterMemDBs filter memory databases in the input schemas.
+func FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
+	for _, dbInfo := range oldSchemas {
+		if util.IsMemDB(dbInfo.Name.L) {
+			continue
+		}
+		schemas = append(schemas, dbInfo)
+	}
+	return
 }
 
 // BytesKeyToHex converts bytes key to hex key, it is exported only for test.
@@ -784,6 +798,15 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
 	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
 	return &regionInfo, err
+}
+
+// GetRegionsInfoByRange gets the region information of current store by using PD's api.
+func (h *Helper) GetRegionsInfoByRange(startKey, endKey []byte) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	uri := fmt.Sprintf("%s?key=%s&end_key=%s", pdapi.RegionsInKeys,
+		url.QueryEscape(string(startKey)), url.QueryEscape(string(endKey)))
+	err := h.requestPD("GET", uri, nil, &regionsInfo)
+	return &regionsInfo, err
 }
 
 // request PD API, decode the response body into res
