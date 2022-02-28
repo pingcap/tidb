@@ -320,6 +320,7 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var err error
 	var preparedAst *ast.Prepared
 	var stmtText string
 	if planCacheEnabled {
@@ -329,9 +330,13 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText = preparedObj.StmtText
-				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, preparedAst.SchemaVersion)
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, preparedAst.SchemaVersion)
 			}
 		}
+	}
+	if err != nil {
+		logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+		return
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {

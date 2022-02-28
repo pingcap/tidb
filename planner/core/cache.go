@@ -130,7 +130,10 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText string, schemaVersion int64) kvcache.Key {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText string, schemaVersion int64) (kvcache.Key, error) {
+	if stmtText == "" {
+		return nil, errors.New("no statement text")
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -148,7 +151,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText string, schemaV
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
 	}
-	return key
+	return key, nil
 }
 
 // FieldSlice is the slice of the types.FieldType
