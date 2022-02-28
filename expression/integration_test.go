@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2776,6 +2777,9 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
+
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
@@ -3479,36 +3483,33 @@ func TestExprPushdown(t *testing.T) {
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
 	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
 	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
 	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
+
 func TestIssue16973(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4175,7 +4176,7 @@ func TestSelectLimitPlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2"))
 }
 
-func TestCollation(t *testing.T) {
+func TestCollationAndCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -4185,51 +4186,51 @@ func TestCollation(t *testing.T) {
 	tk.MustExec("create table t (utf8_bin_c varchar(10) charset utf8 collate utf8_bin, utf8_gen_c varchar(10) charset utf8 collate utf8_general_ci, bin_c binary, num_c int, " +
 		"abin char collate ascii_bin, lbin char collate latin1_bin, u4bin char collate utf8mb4_bin, u4ci char collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values ('a', 'b', 'c', 4, 'a', 'a', 'a', 'a')")
-	tk.MustQuery("select collation(null)").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2)").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + 'a')").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + utf8_gen_c) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + utf8_bin_c) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, 2)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, 'abc')) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, null)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, num_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, utf8_gen_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(upper(bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(abin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(lbin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(u4bin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(u4ci, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(abin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(lbin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(u4ci, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(abin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(lbin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(abin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(lbin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(abin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(lbin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(abin, lbin)) from t").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(null), charset(null)").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2), charset(2)").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + 'a'), charset(2 + 'a')").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + utf8_gen_c), charset(2 + utf8_gen_c) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + utf8_bin_c), charset(2 + utf8_bin_c) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, 2)), charset(concat(utf8_bin_c, 2)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, 'abc')), charset(concat(utf8_gen_c, 'abc')) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, null)), charset(concat(utf8_gen_c, null)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, num_c)), charset(concat(utf8_gen_c, num_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, utf8_gen_c)), charset(concat(utf8_bin_c, utf8_gen_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(upper(utf8_bin_c)), charset(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(upper(utf8_gen_c)), charset(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(upper(bin_c)), charset(upper(bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(abin, bin_c)), charset(concat(abin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(lbin, bin_c)), charset(concat(lbin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, bin_c)), charset(concat(utf8_bin_c, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, bin_c)), charset(concat(utf8_gen_c, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(u4bin, bin_c)), charset(concat(u4bin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(u4ci, bin_c)), charset(concat(u4ci, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(abin, u4bin)), charset(concat(abin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(lbin, u4bin)), charset(concat(lbin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, u4bin)), charset(concat(utf8_bin_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, u4bin)), charset(concat(utf8_gen_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(u4ci, u4bin)), charset(concat(u4ci, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(abin, u4ci)), charset(concat(abin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(lbin, u4ci)), charset(concat(lbin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, u4ci)), charset(concat(utf8_bin_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, u4ci)), charset(concat(utf8_gen_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(abin, utf8_bin_c)), charset(concat(abin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(lbin, utf8_bin_c)), charset(concat(lbin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, utf8_bin_c)), charset(concat(utf8_gen_c, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(abin, utf8_gen_c)), charset(concat(abin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(lbin, utf8_gen_c)), charset(concat(lbin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(abin, lbin)), charset(concat(abin, lbin)) from t").Check(testkit.Rows("latin1_bin latin1"))
 
 	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
-	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation('a'), charset('a')").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
-	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation('a'), charset('a')").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
 
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustExec("set @test_collate_var = 'a'")
-	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(@test_collate_var), charset(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
 	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
-	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(@test_collate_var), charset(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
 
 	tk.MustQuery("select locate('1', '123' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("0"))
 	tk.MustQuery("select 1 in ('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
@@ -7023,4 +7024,38 @@ func TestIssue29708(t *testing.T) {
 		{"a"},
 		{"b"},
 	})
+}
+
+func TestIssue22206(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
+	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
+	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime(5000000000);")
+	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(unixTime))
+}
+
+func TestIssue32488(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t values('ʞ'), ('İ');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
 }

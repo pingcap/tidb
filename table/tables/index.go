@@ -147,8 +147,20 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
+	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
+
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
+		if err != nil {
+			return nil, err
+		}
+		if !opt.IgnoreAssertion && (!opt.Untouched) {
+			if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+			} else {
+				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+			}
+		}
 		return nil, err
 	}
 
@@ -175,10 +187,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
+		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		if lazyCheck {
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if opt.IgnoreAssertion {
+			return nil, nil
+		}
+		if lazyCheck && !txn.IsPessimistic() {
+			err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		} else {
+			err = txn.SetAssertion(key, kv.SetAssertNotExist)
 		}
 		return nil, err
 	}
@@ -200,6 +224,13 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 	} else {
 		err = txn.GetMemBuffer().Delete(key)
+	}
+	if err != nil {
+		return err
+	}
+	if c.idxInfo.State == model.StatePublic {
+		// If the index is in public state, delete this index means it must exists.
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	return err
 }

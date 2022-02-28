@@ -24,6 +24,7 @@ linters:
     - makezero
     - durationcheck
     - prealloc
+    - predeclared
 
 linters-settings:
   staticcheck:

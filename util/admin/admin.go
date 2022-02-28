@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
-	"time"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -362,11 +363,39 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
+	}
+
+	ir := func() *consistency.Reporter {
+		return &consistency.Reporter{
+			HandleEncode: func(handle kv.Handle) kv.Key {
+				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
+			},
+			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				var matchingIdx table.Index
+				for _, v := range t.Indices() {
+					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
+						matchingIdx = v
+						break
+					}
+				}
+				if matchingIdx == nil {
+					return nil
+				}
+				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				if err != nil {
+					return nil
+				}
+				return k
+			},
+			Tbl:  t.Meta(),
+			Idx:  idx.Meta(),
+			Sctx: sessCtx,
+		}
 	}
 
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
@@ -387,16 +416,16 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
+			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
+			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
+			record := &consistency.RecordData{Handle: h1, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
 		return true, nil
@@ -452,7 +481,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -476,8 +505,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 }
 
 var (
-	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
 	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
