@@ -51,6 +51,7 @@ var (
 	_ StmtNode = &KillStmt{}
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
+	_ StmtNode = &SetBindingStmt{}
 	_ StmtNode = &ShutdownStmt{}
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
@@ -1687,7 +1688,7 @@ const (
 	BindingStatusTypeIgnored
 )
 
-// SetBindingStmt sets sql binding hint.
+// SetBindingStmt sets sql binding status.
 type SetBindingStmt struct {
 	stmtNode
 

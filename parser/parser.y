@@ -6139,6 +6139,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"IGNORED"
 |	"MIN"
 |	"MAX"
 |	"NOW"
