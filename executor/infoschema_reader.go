@@ -512,13 +512,17 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
 
