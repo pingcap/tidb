@@ -6377,6 +6377,8 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	tk2.MustExec("alter table t1 read write")
 }
 
+type checkRet func(c *C, err1, err2 error)
+
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
