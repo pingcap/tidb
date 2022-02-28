@@ -11,6 +11,8 @@ import (
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
+	// For pprof
+	_ "net/http/pprof" // #nosec G108
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
