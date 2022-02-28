@@ -788,7 +788,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj.names = make([]*types.FieldName, len(v.Exprs))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 
-	// Since do statement only contain expression list, and it may contain aggFunc, detect the build the aggMapper firstly.
+	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
 	var (
 		err      error
 		aggFuncs []*ast.AggregateFuncExpr
@@ -938,7 +938,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	return p, nil
 }
 
-// detectDoAgg detects an aggregate function in its exprs.
+// detectAggInExprNode detects an aggregate function in its exprs.
 func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
 	for _, expr := range exprs {
 		if ast.HasAggFlag(expr) {
