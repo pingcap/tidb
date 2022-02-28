@@ -1011,6 +1011,8 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

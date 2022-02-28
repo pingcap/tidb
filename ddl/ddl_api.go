@@ -209,18 +209,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 }
 
 func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
-	sessionVars := ctx.GetSessionVars()
-	count, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBBatchPendingTiFlashCount)
-	if err != nil {
-		logutil.BgLogger().Error("can not get TiDBBatchPendingTiFlashCount", zap.Error(err))
-		return variable.DefTiDBBatchPendingTiFlashCount
-	}
-	c, err := strconv.ParseUint(count, 10, 64)
-	if err != nil {
-		logutil.BgLogger().Error("can not parse TiDBBatchPendingTiFlashCount", zap.Error(err))
-		return variable.DefTiDBBatchPendingTiFlashCount
-	}
-	return uint32(c)
+	return uint32(ctx.GetSessionVars().BatchPendingTiFlashCount)
 }
 
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
@@ -295,11 +284,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
-		// When handled some tables, we need to wait some tables become available.
+		// Alter `tiflashCheckPendingTablesTick` tables are handled, we need to check if we have reached threshold.
 		if (succ+fail)%tiflashCheckPendingTablesTick == 0 || forceCheck {
-			// Maybe current schema is not up-to-date, we will execute one probing ddl to update,
-			// if we timeout in `pendingFunc`. However, we shall mark `forceCheck` to true, there will still be checking
-			// after this iteration.
+			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
+			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			forceCheck = true
 			pendingFunc := func() bool {
 				for retry := 0; retry < configRetry; retry += 1 {

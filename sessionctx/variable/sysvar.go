@@ -1400,7 +1400,11 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBatchPendingTiFlashCount, Value: strconv.Itoa(DefTiDBBatchPendingTiFlashCount), MinValue: 1, MaxValue: math.MaxUint32, Hidden: false, Type: TypeUnsigned, SetSession: func(s *SessionVars, val string) error {
-		s.AssertionLevel = tidbOptAssertionLevel(val)
+		b, e := strconv.Atoi(val)
+		if e != nil {
+			b = DefTiDBBatchPendingTiFlashCount
+		}
+		s.BatchPendingTiFlashCount = b
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
