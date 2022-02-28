@@ -2631,9 +2631,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1. switch off the tidb_enable_historical_stats, and there is no record in table `mysql.stats_meta_history`
-	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
-	num, _ := strconv.Atoi(rows[0][0].(string))
-	require.Equal(t, num, 0)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 	// insert demo tuples, and there is no record either.
 	insertNums := 5
 	for i := 0; i < insertNums; i++ {
@@ -2641,9 +2639,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
 		require.NoError(t, err)
 	}
-	rows = tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Rows()
-	num, _ = strconv.Atoi(rows[0][0].(string))
-	require.Equal(t, num, 0)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 
 	// 2. switch on the tidb_enable_historical_stats and insert tuples to produce count/modifyCount delta change.
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -2654,12 +2650,6 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
 		require.NoError(t, err)
 	}
-	rows = tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Rows()
-	require.Equal(t, len(rows), insertNums)
-	for i, row := range rows {
-		modifyCount, _ := strconv.Atoi(row[0].(string))
-		count, _ := strconv.Atoi(row[1].(string))
-		require.Equal(t, modifyCount, (insertNums+i+1)*3)
-		require.Equal(t, count, (insertNums+i+1)*3)
-	}
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
+		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
 }

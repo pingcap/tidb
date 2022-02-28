@@ -486,10 +486,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(id, statsVer)
 		}
 	}()
