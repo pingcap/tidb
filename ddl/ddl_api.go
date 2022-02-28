@@ -272,6 +272,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	forceCheck := false
 
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
+	threshold := getBatchPendingTiFlashCount(sctx)
+	configRetry := tiflashCheckPendingTablesRetry
+	configWaitTime := tiflashCheckPendingTablesWaitTime
+	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+		configRetry = value.(int)
+		configWaitTime = time.Second
+	})
+
 	for _, tbl := range dbInfo.Tables {
 		select {
 		case <-ctx.Done():
@@ -287,20 +295,20 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			continue
 		}
 
-		configRetry := tiflashCheckPendingTablesRetry
-		configWaitTime := tiflashCheckPendingTablesWaitTime
-		failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
-			configRetry = value.(int)
-			configWaitTime = time.Second
-		})
 		// When handled some tables, we need to wait some tables become available.
 		if (succ+fail)%tiflashCheckPendingTablesTick == 0 || forceCheck {
-			// Maybe current schema is not up-to-date, so we should one ddlJob to update current schema from time to time.
+			// Maybe current schema is not up-to-date, we will execute one probing ddl to update,
+			// if we timeout in `pendingFunc`. However, we shall mark `forceCheck` to true, there will still be checking
+			// after this iteration.
 			forceCheck = true
 			pendingFunc := func() bool {
 				for retry := 0; retry < configRetry; retry += 1 {
+					select {
+					case <-ctx.Done():
+						return true
+					default:
+					}
 					d.getPendingTiFlashTableCount(&originVersion, &pendingCount)
-					threshold := getBatchPendingTiFlashCount(sctx)
 					delay := time.Duration(0)
 					if pendingCount >= threshold {
 						logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
@@ -311,8 +319,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 						return false
 					}
 					select {
-					case <-ctx.Done():
-						return true
 					case <-time.After(delay):
 					}
 				}
