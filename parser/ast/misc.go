@@ -1681,6 +1681,70 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// Binding status types.
+const (
+	BindingStatusTypeUsing uint8 = iota
+	BindingStatusTypeIgnored
+)
+
+// SetBindingStmt sets sql binding hint.
+type SetBindingStmt struct {
+	stmtNode
+
+	GlobalScope       bool
+	BindingStatusType uint8
+	OriginNode        StmtNode
+	HintedNode        StmtNode
+}
+
+func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET ")
+	if n.GlobalScope {
+		ctx.WriteKeyWord("GLOBAL ")
+	} else {
+		ctx.WriteKeyWord("SESSION ")
+	}
+	ctx.WriteKeyWord("BINDING ")
+	switch n.BindingStatusType {
+	case BindingStatusTypeUsing:
+		ctx.WriteKeyWord("USING ")
+	case BindingStatusTypeIgnored:
+		ctx.WriteKeyWord("IGNORED ")
+	}
+	ctx.WriteKeyWord("FOR ")
+	if err := n.OriginNode.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if n.HintedNode != nil {
+		ctx.WriteKeyWord(" USING ")
+		if err := n.HintedNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetBindingStmt)
+	origNode, ok := n.OriginNode.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OriginNode = origNode.(StmtNode)
+	if n.HintedNode != nil {
+		hintedNode, ok := n.HintedNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HintedNode = hintedNode.(StmtNode)
+	}
+	return v.Leave(n)
+}
+
 // Extended statistics types.
 const (
 	StatsTypeCardinality uint8 = iota

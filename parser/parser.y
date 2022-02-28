@@ -653,6 +653,7 @@ import (
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	ignored               "IGNORED"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
 	leader                "LEADER"
@@ -912,6 +913,7 @@ import (
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
+	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
 	ShowImportStmt             "SHOW IMPORT statement"
@@ -1163,6 +1165,7 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
 	SubPartDefinitionList                  "SubPartition definition list"
@@ -3413,6 +3416,16 @@ StatsType:
 |	"CORRELATION"
 	{
 		$$ = ast.StatsTypeCorrelation
+	}
+
+BindingStatusType:
+	"USING"
+	{
+		$$ = ast.BindingStatusTypeUsing
+	}
+|	"IGNORED"
+	{
+		$$ = ast.BindingStatusTypeIgnored
 	}
 
 CreateStatisticsStmt:
@@ -12647,6 +12660,43 @@ DropBindingStmt:
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+
+SetBindingStmt:
+	"SET" GlobalScope "BINDING" BindingStatusType "FOR" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $6
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			GlobalScope:       $2.(bool),
+			BindingStatusType: $4.(uint8),
+			OriginNode:        originStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" GlobalScope "BINDING" BindingStatusType "FOR" BindableStmt "USING" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.startOffset(&yyS[yypt-1])
+		originStmt := $6
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+
+		startOffset = parser.startOffset(&yyS[yypt])
+		hintedStmt := $8
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			GlobalScope:       $2.(bool),
+			BindingStatusType: $4.(uint8),
+			OriginNode:        originStmt,
+			HintedNode:        hintedStmt,
+			GlobalScope:       $2.(bool),
 		}
 
 		$$ = x

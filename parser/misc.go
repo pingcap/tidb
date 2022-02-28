@@ -405,6 +405,7 @@ var tokenMap = map[string]int{
 	"IS":                       is,
 	"ISOLATION":                isolation,
 	"ISSUER":                   issuer,
+	"IGNORED":                  ignored,
 	"JOB":                      job,
 	"JOBS":                     jobs,
 	"JOIN":                     join,
