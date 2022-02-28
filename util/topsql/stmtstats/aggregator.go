@@ -38,6 +38,7 @@ type aggregator struct {
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
 	running    *atomic.Bool
+	wg         sync.WaitGroup
 }
 
 // newAggregator creates an empty aggregator.
@@ -49,6 +50,11 @@ func newAggregator() *aggregator {
 func (m *aggregator) run() {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.running.Store(true)
+	m.wg.Add(1)
+	defer func() {
+		m.running.Store(false)
+		m.wg.Done()
+	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
@@ -117,7 +123,7 @@ func (m *aggregator) unregisterCollector(collector Collector) {
 // close ends the execution of the current aggregator.
 func (m *aggregator) close() {
 	m.cancel()
-	m.running.Store(false)
+	m.wg.Wait()
 }
 
 // closed returns whether the aggregator has been closed.
