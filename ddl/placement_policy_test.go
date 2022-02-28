@@ -39,17 +39,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func clearAllBundles(t *testing.T) {
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	require.NoError(t, err)
-	clearBundles := make([]*placement.Bundle, 0, len(bundles))
-	for _, bundle := range bundles {
-		clearBundles = append(clearBundles, &placement.Bundle{ID: bundle.ID})
-	}
-	err = infosync.PutRuleBundles(context.TODO(), clearBundles)
-	require.NoError(t, err)
-}
-
 func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, tbName string) {
 	tblInfo, err := do.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	require.NoError(t, err)
