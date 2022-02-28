@@ -307,6 +307,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 						return false
 					}
 					select {
+					case <-ctx.Done():
+						return true
 					case <-time.After(delay):
 					}
 				}
