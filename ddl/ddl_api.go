@@ -223,7 +223,8 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 	return uint32(c)
 }
 
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion *int64, pendingCount *uint32) {
+// getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
+func (d *ddl) getPendingTiFlashTableCount(originVersion *int64, pendingCount *uint32) {
 	is := d.infoCache.GetLatest()
 	dbInfos := is.AllSchemas()
 	// If there are no schema change since last time(can be weird)
@@ -274,7 +275,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	for _, tbl := range dbInfo.Tables {
 		select {
 		case <-ctx.Done():
-			logutil.BgLogger().Info("intermediate quit TiFlash", zap.Int64("schemaID", dbInfo.ID))
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 			return nil
 		default:
 		}
@@ -285,7 +286,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			skip += 1
 			continue
 		}
-		logutil.BgLogger().Info("start processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 
 		configRetry := tiflashCheckPendingTablesRetry
 		configWaitTime := tiflashCheckPendingTablesWaitTime
@@ -299,7 +299,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			forceCheck = true
 			pendingFunc := func() bool {
 				for retry := 0; retry < configRetry; retry += 1 {
-					d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
+					d.getPendingTiFlashTableCount(&originVersion, &pendingCount)
 					threshold := getBatchPendingTiFlashCount(sctx)
 					delay := time.Duration(0)
 					if pendingCount >= threshold {
@@ -307,7 +307,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 						delay = configWaitTime
 					} else {
 						// If there are not many unavailable tables, we will no longer need force check.
-						logutil.BgLogger().Info("no many unavailable tables", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Bool("isOwner", d.isOwner()), zap.Int64("tableID", tbl.ID))
 						forceCheck = false
 						return false
 					}
@@ -321,7 +320,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 				return false
 			}
 			if pendingFunc() {
-				logutil.BgLogger().Info("intermediate quit TiFlash", zap.Int64("schemaID", dbInfo.ID))
+				logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 				return nil
 			}
 		}
@@ -350,7 +349,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
 	sctx.GetSessionVars().StmtCtx.SetMessage(msg)
-	logutil.BgLogger().Info("finish normally", zap.Int64("schemaID", dbInfo.ID))
+	logutil.BgLogger().Info("finish batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 	return nil
 }
 
