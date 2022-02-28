@@ -217,18 +217,19 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
+	resultRows := make([]types.Datum, 0, len(m.columns))
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
-		row, err := m.decodeRecordKeyValue(key, value)
+		err := m.decodeRecordKeyValue(key, value, resultRows)
 		if err != nil {
 			return err
 		}
 
-		mutableRow.SetDatums(row...)
+		mutableRow.SetDatums(resultRows...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
-		m.addedRows = append(m.addedRows, row)
+		m.addedRows = append(m.addedRows, resultRows)
 		return nil
 	})
 	if err != nil {
@@ -242,30 +243,30 @@ func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum, error) {
+func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows []types.Datum) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return m.decodeRowData(handle, value)
+	return m.decodeRowData(handle, value, resultRows)
 }
 
 // decodeRowData uses to decode row data value.
-func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.Datum, error) {
+func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows []types.Datum) error {
 	values, err := m.getRowData(handle, value)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	ds := make([]types.Datum, 0, len(m.columns))
+	resultRows = resultRows[0:0]
 	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
 		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
 		if err != nil {
-			return nil, err
+			return err
 		}
-		ds = append(ds, d)
+		resultRows = append(resultRows, d)
 	}
-	return ds, nil
+	return nil
 }
 
 // getRowData decodes raw byte slice to row data.
