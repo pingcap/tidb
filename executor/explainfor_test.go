@@ -1437,9 +1437,9 @@ func (s *testPrepareSerialSuite) TestValidity4PlanCache(c *C) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
-	tk.MustExec("use test")
+	tk.MustExec("use test") // still read plan_cache.t and can hit the cache
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func (s *testPrepareSerialSuite) TestListPartition4PlanCache(c *C) {
