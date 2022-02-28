@@ -1722,7 +1722,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatistics),
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
-			strings.ToLower(infoschema.TableTables),
 			strings.ToLower(infoschema.TableReferConst),
 			strings.ToLower(infoschema.TableSequences),
 			strings.ToLower(infoschema.TablePartitions),
@@ -1758,6 +1757,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				retriever: &memtableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
+				},
+			}
+
+		case strings.ToLower(infoschema.TableTables):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &memtableRetriever{
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.TablesTableExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),

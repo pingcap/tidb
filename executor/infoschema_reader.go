@@ -80,6 +80,7 @@ type memtableRetriever struct {
 	rows        [][]types.Datum
 	rowIdx      int
 	retrieved   bool
+	extractor   plannercore.MemTablePredicateExtractor
 	initialized bool
 }
 
@@ -507,16 +508,101 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return err
 	}
-
+	extractor, ok := e.extractor.(*plannercore.TablesTableExtractor)
+	if !ok {
+		return errors.New("illegal extractor type")
+	}
 	checker := privilege.GetPrivilegeManager(sctx)
+	var tableCatalogRegexp, tableSchemaRegexp, tableNameRegexp, engineRegexp, tableCollationRegexp, createOptionsRegexp []*regexp.Regexp
+	var tableCatalogFilterEnable, tableSchemaFilterEnable, tableNameFilterEnable, engineFilterEnable, tableCollationFilterEnable, createOptionsFilterEnable bool
+	if !extractor.SkipRequest {
+		tableCatalogFilterEnable = extractor.TableCatalog.Count() > 0
+		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
+		tableNameFilterEnable = extractor.TableName.Count() > 0
+		engineFilterEnable = extractor.Engine.Count() > 0
+		tableCollationFilterEnable = extractor.TableCollation.Count() > 0
+		createOptionsFilterEnable = extractor.CreateOptions.Count() > 0
 
+		if len(extractor.TableCatalogPatterns) > 0 {
+			tableCatalogRegexp = make([]*regexp.Regexp, len(extractor.TableCatalogPatterns))
+			for i, pattern := range extractor.TableCatalogPatterns {
+				tableCatalogRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.EnginePatterns) > 0 {
+			engineRegexp = make([]*regexp.Regexp, len(extractor.EnginePatterns))
+			for i, pattern := range extractor.EnginePatterns {
+				engineRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.TableCollationPatterns) > 0 {
+			tableCollationRegexp = make([]*regexp.Regexp, len(extractor.TableCollationPatterns))
+			for i, pattern := range extractor.TableCollationPatterns {
+				tableCollationRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+		if len(extractor.CreateOptionsPatterns) > 0 {
+			createOptionsRegexp = make([]*regexp.Regexp, len(extractor.CreateOptionsPatterns))
+			for i, pattern := range extractor.CreateOptionsPatterns {
+				createOptionsRegexp[i] = regexp.MustCompile(pattern)
+			}
+		}
+	}
+	if engineFilterEnable && !extractor.Engine.Exist("InnoDB") {
+		return nil
+	}
+	for _, re := range engineRegexp {
+		if !re.MatchString("InnoDB") {
+			return nil
+		}
+	}
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+ForSchemasTag:
 	for _, schema := range schemas {
+	ForTablesTag:
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
+			}
+			if !extractor.SkipRequest {
+				if tableCatalogFilterEnable && !extractor.TableCatalog.Exist(infoschema.CatalogVal) {
+					continue
+				}
+				for _, re := range tableCatalogRegexp {
+					if !re.MatchString(infoschema.CatalogVal) {
+						continue ForTablesTag
+					}
+				}
+				if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
+					continue ForSchemasTag
+				}
+				for _, re := range tableSchemaRegexp {
+					if !re.MatchString(schema.Name.O) {
+						continue ForSchemasTag
+					}
+				}
+				if tableNameFilterEnable && !extractor.TableName.Exist(table.Name.L) {
+					continue
+				}
+				for _, re := range tableNameRegexp {
+					if !re.MatchString(table.Name.L) {
+						continue ForTablesTag
+					}
+				}
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
@@ -531,6 +617,24 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					createOptions = "partitioned"
 				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
 					createOptions = "cached=on"
+				}
+				if !extractor.SkipRequest {
+					if tableCollationFilterEnable && !extractor.TableCollation.Exist(strings.ToLower(collation)) {
+						continue
+					}
+					for _, re := range tableCollationRegexp {
+						if !re.MatchString(strings.ToLower(collation)) {
+							continue ForTablesTag
+						}
+					}
+					if createOptionsFilterEnable && !extractor.CreateOptions.Exist(createOptions) {
+						continue
+					}
+					for _, re := range createOptionsRegexp {
+						if !re.MatchString(createOptions) {
+							continue ForTablesTag
+						}
+					}
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
