@@ -1084,8 +1084,13 @@ func (s *tiflashTestSuite) TestTiflashPartitionTableScan(c *C) {
 	time.Sleep(2 * time.Second)
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	// MPP
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
 
+	// BatchCop
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF;")
+	tk.MustExec("set @@tidb_allow_batch_cop = 2;")
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
 }
