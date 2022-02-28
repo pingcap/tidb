@@ -73,7 +73,7 @@ func PreparedPlanCacheEnabled() bool {
 type planCacheKey struct {
 	database             string
 	connID               uint64
-	pstmtID              uint32
+	stmtText             string
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -95,7 +95,7 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -115,12 +115,12 @@ func (key *planCacheKey) Hash() []byte {
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
+func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
 	psStmtKey, isPsStmtKey := key.(*planCacheKey)
 	if !isPsStmtKey {
 		return
 	}
-	psStmtKey.pstmtID = pstmtID
+	psStmtKey.stmtText = stmtText
 	psStmtKey.schemaVersion = schemaVersion
 	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
 	for k, v := range isolationReadEngines {
@@ -130,7 +130,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText string, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -138,7 +138,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVe
 	key := &planCacheKey{
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
+		stmtText:             stmtText,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -207,6 +207,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
+	StmtText            string
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}

@@ -166,7 +166,7 @@ func (ts *TiDBStatement) Close() error {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
 			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+				ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.PreparedAst.SchemaVersion))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}

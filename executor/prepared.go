@@ -244,6 +244,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:         prepared,
+		StmtText:            prepared.Stmt.Text(),
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
@@ -331,7 +332,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
-			vars, id, prepared.SchemaVersion,
+			vars, preparedObj.StmtText, prepared.SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)
