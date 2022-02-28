@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -398,14 +397,13 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
-// TestGetTableByName gets table by name for test.
-func TestGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
+// GetTableByName gets table by name for test.
+func (tk *TestKit) GetTableByName(db, table string) table.Table {
+	dom := domain.GetDomain(tk.Session())
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
+	tk.require.NoError(dom.Reload())
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
+	tk.require.NoError(err)
 	return tbl
 }
 
