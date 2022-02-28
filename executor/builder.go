@@ -3851,10 +3851,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
-		} else {
-			handles, _ := dedupHandles(lookUpContents)
-			return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 		}
+		handles, _ := dedupHandles(lookUpContents)
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
