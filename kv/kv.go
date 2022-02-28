@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -466,6 +467,11 @@ type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
+}
+
+// StorageWithPD is used to get pd client.
+type StorageWithPD interface {
+	GetPDClient() pd.Client
 }
 
 // FnKeyCmp is the function for iterator the keys

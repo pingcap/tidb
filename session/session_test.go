@@ -74,7 +74,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -6004,4 +6004,14 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

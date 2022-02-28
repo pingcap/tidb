@@ -1014,6 +1014,26 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// DayName: supported
+	function, err = NewFunction(mock.NewContext(), ast.DayName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// MonthName: supported
+	function, err = NewFunction(mock.NewContext(), ast.MonthName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// regexpUTF8: supported
+	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// regexp: supported
+	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1359,6 +1379,10 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		require.NoError(t, err)
 		exprs = append(exprs, function)
 	}
+
+	function, err = NewFunction(mock.NewContext(), ast.Mod, types.NewFieldType(mysql.TypeInt24), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
