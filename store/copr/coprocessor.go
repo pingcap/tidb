@@ -158,7 +158,7 @@ type copTask struct {
 	paging     bool
 	pagingSize uint64
 
-	partitionID int64
+	partitionID int64 // used by balanceBatchCopTask in PartitionTableScan
 }
 
 func (r *copTask) String() string {

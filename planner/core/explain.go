@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -291,6 +292,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if p.IsGlobalRead {
 		buffer.WriteString(", global read")
+	}
+	if p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.StoreType == kv.TiFlash {
+		buffer.WriteString(", PartitionTableScan")
 	}
 	return buffer.String()
 }

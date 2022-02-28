@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
@@ -34,6 +35,17 @@ type RegionInfo struct {
 	Ranges      *KeyRanges
 	AllStores   []uint64
 	PartitionID int64
+}
+
+func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {
+	return &coprocessor.RegionInfo{
+		RegionId: ri.Region.GetID(),
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: ri.Region.GetConfVer(),
+			Version: ri.Region.GetVer(),
+		},
+		Ranges: ri.Ranges.ToPBRanges(),
+	}
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.

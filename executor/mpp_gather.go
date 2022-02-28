@@ -83,7 +83,6 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
 			State:     kv.MppTaskReady,
-			TableIDs:  mppTask.TableIDs,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}

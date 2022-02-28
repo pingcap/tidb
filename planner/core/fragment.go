@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -93,10 +92,6 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 
 type mppAddr struct {
 	addr string
-}
-
-func (m *mppAddr) GetTableRegions() []*coprocessor.TableRegions {
-	return nil
 }
 
 func (m *mppAddr) GetAddress() string {
@@ -334,10 +329,10 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, ts.Table.ID)
+	return e.constructMPPTasksForSinglePhysicalTable(ctx, kvRanges, ts.Table.ID)
 }
 
-func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) constructMPPTasksForSinglePhysicalTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
 	req := &kv.MPPBuildTasksRequest{
 		KeyRanges: kvRanges,
 	}

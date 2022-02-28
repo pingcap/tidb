@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -52,10 +51,6 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-func (c *batchCopTask) GetTableRegions() []*coprocessor.TableRegions {
-	return c.PartitionTableRegions
-}
-
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
 	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
@@ -67,9 +62,9 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
+	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRangesForPartition != nil {
-		ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
-		bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 		rangess := make([]*KeyRanges, len(req.KeyRangesForPartition))
 		for i, ranges := range req.KeyRangesForPartition {
 			rangess[i] = NewKeyRanges(ranges)
@@ -85,8 +80,6 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		return mppTasks, nil
 	}
 
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
-	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
@@ -222,16 +215,10 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
 		for _, ri := range originalTask.regionInfos {
-			regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-				RegionId: ri.Region.GetID(),
-				RegionEpoch: &metapb.RegionEpoch{
-					ConfVer: ri.Region.GetConfVer(),
-					Version: ri.Region.GetVer(),
-				},
-				Ranges: ri.Ranges.ToPBRanges(),
-			})
+			regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 		}
 	}
+
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress()}
 
@@ -239,13 +226,15 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:      60,
-		SchemaVer:    req.SchemaVar,
-		Regions:      regionInfos,
-		TableRegions: req.Meta.GetTableRegions(),
+		Timeout:   60,
+		SchemaVer: req.SchemaVar,
+		Regions:   regionInfos,
 	}
-	if mppReq.TableRegions != nil {
-		mppReq.Regions = nil
+	if originalTask != nil {
+		mppReq.TableRegions = originalTask.PartitionTableRegions
+		if mppReq.TableRegions != nil {
+			mppReq.Regions = nil
+		}
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})

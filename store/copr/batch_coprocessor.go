@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
@@ -628,23 +627,16 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 		if partitionIDs != nil {
 			for _, copTask := range batchTasks {
 				tableRegions := make([]*coprocessor.TableRegions, len(partitionIDs))
-				// init
+				// init coprocessor.TableRegions
 				for j, pid := range partitionIDs {
 					tableRegions[j] = &coprocessor.TableRegions{
 						PhysicalTableId: pid,
 					}
 				}
-				// fill
+				// fill region infos
 				for _, ri := range copTask.regionInfos {
 					tableRegions[ri.PartitionID].Regions = append(tableRegions[ri.PartitionID].Regions,
-						&coprocessor.RegionInfo{
-							RegionId: ri.Region.GetID(),
-							RegionEpoch: &metapb.RegionEpoch{
-								ConfVer: ri.Region.GetConfVer(),
-								Version: ri.Region.GetVer(),
-							},
-							Ranges: ri.Ranges.ToPBRanges(),
-						})
+						ri.toCoprocessorRegionInfo())
 				}
 				// clear empty table region
 				for j := len(tableRegions) - 1; j >= 0; j-- {
@@ -847,14 +839,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
-		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: ri.Region.GetID(),
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: ri.Region.GetConfVer(),
-				Version: ri.Region.GetVer(),
-			},
-			Ranges: ri.Ranges.ToPBRanges(),
-		})
+		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 	}
 
 	copReq := coprocessor.BatchRequest{
@@ -863,7 +848,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		Data:         b.req.Data,
 		SchemaVer:    b.req.SchemaVar,
 		Regions:      regionInfos,
-		TableRegions: task.GetTableRegions(),
+		TableRegions: task.PartitionTableRegions,
 	}
 	if copReq.TableRegions != nil {
 		copReq.Regions = nil

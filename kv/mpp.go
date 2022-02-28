@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
@@ -26,8 +25,6 @@ import (
 type MPPTaskMeta interface {
 	// GetAddress indicates which node this task should execute on.
 	GetAddress() string
-	// GetTableRegions indicates which regions this task should execute on.
-	GetTableRegions() []*coprocessor.TableRegions
 }
 
 // MPPTask means the minimum execution unit of a mpp computation job.
@@ -77,9 +74,6 @@ type MPPDispatchRequest struct {
 	StartTs   uint64
 	ID        int64 // identify a single task
 	State     MppTaskStates
-
-	// for partition table
-	TableIDs []int64
 }
 
 // MPPClient accepts and processes mpp requests.
