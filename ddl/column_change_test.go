@@ -56,7 +56,7 @@ func TestColumnChangeSuite(t *testing.T) {
 
 func (s *testColumnChangeSuiteToVerify) SetupSuite() {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store = testCreateStore(s.T(), "test_column_change")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),

@@ -100,7 +100,7 @@ func TestForeignKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := testCreateStoreT(t, "test_foreign")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)

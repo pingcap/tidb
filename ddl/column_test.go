@@ -55,7 +55,7 @@ func TestColumnSuite(t *testing.T) {
 }
 
 func (s *testColumnSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_column")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
