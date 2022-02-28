@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
