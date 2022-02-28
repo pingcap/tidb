@@ -335,7 +335,7 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each partition table
+	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
 	// All fields above are immutable.
 

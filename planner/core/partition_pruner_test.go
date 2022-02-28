@@ -303,14 +303,14 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, indexPlanTree)
 
 		// compare the result.
-		result := tk.MustQuery(tt.SQL).Sort()
-		idxResult := tk1.MustQuery(tt.SQL).Sort()
+		result := tk.MustQuery(tt.SQL)
+		idxResult := tk1.MustQuery(tt.SQL)
 		result.Check(idxResult.Rows())
 		result.Check(testkit.Rows(output[i].Result...))
 
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt.SQL, "partition(") {
-			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
+			result.Check(tk2.MustQuery(tt.SQL).Rows())
 			valid = true
 		}
 	}
