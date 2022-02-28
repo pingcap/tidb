@@ -36,14 +36,12 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
 type testDDLSuiteToVerify struct {
 	suite.Suite
-	testutil.CommonHandleSuite
 }
 
 func TestDDLSuite(t *testing.T) {
@@ -74,7 +72,7 @@ func (s *testDDLSerialSuiteToVerify) SetupSuite() {
 }
 
 func (s *testDDLSuiteToVerify) TestCheckOwner() {
-	store := testCreateStore(s.T(), "test_owner")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -97,8 +95,10 @@ func (s *testDDLSuiteToVerify) TestCheckOwner() {
 }
 
 func (s *testDDLSuiteToVerify) TestNotifyDDLJob() {
-	store := testCreateStore(s.T(), "test_notify_job")
-	defer store.Close()
+	store := createMockStore(s.T())
+	defer func() {
+		require.NoError(s.T(), store.Close())
+	}()
 
 	getFirstNotificationAfterStartDDL := func(d *ddl) {
 		select {
@@ -189,7 +189,7 @@ func (s *testDDLSuiteToVerify) TestNotifyDDLJob() {
 
 // testRunWorker tests no job is handled when the value of RunWorker is false.
 func (s *testDDLSerialSuiteToVerify) testRunWorker() {
-	store := testCreateStore(s.T(), "test_run_worker")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -229,7 +229,7 @@ func (s *testDDLSerialSuiteToVerify) testRunWorker() {
 }
 
 func (s *testDDLSuiteToVerify) TestSchemaError() {
-	store := testCreateStore(s.T(), "test_schema_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -251,7 +251,7 @@ func (s *testDDLSuiteToVerify) TestSchemaError() {
 }
 
 func (s *testDDLSuiteToVerify) TestTableError() {
-	store := testCreateStore(s.T(), "test_table_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -305,7 +305,7 @@ func (s *testDDLSuiteToVerify) TestTableError() {
 }
 
 func (s *testDDLSuiteToVerify) TestViewError() {
-	store := testCreateStore(s.T(), "test_view_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -341,7 +341,7 @@ func (s *testDDLSuiteToVerify) TestViewError() {
 }
 
 func (s *testDDLSuiteToVerify) TestInvalidDDLJob() {
-	store := testCreateStore(s.T(), "test_invalid_ddl_job_type_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -370,7 +370,7 @@ func (s *testDDLSuiteToVerify) TestInvalidDDLJob() {
 }
 
 func (s *testDDLSuiteToVerify) TestForeignKeyError() {
-	store := testCreateStore(s.T(), "test_foreign_key_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -401,7 +401,7 @@ func (s *testDDLSuiteToVerify) TestForeignKeyError() {
 }
 
 func (s *testDDLSuiteToVerify) TestIndexError() {
-	store := testCreateStore(s.T(), "test_index_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -450,7 +450,7 @@ func (s *testDDLSuiteToVerify) TestIndexError() {
 }
 
 func (s *testDDLSuiteToVerify) TestColumnError() {
-	store := testCreateStore(s.T(), "test_column_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -511,7 +511,7 @@ func (s *testDDLSuiteToVerify) TestColumnError() {
 }
 
 func (s *testDDLSerialSuiteToVerify) TestAddBatchJobError() {
-	store := testCreateStore(s.T(), "test_add_batch_job_error")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -830,7 +830,7 @@ func checkIdxVisibility(changedTable table.Table, idxName string, expected bool)
 }
 
 func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
-	store := testCreateStore(s.T(), "test_cancel_job")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -1457,7 +1457,7 @@ func (s *testDDLSuiteToVerify) TestIgnorableSpec() {
 }
 
 func (s *testDDLSuiteToVerify) TestBuildJobDependence() {
-	store := testCreateStore(s.T(), "test_set_job_relation")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -1544,7 +1544,7 @@ func addDDLJob(t *testing.T, d *ddl, job *model.Job) {
 }
 
 func (s *testDDLSuiteToVerify) TestParallelDDL() {
-	store := testCreateStore(s.T(), "test_parallel_ddl")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -1750,7 +1750,7 @@ func (s *testDDLSuiteToVerify) TestParallelDDL() {
 }
 
 func (s *testDDLSuiteToVerify) TestDDLPackageExecuteSQL() {
-	store := testCreateStore(s.T(), "test_run_sql")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)

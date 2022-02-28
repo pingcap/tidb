@@ -54,7 +54,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d *ddl, pol
 }
 
 func (s *testDDLSuiteToVerify) TestPlacementPolicyInUse() {
-	store := testCreateStore(s.T(), "test_placement_policy_in_use")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)

@@ -46,7 +46,7 @@ func TestIndexChangeSuite(t *testing.T) {
 }
 
 func (s *testIndexChangeSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_index_change")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
