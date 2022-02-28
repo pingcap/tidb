@@ -2886,22 +2886,24 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 	tableName = s[2]
 	if len(s) > 3 {
 		partitionName = s[3]
-	} else {
-		partitionName = ""
 	}
 	return
 }
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
+	if len(rule.Data) == 0 {
+		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		return
+	}
 	data := rule.Data[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		err = errors.New("get the label rules failed")
+		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
 		return
 	}
 	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
 	if err != nil {
-		err = errors.New("decode key from start_key in rule failed")
+		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
 		return
 	}
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -2910,7 +2912,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	}
 	tableID = tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		err = errors.New("decode tableID from key failed")
+		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
 		return
 	}
 	return
