@@ -1926,10 +1926,10 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 }
 
 func TestInsertIntoSelectError(t *testing.T) {
-	store, clean := testkit2.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	tk := testkit2.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
 	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
