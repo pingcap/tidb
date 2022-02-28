@@ -322,15 +322,15 @@ func (s *session) cleanRetryInfo() {
 	var cacheKey kvcache.Key
 	var err error
 	var preparedAst *ast.Prepared
-	var stmtText string
+	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				stmtText = preparedObj.StmtText
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, preparedAst.SchemaVersion)
+				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
 			}
 		}
 	}

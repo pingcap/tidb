@@ -130,16 +130,19 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText string, schemaVersion int64) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
+	}
+	if stmtDB == "" {
+		return nil, errors.New("no statement database")
 	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &planCacheKey{
-		database:             sessionVars.CurrentDB,
+		database:             stmtDB,
 		connID:               sessionVars.ConnectionID,
 		stmtText:             stmtText,
 		schemaVersion:        schemaVersion,
@@ -211,6 +214,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
 	StmtText            string
+	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}
