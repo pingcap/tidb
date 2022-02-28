@@ -1251,7 +1251,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	oldTbl := testGetTableByName(c, tk.Se, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl.Meta().Partition, NotNil)
 	part := tbl.Meta().Partition
@@ -1282,7 +1282,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	oldTbl := testGetTableByName(c, tk.Se, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl.Meta().Partition, NotNil)
 	part := tbl.Meta().Partition

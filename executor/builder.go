@@ -3213,7 +3213,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruningList(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	usedPartitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3222,12 +3222,12 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		sctx.IsTiFlash.Store(true)
 	}
 
-	if len(partitions) == 0 {
+	if len(usedPartitions) == 0 {
 		return &TableDualExec{baseExecutor: *ret.base()}
 	}
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
-		partitions: partitions,
+		partitions: usedPartitions,
 	}
 
 	return ret
@@ -3872,7 +3872,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	var kvRanges []kv.KeyRange
 	if v.IsCommonHandle {
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
-			// In this case we can use dynamic partition pruning.
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			for _, content := range lookUpContents {
@@ -3958,14 +3957,13 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
-	partitions []table.PhysicalTable
+	partitions map[int64]table.PhysicalTable
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, 0, len(h.partitions))
 	pids := make([]int64, 0, len(h.partitions))
-	for _, p := range h.partitions {
-		pid := p.GetPhysicalID()
+	for pid, p := range h.partitions {
 		meta := p.Meta()
 		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
@@ -3979,8 +3977,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
-	for _, p := range h.partitions {
-		pid := p.GetPhysicalID()
+	for pid, p := range h.partitions {
 		meta := p.Meta()
 		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
