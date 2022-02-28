@@ -303,14 +303,14 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, indexPlanTree)
 
 		// compare the result.
-		result := tk.MustQuery(tt.SQL)
-		idxResult := tk1.MustQuery(tt.SQL)
+		result := tk.MustQuery(tt.SQL).Sort()
+		idxResult := tk1.MustQuery(tt.SQL).Sort()
 		result.Check(idxResult.Rows())
 		result.Check(testkit.Rows(output[i].Result...))
 
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt.SQL, "partition(") {
-			result.Check(tk2.MustQuery(tt.SQL).Rows())
+			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
 			valid = true
 		}
 	}
@@ -468,7 +468,7 @@ func (s *testPartitionPruneSuit) TestIssue22898(c *C) {
 	tk.MustExec("CREATE TABLE NT_RP3763 (COL1 TINYINT(8) SIGNED COMMENT \"NUMERIC NO INDEX\" DEFAULT 41,COL2 VARCHAR(20),COL3 DATETIME,COL4 BIGINT,COL5 FLOAT) PARTITION BY RANGE (COL1 * COL3) (PARTITION P0 VALUES LESS THAN (0),PARTITION P1 VALUES LESS THAN (10),PARTITION P2 VALUES LESS THAN (20),PARTITION P3 VALUES LESS THAN (30),PARTITION P4 VALUES LESS THAN (40),PARTITION P5 VALUES LESS THAN (50),PARTITION PMX VALUES LESS THAN MAXVALUE);")
 	tk.MustExec("insert into NT_RP3763 (COL1,COL2,COL3,COL4,COL5) values(-82,\"夐齏醕皆磹漋甓崘潮嵙燷渏艂朼洛炷鉢儝鱈肇\",\"5748\\-06\\-26\\ 20:48:49\",-3133527360541070260,-2.624880003397658e+38);")
 	tk.MustExec("insert into NT_RP3763 (COL1,COL2,COL3,COL4,COL5) values(48,\"簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢\",\"7228\\-12\\-13\\ 02:59:54\",-6181009269190017937,2.7731105531290494e+38);")
-	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (10, 48, -82);").Check(testkit.Rows("-82 夐齏醕皆磹漋甓崘潮嵙燷渏艂朼洛炷鉢儝鱈肇 5748-06-26 20:48:49 -3133527360541070260 -262488000000000000000000000000000000000", "48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
+	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (10, 48, -82);").Sort().Check(testkit.Rows("-82 夐齏醕皆磹漋甓崘潮嵙燷渏艂朼洛炷鉢儝鱈肇 5748-06-26 20:48:49 -3133527360541070260 -262488000000000000000000000000000000000", "48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
 	tk.MustQuery("select * from `NT_RP3763` where `COL1` in (48);").Check(testkit.Rows("48 簖鹩筈匹眜赖泽騈爷詵赺玡婙Ɇ郝鮙廛賙疼舢 7228-12-13 02:59:54 -6181009269190017937 277311060000000000000000000000000000000"))
 }
 
