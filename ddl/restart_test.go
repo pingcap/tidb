@@ -107,7 +107,7 @@ func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 }
 
 func TestSchemaResume(t *testing.T) {
-	store := testCreateStore(t, "test_schema_resume")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestSchemaResume(t *testing.T) {
 }
 
 func (s *testStatSuiteToVerify) TestStat() {
-	store := testCreateStore(s.T(), "test_stat")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
@@ -220,7 +220,7 @@ func TestTableSuite(t *testing.T) {
 }
 
 func (s *testTableSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_table")
+	s.store = createMockStore(s.T())
 	ddl, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),

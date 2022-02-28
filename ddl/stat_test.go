@@ -54,7 +54,7 @@ func (s *testStatSuiteToVerify) getDDLSchemaVer(d *ddl) int64 {
 }
 
 func (s *testSerialStatSuiteToVerify) TestDDLStatsInfo() {
-	store := testCreateStore(s.T(), "test_stat")
+	store := createMockStore(s.T())
 	defer func() {
 		err := store.Close()
 		require.NoError(s.T(), err)
