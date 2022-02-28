@@ -30,19 +30,6 @@ Many scenarios use read-and-lock operations like `SELECT ... FOR UPDATE` and `SE
 Since MySQL 8.0, `SELECT ... FOR UPDATE SKIP LOCKED` syntax is supported, which reads and locks the rows without waiting, and the locked rows will be removed from the resultset. Different from `SELECT ... FOR UPDATE NOWAIT`, this syntax never returns a locked error.
 
 ## Detailed Design
-
-Explain the design in enough detail that: it is reasonably clear how the feature would be implemented, corner cases are dissected by example, how the feature is used, etc.
-
-It's better to describe the pseudo-code of the key algorithm, API interfaces, the UML graph, what components are needed to be changed in this section.
-
-Compatibility is important, please also take into consideration, a checklist:
-
-- Compatibility with other features, like partition table, security&privilege, collation&charset, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
-
 ### Planner
 
 The parser of TiDB already supports `SELECT ... FOR UPDATE SKIP LOCKED` syntax, however, such lock type will be processed the same as `SELECT` syntax. The planner should handle this syntax and optimize it as a for-update read.
