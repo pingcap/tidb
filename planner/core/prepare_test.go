@@ -1308,6 +1308,44 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	require.Equal(t, float64(6), cnt)
 }
 
+func TestPlanCacheSwitchDB(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	// create a table in test
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (-1)`)
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+
+	// switch to a new DB
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// prepare again
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
 	store, clean := testkit.CreateMockStore(t)
