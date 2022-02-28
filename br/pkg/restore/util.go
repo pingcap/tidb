@@ -18,6 +18,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
@@ -360,11 +361,14 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func GetTS(key []byte) []byte {
+func GetKeyTS(key []byte) (uint64, error) {
 	if len(key) < 8 {
-		return nil
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"the length of key is smaller than 8, key:%s", redact.Key(key))
 	}
-	return key[len(key)-8:]
+
+	_, ts, err := codec.DecodeUintDesc(key[len(key)-8:])
+	return ts, err
 }
 
 func TruncateTS(key []byte) []byte {

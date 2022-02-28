@@ -32,13 +32,15 @@ type SchemasInfo struct {
 	Tables map[string]*model.TableInfo // tableName -> *model.TableInfo
 }
 
+// SchemasReplace specifies schemas infomation mapping old schemas to new schemas.
 type SchemasReplace struct {
 	OldDBs     map[int64]*model.DBInfo
 	OldTables  map[int64]*model.TableInfo
 	NewSchemas map[string]*SchemasInfo
-	RestoreTS  uint64
+	RewriteTS  uint64
 }
 
+// NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
 	oldDBs map[int64]*model.DBInfo,
 	oldTables map[int64]*model.TableInfo,
@@ -49,7 +51,7 @@ func NewSchemasReplace(
 		OldDBs:     oldDBs,
 		OldTables:  oldTables,
 		NewSchemas: NewSchemas,
-		RestoreTS:  restoreTS,
+		RewriteTS:  restoreTS,
 	}
 }
 
@@ -158,7 +160,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, str
 	rawMetakey.UpdateKey(meta.DBkey(newDbID))
 	rawMetakey.UpdateField(meta.TableKey(newTableID))
 	if cf == "write" {
-		rawMetakey.UpdateTS(sr.RestoreTS)
+		rawMetakey.UpdateTS(sr.RewriteTS)
 	}
 	return rawMetakey.EncodeMetaKey(), dbName, nil
 }

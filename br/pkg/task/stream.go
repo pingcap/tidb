@@ -642,16 +642,17 @@ func RunStreamRestore(
 	}
 
 	client.InitClients(u, false)
-
-	if cfg.RestoreTS == 0 {
-		cfg.RestoreTS, err = streamMgr.getTS(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	currentTS, err := streamMgr.getTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = currentTS
+	}
 	client.SetRestoreTs(cfg.RestoreTS)
+	client.SetCurrentTS(currentTS)
+	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
@@ -678,18 +679,26 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	// perform restore meta kv files
+	errChMeta := make(chan error)
+	go func() {
+		rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
+		if err != nil {
+			errChMeta <- err
+			return
+		}
+		defer rawkvClient.Close()
+
+		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables)
+		errChMeta <- err
+	}()
+
 	// perform restore kv files
 	if err := client.RestoreKVFiles(ctx, rewriteRules, dFiles); err != nil {
 		return errors.Trace(err)
 	}
 
-	rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer rawkvClient.Close()
-
-	if err := client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables); err != nil {
+	if err := <-errChMeta; err != nil {
 		return errors.Trace(err)
 	}
 

@@ -105,6 +105,9 @@ type Client struct {
 	// restoreTs is used for kv file restore.
 	// TiKV will filter the key space larger than this ts.
 	restoreTs uint64
+	// currentTS is used for rewrite meta kv when restore stream.
+	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
+	currentTS uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -200,6 +203,10 @@ func (rc *Client) Close() {
 
 func (rc *Client) SetRestoreTs(ts uint64) {
 	rc.restoreTs = ts
+}
+
+func (rc *Client) SetCurrentTS(ts uint64) {
+	rc.currentTS = ts
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
@@ -1434,6 +1441,7 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
+// RestoreKVFiles tries to restore files about data kv-event from stream-backup.
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
@@ -1490,6 +1498,8 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
+// initSchemasRepalceForDDL gets schemas infomation Mapping from old schemas to new schemas.
+// It is used to rewrite meta kv-event.
 func (rc *Client) initSchemasRepalceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
 	var (
 		oldDBs     = make(map[int64]*model.DBInfo)
@@ -1524,9 +1534,23 @@ func (rc *Client) initSchemasRepalceForDDL(tables *map[int64]*metautil.Table) (*
 		}
 	}
 
-	return stream.NewSchemasReplace(oldDBs, oldTables, newSchemas, rc.restoreTs), nil
+	for id, db := range oldDBs {
+		log.Info("old db", zap.Int64("id", id), zap.String("dbname", db.Name.String()), zap.Int64("dbID", db.ID))
+	}
+	for id, table := range oldTables {
+		log.Info("old table", zap.Int64("id", id), zap.String("tabletame", table.Name.String()), zap.Int64("tableID", table.ID))
+	}
+	for dbname, db := range newSchemas {
+		log.Info("new db", zap.String("dbname", dbname), zap.String("dbname", db.DbInfo.Name.String()), zap.Int64("dbID", db.DbInfo.ID))
+		for tablename, table := range db.Tables {
+			log.Info("new table", zap.String("tablename", tablename), zap.String("tablename", table.Name.String()), zap.Int64("tableID", table.ID))
+		}
+	}
+
+	return stream.NewSchemasReplace(oldDBs, oldTables, newSchemas, rc.currentTS), nil
 }
 
+// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	rawkvClient *rawkv.Client,
@@ -1538,21 +1562,12 @@ func (rc *Client) RestoreMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	for id, db := range schemasReplace.OldDBs {
-		log.Info("old db", zap.Int64("id", id), zap.String("dbname", db.Name.String()), zap.Int64("dbID", db.ID))
-	}
-	for id, table := range schemasReplace.OldTables {
-		log.Info("old table", zap.Int64("id", id), zap.String("tabletame", table.Name.String()), zap.Int64("tableID", table.ID))
-	}
-
-	for dbname, db := range schemasReplace.NewSchemas {
-		log.Info("new db", zap.String("dbname", dbname), zap.String("dbname", db.DbInfo.Name.String()), zap.Int64("dbID", db.DbInfo.ID))
-		for tablename, table := range db.Tables {
-			log.Info("new table", zap.String("tablename", tablename), zap.String("tablename", table.Name.String()), zap.Int64("tableID", table.ID))
-		}
-	}
-
 	for _, f := range files {
+		// skip these files if file.MinTs > restoreTS
+		if f.MinTs > rc.restoreTs {
+			continue
+		}
+
 		log.Info("restore mfile", zap.String("file", f.Path), zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
@@ -1563,6 +1578,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
+// RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	rawKVClient *rawkv.Client,
@@ -1577,7 +1593,18 @@ func (rc *Client) RestoreMetaKVFile(
 	iter := stream.NewEventIterator(buff)
 	for iter.Valid() {
 		iter.Next()
+		if iter.GetError() != nil {
+			return errors.Trace(iter.GetError())
+		}
+
 		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		ts, err := GetKeyTS(txnEntry.Key)
+		if err != nil {
+			return errors.Trace(err)
+		} else if ts > rc.restoreTs {
+			break
+		}
+
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
 			log.Info("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
