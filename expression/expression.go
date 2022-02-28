@@ -1008,8 +1008,9 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec,
-			tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracDec:
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+			// We don't push round with frac due to mysql's round with frac has its special behavior:
+			// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 			return true
 		}
 	case ast.Rand:
@@ -1052,7 +1053,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
-		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter,
+		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
@@ -1060,8 +1061,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.JSONLength,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
-		ast.LTrim, ast.RTrim,
-		ast.Lpad, ast.Rpad,
+		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_InDuration,

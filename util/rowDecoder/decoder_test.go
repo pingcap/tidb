@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
@@ -188,7 +188,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, testutil.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, nil)
 		require.Nil(t, err)
 
 		for i, col := range cols {
