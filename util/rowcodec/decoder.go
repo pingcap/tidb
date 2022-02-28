@@ -15,6 +15,7 @@
 package rowcodec
 
 import (
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -463,22 +464,28 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 }
 
 func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
-	var buf []byte
 	switch tp {
 	case BytesFlag:
+		buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
 		buf = append(buf, CompactBytesFlag)
 		buf = codec.EncodeCompactBytes(buf, val)
+		return buf
 	case IntFlag:
+		buf := make([]byte, 0, 1+binary.MaxVarintLen64)
 		buf = append(buf, VarintFlag)
 		buf = codec.EncodeVarint(buf, decodeInt(val))
+		return buf
 	case UintFlag:
+		buf := make([]byte, 0, 1+binary.MaxVarintLen64)
 		buf = append(buf, VaruintFlag)
 		buf = codec.EncodeUvarint(buf, decodeUint(val))
+		return buf
 	default:
+		buf := make([]byte, 0, 1+len(val))
 		buf = append(buf, tp)
 		buf = append(buf, val...)
+		return buf
 	}
-	return buf
 }
 
 // fieldType2Flag transforms field type into kv type flag.
