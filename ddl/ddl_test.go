@@ -105,13 +105,7 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	return d, err
 }
 
-func testCreateStore(t *testing.T, name string) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store
-}
-
-func testCreateStoreT(t *testing.T, name string) kv.Storage {
+func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	return store
