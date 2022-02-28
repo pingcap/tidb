@@ -12696,7 +12696,6 @@ SetBindingStmt:
 			BindingStatusType: $4.(uint8),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
-			GlobalScope:       $2.(bool),
 		}
 
 		$$ = x
