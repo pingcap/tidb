@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"math/rand"
+	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -65,8 +66,25 @@ type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
 }
 
+// MemUsage returns the memory usage of sample item.
+func (i ReservoirRowSampleItem) MemUsage() (sum int) {
+	for _, col := range i.Columns {
+		sum += col.MemUsage()
+	}
+	sum += 8 + i.Handle.MemUsage()
+	return sum
+}
+
 // WeightedRowSampleHeap implements the Heap interface.
 type WeightedRowSampleHeap []*ReservoirRowSampleItem
+
+// MemUsage returns the memory usage of sample heap.
+func (h WeightedRowSampleHeap) MemUsage() (sum int64) {
+	for _, item := range h {
+		sum += int64(unsafe.Sizeof(*item)) + int64(item.MemUsage())
+	}
+	return sum
+}
 
 // Len implements the Heap interface.
 func (h WeightedRowSampleHeap) Len() int {
@@ -272,6 +290,15 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 			Weight:  pbSample.Weight,
 		})
 	}
+}
+
+func (s *baseCollector) MemoryUsage() (sum int64) {
+	sum += int64(cap(s.NullCount)*8) + int64(cap(s.TotalSizes)*8) + 8
+	for _, fmSketch := range s.FMSketches {
+		sum += int64(unsafe.Sizeof(*fmSketch)) + fmSketch.MemoryUsage()
+	}
+	sum += s.Samples.MemUsage()
+	return sum
 }
 
 // Base implements the RowSampleCollector interface.

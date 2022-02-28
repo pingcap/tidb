@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/metrics"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -71,6 +73,11 @@ type Tracker struct {
 	bytesSoftLimit int64
 	maxConsumed    int64 // max number of bytes consumed during execution.
 	isGlobal       bool  // isGlobal indicates whether this tracker is global tracker
+
+	kcMu struct {
+		sync.Mutex
+		keyConsumers map[KeyConsumer]struct{} // The list of memory KeyConsumer.
+	}
 }
 
 type actionMu struct {
@@ -147,6 +154,12 @@ func (t *Tracker) GetBytesLimit() int64 {
 // CheckExceed checks whether the consumed bytes is exceed for this tracker.
 func (t *Tracker) CheckExceed() bool {
 	return atomic.LoadInt64(&t.bytesConsumed) >= t.bytesHardLimit && t.bytesHardLimit > 0
+}
+
+// GetSoftBytesLimit gets the soft bytes limit for this tracker.
+// "bytesSoftLimit <= 0" means no limit.
+func (t *Tracker) GetSoftBytesLimit() int64 {
+	return t.bytesSoftLimit
 }
 
 // SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
@@ -231,6 +244,10 @@ func (t *Tracker) Detach() {
 	if parent == nil {
 		return
 	}
+	if parent.isGlobal {
+		t.DetachFromGlobalTracker()
+		return
+	}
 	parent.remove(t)
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -312,6 +329,10 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		tracker.AllocateForKeyConsumers(bytesConsumed, bytes)
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label).Set(float64(bytesConsumed))
+		}
 		if bytesConsumed >= tracker.bytesHardLimit && tracker.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
@@ -513,6 +534,51 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+func (t *Tracker) FindAncestor(label int) *Tracker {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.label == label {
+			return tracker
+		}
+	}
+	return nil
+}
+
+type KeyConsumer interface {
+	OnAllocated(bytesAllocated int64)
+	Weight() int64
+}
+
+func (t *Tracker) RegisterKeyConsumer(keyConsumer KeyConsumer) {
+	t.kcMu.Lock()
+	defer t.kcMu.Unlock()
+	t.kcMu.keyConsumers[keyConsumer] = struct{}{}
+}
+
+func (t *Tracker) UnRegisterKeyConsumer(keyConsumer KeyConsumer) {
+	t.kcMu.Lock()
+	defer t.kcMu.Unlock()
+	delete(t.kcMu.keyConsumers, keyConsumer)
+}
+
+func (t *Tracker) AllocateForKeyConsumers(bytesConsumed int64, bytes int64) {
+	if bytes < t.bytesSoftLimit/100 {
+		return
+	}
+	vacant := t.bytesSoftLimit - bytesConsumed
+	t.kcMu.Lock()
+	defer t.kcMu.Unlock()
+	totalWeight := int64(0)
+	weightMap := make(map[KeyConsumer]int64, len(t.kcMu.keyConsumers))
+	for consumer := range t.kcMu.keyConsumers {
+		weight := consumer.Weight()
+		totalWeight += weight
+		weightMap[consumer] = weight
+	}
+	for consumer, weight := range weightMap {
+		consumer.OnAllocated(vacant * weight / totalWeight)
+	}
+}
+
 const (
 	// LabelForSQLText represents the label of the SQL Text
 	LabelForSQLText int = -1
@@ -556,4 +622,13 @@ const (
 	LabelForIndexJoinInnerWorker int = -20
 	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
 	LabelForIndexJoinOuterWorker int = -21
+	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
+	LabelForAnalyzeMemory int = -22
+	// LabelForAnalyzeSharedMemory represents the label of the global memory of all analyze jobs
+	LabelForAnalyzeSharedMemory int = -23
 )
+
+// MetricsTypes is used to get label for metrics
+var MetricsTypes = map[int]string{
+	LabelForAnalyzeSharedMemory: "analyze-memory",
+}

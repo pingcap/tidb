@@ -471,6 +471,7 @@ type Performance struct {
 	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
 	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	AnalyzeMemoryQuota    uint64  `toml:"analyze-memory-quota" json:"analyze-memory-quota"`
 	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -679,6 +680,7 @@ var defaultConf = Config{
 		MaxMemory:             0,
 		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
+		AnalyzeMemoryQuota:    0,
 		TCPKeepAlive:          true,
 		TCPNoDelay:            true,
 		CrossJoin:             true,

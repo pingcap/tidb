@@ -137,10 +137,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
+	// ratelimit v2
+	it.rateLimiter = NewRateLimiter(option.EnableRateLimitV2, it.finishCh, 1, uint(it.concurrency), uint(len(it.tasks)), req.MemTracker, option.CapMemTracker)
+
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo, it.rateLimiter)
 	return it
 }
 
@@ -295,13 +298,16 @@ type copIterator struct {
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to make sure the channel is not closed twice.
 	closed uint32
 
 	resolvedLocks  util.TSSet
 	committedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
+
+	// rateLimiter controls the rate of send based on statistics
+	rateLimiter *RateLimiter
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -321,16 +327,19 @@ type copIteratorWorker struct {
 
 	actionOnExceed             *rateLimitAction
 	enableCollectExecutionInfo bool
+
+	rateLimiter *RateLimiter
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
-	tasks    []*copTask
-	finishCh <-chan struct{}
-	respChan chan<- *copResponse
-	sendRate *util.RateLimit
+	taskCh      chan<- *copTask
+	wg          *sync.WaitGroup
+	tasks       []*copTask
+	finishCh    <-chan struct{}
+	respChan    chan<- *copResponse
+	sendRate    *util.RateLimit
+	rateLimiter *RateLimiter
 }
 
 type copResponse struct {
@@ -425,7 +434,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool, rateLimiter *RateLimiter) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -443,15 +452,17 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			replicaReadSeed:            it.replicaReadSeed,
 			actionOnExceed:             it.actionOnExceed,
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
+			rateLimiter:                rateLimiter,
 		}
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
-		sendRate: it.sendRate,
+		taskCh:      taskCh,
+		wg:          &it.wg,
+		tasks:       it.tasks,
+		finishCh:    it.finishCh,
+		sendRate:    it.sendRate,
+		rateLimiter: it.rateLimiter,
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
@@ -461,6 +472,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
+	rateLimiter.Open()
 	go taskSender.run()
 }
 
@@ -473,6 +485,10 @@ func (sender *copIteratorTaskSender) run() {
 		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
 		exit := sender.sendRate.GetToken(sender.finishCh)
+		if exit {
+			break
+		}
+		exit = sender.rateLimiter.OnRequest()
 		if exit {
 			break
 		}
@@ -596,12 +612,14 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
+			it.rateLimiter.Close()
 			return nil, nil
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
 				it.sendRate.PutToken()
 			})
+			// TODO
 			return it.Next(ctx)
 		}
 	} else {
@@ -609,6 +627,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
 				it.actionOnExceed.close()
+				it.rateLimiter.Close()
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
@@ -618,6 +637,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				return nil, nil
 			}
 			if ok {
+				it.rateLimiter.OnResponse(resp.MemSize())
 				break
 			}
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -1167,6 +1187,7 @@ func (it *copIterator) Close() error {
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
 	it.wg.Wait()
+	it.rateLimiter.Close()
 	return nil
 }
 
@@ -1338,5 +1359,118 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_SI
 	default:
 		return kvrpcpb.IsolationLevel_SI
+	}
+}
+
+type RateLimiter struct {
+	sync.Mutex
+	enabled          bool
+	finishCh         <-chan struct{}
+	minCapacity      uint
+	maxCapacity      uint
+	totalTaskNum     uint
+	requestsInFlight uint
+	respNum          uint
+	avgRespSize      int64
+	sendRate         *util.RateLimit
+	curCapacity      uint
+	targetCapacity   uint
+	memTracker       *memory.Tracker
+	capMemTracker    *memory.Tracker
+}
+
+func NewRateLimiter(enabled bool, finishCh <-chan struct{}, minCapacity uint, maxCapacity uint, totalTaskNum uint, memTracker *memory.Tracker, capMemTracker *memory.Tracker) *RateLimiter {
+	rateLimiter := &RateLimiter{
+		enabled:          enabled,
+		finishCh:         finishCh,
+		minCapacity:      minCapacity,
+		maxCapacity:      maxCapacity,
+		totalTaskNum:     totalTaskNum,
+		requestsInFlight: 0,
+		respNum:          0,
+		avgRespSize:      0,
+		curCapacity:      maxCapacity,
+		targetCapacity:   minCapacity,
+		memTracker:       memTracker,
+		capMemTracker:    capMemTracker,
+	}
+	if enabled {
+		rateLimiter.sendRate = util.NewRateLimit(int(maxCapacity))
+	}
+	return rateLimiter
+}
+
+func (r *RateLimiter) Open() {
+	if r.enabled {
+		r.capMemTracker.RegisterKeyConsumer(r)
+		for r.curCapacity > r.targetCapacity {
+			r.sendRate.GetToken(r.finishCh)
+			r.curCapacity -= 1
+		}
+	}
+}
+
+func (r *RateLimiter) Close() {
+	if r.enabled {
+		r.capMemTracker.UnRegisterKeyConsumer(r)
+	}
+}
+
+// OnRequest is called before a request is sent.
+func (r *RateLimiter) OnRequest() (exit bool) {
+	if r.enabled {
+		r.Lock()
+		defer r.Unlock()
+		exit = r.sendRate.GetToken(r.finishCh)
+		if !exit {
+			r.requestsInFlight += 1
+		}
+		return exit
+	}
+	return false
+}
+
+// OnResponse is called when responded.
+func (r *RateLimiter) OnResponse(respSize int64) {
+	if r.enabled {
+		r.Lock()
+		defer r.Unlock()
+		r.requestsInFlight -= 1
+		r.respNum += 1
+		r.avgRespSize = (r.avgRespSize + respSize) / int64(r.respNum)
+		if r.curCapacity > r.targetCapacity {
+			r.curCapacity -= 1
+			return
+		} else {
+			r.sendRate.PutToken()
+		}
+	}
+}
+
+func (r *RateLimiter) OnAllocated(bytesAllocated int64) {
+	r.Lock()
+	defer r.Unlock()
+	if r.enabled && r.respNum > r.minCapacity { // the requests used to calc avgRespSize are returned
+		newCapacity := bytesAllocated / r.avgRespSize
+		if newCapacity > int64(r.maxCapacity) {
+			newCapacity = int64(r.maxCapacity)
+		}
+		if newCapacity > int64(r.minCapacity) {
+			r.targetCapacity = uint(newCapacity)
+			for r.curCapacity < r.targetCapacity {
+				r.sendRate.PutToken()
+				r.curCapacity += 1
+			}
+		}
+	}
+}
+
+func (r *RateLimiter) Weight() int64 {
+	r.Lock()
+	defer r.Unlock()
+	if r.enabled && r.respNum > r.minCapacity {
+		return r.avgRespSize * int64(r.totalTaskNum)
+	} else {
+		return 0
 	}
 }

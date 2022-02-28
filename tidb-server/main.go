@@ -627,6 +627,12 @@ func setGlobalVars() {
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	if cfg.Performance.AnalyzeMemoryQuota < 1 {
+		// If MaxMemory equals 0, it means unlimited
+		executor.AnalyzeMemoryTracker.SetBytesLimit(-1)
+	} else {
+		executor.AnalyzeMemoryTracker.SetBytesLimit(int64(cfg.Performance.AnalyzeMemoryQuota))
+	}
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
 	if err != nil || t < 0 {

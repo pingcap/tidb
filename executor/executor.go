@@ -100,6 +100,8 @@ var (
 	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
+	// AnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
+	AnalyzeMemoryTracker *memory.Tracker
 )
 
 var (
@@ -133,6 +135,8 @@ const (
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
+	globalPanicAnalyzeMemoryExceed string = "Out Of Global Analyze Memory Limit!"
 )
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
@@ -147,6 +151,9 @@ func init() {
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
+	AnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
+	AnalyzeMemoryTracker.SetActionOnExceed(action)
+	AnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -162,6 +169,8 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 		msg = globalPanicStorageExceed
 	case memory.LabelForGlobalMemory:
 		msg = globalPanicMemoryExceed
+	case memory.LabelForAnalyzeSharedMemory:
+		msg = globalPanicAnalyzeMemoryExceed
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
@@ -1731,9 +1740,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
-	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
+		sc.MemTracker.AttachTo(AnalyzeMemoryTracker)
+	} else {
+		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	}
+
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
-	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)

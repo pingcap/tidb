@@ -127,6 +127,8 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
+var EmptyHistogramMemUsage = int64(48) // TODO
+
 // MemoryUsage returns the total memory usage of this Histogram.
 // everytime changed the Histogram of the table, it will cost O(n)
 // complexity so calculate the memoryUsage might cost little time.

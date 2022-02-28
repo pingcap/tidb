@@ -260,6 +260,8 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
+	EnableRateLimitV2          bool
+	CapMemTracker              *memory.Tracker
 }
 
 // ReqTypes.

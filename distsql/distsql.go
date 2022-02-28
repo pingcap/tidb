@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
@@ -164,7 +165,12 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
-	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
+	option := &kv.ClientSendOption{
+		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+		EnableRateLimitV2:          true,
+		CapMemTracker:              kvReq.MemTracker.FindAncestor(memory.LabelForAnalyzeSharedMemory),
+	}
+	resp := client.Send(ctx, kvReq, vars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
