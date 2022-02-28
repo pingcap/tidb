@@ -128,7 +128,7 @@ func checkTableBundlesInPD(t *testing.T, tt *meta.Meta, tblInfo *model.TableInfo
 func TestPlacementPolicy(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -391,7 +391,7 @@ func TestCreateOrReplacePlacementPolicy(t *testing.T) {
 func TestAlterPlacementPolicy(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -463,7 +463,7 @@ func TestAlterPlacementPolicy(t *testing.T) {
 func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
@@ -589,7 +589,7 @@ func getClonedDatabase(dom *domain.Domain, dbName string) (*model.DBInfo, bool) 
 func TestCreateTableWithInfoPlacement(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -639,7 +639,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists test2")
@@ -868,7 +868,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 func TestAlterTablePartitionWithPlacementPolicy(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("drop table if exists t1")
@@ -927,7 +927,7 @@ func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionctx.Context, db 
 func TestPolicyInheritance(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1074,7 +1074,7 @@ func TestDatabasePlacement(t *testing.T) {
 }
 
 func TestDropDatabaseGCPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1134,7 +1134,7 @@ func TestDropDatabaseGCPlacement(t *testing.T) {
 }
 
 func TestDropTableGCPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1194,7 +1194,7 @@ func TestDropTableGCPlacement(t *testing.T) {
 func TestAlterTablePlacement(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp")
@@ -1262,7 +1262,7 @@ func TestAlterTablePlacement(t *testing.T) {
 }
 
 func TestDropTablePartitionGCPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1337,7 +1337,7 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 }
 
 func TestAlterTablePartitionPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1425,7 +1425,7 @@ func TestAlterTablePartitionPlacement(t *testing.T) {
 }
 
 func TestAddPartitionWithPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1572,7 +1572,7 @@ func TestTruncateTableWithPlacement(t *testing.T) {
 }
 
 func TestTruncateTableGCWithPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1707,7 +1707,7 @@ func TestTruncateTablePartitionWithPlacement(t *testing.T) {
 }
 
 func TestTruncatePartitionGCWithPlacement(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
@@ -1779,7 +1779,7 @@ func TestTruncatePartitionGCWithPlacement(t *testing.T) {
 func TestExchangePartitionWithPlacement(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	tk.MustExec("use test")
@@ -1912,7 +1912,7 @@ func TestPDFail(t *testing.T) {
 	}()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, tp")
@@ -2000,7 +2000,7 @@ func TestPDFail(t *testing.T) {
 }
 
 func TestRecoverTableWithPlacementPolicy(t *testing.T) {
-	clearAllBundles(t)
+	// clearAllBundles(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
