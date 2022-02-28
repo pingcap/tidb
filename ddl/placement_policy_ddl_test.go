@@ -53,74 +53,72 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d *ddl, pol
 	return job
 }
 
-func (s *testDDLSuiteToVerify) TestPlacementPolicyInUse() {
-	store := createMockStore(s.T())
+func TestPlacementPolicyInUse(t *testing.T) {
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		require.NoError(s.T(), err)
+		require.NoError(t, store.Close())
 	}()
 
 	ctx := context.Background()
 	d, err := testNewDDLAndStart(ctx, WithStore(store))
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	defer func() {
-		err := d.Stop()
-		require.NoError(s.T(), err)
+		require.NoError(t, d.Stop())
 	}()
 	sctx := testNewContext(d)
 
 	db1, err := testSchemaInfo(d, "db1")
-	require.NoError(s.T(), err)
-	testCreateSchema(s.T(), sctx, d, db1)
+	require.NoError(t, err)
+	testCreateSchema(t, sctx, d, db1)
 	db1.State = model.StatePublic
 
 	db2, err := testSchemaInfo(d, "db2")
-	require.NoError(s.T(), err)
-	testCreateSchema(s.T(), sctx, d, db2)
+	require.NoError(t, err)
+	testCreateSchema(t, sctx, d, db2)
 	db2.State = model.StatePublic
 
 	policySettings := &model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"}
-	p1 := testPlacementPolicyInfo(s.T(), d, "p1", policySettings)
-	p2 := testPlacementPolicyInfo(s.T(), d, "p2", policySettings)
-	p3 := testPlacementPolicyInfo(s.T(), d, "p3", policySettings)
-	p4 := testPlacementPolicyInfo(s.T(), d, "p4", policySettings)
-	p5 := testPlacementPolicyInfo(s.T(), d, "p5", policySettings)
-	testCreatePlacementPolicy(s.T(), sctx, d, p1)
-	testCreatePlacementPolicy(s.T(), sctx, d, p2)
-	testCreatePlacementPolicy(s.T(), sctx, d, p3)
-	testCreatePlacementPolicy(s.T(), sctx, d, p4)
-	testCreatePlacementPolicy(s.T(), sctx, d, p5)
+	p1 := testPlacementPolicyInfo(t, d, "p1", policySettings)
+	p2 := testPlacementPolicyInfo(t, d, "p2", policySettings)
+	p3 := testPlacementPolicyInfo(t, d, "p3", policySettings)
+	p4 := testPlacementPolicyInfo(t, d, "p4", policySettings)
+	p5 := testPlacementPolicyInfo(t, d, "p5", policySettings)
+	testCreatePlacementPolicy(t, sctx, d, p1)
+	testCreatePlacementPolicy(t, sctx, d, p2)
+	testCreatePlacementPolicy(t, sctx, d, p3)
+	testCreatePlacementPolicy(t, sctx, d, p4)
+	testCreatePlacementPolicy(t, sctx, d, p5)
 
 	t1, err := testTableInfo(d, "t1", 1)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
-	testCreateTable(s.T(), sctx, d, db1, t1)
+	testCreateTable(t, sctx, d, db1, t1)
 	t1.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t1)
 
 	t2, err := testTableInfo(d, "t2", 1)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	t2.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
-	testCreateTable(s.T(), sctx, d, db2, t2)
+	testCreateTable(t, sctx, d, db2, t2)
 	t2.State = model.StatePublic
 	db2.Tables = append(db2.Tables, t2)
 
 	t3, err := testTableInfo(d, "t3", 1)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	t3.PlacementPolicyRef = &model.PolicyRefInfo{ID: p2.ID, Name: p2.Name}
-	testCreateTable(s.T(), sctx, d, db1, t3)
+	testCreateTable(t, sctx, d, db1, t3)
 	t3.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t3)
 
 	dbP, err := testSchemaInfo(d, "db_p")
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	dbP.PlacementPolicyRef = &model.PolicyRefInfo{ID: p4.ID, Name: p4.Name}
 	dbP.State = model.StatePublic
-	testCreateSchema(s.T(), sctx, d, dbP)
+	testCreateSchema(t, sctx, d, dbP)
 
-	t4 := testTableInfoWithPartition(s.T(), d, "t4", 1)
+	t4 := testTableInfoWithPartition(t, d, "t4", 1)
 	t4.Partition.Definitions[0].PlacementPolicyRef = &model.PolicyRefInfo{ID: p5.ID, Name: p5.Name}
-	testCreateTable(s.T(), sctx, d, db1, t4)
+	testCreateTable(t, sctx, d, db1, t4)
 	t4.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t4)
 
@@ -130,22 +128,22 @@ func (s *testDDLSuiteToVerify) TestPlacementPolicyInUse() {
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
 		1,
 	)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	is := builder.Build()
 
 	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {
-		require.True(s.T(), ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromInfoSchema(is, policy)))
-		require.Nil(s.T(), kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
+		require.True(t, ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromInfoSchema(is, policy)))
+		require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			require.True(s.T(), ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, policy)))
+			require.True(t, ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, policy)))
 			return nil
 		}))
 	}
 
-	require.Nil(s.T(), checkPlacementPolicyNotInUseFromInfoSchema(is, p3))
-	require.Nil(s.T(), kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
+	require.NoError(t, checkPlacementPolicyNotInUseFromInfoSchema(is, p3))
+	require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		require.Nil(s.T(), checkPlacementPolicyNotInUseFromMeta(m, p3))
+		require.NoError(t, checkPlacementPolicyNotInUseFromMeta(m, p3))
 		return nil
 	}))
 }
