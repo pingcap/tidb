@@ -986,10 +986,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
@@ -1162,10 +1159,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
@@ -1275,10 +1269,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
@@ -1478,10 +1469,7 @@ const (
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
@@ -1552,10 +1540,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
@@ -1768,10 +1753,7 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()

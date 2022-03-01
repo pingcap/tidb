@@ -178,10 +178,7 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
 		}
 	}()
@@ -223,10 +220,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
 	statsVer := uint64(0)
 	defer func() {
-		if err != nil {
-			return
-		}
-		if statsVer != 0 {
+		if err == nil && statsVer != 0 {
 			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
 		}
 	}()
