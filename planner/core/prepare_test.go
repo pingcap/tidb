@@ -1344,6 +1344,13 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// specify DB in the query
+	tk.MustExec(`prepare stmt from 'select * from test.t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestPlanCacheHitInfo(t *testing.T) {
