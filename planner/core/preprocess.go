@@ -1633,7 +1633,6 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 	}
 
 	if p.IsStaleness = p.staleReadProcessor.IsStaleness(); p.IsStaleness {
-		p.initedLastSnapshotTS = true
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
