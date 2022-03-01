@@ -1402,7 +1402,7 @@ func NewRateLimiter(enabled bool, finishCh <-chan struct{}, minCapacity uint, ma
 
 func (r *RateLimiter) Open() {
 	if r.enabled {
-		r.capMemTracker.RegisterKeyConsumer(r)
+		r.capMemTracker.RegisterFreeWatcher(r)
 		for r.curCapacity > r.targetCapacity {
 			r.sendRate.GetToken(r.finishCh)
 			r.curCapacity -= 1
@@ -1412,7 +1412,7 @@ func (r *RateLimiter) Open() {
 
 func (r *RateLimiter) Close() {
 	if r.enabled {
-		r.capMemTracker.UnRegisterKeyConsumer(r)
+		r.capMemTracker.UnRegisterFreeWatcher(r)
 	}
 }
 
@@ -1447,7 +1447,7 @@ func (r *RateLimiter) OnResponse(respSize int64) {
 	}
 }
 
-func (r *RateLimiter) OnAllocated(bytesAllocated int64) {
+func (r *RateLimiter) OnFreeAllocated(bytesAllocated int64) {
 	r.Lock()
 	defer r.Unlock()
 	if r.enabled && r.respNum > r.minCapacity { // the requests used to calc avgRespSize are returned
@@ -1462,7 +1462,7 @@ func (r *RateLimiter) OnAllocated(bytesAllocated int64) {
 				r.curCapacity += 1
 			}
 			tokensToRemoveNow := r.curCapacity - r.requestsInFlight - r.targetCapacity
-			if tokensToRemoveNow > 0 {
+			for tokensToRemoveNow > 0 {
 				r.sendRate.GetToken(r.finishCh)
 				tokensToRemoveNow -= 1
 			}

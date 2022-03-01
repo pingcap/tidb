@@ -74,9 +74,9 @@ type Tracker struct {
 	maxConsumed    int64 // max number of bytes consumed during execution.
 	isGlobal       bool  // isGlobal indicates whether this tracker is global tracker
 
-	kcMu struct {
+	fwMu struct {
 		sync.Mutex
-		keyConsumers map[KeyConsumer]struct{} // The list of memory KeyConsumer.
+		freeWatchers map[FreeWatcher]struct{} // The list of memory FreeWatcher.
 	}
 }
 
@@ -329,7 +329,7 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
-		tracker.AllocateForKeyConsumers(bytesConsumed, bytes)
+		tracker.AllocateForFreeWatchers(bytesConsumed, bytes)
 		if label, ok := MetricsTypes[tracker.label]; ok {
 			metrics.MemoryUsage.WithLabelValues(label).Set(float64(bytesConsumed))
 		}
@@ -543,39 +543,39 @@ func (t *Tracker) FindAncestor(label int) *Tracker {
 	return nil
 }
 
-type KeyConsumer interface {
-	OnAllocated(bytesAllocated int64)
+type FreeWatcher interface {
+	OnFreeAllocated(bytesAllocated int64)
 	Weight() int64
 }
 
-func (t *Tracker) RegisterKeyConsumer(keyConsumer KeyConsumer) {
-	t.kcMu.Lock()
-	defer t.kcMu.Unlock()
-	t.kcMu.keyConsumers[keyConsumer] = struct{}{}
+func (t *Tracker) RegisterFreeWatcher(freeWatcher FreeWatcher) {
+	t.fwMu.Lock()
+	defer t.fwMu.Unlock()
+	t.fwMu.freeWatchers[freeWatcher] = struct{}{}
 }
 
-func (t *Tracker) UnRegisterKeyConsumer(keyConsumer KeyConsumer) {
-	t.kcMu.Lock()
-	defer t.kcMu.Unlock()
-	delete(t.kcMu.keyConsumers, keyConsumer)
+func (t *Tracker) UnRegisterFreeWatcher(freeWatcher FreeWatcher) {
+	t.fwMu.Lock()
+	defer t.fwMu.Unlock()
+	delete(t.fwMu.freeWatchers, freeWatcher)
 }
 
-func (t *Tracker) AllocateForKeyConsumers(bytesConsumed int64, bytes int64) {
+func (t *Tracker) AllocateForFreeWatchers(bytesConsumed int64, bytes int64) {
 	if bytes < t.bytesSoftLimit/100 {
 		return
 	}
-	vacant := t.bytesSoftLimit - bytesConsumed
-	t.kcMu.Lock()
-	defer t.kcMu.Unlock()
+	free := t.bytesSoftLimit - bytesConsumed
+	t.fwMu.Lock()
+	defer t.fwMu.Unlock()
 	totalWeight := int64(0)
-	weightMap := make(map[KeyConsumer]int64, len(t.kcMu.keyConsumers))
-	for consumer := range t.kcMu.keyConsumers {
-		weight := consumer.Weight()
+	weightMap := make(map[FreeWatcher]int64, len(t.fwMu.freeWatchers))
+	for watcher := range t.fwMu.freeWatchers {
+		weight := watcher.Weight()
 		totalWeight += weight
-		weightMap[consumer] = weight
+		weightMap[watcher] = weight
 	}
-	for consumer, weight := range weightMap {
-		consumer.OnAllocated(vacant * weight / totalWeight)
+	for watcher, weight := range weightMap {
+		watcher.OnFreeAllocated(free * weight / totalWeight)
 	}
 }
 
