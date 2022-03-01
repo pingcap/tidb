@@ -789,9 +789,13 @@ ForColumnsTag:
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
-		var columnDefault interface{}
+		var columnDefault string
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+			if col.Tp == mysql.TypeBit {
+				defaultValBinaryLiteral := types.BinaryLiteral(columnDefault)
+				columnDefault = fmt.Sprintf("%s", defaultValBinaryLiteral.ToBitLiteralString(true))
+			}
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal,                // TABLE_CATALOG
