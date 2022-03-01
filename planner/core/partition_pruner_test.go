@@ -125,21 +125,22 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo"))
 
-	// for other types, the in-pruning shouldn't be working for safety
 	tk.MustExec(`create table t3 (a varchar(10)) partition by range columns(a) (
 		partition p0 values less than ("aaa"),
 		partition p1 values less than ("bbb"),
 		partition p2 values less than ("ccc"))`)
-	tk.MustQuery(`explain format='brief' select a from t3 where a in ('aaa', 'aab')`).Check(testkit.Rows("PartitionUnion 60.00 root  ",
-		"├─TableReader 20.00 root  data:Selection",
-		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
-		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p0 keep order:false, stats:pseudo",
-		"├─TableReader 20.00 root  data:Selection",
-		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
-		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p1 keep order:false, stats:pseudo",
-		"└─TableReader 20.00 root  data:Selection",
-		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
-		"    └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p2 keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select a from t3 where a in ('aaa', 'aab')`).Check(testkit.Rows(
+		`TableReader 20.00 root  data:Selection`,
+		`└─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, "aaa", "aab")`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p1 keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format='brief' select a from t3 where a in ('aaa', 'bu')`).Check(testkit.Rows(
+		`PartitionUnion 40.00 root  `,
+		`├─TableReader 20.00 root  data:Selection`,
+		`│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, "aaa", "bu")`,
+		`│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p1 keep order:false, stats:pseudo`,
+		`└─TableReader 20.00 root  data:Selection`,
+		`  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, "aaa", "bu")`,
+		`    └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p2 keep order:false, stats:pseudo`))
 }
 
 func TestRangeColumnPartitionPruningForInString(t *testing.T) {
@@ -151,21 +152,89 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	defer tk.MustExec("drop database test_range_col_in_string")
 
 	tk.MustExec("use test_range_col_in_string")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static'")
-	tk.MustExec(`create table t3 (a varchar(10) charset utf8mb4 collation utf8mb4_general_ci) partition by range columns(a) (` +
-		`partition pNull values less than (""),` +
-		`partition p0 values less than ("aaa"),` +
-		`partition p1 values less than ("AAAA"),` +
-		`partition p2 values less than ("Räksmörgås"),` +
-		`partition p3 values less than ("CCC"),` +
-		`partition pBeers values less than ("🍺🍺🍺")` +
+
+	type testStruct struct {
+		sql        string
+		partitions string
+	}
+	tests := []testStruct{
+		// Lower case partition names due to issue#32719
+		{sql: `explain select * from t where a IS NULL`, partitions: "pnull"},
+		{sql: `explain select * from t where a = 'AA'`, partitions: "paaaa"},
+		{sql: `explain select * from t where a = 'AAA'`, partitions: "paaaa"},
+		{sql: `explain select * from t where a = 'AB'`, partitions: "pccc"},
+		{sql: `explain select * from t where a = 'aB'`, partitions: "paaa"},
+		{sql: `explain select * from t where a = '🍣'`, partitions: "psushi"},
+		{sql: `explain select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax"},
+	}
+
+	extractPartitions := func(res *testkit.Result) string {
+		planStrings := testdata.ConvertRowsToStrings(res.Rows())
+		partitions := []string{}
+		for _, s := range planStrings {
+			parts := getFieldValue("partition:", s)
+			if parts != "" {
+				partitions = append(partitions, strings.Split(parts, ",")...)
+			}
+		}
+		return strings.Join(partitions, ",")
+	}
+	checkColumnStringPruningTests := func(tests []testStruct) {
+		modes := []string{"dynamic", "static"}
+		for _, mode := range modes {
+			tk.MustExec(`set @@tidb_partition_prune_mode = '` + mode + `'`)
+			for _, test := range tests {
+				result := tk.MustQuery(test.sql)
+				partitions := strings.ToLower(extractPartitions(result))
+				require.Equal(t, test.partitions, partitions, "Mode: %s sql: %s", mode, test.sql)
+			}
+		}
+	}
+	tk.MustExec("create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns(a)" +
+		`( partition pNull values less than (""),` +
+		`partition pAAAA values less than ("AAAA"),` +
+		`partition pCCC values less than ("CCC"),` +
+		`partition pShrimpsandwich values less than ("Räksmörgås"),` +
+		`partition paaa values less than ("aaa"),` +
+		`partition pSushi values less than ("🍣🍣🍣"),` +
 		`partition pMax values less than (MAXVALUE))`)
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a IS NULL`).Sort().Check(testkit.Rows("kalle"))
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AA'`).Sort().Check(testkit.Rows("kalle"))
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AAA'`).Sort().Check(testkit.Rows("kalle"))
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AB'`).Sort().Check(testkit.Rows("kalle"))
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'aB'`).Sort().Check(testkit.Rows("kalle"))
-	tk.MustQuery(`explain format = 'brief' select * from t3 where a = '🍣'`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest")`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_unicode_ci`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) partition by range columns(a)" +
+		`( partition pNull values less than (""),` +
+		`partition paaa values less than ("aaa"),` +
+		`partition pAAAA values less than ("AAAA"),` +
+		`partition pCCC values less than ("CCC"),` +
+		`partition pShrimpsandwich values less than ("Räksmörgås"),` +
+		`partition pSushi values less than ("🍣🍣🍣"),` +
+		`partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest")`)
+
+	tests = []testStruct{
+		// Lower case partition names due to issue#32719
+		{sql: `explain select * from t where a IS NULL`, partitions: "pnull"},
+		{sql: `explain select * from t where a = 'AA'`, partitions: "paaa"},
+		{sql: `explain select * from t where a = 'AAA'`, partitions: "paaaa"},
+		{sql: `explain select * from t where a = 'AB'`, partitions: "pccc"},
+		{sql: `explain select * from t where a = 'aB'`, partitions: "pccc"},
+		{sql: `explain select * from t where a = '🍣'`, partitions: "psushi"},
+		{sql: `explain select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax"},
+	}
+
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec(`set names utf8mb4 collate utf8mb4_unicode_ci`)
+	checkColumnStringPruningTests(tests)
+	tk.MustExec("set @@session.tidb_partition_prune_mode=Default")
 }
 
 func TestListPartitionPruner(t *testing.T) {
