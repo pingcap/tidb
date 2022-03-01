@@ -548,19 +548,6 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
-	for _, arg := range args {
-		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
-		if argFlen > flen {
-			flen = argFlen
-		}
-		if argDecimal > decimal {
-			decimal = argDecimal
-		}
-	}
-	return flen, decimal
-}
-
 type builtinGreatestIntSig struct {
 	baseBuiltinFunc
 }
