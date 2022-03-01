@@ -953,7 +953,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// arithmetical functions.
 		ast.PI, ast.Truncate,
-		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
+		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
 
 		// math functions.
 		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
@@ -983,13 +983,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.DateFormat,                                               /* Date */
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month, /* ast.MonthName */
-		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, /* ast.Week */
-		ast.Weekday, ast.WeekOfYear, ast.Year, /* ast.YearWeek */
+		ast.Date, ast.Week, ast.YearWeek, ast.ToSeconds, ast.DateDiff,
+		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
+		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
+		ast.DateFormat,
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
+		ast.Weekday, ast.WeekOfYear, ast.Year,
 		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		ast.LastDay,
+		ast.Sysdate,
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -1004,8 +1008,9 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec,
-			tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracDec:
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+			// We don't push round with frac due to mysql's round with frac has its special behavior:
+			// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 			return true
 		}
 	case ast.Rand:
@@ -1048,7 +1053,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
-		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter,
+		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
@@ -1056,8 +1061,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.JSONLength,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
-		ast.LTrim, ast.RTrim,
-		ast.Lpad, ast.Rpad,
+		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_InDuration,
