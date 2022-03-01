@@ -309,6 +309,16 @@ PARTITION BY RANGE (c) (
 	require.NoError(t, err)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 0)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table drop_t (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestCreateWithSameName(t *testing.T) {
@@ -350,7 +360,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`drop table recreate_t;`)
 
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows, 2)
+	require.Len(t, rows, 0)
 
 	tk.MustExec(`create table recreate_t (c int)
 	PARTITION BY RANGE (c) (
@@ -361,7 +371,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`alter table recreate_t attributes="key=value";`)
 	tk.MustExec(`alter table recreate_t partition p1 attributes="key1=value1";`)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows, 3)
+	require.Len(t, rows, 2)
 
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
