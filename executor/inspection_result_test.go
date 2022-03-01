@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"path/filepath"
 	"strings"
@@ -39,7 +38,8 @@ import (
 func TestInspectionResult(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	mockData := map[string]variable.TableSnapshot{}
 	// mock configuration inconsistent
@@ -122,8 +122,8 @@ func TestInspectionResult(t *testing.T) {
 		},
 	}
 
-	ctx := setupForInspection(t, mockMetric, mockData)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockMetric, mockData)
+	defer cleanup()
 
 	cases := []struct {
 		sql  string
@@ -186,15 +186,7 @@ func parseTime(t *testing.T, se session.Session, str string) types.Time {
 	return time
 }
 
-func tearDownForInspection(t *testing.T) {
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
-	require.NoError(t, failpoint.Disable(fpName))
-
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	require.NoError(t, failpoint.Disable(fpName2))
-}
-
-func setupForInspection(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
+func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) (context.Context, func()) {
 	// mock tikv configuration.
 	if configurations == nil {
 		configurations = map[string]variable.TableSnapshot{}
@@ -233,25 +225,29 @@ func setupForInspection(t *testing.T, mockData map[string][][]types.Datum, confi
 			},
 		}
 	}
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
-	require.NoError(t, failpoint.Enable(fpName, "return"))
+	fpName0 := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	require.NoError(t, failpoint.Enable(fpName0, "return"))
 
 	// Mock for metric table data.
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	require.NoError(t, failpoint.Enable(fpName2, "return"))
+	fpName1 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	require.NoError(t, failpoint.Enable(fpName1, "return"))
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
-		return fpName2 == currName || currName == fpName
+		return currName == fpName1 || currName == fpName0
 	})
-	return ctx
+	return ctx, func() {
+		require.NoError(t, failpoint.Disable(fpName0))
+		require.NoError(t, failpoint.Disable(fpName1))
+	}
 }
 
 func TestThresholdCheckInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	datetime := func(str string) types.Time {
 		return parseTime(t, tk.Session(), str)
 	}
@@ -293,9 +289,8 @@ func TestThresholdCheckInspection(t *testing.T) {
 		"pd_region_health":                    {},
 	}
 
-	ctx := setupForInspection(t, mockData, nil)
-
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	require.NoError(t, err)
@@ -344,7 +339,8 @@ func TestThresholdCheckInspection(t *testing.T) {
 func TestThresholdCheckInspection2(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -400,8 +396,8 @@ func TestThresholdCheckInspection2(t *testing.T) {
 		"pd_region_health":          {},
 	}
 
-	ctx := setupForInspection(t, mockData, nil)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	require.NoError(t, err)
@@ -428,7 +424,8 @@ func TestThresholdCheckInspection2(t *testing.T) {
 func TestThresholdCheckInspection3(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -462,8 +459,8 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		},
 	}
 
-	ctx := setupForInspection(t, mockData, nil)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
@@ -482,8 +479,6 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		"store-available-balance tikv tikv-1 tikv-1s 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
-// setupClusterGRPCServer is a copy of testClusterTableBase.setupClusterGRPCServer
-// TODO delete this copy after testClusterTableBase.setupClusterGRPCServer migrated
 func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
 	// tp => testServer
 	testServers := map[string]*testServer{}
@@ -498,7 +493,7 @@ func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
 
 		// Find a available port
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoErrorf(t, err, "cannot find available port")
+		require.NoError(t, err, "cannot find available port")
 
 		testServers[typ] = &testServer{
 			typ:     typ,
@@ -508,9 +503,7 @@ func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
 			logFile: logFile,
 		}
 		go func() {
-			if err := server.Serve(listener); err != nil {
-				log.Fatalf("failed to serve: %v", err)
-			}
+			require.NoError(t, server.Serve(listener))
 		}()
 	}
 	return testServers
@@ -519,7 +512,8 @@ func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
 func TestCriticalErrorInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	testServers := setupClusterGRPCServer(t)
 	defer func() {
@@ -604,8 +598,8 @@ func TestCriticalErrorInspection(t *testing.T) {
 		},
 	}
 
-	ctx := setupForInspection(t, mockData, nil)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
 	require.NoError(t, err)
@@ -641,7 +635,8 @@ func TestCriticalErrorInspection(t *testing.T) {
 func TestNodeLoadInspection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -694,8 +689,8 @@ func TestNodeLoadInspection(t *testing.T) {
 		},
 	}
 
-	ctx := setupForInspection(t, mockData, nil)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
@@ -718,7 +713,8 @@ func TestNodeLoadInspection(t *testing.T) {
 func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKitWithInit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -744,8 +740,8 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 		},
 	}
 
-	ctx := setupForInspection(t, mockData, configurations)
-	defer tearDownForInspection(t)
+	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
 	require.NoError(t, err)
