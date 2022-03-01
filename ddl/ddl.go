@@ -217,6 +217,11 @@ type ddlCtx struct {
 		hook        Callback
 		interceptor Interceptor
 	}
+
+	ddlSeqNumMu struct {
+		sync.Mutex
+		seqNum uint64
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -379,8 +384,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -395,7 +400,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
-			globalSeqNum, err = t.GetHistoryDDLCount()
+			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
 			return err
 		})
 		if err != nil {
