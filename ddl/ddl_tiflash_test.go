@@ -793,4 +793,16 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	require.True(t, timeOut)
 	check(4, 5)
 	time.Sleep(time.Second * 2)
+
+	// Retrigger, but close session before the whole job ends.
+	go func() {
+		time.Sleep(time.Millisecond * 20)
+		tk.Session().Close()
+		logutil.BgLogger().Info("session closed")
+	}()
+	timeOut, err = execWithTimeout(t, tk, time.Second*4, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	require.NoError(t, err)
+	require.False(t, timeOut)
+	check(5, 5)
+	time.Sleep(time.Second * 2)
 }
