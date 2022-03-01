@@ -19,55 +19,33 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testColumnTypeChangeSuite{})
-
-type testColumnTypeChangeSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
-	var err error
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testColumnTypeChangeSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeBetweenInteger(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Modify column from null to not null.
@@ -78,7 +56,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
 	tk.MustExec("insert into t(a, b) values (null, 1)")
 	// Modify column from null to not null in same type will cause ErrWarnDataTruncated
 	_, err := tk.Exec("alter table t modify column a int not null")
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	require.Equal(t, "[ddl:1265]Data truncated for column 'a' at row 1", err.Error())
 
 	// Modify column from null to not null in different type will cause WarnDataTruncated.
 	tk.MustGetErrCode("alter table t modify column a tinyint not null", mysql.WarnDataTruncated)
@@ -128,27 +106,29 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
 	tk.MustGetErrCode("alter table t modify column a smallint", mysql.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a tinyint", mysql.ErrDataOutOfRange)
 	_, err = tk.Exec("admin check table t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, c2 int)")
 	tk.MustExec("insert into t(c1, c2) values (1, 1)")
 
 	// use new session to check meta in callback function.
-	internalTK := testkit.NewTestKit(c, s.store)
+	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(len(tbl.Cols()), Equals, 2)
-	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false), NotNil)
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+	require.NotNil(t, tk.GetModifyColumn("test", "t", "c2", false))
 
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
@@ -161,95 +141,97 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 		}
 		switch job.SchemaState {
 		case model.StateNone:
-			tbl = testGetTableByName(c, internalTK.Se, "test", "t")
+			tbl = internalTK.GetTableByName("test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.Cols()) != 2 {
 				checkErr = errors.New("len(cols) is not right")
 			}
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			tbl = testGetTableByName(c, internalTK.Se, "test", "t")
+			tbl = internalTK.GetTableByName("test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
 				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
+			} else if internalTK.GetModifyColumn("test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
-			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2_0", true) == nil {
+			} else if internalTK.GetModifyColumn("test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
 			}
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	// Alter sql will modify column c2 to tinyint not null.
 	SQL := "alter table t modify column c2 tinyint not null"
 	tk.MustExec(SQL)
 	// Assert the checkErr in the job of every state.
-	c.Assert(checkErr, IsNil)
+	require.Nil(t, checkErr)
 
 	// Check the col meta after the column type change.
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(len(tbl.Cols()), Equals, 2)
-	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
-	c.Assert(col, NotNil)
-	c.Assert(parser_mysql.HasNotNullFlag(col.Flag), Equals, true)
-	c.Assert(col.Flag&parser_mysql.NoDefaultValueFlag, Not(Equals), uint(0))
-	c.Assert(col.Tp, Equals, parser_mysql.TypeTiny)
-	c.Assert(col.ChangeStateInfo, IsNil)
+	tbl = tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+	col := tk.GetModifyColumn("test", "t", "c2", false)
+	require.NotNil(t, col)
+	require.Equal(t, true, parser_mysql.HasNotNullFlag(col.Flag))
+	require.NotEqual(t, 0, col.Flag&parser_mysql.NoDefaultValueFlag)
+	require.Equal(t, parser_mysql.TypeTiny, col.Tp)
+	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
-func (s *testColumnTypeChangeSuite) TestRollbackColumnTypeChangeBetweenInteger(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bigint, c2 bigint)")
 	tk.MustExec("insert into t(c1, c2) values (1, 1)")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(len(tbl.Cols()), Equals, 2)
-	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false), NotNil)
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+	require.NotNil(t, tk.GetModifyColumn("test", "t", "c2", false))
 
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	hook := &ddl.TestDDLCallback{}
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(hook, tbl, model.StateNone)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	// Alter sql will modify column c2 to bigint not null.
 	SQL := "alter table t modify column c2 int not null"
 	_, err := tk.Exec(SQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-queueing")
-	assertRollBackedColUnchanged(c, tk)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-queueing", err.Error())
+	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateDeleteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateDeleteOnly)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err = tk.Exec(SQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-delete only")
-	assertRollBackedColUnchanged(c, tk)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-delete only", err.Error())
+	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteOnly)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err = tk.Exec(SQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-write only")
-	assertRollBackedColUnchanged(c, tk)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-write only", err.Error())
+	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteReorg.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteReorganization)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err = tk.Exec(SQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-write reorganization")
-	assertRollBackedColUnchanged(c, tk)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-write reorganization", err.Error())
+	assertRollBackedColUnchanged(t, tk)
 }
 
 func customizeHookRollbackAtState(hook *ddl.TestDDLCallback, tbl table.Table, state model.SchemaState) {
@@ -264,15 +246,15 @@ func customizeHookRollbackAtState(hook *ddl.TestDDLCallback, tbl table.Table, st
 	}
 }
 
-func assertRollBackedColUnchanged(c *C, tk *testkit.TestKit) {
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(len(tbl.Cols()), Equals, 2)
-	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
-	c.Assert(col, NotNil)
-	c.Assert(col.Flag, Equals, uint(0))
-	c.Assert(col.Tp, Equals, parser_mysql.TypeLonglong)
-	c.Assert(col.ChangeStateInfo, IsNil)
+func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+	col := tk.GetModifyColumn("test", "t", "c2", false)
+	require.NotNil(t, col)
+	require.Equal(t, uint(0), col.Flag)
+	require.Equal(t, parser_mysql.TypeLonglong, col.Tp)
+	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
@@ -286,8 +268,10 @@ func init() {
 	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	prepare := func(tk *testkit.TestKit) {
@@ -304,129 +288,129 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	// integer to string
 	prepare(tk)
 	tk.MustExec("alter table t modify a varchar(10)")
-	modifiedColumn := getModifyColumn(c, tk.Se, "test", "t", "a", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	modifiedColumn := tk.GetModifyColumn("test", "t", "a", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b char(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	tk.MustExec("alter table t modify c binary(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
 
 	tk.MustExec("alter table t modify d varbinary(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	tk.MustExec("alter table t modify e blob(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "f", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
 
 	// integer to decimal
 	prepare(tk)
 	tk.MustExec("alter table t modify a decimal(2,1)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeNewDecimal)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeNewDecimal, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
 
 	// integer to year
 	// For year(2), MySQL converts values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges 2000 to 2069 and 1970 to 1999.
 	tk.MustExec("alter table t modify b year")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeYear)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeYear, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
 
 	// integer to time
 	tk.MustExec("alter table t modify c time")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDuration) // mysql.TypeTime has rename to TypeDuration.
+	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeDuration, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
 
 	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
 	tk.MustExec("alter table t modify d date")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDate)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeDate, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
 
 	// integer to timestamp (according to what timezone you have set)
 	tk.MustExec("alter table t modify e timestamp")
 	tk.MustExec("set @@session.time_zone=UTC")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeTimestamp, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "f", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDatetime)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeDatetime, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
 
 	// integer to floating-point values
 	prepare(tk)
 	tk.MustExec("alter table t modify a float")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeFloat)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeFloat, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b double")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDouble)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeDouble, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	// integer to bit
 	tk.MustExec("alter table t modify c bit(10)")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBit)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeBit, modifiedColumn.Tp)
 	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
 	tk.MustQuery("select c from t").Check(testkit.Rows("\x00o"))
 
 	// integer to json
 	tk.MustExec("alter table t modify d json")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeJSON)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeJSON, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	// integer to enum
 	prepareForEnumSet(tk)
 	// TiDB take integer as the enum element offset to cast.
 	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeEnum)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeEnum, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
 
 	// TiDB take integer as the set element offset to cast.
 	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
-	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
-	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeSet)
+	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	require.NotNil(t, modifiedColumn)
+	require.Equal(t, parser_mysql.TypeSet, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
 
 	// TiDB can't take integer as the enum element string to cast, while the MySQL can.
@@ -436,8 +420,10 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", mysql.WarnDataTruncated)
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarchar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeBetweenVarcharAndNonVarchar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists col_type_change_char;")
 	tk.MustExec("create database col_type_change_char;")
@@ -463,15 +449,17 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarc
 	tk.MustQuery("select a from t;").Check(testkit.Rows("aaa"))
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
+	originalTz := tk.Session().GetSessionVars().TimeZone
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		tk.Se.GetSessionVars().TimeZone = originalTz
+		tk.Session().GetSessionVars().TimeZone = originalTz
 	}()
 
 	// Init string date type table.
@@ -690,15 +678,17 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", mysql.ErrBadNumber)
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
+	originalTz := tk.Session().GetSessionVars().TimeZone
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		tk.Se.GetSessionVars().TimeZone = originalTz
+		tk.Session().GetSessionVars().TimeZone = originalTz
 	}()
 
 	// Init string date type table.
@@ -953,12 +943,14 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 }
 
 // Test issue #20529.
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	var assertResult bool
 	assertHasAlterWriteReorg := func(tbl table.Table) {
@@ -973,38 +965,40 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C
 				assertResult = true
 			}
 		}
-		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	}
 
 	// Change int to tinyint.
 	// Although display length is increased, the default flen is decreased, reorg is needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(1))")
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	tbl := tk.GetTableByName("test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(3)")
-	c.Assert(assertResult, Equals, true)
+	require.Equal(t, true, assertResult)
 
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	tbl = tk.GetTableByName("test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
-	c.Assert(assertResult, Equals, false)
+	require.Equal(t, false, assertResult)
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromDateTimeTypeToOthers(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
+	originalTz := tk.Session().GetSessionVars().TimeZone
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		tk.Se.GetSessionVars().TimeZone = originalTz
+		tk.Session().GetSessionVars().TimeZone = originalTz
 	}()
 
 	// Init string date type table.
@@ -1173,15 +1167,17 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromDateTimeTypeToOthers
 	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
+	originalTz := tk.Session().GetSessionVars().TimeZone
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		tk.Se.GetSessionVars().TimeZone = originalTz
+		tk.Session().GetSessionVars().TimeZone = originalTz
 	}()
 
 	// Init string date type table.
@@ -1565,8 +1561,10 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 2001 0 2020 1991 2009 2020 <nil>"))
 }
 
-func (s *testColumnTypeChangeSuite) TestUpdateDataAfterChangeTimestampToDate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateDataAfterChangeTimestampToDate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (col timestamp default '1971-06-09' not null, col1 int default 1, unique key(col1));")
@@ -1586,22 +1584,24 @@ func (s *testColumnTypeChangeSuite) TestUpdateDataAfterChangeTimestampToDate(c *
 }
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
-func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRowFormat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v varchar(10))")
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	tbl := tk.GetTableByName("test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
-	h := helper.NewHelper(s.store.(helper.Storage))
+	h := helper.NewHelper(store.(helper.Storage))
 	data, err := h.GetMvccByEncodedKey(encodedKey)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// The new format will start with CodecVer = 128 (0x80).
-	c.Assert(data.Info.Writes[0].ShortValue, DeepEquals, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33})
+	require.Equal(t, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33}, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1611,11 +1611,13 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 // The added column with NOT-NULL option will be fetched with error when it's origin default value is not set.
 // It's good because the insert / update logic will cast the related column to changing column rather than use
 // origin default value directly.
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangingColOriginDefaultValue(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -1623,9 +1625,9 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(2, 2)")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	originalHook := s.dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: s.dom}
+	tbl := tk.GetTableByName("test", "t")
+	originalHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1641,7 +1643,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
-				tbl := testGetTableByName(c, tk1.Se, "test", "t")
+				tbl := tk.GetTableByName("test", "t")
 				if len(tbl.WritableCols()) != 3 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1677,20 +1679,22 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 			i++
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	c.Assert(checkErr, IsNil)
+	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	require.Nil(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastSucc(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("set time_zone = 'UTC'")
@@ -1700,9 +1704,9 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	originalHook := s.dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: s.dom}
+	tbl := tk.GetTableByName("test", "t")
+	originalHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
@@ -1718,7 +1722,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && stableTimes < 3 {
 			if !once {
 				once = true
-				tbl := testGetTableByName(c, tk1.Se, "test", "t")
+				tbl := tk.GetTableByName("test", "t")
 				if len(tbl.WritableCols()) != 4 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1761,10 +1765,10 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		i++
 	}
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t modify column c date NOT NULL")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	c.Assert(checkErr, IsNil)
+	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	require.Nil(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
 		testkit.Rows("1 -1 1971-06-09", "2 -2 1971-06-09", "5 5 2021-06-06", "6 6 2021-06-06", "7 7 2021-06-06"))
@@ -1772,11 +1776,13 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 }
 
 // TestChangingColOriginDefaultValueAfterAddColAndCastFail tests #25383.
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastFail(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("set time_zone = 'UTC'")
@@ -1784,9 +1790,9 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	originalHook := s.dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: s.dom}
+	tbl := tk.GetTableByName("test", "t")
+	originalHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1797,7 +1803,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		}
 
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
-			tbl := testGetTableByName(c, tk1.Se, "test", "t")
+			tbl := tk.GetTableByName("test", "t")
 			if len(tbl.WritableCols()) != 4 {
 				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
@@ -1819,17 +1825,19 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		}
 	}
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	c.Assert(checkErr, IsNil)
+	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	require.Nil(t, checkErr)
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
 }
 
 // Close issue #22820
-func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangingAttributeOfColumnWithFK(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	prepare := func() {
@@ -1842,20 +1850,20 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	prepare()
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
-	tbl := testGetTableByName(c, tk.Se, "test", "orders")
-	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+	tbl := tk.GetTableByName("test", "orders")
+	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
-	tbl = testGetTableByName(c, tk.Se, "test", "orders")
-	c.Assert(tbl.Meta().Columns[1].Name.L, Equals, "user_id2")
-	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+	tbl = tk.GetTableByName("test", "orders")
+	require.Equal(t, "user_id2", tbl.Meta().Columns[1].Name.L)
+	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
-	tbl = testGetTableByName(c, tk.Se, "test", "orders")
-	c.Assert(tbl.Meta().Columns[1].Comment, Equals, "haha")
-	c.Assert(tbl.Meta().Columns[1].DefaultValue.(string), Equals, "-1")
+	tbl = tk.GetTableByName("test", "orders")
+	require.Equal(t, "haha", tbl.Meta().Columns[1].Comment)
+	require.Equal(t, "-1", tbl.Meta().Columns[1].DefaultValue.(string))
 
 	prepare()
 	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
@@ -1863,8 +1871,10 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	tk.MustExec("drop table if exists orders, users")
 }
 
-func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterPrimaryKeyToNull(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t, t1")
@@ -1877,8 +1887,10 @@ func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
 }
 
 // Close https://github.com/pingcap/tidb/issues/24839.
-func (s testColumnTypeChangeSuite) TestChangeUnsignedIntToDatetime(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeUnsignedIntToDatetime(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t;")
@@ -1897,8 +1909,10 @@ func (s testColumnTypeChangeSuite) TestChangeUnsignedIntToDatetime(c *C) {
 }
 
 // Close issue #23202
-func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -1907,15 +1921,15 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk.MustExec("alter table t add index(b)")
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
 
-	failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"))
 	}()
 
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{Do: s.dom}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -1925,31 +1939,33 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 			jobID = job.ID
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
 	_, err := tk.Exec("alter table t drop index b")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
-	c.Assert(jobID > 0, Equals, true)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", err.Error())
+	require.Equal(t, true, jobID > 0)
 
 	// Verification of the history job state.
 	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(jobID)
 		return errors2.Trace(err1)
 	})
-	c.Assert(err, IsNil)
-	c.Assert(job.ErrorCount, Equals, int64(4))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), job.ErrorCount)
+	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", job.Error.Error())
 }
 
 // Close issue #24253
-func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -1977,23 +1993,25 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 }
 
 // Close issue #24584
-func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineLeak(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic"))
 	}()
 
 	// set ddl hook
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
-	tbl := testGetTableByName(c, tk.Se, "test", "ctc_goroutine_leak")
+	tbl := tk.GetTableByName("test", "ctc_goroutine_leak")
 
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
@@ -2008,9 +2026,9 @@ func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineL
 			jobID = job.ID
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	var (
 		wg       = sync.WaitGroup{}
@@ -2025,12 +2043,14 @@ func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineL
 	<-ddl.TestReorgGoroutineRunning
 	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
 	wg.Wait()
-	c.Assert(alterErr.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	require.Equal(t, "[ddl:8214]Cancelled DDL job", alterErr.Error())
 }
 
 // Close issue #24971, #24973, #24974
-func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCTCShouldCastTheDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -2059,8 +2079,10 @@ func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 // Close issue #25037
 // 1: for default value of binary of create-table, it should append the \0 as the suffix to meet flen.
 // 2: when cast the bit to binary, we should consider to convert it to uint then cast uint to string, rather than taking the bit to string directly.
-func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCTCCastBitToBinary(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// For point 1:
@@ -2085,37 +2107,35 @@ func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
 }
 
-func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangePrefixedIndexColumnToNonPrefixOne(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a text, unique index idx(a(2)));")
 	tk.MustExec("alter table t modify column a int;")
 	showCreateTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
-	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
-		Commentf("%s", showCreateTable))
+	require.Containsf(t, showCreateTable, "UNIQUE KEY `idx` (`a`)", showCreateTable)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a char(255), unique index idx(a(2)));")
 	tk.MustExec("alter table t modify column a float;")
 	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
-	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
-		Commentf("%s", showCreateTable))
+	require.Containsf(t, showCreateTable, "UNIQUE KEY `idx` (`a`)", showCreateTable)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a char(255), b text, unique index idx(a(2), b(10)));")
 	tk.MustExec("alter table t modify column b int;")
 	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
-	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
-		Commentf("%s", showCreateTable))
+	require.Containsf(t, showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)", showCreateTable)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
 	tk.MustExec("alter table t modify a char(9);")
 	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
-	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
-		Commentf("%s", showCreateTable))
+	require.Containsf(t, showCreateTable, "UNIQUE KEY `idx` (`a`)", showCreateTable)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(700), key(a(700)));")
@@ -2123,8 +2143,10 @@ func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(
 }
 
 // Fix issue https://github.com/pingcap/tidb/issues/25469
-func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCastToTimeStampDecodeError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t")
@@ -2147,8 +2169,10 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 }
 
 // https://github.com/pingcap/tidb/issues/25285.
-func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCastFromZeroIntToTimeError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	prepare := func() {
@@ -2192,8 +2216,10 @@ func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
 	tk.MustExec("drop table if exists t;")
 }
 
-func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeFromTimeToYear(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t;")
@@ -2222,24 +2248,26 @@ func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
 // Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
 // For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
 // For ddl reorging or changing column in ctc, it need report some errors.
-func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
 	tk.MustExec("insert into t values(now())")
 
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	// use new session to check meta in callback function.
-	internalTK := testkit.NewTestKit(c, s.store)
+	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl, NotNil)
-	c.Assert(len(tbl.Cols()), Equals, 1)
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Equal(t, 1, len(tbl.Cols()))
 
 	hook := &ddl.TestDDLCallback{}
 	var (
@@ -2259,17 +2287,19 @@ func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C
 			_, checkErr2 = internalTK.Exec("update t set `a` = '3977-02-22'")
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
-	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
-	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr1.Error())
+	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr2.Error())
 	tk.MustExec("drop table if exists t")
 }
 
 // https://github.com/pingcap/tidb/issues/25282.
-func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeFromUnsignedIntToTime(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t;")
@@ -2282,8 +2312,10 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 
 // See https://github.com/pingcap/tidb/issues/25287.
 // Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
-func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeFromBitToStringInvalidUtf8ErrMsg(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t;")
@@ -2293,8 +2325,10 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
 }
 
-func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestForIssue24621(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2304,8 +2338,10 @@ func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
 	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
 }
 
-func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestChangeNullValueFromOtherTypeToTimestamp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Some ddl cases.
@@ -2323,8 +2359,8 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	prepare()
 	// only from other type NULL to timestamp type NOT NULL, it should be successful.
 	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1265]Data truncated for column 'a1' at row 1", err.Error())
 
 	prepare2 := func() {
 		tk.MustExec("drop table if exists t")
@@ -2336,23 +2372,25 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	prepare2()
 	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
 	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1265]Data truncated for column 'a' at row 1", err.Error())
 
 	// Some dml cases.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a timestamp NOT NULL)")
 	_, err = tk.Exec("insert into t values()")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+	require.Error(t, err)
+	require.Equal(t, "[table:1364]Field 'a' doesn't have a default value", err.Error())
 
 	_, err = tk.Exec("insert into t values(null)")
-	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+	require.Equal(t, "[table:1048]Column 'a' cannot be null", err.Error())
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	// issue #31372
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	prepare := func(createTableStmt string) {
@@ -2372,8 +2410,10 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c 
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestColumnTypeChangeTimestampToInt(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// 1. modify a timestamp column to bigint
