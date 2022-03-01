@@ -740,7 +740,7 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 		},
 	}
 
-	ctx, cleanup := createInspectionContext(t, mockData, nil)
+	ctx, cleanup := createInspectionContext(t, mockData, configurations)
 	defer cleanup()
 
 	rs, err := tk.Session().Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
