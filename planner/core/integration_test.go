@@ -2872,10 +2872,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	rows[1][2] = "least(test.t.id, 1)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where least(id, 1)").
 		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "interval(test.t.id, 1, 2)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where interval(id, 1, 2)").
-		CheckAt([]int{0, 3, 6}, rows)
 }
 
 func TestDistinctScalarFunctionPushDown(t *testing.T) {
