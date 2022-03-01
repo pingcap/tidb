@@ -616,7 +616,35 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "CHARSET")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argsTps := make([]types.EvalType, 0, len(args))
+	for _, arg := range args {
+		argsTps = append(argsTps, arg.GetType().EvalType())
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 64
+	sig := &builtinCharsetSig{bf}
+	return sig, nil
+}
+
+type builtinCharsetSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCharsetSig) Clone() builtinFunc {
+	newSig := &builtinCharsetSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCharsetSig) evalString(_ chunk.Row) (string, bool, error) {
+	return b.args[0].GetType().Charset, false, nil
 }
 
 type coercibilityFunctionClass struct {
@@ -746,7 +774,7 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBIsDDLOwnerSig.
+// evalInt evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {

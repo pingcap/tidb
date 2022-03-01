@@ -166,8 +166,31 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// extractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
+func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *CorrelatedColumn:
+		result = append(result, &v.Column)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsAndCorColumns(result, arg)
+		}
+	}
+	return result
+}
+
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
+func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
+	for _, expr := range list {
+		result = extractColumnsAndCorColumns(result, expr)
+	}
+	return result
+}
+
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
@@ -515,6 +538,41 @@ func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	return newExpr
 }
 
+// ContainOuterNot checks if there is an outer `not`.
+func ContainOuterNot(expr Expression) bool {
+	return containOuterNot(expr, false)
+}
+
+// containOuterNot checks if there is an outer `not`.
+// Input `not` means whether there is `not` outside `expr`
+//
+// eg.
+//    not(0+(t.a == 1 and t.b == 2)) returns true
+//    not(t.a) and not(t.b) returns false
+func containOuterNot(expr Expression, not bool) bool {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return containOuterNot(f.GetArgs()[0], true)
+		case ast.IsTruthWithNull, ast.IsNull:
+			return containOuterNot(f.GetArgs()[0], not)
+		default:
+			if not {
+				return true
+			}
+			hasNot := false
+			for _, expr := range f.GetArgs() {
+				hasNot = hasNot || containOuterNot(expr, not)
+				if hasNot {
+					return hasNot
+				}
+			}
+			return hasNot
+		}
+	}
+	return false
+}
+
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
@@ -696,13 +754,13 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
-	if useCache || isPointExec {
+	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
 			ctx:   ctx,
@@ -737,7 +795,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr))
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
@@ -1122,11 +1180,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParams(ctx, stmt, inValues...)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmtNode)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}

@@ -15,9 +15,9 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"sort"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -55,12 +56,13 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
@@ -78,7 +80,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -125,8 +127,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
@@ -1451,22 +1451,7 @@ LOOP:
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	it, err := nidx.SeekFirst(txn)
-	c.Assert(err, IsNil)
-	defer it.Close()
-
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
-		c.Assert(err, IsNil)
-		_, ok := handles.Get(h)
-		c.Assert(ok, IsTrue, Commentf("handle: %v", h.String()))
-		handles.Delete(h)
-	}
-	c.Assert(handles.Len(), Equals, 0)
+	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
 
@@ -2861,8 +2846,8 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 
 	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
 
-	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
 	tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
 
 	tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", errno.ErrCollationCharsetMismatch)
@@ -2882,8 +2867,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk = testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
@@ -3188,8 +3171,8 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// Success when the new collation is enabled.
+	tk.MustExec("create table t_set (a set('1', '4', '10') default '1 ,4');")
 	// The type of default value is int.
 	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
@@ -3198,6 +3181,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 
 	// The type of default value is int.
 	// It's for successful cases
+	tk.MustExec("drop table if exists t_set")
 	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
 	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
@@ -3548,6 +3532,7 @@ func (s *testDBSuite5) TestAlterTableRenameTable(c *C) {
 func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
 	// for different databases
 	tk.MustExec("create table t (c1 int, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2)")
@@ -3587,19 +3572,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
@@ -3624,7 +3609,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
 	// for the same table name
@@ -3743,13 +3728,13 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 
 	// for failure case
 	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")
@@ -4899,13 +4884,13 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 
 	// DROP PARTITION
 	s.mustExec(tk, c, "drop table if exists t2")
-	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 drop partition p1"
 	s.mustExec(tk, c, sql)
 	tk.MustGetErrCode(sql, errno.ErrDropPartitionNonExistent)
 	s.mustExec(tk, c, "alter table t2 drop partition if exists p1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to DROP"))
 }
 
 func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testDBSuite5, c *C) {
@@ -5030,7 +5015,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 
 	// For issue #13189
 	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
-	tk.MustExec("create table t1(a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("create table t1 (a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("SET @@time_zone = '+00:00'")
+	defer tk.MustExec("SET @@time_zone = DEFAULT")
+	tk.MustQuery("SELECT @@time_zone").Check(testkit.Rows("+00:00"))
+	tk.MustExec("create table t2 (a int primary key, b timestamp DEFAULT CURRENT_TIMESTAMP, c timestamp DEFAULT '2000-01-01 00:00:00')")
 	tk.MustExec("insert into t1 set a = 1, b = default(c);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
 	tk.MustExec("insert into t1 set a = 2, b = default(c), c = default(d), d = default(b);")
@@ -5040,6 +5029,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 set a = default(b) + default(c) - default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
+	tk.MustExec("set @@timestamp = 1321009871")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustQuery("SELECT NOW()").Check(testkit.Rows("2011-11-11 11:11:11"))
+	tk.MustExec("insert into t2 set a = 1, b = default(c)")
+	tk.MustExec("insert into t2 set a = 2, c = default(b)")
+	tk.MustGetErrCode("insert into t2 set a = 3, b = default(a)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t2 set a = 4, b = default(b), c = default(c)")
+	tk.MustExec("insert into t2 set a = 5, b = default, c = default")
+	tk.MustExec("insert into t2 set a = 6")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows(
+		"1 2000-01-01 00:00:00 2000-01-01 00:00:00",
+		"2 2011-11-11 11:11:11 2011-11-11 11:11:11",
+		"4 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2000-01-01 00:00:00",
+		"6 2011-11-11 11:11:11 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `UPDATE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5052,6 +5056,21 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("insert into t1 set a = 10")
 	tk.MustExec("update t1 set a = 10, b = default(c) + default(d)")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40"))
+	tk.MustExec("set @@timestamp = 1671747742")
+	tk.MustExec("update t2 set b = default(c) WHERE a = 6")
+	tk.MustExec("update t2 set c = default(b) WHERE a = 5")
+	tk.MustGetErrCode("update t2 set b = default(a) WHERE a = 4", errno.ErrNoDefaultForField)
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 4")
+	// Non existing row!
+	tk.MustExec("update t2 set b = default(b), c = default(c) WHERE a = 3")
+	tk.MustExec("update t2 set b = default, c = default WHERE a = 2")
+	tk.MustExec("update t2 set b = default(b) WHERE a = 1")
+	tk.MustQuery("select * from t2;").Sort().Check(testkit.Rows(
+		"1 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"2 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"4 2022-12-22 22:22:22 2000-01-01 00:00:00",
+		"5 2011-11-11 11:11:11 2022-12-22 22:22:22",
+		"6 2000-01-01 00:00:00 2000-01-01 00:00:00"))
 	// Use `DEFAULT()` in `REPLACE` statement
 	tk.MustExec("delete from t1;")
 	tk.MustExec("insert into t1 value (1, 2, 3, 4);")
@@ -5068,9 +5087,11 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 70 30 40", "20 20 30 50"))
 
 	// Use `DEFAULT()` in expression of generate columns, issue #12471
+	tk.MustExec("DROP TABLE t2")
 	tk.MustExec("create table t2(a int default 9, b int as (1 + default(a)));")
 	tk.MustExec("insert into t2 values(1, default);")
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10"))
+	tk.MustExec("insert into t2 values(2, default(b))")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
 
 	// Use `DEFAULT()` with subquery, issue #13390
 	tk.MustExec("create table t3(f1 int default 11);")
@@ -6356,6 +6377,8 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	tk2.MustExec("alter table t1 read write")
 }
 
+type checkRet func(c *C, err1, err2 error)
+
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
@@ -6386,10 +6409,9 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	var err1 error
 	var err2 error
-	wg.Add(2)
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
@@ -6412,15 +6434,13 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		_, err1 = se1.Execute(context.Background(), sql1)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		<-ch
 		_, err2 = se2.Execute(context.Background(), sql2)
-	}()
+	})
 
 	wg.Wait()
 	f(c, err1, err2)
@@ -6836,8 +6856,8 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
-	domain.SchemaOutOfDateRetryTimes = int32(50)
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
 }
 
 func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
@@ -7290,6 +7310,51 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
 }
 
+// Close issue #24172.
+// See https://github.com/pingcap/tidb/issues/24172
+func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+
+	var cancelErr error
+	var rs []sqlexec.RecordSet
+	hook := &ddl.TestDDLCallback{}
+	d := s.dom.DDL()
+	originalHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originalHook)
+
+	// Test when cancelling cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustExec("alter table t add index (id)")
+	c.Assert(cancelErr.Error(), Equals, "mock commit error")
+
+	// Test when cancelling is retried only once and adding index is cancelled in the end.
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
+	c.Assert(cancelErr, IsNil)
+	result := tk1.ResultSetToResultWithCtx(context.Background(), rs[0], Commentf("cancel ddl job fails"))
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
 // For Close issue #24288
 // see https://github.com/pingcap/tidb/issues/24288
 func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
@@ -7594,4 +7659,158 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"  `d` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testDBSuite2) TestBatchCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tables_1")
+	tk.MustExec("drop table if exists tables_2")
+	tk.MustExec("drop table if exists tables_3")
+
+	d := s.dom.DDL()
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+	})
+
+	// correct name
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(err, IsNil)
+
+	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
+	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
+	c.Assert(job[1], Equals, "test")
+	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
+	c.Assert(job[3], Equals, "create tables")
+	c.Assert(job[4], Equals, "public")
+	// FIXME: we must change column type to give multiple id
+	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
+
+	newinfo := &model.TableInfo{
+		Name: model.NewCIStr("tables_4"),
+	}
+	{
+		colNum := 2
+		cols := make([]*model.ColumnInfo, colNum)
+		viewCols := make([]model.CIStr, colNum)
+		var stmtBuffer bytes.Buffer
+		stmtBuffer.WriteString("SELECT ")
+		for i := range cols {
+			col := &model.ColumnInfo{
+				Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+				Offset: i,
+				State:  model.StatePublic,
+			}
+			cols[i] = col
+			viewCols[i] = col.Name
+			stmtBuffer.WriteString(cols[i].Name.L + ",")
+		}
+		stmtBuffer.WriteString("1 FROM t")
+		newinfo.Columns = cols
+		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
+	}
+
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
+	c.Check(err, IsNil)
+}
+
+func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
+	// For issue #31735.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, unique kye(a))")
+	tk.MustExec("insert into t1 value (1), (10)")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	_, checkErr = tk1.Exec("use test_db")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	times := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (1) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (2)")
+			}
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (2) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (3)")
+			}
+		case model.StateWriteReorganization:
+			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("insert into t1 values (3) on duplicate key update a=a+1")
+				if checkErr == nil {
+					_, checkErr = tk1.Exec("replace into t1 values (4)")
+				}
+				times++
+			}
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t1 add column gc int as ((a+1))")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
+	c.Assert(checkErr, IsNil)
+}
+
+func (s *testDBSuite1) TestGetTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		tzSQL  string
+		tzStr  string
+		tzName string
+		offset int
+		err    string
+	}{
+		{"set time_zone = '+00:00'", "", "UTC", 0, ""},
+		{"set time_zone = '-00:00'", "", "UTC", 0, ""},
+		{"set time_zone = 'UTC'", "UTC", "UTC", 0, ""},
+		{"set time_zone = '+05:00'", "", "UTC", 18000, ""},
+		{"set time_zone = '-08:00'", "", "UTC", -28800, ""},
+		{"set time_zone = '+08:00'", "", "UTC", 28800, ""},
+		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
+		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
+		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
+		{"set time_zone = 'Etc/GMT-12'", "Etc/GMT-12", "Etc/GMT-12", 0, ""},
+		{"set time_zone = 'EST'", "EST", "EST", 0, ""},
+		{"set time_zone = 'Australia/Lord_Howe'", "Australia/Lord_Howe", "Australia/Lord_Howe", 0, ""},
+	}
+	for _, tc := range testCases {
+		err := tk.ExecToErr(tc.tzSQL)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tc.err)
+		} else {
+			c.Assert(tc.err, Equals, "")
+		}
+		c.Assert(tk.Se.GetSessionVars().TimeZone.String(), Equals, tc.tzStr, Commentf("sql: %s", tc.tzSQL))
+		tz, offset := ddlutil.GetTimeZone(tk.Se)
+		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
+		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
+	}
 }

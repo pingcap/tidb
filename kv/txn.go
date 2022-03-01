@@ -16,10 +16,12 @@ package kv
 
 import (
 	"context"
+	"errors"
 	"math"
 	"math/rand"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -58,9 +60,24 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			return err
 		}
 
-		err = txn.Commit(ctx)
+		failpoint.Inject("mockCommitErrorInNewTxn", func(val failpoint.Value) {
+			if v := val.(string); len(v) > 0 {
+				switch v {
+				case "retry_once":
+					if i == 0 {
+						err = ErrTxnRetryable
+					}
+				case "no_retry":
+					failpoint.Return(errors.New("mock commit error"))
+				}
+			}
+		})
+
 		if err == nil {
-			break
+			err = txn.Commit(ctx)
+			if err == nil {
+				break
+			}
 		}
 		if retryable && IsTxnRetryableError(err) {
 			logutil.BgLogger().Warn("RunInNewTxn",

@@ -22,14 +22,13 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInetAton(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Input    interface{}
@@ -57,12 +56,11 @@ func TestInetAton(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Expected"][0], d)
+		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
 func TestIsIPv4(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -87,18 +85,17 @@ func TestIsIPv4(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(0), r)
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestIsUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		uuid   string
@@ -123,7 +120,7 @@ func TestIsUUID(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
@@ -134,7 +131,6 @@ func TestIsUUID(t *testing.T) {
 }
 
 func TestUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
@@ -161,7 +157,6 @@ func TestUUID(t *testing.T) {
 }
 
 func TestAnyValue(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
@@ -179,12 +174,11 @@ func TestAnyValue(t *testing.T) {
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 }
 
 func TestIsIPv6(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -203,18 +197,17 @@ func TestIsIPv6(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(0), r)
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestInetNtoa(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     int
@@ -234,7 +227,7 @@ func TestInetNtoa(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
@@ -245,7 +238,6 @@ func TestInetNtoa(t *testing.T) {
 }
 
 func TestInet6NtoA(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -273,7 +265,7 @@ func TestInet6NtoA(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
@@ -284,7 +276,6 @@ func TestInet6NtoA(t *testing.T) {
 }
 
 func TestInet6AtoN(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -305,7 +296,7 @@ func TestInet6AtoN(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
@@ -316,7 +307,6 @@ func TestInet6AtoN(t *testing.T) {
 }
 
 func TestIsIPv4Mapped(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -335,18 +325,17 @@ func TestIsIPv4Mapped(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(int64(0)), r)
+	testutil.DatumEqual(t, types.NewDatum(int64(0)), r)
 }
 
 func TestIsIPv4Compat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -366,18 +355,17 @@ func TestIsIPv4Compat(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(0), r)
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestNameConst(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
@@ -421,7 +409,6 @@ func TestNameConst(t *testing.T) {
 }
 
 func TestUUIDToBin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -511,7 +498,7 @@ func TestUUIDToBin(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+				testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 			}
 		}
 	}
@@ -521,7 +508,6 @@ func TestUUIDToBin(t *testing.T) {
 }
 
 func TestBinToUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -590,4 +576,38 @@ func TestBinToUUID(t *testing.T) {
 
 	_, err := funcs[ast.BinToUUID].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+}
+
+func TestTidbShard(t *testing.T) {
+	ctx := createContext(t)
+
+	fc := funcs[ast.TiDBShard]
+
+	// tidb_shard(-1) == 81, ......
+	args := makeDatums([]int{-1, 0, 1, 9999999999999999})
+	res := makeDatums([]int{81, 167, 214, 63})
+	for i, arg := range args {
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, res[i], d)
+	}
+
+	// tidb_shard("string") always return 167
+	args2 := makeDatums([]string{"abc", "ope", "wopddd"})
+	res2 := makeDatums([]int{167})
+	for _, arg := range args2 {
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, res2[0], d)
+	}
+
+	args3 := makeDatums([]int{-1, 0, 1, 9999999999999999})
+	{
+		_, err := fc.getFunction(ctx, datumsToConstants(args3))
+		require.Error(t, err)
+	}
 }

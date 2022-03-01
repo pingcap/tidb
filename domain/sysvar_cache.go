@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -94,11 +95,7 @@ func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, e
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), `SELECT variable_name, variable_value FROM mysql.global_variables`)
-	if err != nil {
-		return tableContents, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +164,8 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBMemQuotaBindCache:
+		variable.MemQuotaBindCache.Store(variable.TidbOptInt64(sVal, variable.DefTiDBMemQuotaBindCache))
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		var val float64
 		val, err = strconv.ParseFloat(sVal, 64)
@@ -188,51 +187,35 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(variable.TiDBOptOn(sVal))
 	case variable.TiDBStmtSummaryInternalQuery:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(variable.TiDBOptOn(sVal))
 	case variable.TiDBStmtSummaryRefreshInterval:
-		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(variable.TidbOptInt64(sVal, variable.DefTiDBStmtSummaryRefreshInterval))
 	case variable.TiDBStmtSummaryHistorySize:
-		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryHistorySize))
 	case variable.TiDBStmtSummaryMaxStmtCount:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxStmtCount)))
 	case variable.TiDBStmtSummaryMaxSQLLength:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
-	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(sVal, false)
-	case variable.TiDBEnableTopSQL:
-		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBTopSQLPrecisionSeconds:
+		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxSQLLength))
+	case variable.TiDBTopSQLMaxTimeSeriesCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.PrecisionSeconds.Store(val)
-	case variable.TiDBTopSQLMaxStatementCount:
+		topsqlstate.GlobalState.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxMetaCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.MaxStatementCount.Store(val)
-	case variable.TiDBTopSQLMaxCollect:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		variable.TopSQLVariable.MaxCollect.Store(val)
-	case variable.TiDBTopSQLReportIntervalSeconds:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+		topsqlstate.GlobalState.MaxCollect.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBSuperReadOnly:
+		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
@@ -240,6 +223,26 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBTableCacheLease:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TableCacheLease.Store(val)
+	case variable.TiDBPersistAnalyzeOptions:
+		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBEnableColumnTracking:
+		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBStatsLoadSyncWait:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.StatsLoadSyncWait.Store(val)
+	case variable.TiDBStatsLoadPseudoTimeout:
+		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

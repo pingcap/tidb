@@ -31,7 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
 )
@@ -485,6 +485,9 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
 
 	if err = cfg.parseCipherInfo(flags); err != nil {
 		return errors.Trace(err)
@@ -548,7 +551,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 

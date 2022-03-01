@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -35,85 +34,106 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testPlanSuite{})
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-type testPlanSuite struct {
-	*parser.Parser
-
+type plannerSuite struct {
+	p   *parser.Parser
 	is  infoschema.InfoSchema
 	ctx sessionctx.Context
-
-	testData testutil.TestData
-
-	optimizeVars map[string]string
 }
 
-func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable()})
+func createPlannerSuite() (s *plannerSuite) {
+	s = new(plannerSuite)
+	tblInfos := []*model.TableInfo{
+		MockSignedTable(),
+		MockUnsignedTable(),
+		MockView(),
+		MockNoPKTable(),
+		MockRangePartitionTable(),
+		MockHashPartitionTable(),
+		MockListPartitionTable(),
+	}
+	id := int64(0)
+	for _, tblInfo := range tblInfos {
+		tblInfo.ID = id
+		id += 1
+		pi := tblInfo.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			def.ID = id
+			id += 1
+		}
+	}
+	s.is = infoschema.MockInfoSchema(tblInfos)
 	s.ctx = MockContext()
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
-	s.Parser = parser.New()
-	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	c.Assert(err, IsNil)
+	s.p = parser.New()
+	s.p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+	return
 }
 
-func (s *testPlanSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testPlanSuite) TestPredicatePushDown(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPredicatePushDown(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", ca, ith))
+		require.Equal(t, output[ith], ToString(p), fmt.Sprintf("for %s %d", ca, ith))
 	}
 }
 
-func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
-	defer testleak.AfterTest(c)()
+// Issue: 31399
+func TestImplicitCastNotNullFlag(t *testing.T) {
+	ctx := context.Background()
+	ca := "select count(*) from t3 group by a having bit_and(b) > 1;"
+	comment := fmt.Sprintf("for %s", ca)
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(ca, "", "")
+	require.NoError(t, err, comment)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	require.NoError(t, err)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	require.NoError(t, err)
+	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
+	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
+	var nullableFlag uint = 0
+	require.Equal(t, nullableFlag, castNotNullFlag)
+}
+
+func TestEliminateProjectionUnderUnion(t *testing.T) {
 	ctx := context.Background()
 	ca := "Select a from t3 join ( (select 127 as IDD from t3) union all (select 1 as IDD from t3) ) u on t3.b = u.IDD;"
-	comment := Commentf("for %s", ca)
-	stmt, err := s.ParseOneStmt(ca, "", "")
-	c.Assert(err, IsNil, comment)
+	comment := fmt.Sprintf("for %s", ca)
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(ca, "", "")
+	require.NoError(t, err, comment)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
 	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
 	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
-	c.Assert(schemaNullFlag, Equals, exprNullFlag)
+	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 
-func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
-	defer testleak.AfterTest(c)()
+func TestJoinPredicatePushDown(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -121,37 +141,37 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 			Right string
 		}
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		join, ok := proj.children[0].(*LogicalJoin)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		leftPlan, ok := join.children[0].(*DataSource)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		rightPlan, ok := join.children[1].(*DataSource)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
-		c.Assert(leftCond, Equals, output[i].Left, comment)
-		c.Assert(rightCond, Equals, output[i].Right, comment)
+		require.Equal(t, output[i].Left, leftCond, comment)
+		require.Equal(t, output[i].Right, rightCond, comment)
 	}
 }
 
-func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
-	defer testleak.AfterTest(c)()
+func TestOuterWherePredicatePushDown(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -160,44 +180,44 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 			Right string
 		}
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		selection, ok := proj.children[0].(*LogicalSelection)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		selCond := fmt.Sprintf("%s", selection.Conditions)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Sel = selCond
 		})
-		c.Assert(selCond, Equals, output[i].Sel, comment)
+		require.Equal(t, output[i].Sel, selCond, comment)
 		join, ok := selection.children[0].(*LogicalJoin)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		leftPlan, ok := join.children[0].(*DataSource)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		rightPlan, ok := join.children[1].(*DataSource)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
-		c.Assert(leftCond, Equals, output[i].Left, comment)
-		c.Assert(rightCond, Equals, output[i].Right, comment)
+		require.Equal(t, output[i].Left, leftCond, comment)
+		require.Equal(t, output[i].Right, rightCond, comment)
 	}
 }
 
-func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSimplifyOuterJoin(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -205,36 +225,36 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			JoinType string
 		}
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		planString := ToString(p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Best = planString
 		})
-		c.Assert(planString, Equals, output[i].Best, comment)
+		require.Equal(t, output[i].Best, planString, comment)
 		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		if !ok {
 			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
-			c.Assert(ok, IsTrue, comment)
+			require.True(t, ok, comment)
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].JoinType = join.JoinType.String()
 		})
-		c.Assert(join.JoinType.String(), Equals, output[i].JoinType, comment)
+		require.Equal(t, output[i].JoinType, join.JoinType.String(), comment)
 	}
 }
 
-func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAntiSemiJoinConstFalse(t *testing.T) {
 	tests := []struct {
 		sql      string
 		best     string
@@ -247,23 +267,23 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca.sql)
+		stmt, err := s.p.ParseOneStmt(ca.sql, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
-		c.Assert(ToString(p), Equals, ca.best, comment)
+		require.NoError(t, err, comment)
+		require.Equal(t, ca.best, ToString(p), comment)
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
-		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
+		require.Equal(t, ca.joinType, join.JoinType.String(), comment)
 	}
 }
 
-func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDeriveNotNullConds(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -272,59 +292,60 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 			Right string
 		}
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagDecorrelate, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err, comment)
+		testdata.OnRecord(func() {
 			output[i].Plan = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[i].Plan, comment)
+		require.Equal(t, output[i].Plan, ToString(p), comment)
 		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
 		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
 		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftConds, rightConds
 		})
-		c.Assert(leftConds, Equals, output[i].Left, comment)
-		c.Assert(rightConds, Equals, output[i].Right, comment)
+		require.Equal(t, output[i].Left, leftConds, comment)
+		require.Equal(t, output[i].Right, rightConds, comment)
 	}
 }
 
-func (s *testPlanSuite) TestExtraPKNotNullFlag(c *C) {
-	defer testleak.AfterTest(c)()
+func TestExtraPKNotNullFlag(t *testing.T) {
 	sql := "select count(*) from t3"
+	s := createPlannerSuite()
 	ctx := context.Background()
-	comment := Commentf("for %s", sql)
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil, comment)
+	comment := fmt.Sprintf("for %s", sql)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-	c.Assert(err, IsNil, comment)
+	require.NoError(t, err, comment)
 	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
-	c.Assert(ds.Columns[2].Name.L, Equals, "_tidb_rowid")
-	c.Assert(ds.Columns[2].Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
-	c.Assert(ds.schema.Columns[2].RetType.Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
+	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].Flag)
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.Flag)
 }
 
-func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
+func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (Plan, error) {
 	sqlMode := s.ctx.GetSessionVars().SQLMode
 	mockedTableInfo := MockSignedTable()
 	// mock the table info here for later use
 	// enable only full group by
 	s.ctx.GetSessionVars().SQLMode = sqlMode | mysql.ModeOnlyFullGroupBy
 	defer func() { s.ctx.GetSessionVars().SQLMode = sqlMode }() // restore it
-	comment := Commentf("for %s", sql)
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil, comment)
+	comment := fmt.Sprintf("for %s", sql)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
 
 	stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).TableInfo = mockedTableInfo
 
@@ -332,7 +353,7 @@ func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {
 	return p, err
 }
 
-func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
+func TestGroupByWhenNotExistCols(t *testing.T) {
 	sqlTests := []struct {
 		sql              string
 		expectedErrMatch string
@@ -372,37 +393,38 @@ func (s *testPlanSuite) TestGroupByWhenNotExistCols(c *C) {
 			expectedErrMatch: ".*contains nonaggregated column 'test\\.t\\.a'.*",
 		},
 	}
+	s := createPlannerSuite()
 	for _, test := range sqlTests {
 		sql := test.sql
-		p, err := buildLogicPlan4GroupBy(s, c, sql)
-		c.Assert(err, NotNil)
-		c.Assert(p, IsNil)
-		c.Assert(err, ErrorMatches, test.expectedErrMatch)
+		p, err := buildLogicPlan4GroupBy(s, t, sql)
+		require.Nil(t, p)
+		require.Error(t, err)
+		require.Regexp(t, test.expectedErrMatch, err.Error())
 	}
 }
 
-func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
+func TestDupRandJoinCondsPushDown(t *testing.T) {
 	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
-	comment := Commentf("for %s", sql)
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil, comment)
+	comment := fmt.Sprintf("for %s", sql)
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
 	p, _, err := BuildLogicalPlanForTest(context.Background(), s.ctx, stmt, s.is)
-	c.Assert(err, IsNil, comment)
+	require.NoError(t, err, comment)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(LogicalPlan))
-	c.Assert(err, IsNil, comment)
+	require.NoError(t, err, comment)
 	proj, ok := p.(*LogicalProjection)
-	c.Assert(ok, IsTrue, comment)
+	require.True(t, ok, comment)
 	join, ok := proj.children[0].(*LogicalJoin)
-	c.Assert(ok, IsTrue, comment)
+	require.True(t, ok, comment)
 	leftPlan, ok := join.children[0].(*LogicalSelection)
-	c.Assert(ok, IsTrue, comment)
+	require.True(t, ok, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
-	c.Assert(leftCond, Equals, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", comment)
+	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", leftCond, comment)
 }
 
-func (s *testPlanSuite) TestTablePartition(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTablePartition(t *testing.T) {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -444,179 +466,183 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		}
 		output []string
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca.SQL)
-		stmt, err := s.ParseOneStmt(ca.SQL, "", "")
-		c.Assert(err, IsNil, comment)
-		s.testData.OnRecord(func() {
+		comment := fmt.Sprintf("for %s", ca.SQL)
+		stmt, err := s.p.ParseOneStmt(ca.SQL, "", "")
+		require.NoError(t, err, comment)
+		testdata.OnRecord(func() {
 
 		})
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, isChoices[ca.IsIdx])
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		planString := ToString(p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = planString
 		})
-		c.Assert(ToString(p), Equals, output[i], Commentf("for %s", ca))
+		require.Equal(t, output[i], ToString(p), fmt.Sprintf("for %v", ca))
 	}
 }
 
-func (s *testPlanSuite) TestSubquery(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSubquery(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", ca, ith))
+		require.Equal(t, output[ith], ToString(p), fmt.Sprintf("for %s %d", ca, ith))
 	}
 }
 
-func (s *testPlanSuite) TestPlanBuilder(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPlanBuilder(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
-		stmt, err := s.ParseOneStmt(ca, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", ca)
+		stmt, err := s.p.ParseOneStmt(ca, "", "")
+		require.NoError(t, err, comment)
 
 		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagPrunColumns|flagPrunColumnsAgain, lp)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[i], Commentf("for %s", ca))
+		require.Equal(t, output[i], ToString(p), fmt.Sprintf("for %s", ca))
 	}
 }
 
-func (s *testPlanSuite) TestJoinReOrder(c *C) {
-	defer testleak.AfterTest(c)()
+func TestJoinReOrder(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("for %s", tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		planString := ToString(p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = planString
 		})
-		c.Assert(planString, Equals, output[i], Commentf("for %s", tt))
+		require.Equal(t, output[i], planString, fmt.Sprintf("for %s", tt))
 	}
 }
 
-func (s *testPlanSuite) TestEagerAggregation(c *C) {
-	defer testleak.AfterTest(c)()
+func TestEagerAggregation(t *testing.T) {
 	var input []string
 	var output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+
+	s := createPlannerSuite()
 	ctx := context.Background()
 	s.ctx.GetSessionVars().AllowAggPushDown = true
+	defer func() {
+		s.ctx.GetSessionVars().AllowAggPushDown = false
+	}()
 	for ith, tt := range input {
-		comment := Commentf("for %s", tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagPushDownAgg, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", tt, ith))
+		require.Equal(t, output[ith], ToString(p), fmt.Sprintf("for %s %d", tt, ith))
 	}
-	s.ctx.GetSessionVars().AllowAggPushDown = false
 }
 
-func (s *testPlanSuite) TestColumnPruning(c *C) {
-	defer testleak.AfterTest(c)()
+func TestColumnPruning(t *testing.T) {
 	var (
 		input  []string
 		output []map[int][]string
 	)
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:\"%s\"", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:\"%s\"", i, tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
 			output[i] = make(map[int][]string)
 		})
-		s.checkDataSourceCols(lp, c, output[i], comment)
+		checkDataSourceCols(lp, t, output[i], comment)
 	}
 }
 
-func (s *testPlanSuite) TestSortByItemsPruning(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSortByItemsPruning(t *testing.T) {
 	var (
 		input  []string
 		output [][]string
 	)
-	s.testData.GetTestCases(c, &input, &output)
-	s.testData.OnRecord(func() {
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	testdata.OnRecord(func() {
 		output = make([][]string, len(input))
 	})
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("for %s", tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.checkOrderByItems(lp, c, &output[i], comment)
+		require.NoError(t, err)
+		checkOrderByItems(lp, t, &output[i], comment)
 	}
 }
 
-func (s *testPlanSuite) TestProjectionEliminator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestProjectionEliminator(t *testing.T) {
 	tests := []struct {
 		sql  string
 		best string
@@ -630,94 +656,93 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
+		require.NoError(t, err)
+		require.Equal(t, tt.best, ToString(p), fmt.Sprintf("for %s %d", tt.sql, ith))
 	}
 }
 
-func (s *testPlanSuite) TestCS3389(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestCS3389(t *testing.T) {
+	s := createPlannerSuite()
 	ctx := context.Background()
-	stmt, err := s.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
-	c.Assert(err, IsNil)
+	stmt, err := s.p.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
+	require.NoError(t, err)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
 	proj, isProj := p.(*LogicalProjection)
-	c.Assert(isProj, IsTrue)
-	c.Assert(len(proj.Exprs) > 0, IsTrue)
+	require.True(t, isProj)
+	require.True(t, len(proj.Exprs) > 0)
 	child := proj.Children()[0]
 	agg, isAgg := child.(*LogicalAggregation)
-	c.Assert(isAgg, IsTrue)
+	require.True(t, isAgg)
 	child = agg.Children()[0]
 	_, isJoin := child.(*LogicalJoin)
-	c.Assert(isJoin, IsTrue)
+	require.True(t, isJoin)
 }
 
-func (s *testPlanSuite) TestAllocID(c *C) {
+func TestAllocID(t *testing.T) {
 	ctx := MockContext()
 	pA := DataSource{}.Init(ctx, 0)
 	pB := DataSource{}.Init(ctx, 0)
-	c.Assert(pA.id+1, Equals, pB.id)
+	require.Equal(t, pB.id, pA.id+1)
 }
 
-func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
+func checkDataSourceCols(p LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	switch v := p.(type) {
 	case *DataSource, *LogicalUnionAll, *LogicalLimit:
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %s %T ID %d Not found", comment.CheckCommentString(), v, p.ID()))
-		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
+		require.True(t, ok, fmt.Sprintf("For %s %T ID %d Not found", comment, v, p.ID()))
+		require.Equal(t, len(colList), len(p.Schema().Columns), comment)
 		for i, col := range p.Schema().Columns {
-			s.testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				colList[i] = col.String()
 			})
-			c.Assert(col.String(), Equals, colList[i], comment)
+			require.Equal(t, colList[i], col.String(), comment)
 		}
 	}
 	for _, child := range p.Children() {
-		s.checkDataSourceCols(child, c, ans, comment)
+		checkDataSourceCols(child, t, ans, comment)
 	}
 }
 
-func (s *testPlanSuite) checkOrderByItems(p LogicalPlan, c *C, colList *[]string, comment CommentInterface) {
+func checkOrderByItems(p LogicalPlan, t *testing.T, colList *[]string, comment string) {
 	switch p := p.(type) {
 	case *LogicalSort:
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			*colList = make([]string, len(p.ByItems))
 		})
 		for i, col := range p.ByItems {
-			s.testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				(*colList)[i] = col.String()
 			})
 			s := col.String()
-			c.Assert(s, Equals, (*colList)[i], comment)
+			require.Equal(t, (*colList)[i], s, comment)
 		}
 	}
 	children := p.Children()
-	c.Assert(len(children), LessEqual, 1, Commentf("For %v Expected <= 1 Child", comment))
+	require.LessOrEqual(t, len(children), 1, fmt.Sprintf("For %v Expected <= 1 Child", comment))
 	for _, child := range children {
-		s.checkOrderByItems(child, c, colList, comment)
+		checkOrderByItems(child, t, colList, comment)
 	}
 }
 
-func (s *testPlanSuite) TestValidate(c *C) {
-	defer testleak.AfterTest(c)()
+func TestValidate(t *testing.T) {
 	tests := []struct {
 		sql string
 		err *terror.Error
@@ -888,102 +913,102 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := tt.sql
-		comment := Commentf("for %s", sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", sql)
+		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, _, err = BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		if tt.err == nil {
-			c.Assert(err, IsNil, comment)
+			require.NoError(t, err, comment)
 		} else {
-			c.Assert(tt.err.Equal(err), IsTrue, comment)
+			require.True(t, tt.err.Equal(err), comment)
 		}
 	}
 }
 
-func (s *testPlanSuite) checkUniqueKeys(p LogicalPlan, c *C, ans map[int][][]string, sql string) {
-	s.testData.OnRecord(func() {
+func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
+	testdata.OnRecord(func() {
 		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
 	})
 	keyList, ok := ans[p.ID()]
-	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
-	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
+	require.True(t, ok, fmt.Sprintf("for %s, %v not found", sql, p.ID()))
+	require.Equal(t, len(keyList), len(p.Schema().Keys), fmt.Sprintf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i := range keyList {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			keyList[i] = make([]string, len(p.Schema().Keys[i]))
 		})
-		c.Assert(len(p.Schema().Keys[i]), Equals, len(keyList[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
+		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
-			s.testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				keyList[i][j] = p.Schema().Keys[i][j].String()
 			})
-			c.Assert(p.Schema().Keys[i][j].String(), Equals, keyList[i][j], Commentf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
-	s.testData.OnRecord(func() {
+	testdata.OnRecord(func() {
 		ans[p.ID()] = keyList
 	})
 	for _, child := range p.Children() {
-		s.checkUniqueKeys(child, c, ans, sql)
+		checkUniqueKeys(child, t, ans, sql)
 	}
 }
 
-func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUniqueKeyInfo(t *testing.T) {
 	var input []string
 	var output []map[int][][]string
-	s.testData.GetTestCases(c, &input, &output)
-	s.testData.OnRecord(func() {
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	testdata.OnRecord(func() {
 		output = make([]map[int][][]string, len(input))
 	})
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for ith, tt := range input {
-		comment := Commentf("for %s %d", tt, ith)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s %d", tt, ith)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		lp, err := logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
 			output[ith] = make(map[int][][]string)
 		})
-		s.checkUniqueKeys(lp, c, output[ith], tt)
+		checkUniqueKeys(lp, t, output[ith], tt)
 	}
 }
 
-func (s *testPlanSuite) TestAggPrune(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAggPrune(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("for %s", tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 		domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		planString := ToString(p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = planString
 		})
-		c.Assert(planString, Equals, output[i], comment)
+		require.Equal(t, output[i], planString, comment)
 	}
 }
 
-func (s *testPlanSuite) TestVisitInfo(c *C) {
-	defer testleak.AfterTest(c)()
+func TestVisitInfo(t *testing.T) {
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1380,10 +1405,11 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 
 		// TODO: to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
@@ -1392,9 +1418,9 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 
-		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
+		checkVisitInfo(t, builder.visitInfo, tt.ans, comment)
 	}
 }
 
@@ -1437,90 +1463,85 @@ func unique(v []visitInfo) []visitInfo {
 	return v[:len(v)-repeat]
 }
 
-func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
+func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(v1))
 	sort.Sort(visitInfoArray(v2))
 	v1 = unique(v1)
 	v2 = unique(v2)
 
-	c.Assert(len(v1), Equals, len(v2), comment)
+	require.Equal(t, len(v2), len(v1), comment)
 	for i := 0; i < len(v1); i++ {
 		// loose compare errors for code match
-		c.Assert(terror.ErrorEqual(v1[i].err, v2[i].err), IsTrue, Commentf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
+		require.True(t, terror.ErrorEqual(v1[i].err, v2[i].err), fmt.Sprintf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
 		// compare remainder
 		v1[i].err = v2[i].err
-		c.Assert(v1[i], Equals, v2[i], comment)
+		require.Equal(t, v2[i], v1[i], comment)
 	}
 }
 
-func (s *testPlanSuite) TestUnion(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
+func TestUnion(t *testing.T) {
 	var input []string
 	var output []struct {
 		Best string
 		Err  bool
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		plan, err := builder.Build(ctx, stmt)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Err = err != nil
 		})
 		if output[i].Err {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 			continue
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].Best = ToString(p)
 		})
-		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, output[i].Best, comment)
+		require.NoError(t, err)
+		require.Equal(t, output[i].Best, ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
+func TestTopNPushDown(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
 			output[i] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[i], comment)
+		require.Equal(t, output[i], ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) TestNameResolver(c *C) {
-	defer testleak.AfterTest(c)()
+func TestNameResolver(t *testing.T) {
 	tests := []struct {
 		sql string
 		err string
@@ -1554,53 +1575,51 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select sum(a) as x from t group by 1", "[planner:1056]Can't group on 'x'"},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
-	for _, t := range tests {
-		comment := Commentf("for %s", t.sql)
-		stmt, err := s.ParseOneStmt(t.sql, "", "")
-		c.Assert(err, IsNil, comment)
+	for _, test := range tests {
+		comment := fmt.Sprintf("for %s", test.sql)
+		stmt, err := s.p.ParseOneStmt(test.sql, "", "")
+		require.NoError(t, err, comment)
 		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		if t.err == "" {
-			c.Check(err, IsNil)
+		if test.err == "" {
+			require.NoError(t, err)
 		} else {
-			c.Assert(err.Error(), Equals, t.err)
+			require.EqualError(t, err, test.err)
 		}
 	}
 }
 
-func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestOuterJoinEliminator(t *testing.T) {
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
 
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
+		stmt, err := s.p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		planString := ToString(p)
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = planString
 		})
-		c.Assert(planString, Equals, output[i], comment)
+		require.Equal(t, output[i], planString, comment)
 	}
 }
 
-func (s *testPlanSuite) TestSelectView(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
+func TestSelectView(t *testing.T) {
 	tests := []struct {
 		sql  string
 		best string
@@ -1614,80 +1633,90 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 			best: "DataScan(t)->Projection",
 		},
 	}
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, comment)
+		require.NoError(t, err)
+		require.Equal(t, tt.best, ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) TestWindowFunction(c *C) {
+type plannerSuiteWithOptimizeVars struct {
+	*plannerSuite
+	optimizeVars map[string]string
+}
+
+func TestWindowFunction(t *testing.T) {
+	s := new(plannerSuiteWithOptimizeVars)
+	s.plannerSuite = createPlannerSuite()
+
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
-		testleak.AfterTest(c)()
 	}()
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
-	s.doTestWindowFunction(c, input, output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	s.doTestWindowFunction(t, input, output)
 }
 
-func (s *testPlanSuite) TestWindowParallelFunction(c *C) {
+func TestWindowParallelFunction(t *testing.T) {
+	s := new(plannerSuiteWithOptimizeVars)
+	s.plannerSuite = createPlannerSuite()
+
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "4",
 	}
 	defer func() {
 		s.optimizeVars = nil
-		testleak.AfterTest(c)()
 	}()
 	var input, output []string
-	s.testData.GetTestCases(c, &input, &output)
-	s.doTestWindowFunction(c, input, output)
+	planSuiteUnexportedData.GetTestCases(t, &input, &output)
+	s.doTestWindowFunction(t, input, output)
 }
 
-func (s *testPlanSuite) doTestWindowFunction(c *C, input, output []string) {
+func (s *plannerSuiteWithOptimizeVars) doTestWindowFunction(t *testing.T, input, output []string) {
 	ctx := context.TODO()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 		p, stmt, err := s.optimize(ctx, tt)
 		if err != nil {
-			s.testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				output[i] = err.Error()
 			})
-			c.Assert(err.Error(), Equals, output[i], comment)
+			require.EqualError(t, err, output[i], comment)
 			continue
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[i], comment)
+		require.Equal(t, output[i], ToString(p), comment)
 
 		var sb strings.Builder
 		// After restore, the result should be the same.
 		err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, _, err = s.optimize(ctx, sb.String())
 		if err != nil {
-			c.Assert(err.Error(), Equals, output[i], comment)
+			require.EqualError(t, err, output[i], comment)
 			continue
 		}
-		c.Assert(ToString(p), Equals, output[i], comment)
+		require.Equal(t, output[i], ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
-	stmt, err := s.ParseOneStmt(sql, "", "")
+func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1736,8 +1765,7 @@ func pathsName(paths []*candidatePath) string {
 	return strings.Join(names, ",")
 }
 
-func (s *testPlanSuite) TestSkylinePruning(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSkylinePruning(t *testing.T) {
 	tests := []struct {
 		sql    string
 		result string
@@ -1795,27 +1823,28 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 	}
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
-			c.Assert(err.Error(), Equals, tt.result, comment)
+			require.EqualError(t, err, tt.result, comment)
 			continue
 		}
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		lp := p.(LogicalPlan)
 		_, err = lp.recursiveDeriveStats(nil)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		var ds *DataSource
 		var byItems []*util.ByItems
 		for ds == nil {
@@ -1841,12 +1870,11 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			}
 		}
 		paths := ds.skylinePruning(byItemsToProperty(byItems))
-		c.Assert(pathsName(paths), Equals, tt.result, comment)
+		require.Equal(t, tt.result, pathsName(paths), comment)
 	}
 }
 
-func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFastPlanContextTables(t *testing.T) {
 	tests := []struct {
 		sql      string
 		fastPlan bool
@@ -1869,28 +1897,28 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			false,
 		},
 	}
+	s := createPlannerSuite()
 	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
 	for _, tt := range tests {
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
 		p := TryFastPlan(s.ctx, stmt)
 		if tt.fastPlan {
-			c.Assert(p, NotNil)
-			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 1)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].Table, Equals, "t")
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.Tables[0].DB, Equals, "test")
+			require.NotNil(t, p)
+			require.Equal(t, 1, len(s.ctx.GetSessionVars().StmtCtx.Tables))
+			require.Equal(t, "t", s.ctx.GetSessionVars().StmtCtx.Tables[0].Table)
+			require.Equal(t, "test", s.ctx.GetSessionVars().StmtCtx.Tables[0].DB)
 		} else {
-			c.Assert(p, IsNil)
-			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
+			require.Nil(t, p)
+			require.Equal(t, 0, len(s.ctx.GetSessionVars().StmtCtx.Tables))
 		}
 	}
 }
 
-func (s *testPlanSuite) TestUpdateEQCond(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUpdateEQCond(t *testing.T) {
 	tests := []struct {
 		sql  string
 		best string
@@ -1900,72 +1928,72 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
 		},
 	}
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, comment)
+		require.NoError(t, err)
+		require.Equal(t, tt.best, ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
-	defer testleak.AfterTest(c)()
+func TestConflictedJoinTypeHints(t *testing.T) {
 	sql := "select /*+ INL_JOIN(t1) HASH_JOIN(t1) */ * from t t1, t t2 where t1.e = t2.e"
+	s := createPlannerSuite()
 	ctx := context.TODO()
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sctx := MockContext()
 	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	proj, ok := p.(*LogicalProjection)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
-	c.Assert(ok, IsTrue)
-	c.Assert(join.hintInfo, IsNil)
-	c.Assert(join.preferJoinType, Equals, uint(0))
+	require.True(t, ok)
+	require.Nil(t, join.hintInfo)
+	require.Equal(t, uint(0), join.preferJoinType)
 }
 
-func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
+	s := createPlannerSuite()
 	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
 	ctx := context.TODO()
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sctx := MockContext()
 	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	proj, ok := p.(*LogicalProjection)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	// previous wrong JoinType is InnerJoin
-	c.Assert(join.JoinType, Equals, RightOuterJoin)
+	require.Equal(t, RightOuterJoin, join.JoinType)
 }
 
-func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
-	defer testleak.AfterTest(c)()
+func TestResolvingCorrelatedAggregate(t *testing.T) {
 	tests := []struct {
 		sql  string
 		best string
@@ -1996,24 +2024,24 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.TODO()
 	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagEliminateProjection|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
-		c.Assert(ToString(p), Equals, tt.best, comment)
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
 	}
 }
 
-func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
+func TestFastPathInvalidBatchPointGet(t *testing.T) {
 	// #22040
-	defer testleak.AfterTest(c)()
 	tt := []struct {
 		sql      string
 		fastPlan bool
@@ -2039,35 +2067,57 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 			fastPlan: false,
 		},
 	}
+	s := createPlannerSuite()
 	for i, tc := range tt {
-		comment := Commentf("case:%v sql:%s", i, tc.sql)
-		stmt, err := s.ParseOneStmt(tc.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, tc.sql)
+		stmt, err := s.p.ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		plan := TryFastPlan(s.ctx, stmt)
 		if tc.fastPlan {
-			c.Assert(plan, NotNil)
+			require.NotNil(t, plan)
 		} else {
-			c.Assert(plan, IsNil)
+			require.Nil(t, plan)
 		}
 	}
 }
 
-func (s *testPlanSuite) TestWindowLogicalPlanAmbiguous(c *C) {
+func TestTraceFastPlan(t *testing.T) {
+	s := createPlannerSuite()
+	s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		s.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = false
+	}()
+	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
+	sql := "select * from t where a=1"
+	comment := fmt.Sprintf("sql:%s", sql)
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err, comment)
+	plan := TryFastPlan(s.ctx, stmt)
+	require.NotNil(t, plan)
+	require.NotNil(t, s.ctx.GetSessionVars().StmtCtx.OptimizeTracer)
+	require.NotNil(t, s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
+	require.True(t, s.ctx.GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
+}
+
+func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	sql := "select a, max(a) over(), sum(a) over() from t"
 	var planString string
 	// The ambiguous logical plan which contains window function can usually be found in 100 iterations.
 	iterations := 100
+	s := createPlannerSuite()
 	for i := 0; i < iterations; i++ {
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
+		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
 		p, _, err := BuildLogicalPlanForTest(context.Background(), s.ctx, stmt, s.is)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if planString == "" {
 			planString = ToString(p)
 		} else {
-			c.Assert(planString, Equals, ToString(p))
+			require.Equal(t, ToString(p), planString)
 		}
 	}
 }

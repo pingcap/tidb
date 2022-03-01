@@ -15,6 +15,9 @@
 package executor
 
 import (
+	"context"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -34,7 +37,7 @@ import (
 )
 
 type memReader interface {
-	getMemRows() ([][]types.Datum, error)
+	getMemRows(ctx context.Context) ([][]types.Datum, error)
 	getMemRowsHandle() ([]kv.Handle, error)
 }
 
@@ -61,7 +64,12 @@ type memIndexReader struct {
 	cacheTable      kv.MemBuffer
 }
 
-func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
+func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("buildMemIndexReader", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	kvRanges := idxReader.kvRanges
 	outputOffset := make([]int, 0, len(us.columns))
 	for _, col := range idxReader.outputColumns {
@@ -81,7 +89,12 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 	}
 }
 
-func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
+func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("memIndexReader.getMemRows", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
@@ -167,8 +180,6 @@ type memTableReader struct {
 	buffer        allocBuf
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
-	// Used when extracting handles from row in memTableReader.getMemRowsHandle.
-	handleCols plannercore.HandleCols
 }
 
 type allocBuf struct {
@@ -177,7 +188,12 @@ type allocBuf struct {
 	rd          *rowcodec.BytesDecoder
 }
 
-func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
+func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("buildMemTableReader", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
@@ -217,7 +233,12 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
-func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
+func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("memTableReader.getMemRows", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
 		row, err := m.decodeRecordKeyValue(key, value)
@@ -329,17 +350,23 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 
 // getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
-	rows, err := m.getMemRows()
+	handles := make([]kv.Handle, 0, 16)
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+		handle, err := tablecodec.DecodeRowKey(key)
+		if err != nil {
+			return err
+		}
+		handles = append(handles, handle)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	handles := make([]kv.Handle, 0, len(rows))
-	for _, row := range rows {
-		handle, err := m.handleCols.BuildHandleByDatums(row)
-		if err != nil {
-			return nil, err
+
+	if m.desc {
+		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
+			handles[i], handles[j] = handles[j], handles[i]
 		}
-		handles = append(handles, handle)
 	}
 	return handles, nil
 }
@@ -455,7 +482,12 @@ type memIndexLookUpReader struct {
 	cacheTable kv.MemBuffer
 }
 
-func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
+func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("buildMemIndexLookUpReader", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
@@ -487,7 +519,12 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	}
 }
 
-func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
+func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("memIndexLookUpReader.getMemRows", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
@@ -535,7 +572,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		cacheTable: m.cacheTable,
 	}
 
-	return memTblReader.getMemRows()
+	return memTblReader.getMemRows(ctx)
 }
 
 func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
@@ -557,7 +594,12 @@ type memIndexMergeReader struct {
 	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
 }
 
-func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
+func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("buildMemIndexMergeReader", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	indexCount := len(indexMergeReader.indexes)
 	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
@@ -577,7 +619,6 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 					handleBytes: make([]byte, 0, 16),
 					rd:          rd,
 				},
-				handleCols: indexMergeReader.handleCols,
 			})
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
@@ -609,7 +650,12 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 	}
 }
 
-func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
+func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("memIndexMergeReader.getMemRows", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	tbls := []table.Table{m.table}
 	// [partNum][indexNum][rangeNum]
 	var kvRanges [][][]kv.KeyRange
@@ -658,7 +704,7 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 		},
 	}
 
-	return memTblReader.getMemRows()
+	return memTblReader.getMemRows(ctx)
 }
 
 // Union all handles of different Indexes.

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -376,7 +375,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
 	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
-	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-11 00:00:00")) // the given number will be left-forward used.
+	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
@@ -440,8 +439,6 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarchar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("drop database if exists col_type_change_char;")
 	tk.MustExec("create database col_type_change_char;")
 	tk.MustExec("use col_type_change_char;")
@@ -797,7 +794,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varchar(30)")
 	tk.MustExec("alter table t modify b varchar(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// binary
 	reset(tk)
@@ -837,7 +834,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 blob")
 	tk.MustExec("alter table t modify f64 blob")
 	tk.MustExec("alter table t modify b blob")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// text
 	reset(tk)
@@ -850,7 +847,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 text")
 	tk.MustExec("alter table t modify f64 text")
 	tk.MustExec("alter table t modify b text")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// enum
 	reset(tk)
@@ -2284,6 +2281,7 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 }
 
 // See https://github.com/pingcap/tidb/issues/25287.
+// Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
 func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -2291,8 +2289,8 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bit(45));")
 	tk.MustExec("insert into t values (1174717);")
-	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
-	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+	tk.MustExec("alter table t modify column a varchar(31) collate utf8mb4_general_ci;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
 }
 
 func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
@@ -2350,4 +2348,113 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 
 	_, err = tk.Exec("insert into t values(null)")
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+	// issue #31372
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func(createTableStmt string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableStmt)
+		tk.MustExec("insert into t values (36.4), (24.1);")
+	}
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("alter table t modify c1 timestamp")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 17:05:08"))
+
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec(`set time_zone = '+00:00'`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone='+5:00'")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 12:05:08"))
+	tk.MustExec("admin check table t")
+	// test the timezone of "default" and "system"
+	// The current session.time_zone is '-8:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+	tk.MustExec("admin check table t")
+	// change timezone
+	tk.MustExec("set @@session.time_zone= default")
+	tk.MustExec("alter table t modify c1 timestamp")
+	// change timezone
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("set @@session.time_zone='SYSTEM'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("admin check table t")
+
+	// tests DST
+	// 1. modify a timestamp column to bigint
+	// 2. modify the bigint column to timestamp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '1990-04-15 18:00:00');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00"))
+	tk.MustExec("set @@session.time_zone='Asia/Shanghai'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 19900416030000"))
+	tk.MustExec("alter table t modify c1 timestamp default '1990-04-15 18:00:00'")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1990-04-15 18:00:00", "2 1990-04-15 09:00:00"))
+	// 1. modify a timestamp column to bigint
+	// 2. add the index
+	// 3. modify the bigint column to timestamp
+	// The current session.time_zone is '+00:00'.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.time_zone='-8:00'")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2016-03-13 02:30:00', index idx(c1));")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2016-03-13 02:30:00"))
+	tk.MustExec("set @@session.time_zone='America/Los_Angeles'")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
+	tk.MustExec("alter table t add index idx1(id, c1);")
+	tk.MustExec("admin check table t")
 }

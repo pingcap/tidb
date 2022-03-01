@@ -16,41 +16,38 @@ package placement
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRuleSuite{})
-
-type testRuleSuite struct{}
-
-func (t *testRuleSuite) TestClone(c *C) {
+func TestClone(t *testing.T) {
 	rule := &Rule{ID: "434"}
 	newRule := rule.Clone()
 	newRule.ID = "121"
 
-	c.Assert(rule, DeepEquals, &Rule{ID: "434"})
-	c.Assert(newRule, DeepEquals, &Rule{ID: "121"})
+	require.Equal(t, &Rule{ID: "434"}, rule)
+	require.Equal(t, &Rule{ID: "121"}, newRule)
 }
 
-func matchRules(t1, t2 []*Rule, prefix string, c *C) {
-	c.Assert(len(t2), Equals, len(t1), Commentf(prefix))
+func matchRules(t1, t2 []*Rule, prefix string, t *testing.T) {
+	require.Equal(t, len(t2), len(t1), prefix)
 	for i := range t1 {
 		found := false
 		for j := range t2 {
-			ok, _ := DeepEquals.Check([]interface{}{t2[j], t1[i]}, []string{})
+			ok := reflect.DeepEqual(t2[j], t1[i])
 			if ok {
 				found = true
 				break
 			}
 		}
-		if !found {
-			c.Errorf("%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
-		}
+		require.True(t, found, "%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
 	}
 }
 
-func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
+func TestNewRuleAndNewRules(t *testing.T) {
 	type TestCase struct {
 		name     string
 		input    string
@@ -58,7 +55,7 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		output   []*Rule
 		err      error
 	}
-	tests := []TestCase{}
+	var tests []TestCase
 
 	tests = append(tests, TestCase{
 		name:     "empty constraints",
@@ -73,11 +70,13 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		name:     "zero replicas",
 		input:    "",
 		replicas: 0,
-		err:      ErrInvalidConstraintsRelicas,
+		output: []*Rule{
+			NewRule(Voter, 0, NewConstraintsDirect()),
+		},
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal array constraints",
+		name:     "normal list constraints",
 		input:    `["+zone=sh", "+region=sh"]`,
 		replicas: 3,
 		output: []*Rule{
@@ -89,9 +88,8 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal object constraints",
-		input:    `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
-		replicas: 3,
+		name:  "normal dict constraints",
+		input: `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
 		output: []*Rule{
 			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("zone", In, "sh"),
@@ -104,85 +102,51 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal object constraints, with extra count",
+		name:     "normal dict constraints, with count",
 		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		replicas: 4,
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect()),
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name:  "normal object constraints, without count",
-		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-			)),
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name:     "zero count in object constraints",
-		input:    `{"+zone=sh,-zone=bj":0, "+zone=sh": 1}`,
-		replicas: 3,
-		err:      ErrInvalidConstraintsMapcnt,
-	})
-
-	tests = append(tests, TestCase{
-		name:     "overlarge total count in object constraints",
-		input:    `{"+ne=sh,-zone=bj":1, "+zone=sh": 4}`,
-		replicas: 3,
 		err:      ErrInvalidConstraintsRelicas,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid array",
-		input:    `["+ne=sh", "+zone=sh"`,
-		replicas: 3,
-		err:      ErrInvalidConstraintsFormat,
+		name:  "zero count in dict constraints",
+		input: `{"+zone=sh,-zone=bj":0, "+zone=sh": 1}`,
+		err:   ErrInvalidConstraintsMapcnt,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid array constraints",
+		name:     "invalid list constraints",
 		input:    `["ne=sh", "+zone=sh"]`,
 		replicas: 3,
 		err:      ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid map",
-		input:    `{+ne=sh,-zone=bj:1, "+zone=sh": 4`,
-		replicas: 5,
-		err:      ErrInvalidConstraintsFormat,
+		name:  "invalid dict constraints",
+		input: `{+ne=sh,-zone=bj:1, "+zone=sh": 4`,
+		err:   ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid map constraints",
-		input:    `{"nesh,-zone=bj":1, "+zone=sh": 4}`,
-		replicas: 6,
-		err:      ErrInvalidConstraintFormat,
+		name:  "invalid dict constraints",
+		input: `{"nesh,-zone=bj":1, "+zone=sh": 4}`,
+		err:   ErrInvalidConstraintFormat,
 	})
 
-	for _, t := range tests {
-		comment := Commentf("[%s]", t.name)
-		output, err := NewRules(Voter, t.replicas, t.input)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			matchRules(t.output, output, comment.CheckCommentString(), c)
+	tests = append(tests, TestCase{
+		name:  "invalid dict separator",
+		input: `{+region=us-east-2:2}`,
+		err:   ErrInvalidConstraintsMappingWrongSeparator,
+	})
+
+	for _, tt := range tests {
+		comment := fmt.Sprintf("[%s]", tt.name)
+		output, err := NewRules(Voter, tt.replicas, tt.input)
+		if tt.err == nil {
+			require.NoError(t, err, comment)
+			matchRules(tt.output, output, comment, t)
 		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, Commentf("[%s]\n%s\n%s\n", t.name, err, t.err))
+			require.True(t, errors.Is(err, tt.err), "[%s]\n%s\n%s\n", tt.name, err, tt.err)
 		}
 	}
 }

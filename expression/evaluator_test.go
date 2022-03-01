@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -29,12 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
-	TestingT(t)
-}
 
 func kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
@@ -105,13 +98,12 @@ func primitiveValsToConstants(ctx sessionctx.Context, args []interface{}) []Expr
 }
 
 func TestSleep(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sessVars := ctx.GetSessionVars()
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
-	sessVars.StrictSQLMode = false
+	sessVars.StmtCtx.BadNullAsWarning = true
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -128,7 +120,7 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, int64(0), ret)
 
 	// for error case under the strict model
-	sessVars.StrictSQLMode = true
+	sessVars.StmtCtx.BadNullAsWarning = false
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -171,7 +163,6 @@ func TestSleep(t *testing.T) {
 }
 
 func TestBinopComparison(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -250,7 +241,6 @@ func TestBinopComparison(t *testing.T) {
 }
 
 func TestBinopLogic(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -290,7 +280,6 @@ func TestBinopLogic(t *testing.T) {
 }
 
 func TestBinopBitop(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -328,7 +317,6 @@ func TestBinopBitop(t *testing.T) {
 }
 
 func TestBinopNumeric(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -472,7 +460,6 @@ func TestBinopNumeric(t *testing.T) {
 }
 
 func TestExtract(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
@@ -519,7 +506,6 @@ func TestExtract(t *testing.T) {
 }
 
 func TestUnaryOp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg    interface{}
@@ -559,7 +545,7 @@ func TestUnaryOp(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(tt.result), result, Commentf("%d", i))
+		require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
 	}
 
 	tbl = []struct {
@@ -583,12 +569,11 @@ func TestUnaryOp(t *testing.T) {
 		expect := types.NewDatum(tt.result)
 		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
 		require.NoError(t, err)
-		require.Equal(t, 0, ret, Commentf("%v %s", tt.arg, tt.op))
+		require.Equalf(t, 0, ret, "%v %s", tt.arg, tt.op)
 	}
 }
 
 func TestMod(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))

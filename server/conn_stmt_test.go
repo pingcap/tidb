@@ -197,10 +197,33 @@ func TestParseExecArgs(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
+		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
 		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
 		require.Equal(t, tt.expect, tt.args.args[0].GetValue())
 	}
+}
+
+func TestParseExecArgsAndEncode(t *testing.T) {
+	dt := make([]types.Datum, 1)
+	err := parseExecArgs(&stmtctx.StatementContext{},
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{mysql.TypeVarchar, 0},
+		[]byte{4, 178, 226, 202, 212},
+		newInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].GetValue())
+
+	err = parseExecArgs(&stmtctx.StatementContext{},
+		dt,
+		[][]byte{{178, 226, 202, 212}},
+		[]byte{0x0},
+		[]byte{mysql.TypeString, 0},
+		[]byte{},
+		newInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].GetString())
 }
 
 func TestParseStmtFetchCmd(t *testing.T) {

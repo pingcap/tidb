@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -30,8 +30,6 @@ import (
 )
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
-	t.Parallel()
-
 	ret := &types.FieldType{}
 	a := &types.FieldType{
 		Decimal: 1,
@@ -96,7 +94,6 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 }
 
 func TestArithmeticPlus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -193,7 +190,6 @@ func TestArithmeticPlus(t *testing.T) {
 }
 
 func TestArithmeticMinus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -272,7 +268,6 @@ func TestArithmeticMinus(t *testing.T) {
 }
 
 func TestArithmeticMultiply(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -320,7 +315,7 @@ func TestArithmeticMultiply(t *testing.T) {
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
+			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
 			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
@@ -329,7 +324,6 @@ func TestArithmeticMultiply(t *testing.T) {
 }
 
 func TestArithmeticDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	testCases := []struct {
@@ -394,12 +388,11 @@ func TestArithmeticDivide(t *testing.T) {
 		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.expect), val)
+		testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
 	}
 }
 
 func TestArithmeticIntDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -506,7 +499,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
+			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
 			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
@@ -515,7 +508,6 @@ func TestArithmeticIntDivide(t *testing.T) {
 }
 
 func TestArithmeticMod(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -663,12 +655,11 @@ func TestArithmeticMod(t *testing.T) {
 			require.Equal(t, tipb.ScalarFuncSig_ModDecimal, sig.PbCode())
 		}
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.expect), val)
+		testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
 	}
 }
 
 func TestDecimalErrOverflow(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []float64

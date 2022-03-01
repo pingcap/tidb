@@ -30,19 +30,17 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -112,6 +110,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.ddl.SetBinlogClient(s.client)
 
 	clean = func() {
+		clientCon.Close()
 		err = s.ddl.Stop()
 		require.NoError(t, err)
 		s.serv.Stop()
@@ -328,7 +327,9 @@ func getLatestDDLBinlog(t *testing.T, pump *mockBinlogPump, ddlQuery string) (pr
 	require.Greater(t, preDDL.DdlJobId, int64(0))
 	require.Greater(t, preDDL.StartTs, int64(0))
 	require.Equal(t, int64(0), preDDL.CommitTs)
-	require.Equal(t, ddlQuery, string(preDDL.DdlQuery))
+	formatted, err := binloginfo.FormatAndAddTiDBSpecificComment(ddlQuery)
+	require.NoError(t, err, "ddlQuery: %s", ddlQuery)
+	require.Equal(t, formatted, string(preDDL.DdlQuery))
 	return
 }
 
@@ -402,7 +403,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable := testGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable := tk.GetTableByName("test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -430,7 +431,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
-	sequenceTable = testGetTableByName(t, tk.Session(), "test2", "seq2")
+	sequenceTable = tk.GetTableByName("test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -549,136 +550,161 @@ func TestDeleteSchema(t *testing.T) {
 	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }
 
-func TestAddSpecialComment(t *testing.T) {
+func TestFormatAndAddTiDBSpecificComment(t *testing.T) {
 	testCase := []struct {
 		input  string
 		result string
 	}{
 		{
 			"create table t1 (id int ) shard_row_id_bits=2;",
-			"create table t1 (id int ) /*T! shard_row_id_bits=2 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T! SHARD_ROW_ID_BITS = 2 */;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
-			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T! SHARD_ROW_ID_BITS = 2 */ /*T! PRE_SPLIT_REGIONS = 2 */;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
-			"create table t1 (id int ) /*T! shard_row_id_bits=2     pre_split_regions=2 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T! SHARD_ROW_ID_BITS = 2 */ /*T! PRE_SPLIT_REGIONS = 2 */;",
 		},
-
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
-			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+			"CREATE TABLE `t1` (`id` INT) /*T! SHARD_ROW_ID_BITS = 2 */ ENGINE = innodb /*T! PRE_SPLIT_REGIONS = 2 */;",
 		},
 		{
 			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
-			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T! PRE_SPLIT_REGIONS = 2 */ /*T! SHARD_ROW_ID_BITS = 2 */;",
 		},
 		{
 			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
-			"create table t6 (id int ) /*T! shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+			"CREATE TABLE `t6` (`id` INT) /*T! SHARD_ROW_ID_BITS = 2 */ /*T! SHARD_ROW_ID_BITS = 3 */ /*T! PRE_SPLIT_REGIONS = 2 */;",
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",
-			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
+			"CREATE TABLE `t1` (`id` INT PRIMARY KEY /*T![auto_rand] AUTO_RANDOM(2) */);",
 		},
 		{
 			"create table t1 (id int primary key auto_random);",
-			"create table t1 (id int primary key /*T![auto_rand] auto_random */ );",
+			"CREATE TABLE `t1` (`id` INT PRIMARY KEY /*T![auto_rand] AUTO_RANDOM */);",
 		},
 		{
 			"create table t1 (id int auto_random ( 4 ) primary key);",
-			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
+			"CREATE TABLE `t1` (`id` INT /*T![auto_rand] AUTO_RANDOM(4) */ PRIMARY KEY);",
 		},
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
-			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
+			"CREATE TABLE `t1` (`id` INT /*T![auto_rand] AUTO_RANDOM(4) */ PRIMARY KEY);",
 		},
 		{
 			"create table t1 (id int auto_random ( 3 ) primary key) auto_random_base = 100;",
-			"create table t1 (id int /*T![auto_rand] auto_random ( 3 ) */ primary key) /*T![auto_rand_base] auto_random_base = 100 */ ;",
+			"CREATE TABLE `t1` (`id` INT /*T![auto_rand] AUTO_RANDOM(3) */ PRIMARY KEY) /*T![auto_rand_base] AUTO_RANDOM_BASE = 100 */;",
 		},
 		{
 			"create table t1 (id int auto_random primary key) auto_random_base = 50;",
-			"create table t1 (id int /*T![auto_rand] auto_random */ primary key) /*T![auto_rand_base] auto_random_base = 50 */ ;",
+			"CREATE TABLE `t1` (`id` INT /*T![auto_rand] AUTO_RANDOM */ PRIMARY KEY) /*T![auto_rand_base] AUTO_RANDOM_BASE = 50 */;",
 		},
 		{
 			"create table t1 (id int auto_increment key) auto_id_cache 100;",
-			"create table t1 (id int auto_increment key) /*T![auto_id_cache] auto_id_cache 100 */ ;",
+			"CREATE TABLE `t1` (`id` INT AUTO_INCREMENT PRIMARY KEY) /*T![auto_id_cache] AUTO_ID_CACHE = 100 */;",
 		},
 		{
 			"create table t1 (id int auto_increment unique) auto_id_cache 10;",
-			"create table t1 (id int auto_increment unique) /*T![auto_id_cache] auto_id_cache 10 */ ;",
+			"CREATE TABLE `t1` (`id` INT AUTO_INCREMENT UNIQUE KEY) /*T![auto_id_cache] AUTO_ID_CACHE = 10 */;",
 		},
 		{
 			"create table t1 (id int) auto_id_cache = 5;",
-			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache = 5 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T![auto_id_cache] AUTO_ID_CACHE = 5 */;",
 		},
 		{
 			"create table t1 (id int) auto_id_cache=5;",
-			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T![auto_id_cache] AUTO_ID_CACHE = 5 */;",
 		},
 		{
 			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
-			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"CREATE TABLE `t1` (`id` INT) /*T![auto_id_cache] AUTO_ID_CACHE = 5 */;",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) clustered);",
-			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] clustered */ );",
+			"CREATE TABLE `t1` (`id` INT,`a` VARCHAR(255),PRIMARY KEY(`a`, `b`) /*T![clustered_index] CLUSTERED */);",
 		},
 		{
 			"create table t1(id int, v int, primary key(a) clustered);",
-			"create table t1(id int, v int, primary key(a) /*T![clustered_index] clustered */ );",
+			"CREATE TABLE `t1` (`id` INT,`v` INT,PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */);",
 		},
 		{
 			"create table t1(id int primary key clustered, v int);",
-			"create table t1(id int primary key /*T![clustered_index] clustered */ , v int);",
+			"CREATE TABLE `t1` (`id` INT PRIMARY KEY /*T![clustered_index] CLUSTERED */,`v` INT);",
 		},
 		{
 			"alter table t add primary key(a) clustered;",
-			"alter table t add primary key(a) /*T![clustered_index] clustered */ ;",
+			"ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */;",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) nonclustered);",
-			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */ );",
+			"CREATE TABLE `t1` (`id` INT,`a` VARCHAR(255),PRIMARY KEY(`a`, `b`) /*T![clustered_index] NONCLUSTERED */);",
 		},
 		{
 			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
-			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
+			"CREATE TABLE `t1` (`id` INT,`a` VARCHAR(255),PRIMARY KEY(`a`, `b`) /*T![clustered_index] NONCLUSTERED */);",
 		},
 		{
 			"create table clustered_test(id int)",
-			"create table clustered_test(id int)",
+			"CREATE TABLE `clustered_test` (`id` INT);",
 		},
 		{
 			"create database clustered_test",
-			"create database clustered_test",
+			"CREATE DATABASE `clustered_test`;",
 		},
 		{
 			"create database clustered",
-			"create database clustered",
+			"CREATE DATABASE `clustered`;",
 		},
 		{
 			"create table clustered (id int)",
-			"create table clustered (id int)",
+			"CREATE TABLE `clustered` (`id` INT);",
 		},
 		{
 			"create table t1 (id int, a varchar(255) key clustered);",
-			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
+			"CREATE TABLE `t1` (`id` INT,`a` VARCHAR(255) PRIMARY KEY /*T![clustered_index] CLUSTERED */);",
 		},
 		{
 			"alter table t force auto_increment = 12;",
-			"alter table t /*T![force_inc] force */  auto_increment = 12;",
+			"ALTER TABLE `t` /*T![force_inc] FORCE */ AUTO_INCREMENT = 12;",
 		},
 		{
 			"alter table t force, auto_increment = 12;",
-			"alter table t force, auto_increment = 12;",
+			"ALTER TABLE `t` FORCE /* AlterTableForce is not supported */ , AUTO_INCREMENT = 12;",
+		},
+		{
+			// https://github.com/pingcap/tiflow/issues/3755
+			"create table cdc_test (id varchar(10) primary key ,c1 varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000  SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+			"CREATE TABLE `cdc_test` (`id` VARCHAR(10) PRIMARY KEY,`c1` VARCHAR(10)) ENGINE = InnoDB DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_BIN /*T! SHARD_ROW_ID_BITS = 4 */ /*T! PRE_SPLIT_REGIONS = 3 */;",
+		},
+		{
+			"create table clustered (id int);  create table t1 (id int, a varchar(255) key clustered);  ",
+			"CREATE TABLE `clustered` (`id` INT);CREATE TABLE `t1` (`id` INT,`a` VARCHAR(255) PRIMARY KEY /*T![clustered_index] CLUSTERED */);",
+		},
+		{
+			"",
+			"",
+		},
+		{
+			";;",
+			"",
+		},
+		{
+			"alter table t cache",
+			"ALTER TABLE `t` CACHE;",
+		},
+		{
+			"alter table t nocache",
+			"ALTER TABLE `t` NOCACHE;",
 		},
 	}
 	for _, ca := range testCase {
-		re := binloginfo.AddSpecialComment(ca.input)
+		re, err := binloginfo.FormatAndAddTiDBSpecificComment(ca.input)
 		require.Equal(t, ca.result, re)
+		require.NoError(t, err, "Unexpected error for AddTiDBSpecificComment, test input: %s", ca.input)
 	}
 }
 
@@ -696,16 +722,6 @@ func mustGetDDLBinlog(s *binlogSuite, ddlQuery string, t *testing.T) (matched bo
 		time.Sleep(time.Millisecond * 30)
 	}
 	return
-}
-
-func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
 }
 
 func TestTempTableBinlog(t *testing.T) {
@@ -783,6 +799,32 @@ func TestTempTableBinlog(t *testing.T) {
 	tk.MustExec("drop table l_temp_table")
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)
 	require.True(t, ok)
+}
+
+func TestAlterTableCache(t *testing.T) {
+	s, clean := createBinlogSuite(t)
+	defer clean()
+
+	// Don't write binlog for 'ALTER TABLE t CACHE|NOCACHE'.
+	// Cached table is regarded as normal table.
+
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	ddlQuery := "create table t (id int)"
+	tk.MustExec(ddlQuery)
+
+	tk.MustExec(`alter table t cache`)
+	// The latest DDL is still the previous one.
+	getLatestDDLBinlog(t, s.pump, ddlQuery)
+
+	tk.MustExec("insert into t values (?)", 666)
+	prewriteVal := getLatestBinlogPrewriteValue(t, s.pump)
+	require.Equal(t, 1, len(prewriteVal.Mutations))
+
+	tk.MustExec(`alter table t nocache`)
+	getLatestDDLBinlog(t, s.pump, ddlQuery)
 }
 
 func TestIssue28292(t *testing.T) {

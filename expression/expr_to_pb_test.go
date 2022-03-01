@@ -16,8 +16,12 @@ package expression
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -39,7 +43,6 @@ func genColumn(tp byte, id int64) *Column {
 
 func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
-	t.Parallel()
 	var constExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -123,7 +126,6 @@ func TestConstant2Pb(t *testing.T) {
 }
 
 func TestColumn2Pb(t *testing.T) {
-	t.Parallel()
 	var colExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -173,29 +175,29 @@ func TestColumn2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":2,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":4,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0,\"field_type\":{\"tp\":6,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0,\"field_type\":{\"tp\":7,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0,\"field_type\":{\"tp\":9,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0,\"field_type\":{\"tp\":10,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0,\"field_type\":{\"tp\":11,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0,\"field_type\":{\"tp\":13,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0,\"field_type\":{\"tp\":245,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0,\"field_type\":{\"tp\":246,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0,\"field_type\":{\"tp\":249,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0,\"field_type\":{\"tp\":250,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0,\"field_type\":{\"tp\":251,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0,\"field_type\":{\"tp\":252,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABg=\",\"sig\":0,\"field_type\":{\"tp\":247,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":2,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":4,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0,\"field_type\":{\"tp\":6,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0,\"field_type\":{\"tp\":7,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0,\"field_type\":{\"tp\":9,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0,\"field_type\":{\"tp\":10,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0,\"field_type\":{\"tp\":11,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0,\"field_type\":{\"tp\":13,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0,\"field_type\":{\"tp\":245,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0,\"field_type\":{\"tp\":246,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0,\"field_type\":{\"tp\":249,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0,\"field_type\":{\"tp\":250,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0,\"field_type\":{\"tp\":251,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0,\"field_type\":{\"tp\":252,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABg=\",\"sig\":0,\"field_type\":{\"tp\":247,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		require.NotNil(t, pbExprs)
@@ -215,7 +217,6 @@ func TestColumn2Pb(t *testing.T) {
 }
 
 func TestCompareFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -235,13 +236,13 @@ func TestCompareFunc2Pb(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, pbExprs, len(compareExprs))
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":100,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":110,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":120,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":130,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":140,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":150,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":160,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":100,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":110,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":120,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":130,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":140,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":150,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":160,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		require.NotNil(t, pbExprs)
@@ -252,7 +253,6 @@ func TestCompareFunc2Pb(t *testing.T) {
 }
 
 func TestLikeFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var likeFuncs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -280,8 +280,8 @@ func TestLikeFunc2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, likeFuncs, client)
 	require.NoError(t, err)
 	results := []string{
-		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":63,"charset":"binary"},"has_distinct":false}`,
-		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false},{"tp":5,"val":"JWFiYyU=","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":63,"charset":"binary"},"has_distinct":false}`,
+		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":-83,"charset":"binary"},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":-83,"charset":"binary"},"has_distinct":false}`,
+		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false},{"tp":5,"val":"JWFiYyU=","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8"},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":-83,"charset":"binary"},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":-83,"charset":"binary"},"has_distinct":false}`,
 	}
 	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
@@ -291,7 +291,6 @@ func TestLikeFunc2Pb(t *testing.T) {
 }
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var arithmeticalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -309,11 +308,11 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 	}
 
 	jsons := make(map[string]string)
-	jsons[ast.Plus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":200,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}"
-	jsons[ast.Minus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":204,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}"
-	jsons[ast.Mul] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":208,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}"
-	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}"
-	jsons[ast.Mod] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":215,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}"
+	jsons[ast.Plus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":200,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}"
+	jsons[ast.Minus] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":204,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}"
+	jsons[ast.Mul] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":208,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}"
+	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}"
+	jsons[ast.Mod] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":215,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}"
 
 	pbExprs, err := ExpressionsToPBList(sc, arithmeticalFuncs, client)
 	require.NoError(t, err)
@@ -339,7 +338,6 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -356,7 +354,7 @@ func TestDateFunc2Pb(t *testing.T) {
 	require.NotNil(t, pbExprs[0])
 	js, err := json.Marshal(pbExprs[0])
 	require.NoError(t, err)
-	require.Equal(t, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}", string(js))
+	require.Equal(t, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}", string(js))
 }
 
 func TestLogicalFunc2Pb(t *testing.T) {
@@ -383,10 +381,10 @@ func TestLogicalFunc2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, logicalFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3102,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3103,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3104,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3102,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3103,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3104,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
@@ -396,7 +394,6 @@ func TestLogicalFunc2Pb(t *testing.T) {
 }
 
 func TestBitwiseFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var bitwiseFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -420,12 +417,12 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, bitwiseFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3119,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3120,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3129,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3130,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3121,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3119,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3120,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3129,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3130,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3121,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
@@ -435,7 +432,6 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 }
 
 func TestControlFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var controlFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -464,9 +460,9 @@ func TestControlFunc2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, controlFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4107,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4101,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4107,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4101,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 		"null",
 	}
 	for i, pbExpr := range pbExprs {
@@ -477,7 +473,6 @@ func TestControlFunc2Pb(t *testing.T) {
 }
 
 func TestOtherFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var otherFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -497,8 +492,8 @@ func TestOtherFunc2Pb(t *testing.T) {
 	pbExprs, err := ExpressionsToPBList(sc, otherFuncs, client)
 	require.NoError(t, err)
 	jsons := map[string]string{
-		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
-		ast.IsNull:   "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3116,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		ast.IsNull:   "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}],\"sig\":3116,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
@@ -508,7 +503,6 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -527,6 +521,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 	enumColumn := genColumn(mysql.TypeEnum, 10)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// lpad
+	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// rpad
+	function, err = NewFunction(mock.NewContext(), ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -849,11 +853,18 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// Datesub
-	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	constStringColumn := new(Constant)
+	constStringColumn.Value = types.NewStringDatum("day")
+	constStringColumn.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, constStringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_SubDateStringInt, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
@@ -993,6 +1004,36 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// quarter: supported
+	function, err = NewFunction(mock.NewContext(), ast.Quarter, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// strcmp
+	function, err = NewFunction(mock.NewContext(), ast.Strcmp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayName: supported
+	function, err = NewFunction(mock.NewContext(), ast.DayName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// MonthName: supported
+	function, err = NewFunction(mock.NewContext(), ast.MonthName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// regexpUTF8: supported
+	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// regexp: supported
+	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1004,7 +1045,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1058,21 +1098,22 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
-	//intColumn := genColumn(mysql.TypeLonglong, 2)
+	intColumn := genColumn(mysql.TypeLonglong, 2)
 	//realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
+	dateColumn := genColumn(mysql.TypeDate, 8)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 
+	// Test exprs that cannot be pushed.
 	function, err := NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -1108,10 +1149,247 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
+
+	// Test exprs that can be pushed.
+	exprs = exprs[:0]
+	pushed = pushed[:0]
+	remained = remained[:0]
+
+	substringRelated := []string{ast.Substr, ast.Substring, ast.Mid}
+	for _, exprName := range substringRelated {
+		function, err = NewFunction(mock.NewContext(), exprName, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
+
+	testcases := []struct {
+		functionName string
+		retType      *types.FieldType
+		args         []Expression
+	}{
+		{
+			functionName: ast.CharLength,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Right,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Left,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Sin,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Asin,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Cos,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Acos,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Tan,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Atan,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Cot,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Atan2,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.DateFormat,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn, stringColumn},
+		},
+		{
+			functionName: ast.Hour,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Minute,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Second,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Month,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.MicroSecond,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.PI,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{},
+		},
+		{
+			functionName: ast.Round,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Truncate,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Bin,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.Unhex,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Locate,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{stringColumn, stringColumn},
+		},
+		{
+			functionName: ast.Ord,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Lpad,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, stringColumn},
+		},
+		{
+			functionName: ast.Rpad,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, stringColumn},
+		},
+		{
+			functionName: ast.Trim,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.FromBase64,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.ToBase64,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.MakeSet,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{intColumn, stringColumn},
+		},
+		{
+			functionName: ast.SubstringIndex,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Instr,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{stringColumn, stringColumn},
+		},
+		{
+			functionName: ast.Quote,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Oct,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{intColumn},
+		},
+		{
+			functionName: ast.FindInSet,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{stringColumn, stringColumn},
+		},
+		{
+			functionName: ast.Repeat,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn},
+		},
+		{
+			functionName: ast.Date,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.Week,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.YearWeek,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.ToSeconds,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn},
+		},
+		{
+			functionName: ast.DateDiff,
+			retType:      types.NewFieldType(mysql.TypeDate),
+			args:         []Expression{dateColumn, dateColumn},
+		},
+	}
+
+	for _, tc := range testcases {
+		function, err = NewFunction(mock.NewContext(), tc.functionName, tc.retType, tc.args...)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
+
+	function, err = NewFunction(mock.NewContext(), ast.Mod, types.NewFieldType(mysql.TypeInt24), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1138,7 +1416,6 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1146,17 +1423,16 @@ func TestGroupByItem2Pb(t *testing.T) {
 	pbByItem := GroupByItemToPB(sc, client, item)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
-	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
 	pbByItem = GroupByItemToPB(sc, client, item)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
-	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1164,17 +1440,210 @@ func TestSortByItem2Pb(t *testing.T) {
 	pbByItem := SortByItemToPB(sc, client, item, false)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
-	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
 	pbByItem = SortByItemToPB(sc, client, item, false)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
-	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
 	pbByItem = SortByItemToPB(sc, client, item, true)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
-	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":true}", string(js))
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false},\"desc\":true}", string(js))
+}
+
+func TestPushCollationDown(t *testing.T) {
+	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
+	require.NoError(t, err)
+	client := new(mock.Client)
+	sc := new(stmtctx.StatementContext)
+
+	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
+	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
+		fc.SetCharsetAndCollation("binary", coll) // only collation matters
+		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
+		require.NoError(t, err)
+		expr, err := PBToExpr(pbExpr[0], tps, sc)
+		require.NoError(t, err)
+		_, eColl := expr.CharsetAndCollation()
+		require.Equal(t, coll, eColl)
+	}
+}
+
+func columnCollation(c *Column, chs, coll string) *Column {
+	c.RetType.Charset = chs
+	c.RetType.Collate = coll
+	return c
+}
+
+func TestNewCollationsEnabled(t *testing.T) {
+	var colExprs []Expression
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+
+	colExprs = colExprs[:0]
+	colExprs = append(colExprs, genColumn(mysql.TypeVarchar, 1))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 2), "some_invalid_charset", "some_invalid_collation"))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarString, 3), "utf8mb4", "utf8mb4_general_ci"))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeString, 4), "utf8mb4", "utf8mb4_0900_ai_ci"))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 5), "utf8", "utf8_bin"))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 6), "utf8", "utf8_unicode_ci"))
+	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 7), "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs"))
+	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
+	require.Equal(t, len(colExprs), len(pushed))
+	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
+	require.NoError(t, err)
+	jsons := []string{
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"some_invalid_charset\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-45,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-83,\"charset\":\"utf8\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-192,\"charset\":\"utf8\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-2048,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
+	}
+	for i, pbExpr := range pbExprs {
+		require.NotNil(t, pbExprs)
+		js, err := json.Marshal(pbExpr)
+		require.NoError(t, err)
+		require.Equalf(t, jsons[i], string(js), "%v\n", i)
+	}
+
+	item := columnCollation(genColumn(mysql.TypeDouble, 0), "utf8mb4", "utf8mb4_0900_ai_ci")
+	pbByItem := GroupByItemToPB(sc, client, item)
+	js, err := json.Marshal(pbByItem)
+	require.NoError(t, err)
+	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"utf8mb4\"},\"has_distinct\":false},\"desc\":false}", string(js))
+}
+
+func TestMetadata(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"))
+	}()
+
+	pc := PbConverter{client: client, sc: sc}
+
+	metadata := new(tipb.InUnionMetadata)
+	var err error
+	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`
+	cast := BuildCastFunction(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	require.Equal(t, &tipb.InUnionMetadata{InUnion: false}, cast.(*ScalarFunction).Function.metadata())
+	expr := pc.ExprToPB(cast)
+	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
+	require.Greater(t, len(expr.Val), 0)
+	err = proto.Unmarshal(expr.Val, metadata)
+	require.NoError(t, err)
+	require.Equal(t, false, metadata.InUnion)
+
+	// InUnion flag is nil in `BuildCastFunction4Union` when `ScalarFuncSig_CastIntAsString`
+	castInUnion := BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
+	require.Nil(t, castInUnion.(*ScalarFunction).Function.metadata())
+	expr = pc.ExprToPB(castInUnion)
+	require.Equal(t, tipb.ScalarFuncSig_CastIntAsString, expr.Sig)
+	require.Equal(t, 0, len(expr.Val))
+
+	// InUnion flag is true in `BuildCastFunction4Union` when `ScalarFuncSig_CastStringAsInt`
+	castInUnion = BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	require.Equal(t, &tipb.InUnionMetadata{InUnion: true}, castInUnion.(*ScalarFunction).Function.metadata())
+	expr = pc.ExprToPB(castInUnion)
+	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
+	require.Greater(t, len(expr.Val), 0)
+	err = proto.Unmarshal(expr.Val, metadata)
+	require.NoError(t, err)
+	require.Equal(t, true, metadata.InUnion)
+}
+
+func TestPushDownSwitcher(t *testing.T) {
+	var funcs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+
+	cases := []struct {
+		name   string
+		sig    tipb.ScalarFuncSig
+		enable bool
+	}{
+		// Note that so far ScalarFuncSigs here are not be pushed down when the failpoint PushDownTestSwitcher
+		// is disable, which is the prerequisite to pass this test.
+		// Need to be replaced with other non pushed down ScalarFuncSigs if they are pushed down one day.
+		{ast.Sin, tipb.ScalarFuncSig_Sin, true},
+		{ast.Cos, tipb.ScalarFuncSig_Cos, false},
+		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
+	}
+	var enabled []string
+	for _, funcName := range cases {
+		args := []Expression{genColumn(mysql.TypeDouble, 1)}
+		fc, err := NewFunction(
+			mock.NewContext(),
+			funcName.name,
+			types.NewFieldType(mysql.TypeUnspecified),
+			args...,
+		)
+		require.NoError(t, err)
+		funcs = append(funcs, fc)
+		if funcName.enable {
+			enabled = append(enabled, funcName.name)
+		}
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"))
+	}()
+
+	pbExprs, err := ExpressionsToPBList(sc, funcs, client)
+	require.NoError(t, err)
+	require.Equal(t, len(cases), len(pbExprs))
+	for i, pbExpr := range pbExprs {
+		require.Equalf(t, cases[i].sig, pbExpr.Sig, "function: %s, sig: %v", cases[i].name, cases[i].sig)
+	}
+
+	// All disabled
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("")`))
+	pc := PbConverter{client: client, sc: sc}
+	for i := range funcs {
+		pbExpr := pc.ExprToPB(funcs[i])
+		require.Nil(t, pbExpr)
+	}
+
+	// Partial enabled
+	fpexpr := fmt.Sprintf(`return("%s")`, strings.Join(enabled, ","))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", fpexpr))
+	for i := range funcs {
+		pbExpr := pc.ExprToPB(funcs[i])
+		if !cases[i].enable {
+			require.Nil(t, pbExpr)
+			continue
+		}
+		require.Equalf(t, cases[i].sig, pbExpr.Sig, "function: %s, sig: %v", cases[i].name, cases[i].sig)
+	}
+}
+
+func TestPanicIfPbCodeUnspecified(t *testing.T) {
+
+	args := []Expression{genColumn(mysql.TypeLong, 1), genColumn(mysql.TypeLong, 2)}
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.And,
+		types.NewFieldType(mysql.TypeUnspecified),
+		args...,
+	)
+	require.NoError(t, err)
+	fn := fc.(*ScalarFunction)
+	fn.Function.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	require.Equal(t, tipb.ScalarFuncSig_Unspecified, fn.Function.PbCode())
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"))
+	}()
+	pc := PbConverter{client: new(mock.Client), sc: new(stmtctx.StatementContext)}
+	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
 }

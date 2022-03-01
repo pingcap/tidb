@@ -1,5 +1,5 @@
 run:
-  timeout: 7m
+  timeout: 10m
 linters:
   disable-all: true
   enable:
@@ -22,6 +22,9 @@ linters:
     - rowserrcheck
     - unconvert
     - makezero
+    - durationcheck
+    - prealloc
+    - predeclared
 
 linters-settings:
   staticcheck:

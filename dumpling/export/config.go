@@ -45,6 +45,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
+	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
 	flagWhere                    = "where"
@@ -133,6 +134,8 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
+
+	CollationCompatible string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -145,36 +148,37 @@ var ServerInfoUnknown = version.ServerInfo{
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
-		Databases:          nil,
-		Host:               "127.0.0.1",
-		User:               "root",
-		Port:               3306,
-		Password:           "",
-		Threads:            4,
-		Logger:             nil,
-		StatusAddr:         ":8281",
-		FileSize:           UnspecifiedSize,
-		StatementSize:      DefaultStatementSize,
-		OutputDirPath:      ".",
-		ServerInfo:         ServerInfoUnknown,
-		SortByPk:           true,
-		Tables:             nil,
-		Snapshot:           "",
-		Consistency:        consistencyTypeAuto,
-		NoViews:            true,
-		Rows:               UnspecifiedSize,
-		Where:              "",
-		FileType:           "",
-		NoHeader:           false,
-		NoSchemas:          false,
-		NoData:             false,
-		CsvNullValue:       "\\N",
-		SQL:                "",
-		TableFilter:        allFilter,
-		DumpEmptyDatabase:  true,
-		SessionParams:      make(map[string]interface{}),
-		OutputFileTemplate: DefaultOutputFileTemplate,
-		PosAfterConnect:    false,
+		Databases:           nil,
+		Host:                "127.0.0.1",
+		User:                "root",
+		Port:                3306,
+		Password:            "",
+		Threads:             4,
+		Logger:              nil,
+		StatusAddr:          ":8281",
+		FileSize:            UnspecifiedSize,
+		StatementSize:       DefaultStatementSize,
+		OutputDirPath:       ".",
+		ServerInfo:          ServerInfoUnknown,
+		SortByPk:            true,
+		Tables:              nil,
+		Snapshot:            "",
+		Consistency:         consistencyTypeAuto,
+		NoViews:             true,
+		Rows:                UnspecifiedSize,
+		Where:               "",
+		FileType:            "",
+		NoHeader:            false,
+		NoSchemas:           false,
+		NoData:              false,
+		CsvNullValue:        "\\N",
+		SQL:                 "",
+		TableFilter:         allFilter,
+		DumpEmptyDatabase:   true,
+		SessionParams:       make(map[string]interface{}),
+		OutputFileTemplate:  DefaultOutputFileTemplate,
+		PosAfterConnect:     false,
+		CollationCompatible: LooseCollationCompatible,
 	}
 }
 
@@ -226,6 +230,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
+	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
@@ -319,6 +324,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.NoViews, err = flags.GetBool(flagNoViews)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.SortByPk, err = flags.GetBool(flagSortByPk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -554,6 +563,9 @@ const (
 	defaultDumpThreads        = 128
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
+
+	LooseCollationCompatible  = "loose"
+	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"
 )

@@ -26,7 +26,6 @@ import (
 )
 
 func TestT(t *testing.T) {
-	t.Parallel()
 	abc := NewCIStr("aBC")
 	require.Equal(t, "aBC", abc.O)
 	require.Equal(t, "abc", abc.L)
@@ -34,7 +33,6 @@ func TestT(t *testing.T) {
 }
 
 func TestModelBasic(t *testing.T) {
-	t.Parallel()
 	column := &ColumnInfo{
 		ID:           1,
 		Name:         NewCIStr("c"),
@@ -140,7 +138,6 @@ func TestModelBasic(t *testing.T) {
 }
 
 func TestJobStartTime(t *testing.T) {
-	t.Parallel()
 	job := &Job{
 		ID:         123,
 		BinlogInfo: &HistoryInfo{},
@@ -150,16 +147,19 @@ func TestJobStartTime(t *testing.T) {
 }
 
 func TestJobCodec(t *testing.T) {
-	t.Parallel()
 	type A struct {
 		Name string
 	}
+	tzName, tzOffset := time.Now().In(time.UTC).Zone()
 	job := &Job{
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
+		ReorgMeta: &DDLReorgMeta{
+			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
@@ -208,6 +208,8 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, NewCIStr(""), name)
 	require.Equal(t, A{Name: ""}, a)
 	require.Greater(t, len(newJob.String()), 0)
+	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
+	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
@@ -247,7 +249,6 @@ func TestJobCodec(t *testing.T) {
 }
 
 func TestState(t *testing.T) {
-	t.Parallel()
 	schemaTbl := []SchemaState{
 		StateDeleteOnly,
 		StateWriteOnly,
@@ -276,7 +277,6 @@ func TestState(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	t.Parallel()
 	acts := []struct {
 		act    ActionType
 		result string
@@ -302,7 +302,7 @@ func TestString(t *testing.T) {
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
-		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
+		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 
@@ -313,7 +313,6 @@ func TestString(t *testing.T) {
 }
 
 func TestUnmarshalCIStr(t *testing.T) {
-	t.Parallel()
 	var ci CIStr
 
 	// Test unmarshal CIStr from a single string.
@@ -333,7 +332,6 @@ func TestUnmarshalCIStr(t *testing.T) {
 }
 
 func TestDefaultValue(t *testing.T) {
-	t.Parallel()
 	srcCol := &ColumnInfo{
 		ID: 1,
 	}
@@ -411,8 +409,6 @@ func TestDefaultValue(t *testing.T) {
 }
 
 func TestPlacementSettingsString(t *testing.T) {
-	t.Parallel()
-
 	settings := &PlacementSettings{
 		PrimaryRegion: "us-east-1",
 		Regions:       "us-east-1,us-east-2",
@@ -442,4 +438,31 @@ func TestPlacementSettingsString(t *testing.T) {
 		Constraints: "{+us-east-1:1,+us-east-2:1}",
 	}
 	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
+}
+
+func TestLocation(t *testing.T) {
+	// test offset = 0
+	loc := &TimeZoneLocation{}
+	nLoc, err := loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// test loc.location != nil
+	loc.Name = "Asia/Shanghai"
+	nLoc, err = loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// timezone +05:00
+	loc1 := &TimeZoneLocation{Name: "UTC", Offset: 18000}
+	loc1Byte, err := json.Marshal(loc1)
+	require.NoError(t, err)
+	loc2 := &TimeZoneLocation{}
+	err = json.Unmarshal(loc1Byte, loc2)
+	require.NoError(t, err)
+	require.Equal(t, loc2.Offset, loc1.Offset)
+	require.Equal(t, loc2.Name, loc1.Name)
+	nLoc, err = loc2.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	location := time.FixedZone("UTC", loc1.Offset)
+	require.Equal(t, nLoc, location)
 }

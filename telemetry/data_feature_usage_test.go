@@ -25,8 +25,6 @@ import (
 )
 
 func TestTxnUsageInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -70,8 +68,6 @@ func TestTxnUsageInfo(t *testing.T) {
 }
 
 func TestTemporaryTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -89,8 +85,6 @@ func TestTemporaryTable(t *testing.T) {
 }
 
 func TestCachedTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

@@ -3,20 +3,40 @@
 package task
 
 import (
-	. "github.com/pingcap/check"
+	"context"
+	"testing"
+
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/stretchr/testify/require"
 )
 
-type testRestoreSuite struct{}
-
-var _ = Suite(&testRestoreSuite{})
-
-func (s *testRestoreSuite) TestRestoreConfigAdjust(c *C) {
+func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
 	cfg.adjustRestoreConfig()
 
-	c.Assert(cfg.Config.Concurrency, Equals, uint32(defaultRestoreConcurrency))
-	c.Assert(cfg.Config.SwitchModeInterval, Equals, defaultSwitchInterval)
-	c.Assert(cfg.MergeSmallRegionKeyCount, Equals, restore.DefaultMergeRegionKeyCount)
-	c.Assert(cfg.MergeSmallRegionSizeBytes, Equals, restore.DefaultMergeRegionSizeBytes)
+	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
+	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
+	require.Equal(t, restore.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
+	require.Equal(t, restore.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
+}
+
+func TestconfigureRestoreClient(t *testing.T) {
+	cfg := Config{
+		Concurrency: 1024,
+	}
+	restoreComCfg := RestoreCommonConfig{
+		Online: true,
+	}
+	restoreCfg := &RestoreConfig{
+		Config:              cfg,
+		RestoreCommonConfig: restoreComCfg,
+		DdlBatchSize:        128,
+	}
+	client := &restore.Client{}
+
+	ctx := context.Background()
+	err := configureRestoreClient(ctx, client, restoreCfg)
+	require.NoError(t, err)
+	require.Equal(t, client.GetBatchDdlSize(), 128)
+	require.True(t, true, client.IsOnline())
 }
