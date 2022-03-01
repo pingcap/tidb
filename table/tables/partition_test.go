@@ -609,6 +609,69 @@ func TestIssue24746(t *testing.T) {
 	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
 }
 
+func TestIssue31629(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_list_partition = 1")
+	tk.MustExec("create database Issue31629")
+	defer tk.MustExec("drop database Issue31629")
+	tk.MustExec("use Issue31629")
+	// Test following partition types:
+	// HASH, RANGE, LIST:
+	// - directly on a single int column
+	// - with expression on multiple columns
+	// RANGE/LIST COLUMNS single column
+	// RANGE/LIST COLUMNS -- Verify that only single column is allowed and no expression
+	tests := []struct {
+		create string
+		fail   bool
+		cols   []string
+	}{
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by range(col1) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by range(Col1+col3) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"Col1", "col3"}},
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by hash(col1) partitions 3", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by hash(Col1+col3) partitions 3", false, []string{"Col1", "col3"}},
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by list(col1) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by list(Col1+col3) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"Col1", "col3"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, false, []string{"col2"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2,col3) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col1+1) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, false, []string{"col2"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2,col3) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col1+1) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
+	}
+
+	for i, tt := range tests {
+
+		createTable := "create table t1 " + tt.create
+		res, err := tk.Exec(createTable)
+		if res != nil {
+			res.Close()
+		}
+		if err != nil {
+			if tt.fail {
+				continue
+			}
+		}
+		require.Falsef(t, tt.fail, "test %d succeeded but was expected to fail! %s", i, createTable)
+		require.NoError(t, err)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tb, err := dom.InfoSchema().TableByName(model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
+		require.NoError(t, err)
+		tbp, ok := tb.(table.PartitionedTable)
+		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
+		colNames := tbp.GetPartitionColumnNames()
+		checkNames := []model.CIStr{model.NewCIStr(tt.cols[0])}
+		for i := 1; i < len(tt.cols); i++ {
+			checkNames = append(checkNames, model.NewCIStr(tt.cols[i]))
+		}
+		require.ElementsMatchf(t, colNames, checkNames, "test %d %s", i, createTable)
+		tk.MustExec("drop table t1")
+	}
+}
+
 func TestIssue31721(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
