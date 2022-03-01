@@ -15,10 +15,10 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"sync"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"

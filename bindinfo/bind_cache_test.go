@@ -15,11 +15,11 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
