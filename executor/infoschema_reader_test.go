@@ -151,9 +151,10 @@ func TestViews(t *testing.T) {
 }
 
 func TestColumnsTables(t *testing.T) {
-  store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (bit bit(10) DEFAULT b'100')")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
