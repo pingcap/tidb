@@ -1270,7 +1270,6 @@ func NewSessionVars() *SessionVars {
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
-		MemQuotaBindCache:  DefTiDBMemQuotaBindCache,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
