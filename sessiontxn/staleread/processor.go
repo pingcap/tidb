@@ -127,11 +127,12 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 
+		p.evaluated = true
 		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
-			ts = txnCtx.StartTS
+			p.ts = txnCtx.StartTS
+			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema))
 		}
-
-		return p.setEvaluatedTS(0, nil)
+		return nil
 	}
 
 	// Try to get ts from variable `txn_read_ts`, when it is present 'as of' clause in statement should not be allowed
@@ -143,7 +144,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	if ts != 0 {
-		return p.setEvaluatedTS(0, func(sctx sessionctx.Context) (uint64, error) {
+		return p.setEvaluatedTS(ts, func(sctx sessionctx.Context) (uint64, error) {
 			return ts, nil
 		})
 	}
@@ -170,7 +171,7 @@ func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64
 		return 0, err
 	}
 
-	if err = sessionctx.ValidateSnapshotReadTS(context.TODO(), sctx, ts); err != nil {
+	if err = sessionctx.ValidateStaleReadTS(context.TODO(), sctx, ts); err != nil {
 		return 0, err
 	}
 
