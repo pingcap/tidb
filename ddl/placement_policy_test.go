@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -314,42 +313,42 @@ func TestResetSchemaPlacement(t *testing.T) {
 	tk.MustExec("create database TestResetPlacementDB placement policy `TestReset`;")
 	tk.MustExec("use TestResetPlacementDB")
 	// Test for `=default`
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=default;")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for `SET DEFAULT`
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY SET DEFAULT")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for `= 'DEFAULT'`
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY = 'DEFAULT'")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for "= `DEFAULT`"
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY = `DEFAULT`")
-	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testkit.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
