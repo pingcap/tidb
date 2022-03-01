@@ -529,7 +529,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 	fpName2 := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	require.NoError(t, failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)))
-	require.NoError(t, failpoint.Disable(fpName2))
+	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
 
 	datetime := func(str string) types.Time {
 		return parseTime(t, tk.Session(), str)
