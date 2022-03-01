@@ -57,7 +57,7 @@ The followers is the scalability of hot index and shard index.
 
 Computing formula of scalability is  as bellow: `qps1` is the qps before expansion, `tikv1` is the tikv node count before expansion; `qps2` is the qps after expansion, `tikv2` is the tikv node count afterexpansion.
 
-![image-20220301152240006](.\imgs\scalability-formula.png)
+<img alt="CNF 200" src=".\imgs\scalability-formula.png" width="200pt"/>
 
 
 
@@ -398,12 +398,6 @@ Using the shard index to replace the hot index my decrease a little of the perfo
 ## Alternatives
 
 We can use expression index directly other than as the prefix of a index. e.g. replace `index idx(a)` to `indx idx(expr(a))` , it seems more simpler. But  `expr(a)` and `(a)`  don't correspond one to one, the PointGet plan becomes IndexRangeScan and the selection operation `WEHRE a = xxx` must be executed in the tidb-server or tikv. So the performance may be dropped a lot.
-
-
-
-## Questions
-
-As I know @tiancaiamao is intended to do the shard index more comprehensively.
 
 
 
