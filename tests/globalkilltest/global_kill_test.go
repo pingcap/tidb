@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
