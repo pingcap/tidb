@@ -186,11 +186,11 @@ func TestLimitRequiredRows(t *testing.T) {
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -265,15 +265,15 @@ func TestSortRequiredRows(t *testing.T) {
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildSortExec(sctx, byItems, ds)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -372,15 +372,15 @@ func TestTopNRequiredRows(t *testing.T) {
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -465,15 +465,15 @@ func TestSelectionRequiredRows(t *testing.T) {
 			filters = append(filters, f)
 		}
 		exec := buildSelectionExec(sctx, filters, ds)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -523,15 +523,15 @@ func TestProjectionUnparallelRequiredRows(t *testing.T) {
 			}
 		}
 		exec := buildProjectionExec(sctx, exprs, ds, 0)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -579,19 +579,19 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 			}
 		}
 		exec := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 
 			// wait projectionInputFetcher blocked on fetching data
 			// from child in the background.
 			time.Sleep(time.Millisecond * 25)
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -669,15 +669,15 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.Nil(t, exec.Next(ctx, chk))
+			require.NoError(t, exec.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, ds.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
@@ -703,15 +703,15 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 		innerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
 		outerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
 		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
-		require.Nil(t, exec.Open(context.Background()))
+		require.NoError(t, exec.Open(context.Background()))
 
 		chk := newFirstChunk(exec)
 		for i := range required {
 			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
-			require.Nil(t, exec.Next(context.Background(), chk))
+			require.NoError(t, exec.Next(context.Background(), chk))
 		}
-		require.Nil(t, exec.Close())
-		require.Nil(t, outerSrc.checkNumNextCalled())
+		require.NoError(t, exec.Close())
+		require.NoError(t, outerSrc.checkNumNextCalled())
 	}
 }
 
@@ -919,7 +919,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
 			chk.Column(0).ReserveJSON(1)
 			j := new(json.BinaryJSON)
-			require.Nil(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))))
+			require.NoError(t, j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))))
 			chk.Column(0).AppendJSON(*j)
 			require.Equal(t, `{"123": 123}`, vgc.firstRowDatums[0].GetMysqlJSON().String())
 			require.Equal(t, `{"123": 123}`, vgc.lastRowDatums[0].GetMysqlJSON().String())
