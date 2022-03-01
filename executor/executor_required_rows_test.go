@@ -182,7 +182,7 @@ func TestLimitRequiredRows(t *testing.T) {
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
-		require.Nil(t, exec.Open(ctx))
+		require.NoError(t, exec.Open(ctx))
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
