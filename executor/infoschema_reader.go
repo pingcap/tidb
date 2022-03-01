@@ -789,11 +789,12 @@ ForColumnsTag:
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
-		var columnDefault string
+		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 			if col.Tp == mysql.TypeBit {
-				defaultValBinaryLiteral := types.BinaryLiteral(columnDefault)
+				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 			}
 		}
