@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -37,11 +38,11 @@ type mockErrorOperator struct {
 	closed  bool
 }
 
-func (e *mockErrorOperator) Open(ctx context.Context) error {
+func (e *mockErrorOperator) Open(_ context.Context) error {
 	return nil
 }
 
-func (e *mockErrorOperator) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *mockErrorOperator) Next(_ context.Context, _ *chunk.Chunk) error {
 	if e.toPanic {
 		panic("next panic")
 	} else {
@@ -76,11 +77,9 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	explainExec.analyzeExec = &mockOpr
 	tmpCtx := context.Background()
 	_, err := explainExec.generateExplainInfo(tmpCtx)
+	require.EqualError(t, err, "next error, close error")
+	require.True(t, mockOpr.closed)
 
-	expectedStr := "next error, close error"
-	if err != nil && (err.Error() != expectedStr || !mockOpr.closed) {
-		t.Errorf(err.Error())
-	}
 	// mockErrorOperator panic
 	explainExec = &ExplainExec{
 		baseExecutor: baseExec,
@@ -89,13 +88,10 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	mockOpr = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOpr
 	defer func() {
-		if panicErr := recover(); panicErr == nil || !mockOpr.closed {
-			t.Errorf("panic test failed: without panic or close() is not called")
-		}
+		panicErr := recover()
+		require.NotNil(t, panicErr)
+		require.True(t, mockOpr.closed)
 	}()
-
 	_, err = explainExec.generateExplainInfo(tmpCtx)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
+	require.FailNow(t, "generateExplainInfo should panic")
 }
