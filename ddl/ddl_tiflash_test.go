@@ -718,7 +718,6 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.store)
 
 	threshold := 2
-	tk.MustExec("drop database if exists tiflash_ddl_limit")
 	tk.MustExec("create database tiflash_ddl_limit")
 	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
 	for i := 0; i < threshold; i++ {
