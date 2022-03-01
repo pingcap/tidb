@@ -1,7 +1,31 @@
 # Integer shard index
 
-- RFC PR: https://github.com/tikv/rfcs/pull/0084
 - Tracking Issue: https://github.com/pingcap/tidb/issues/31040
+
+Here is a table definition as bellow. The service writes data monotonically on the field `id2`, so the index `hotIndex` becomes a hot index which hinders the scalability of a TiDB cluster. The service executes point SELECT and point UPDATE by the `hotIndex`.
+
+```sql
+CREATE TABLE test(id1 INT PRIMARY, id2 INT, id3 INT, UNIQUE KEY hotIndex(id2));
+
+INSERT INTO test values(val1,val2,val3);
+UPDATE test SET id3 = val3 WHERE id2 = val2;
+SELECT * FROM test WHERE id2 = val2;
+```
+
+The Integer shard index realized by this design doc can scatter `hotIndex` and ensure the service sqls still use the unique key `hotIndex`.  Here is the new table definition including shard index as bellow.
+
+```sql
+CREATE TABLE test(id1 INT PRIMARY, id2 INT, id3 INT, UNIQUE KEY hotIndex((tidb_shard(id2)),id2));
+```
+
+Do we need to modify service sqls above? No, we don't. Optimizer can recognize the shard index and add `tidb_shard(id2) = shardVal` to the `WHERE` clause automatically. Here is the final form of service sqls processed by optimizer as bellow. So, we don't need to modify service sqls and theses sqls can still use the unique index `hotIndex`
+
+```sql
+UPDATE test SET id3 = val3 WHERE tidb_shard(id2) = 8 AND id2 = 100;
+SELECT * FROM test WHERE tidb_shard(id2) = 8 AND id2 = 100;
+```
+
+
 
 ## Summary
 
@@ -9,38 +33,44 @@ Hot index reduces the write scalability of the TiDB cluster when the written dat
 
 The followers is the scalability of hot index and shard index.
 
-| 测试时间 | 并发数 | tidb数 | tikv数 | tidbCPU | tikvCPU | duration(95)                 | QPS(K) | 扩展性 | 备注   |
-| -------- | ------ | ------ | ------ | ------- | ------- | ---------------------------- | ------ | ------ | ------ |
-| 17 14:30 | 800    | 3      | 3      | 4700    | 3350    | insert:  60.5     update:110 | 49.8   |        | 第一轮 |
-| 17 14:50 | 800    | 3      | 3      | 4400    | 3000    | insert:  61     update:111   | 49     |        | 第二轮 |
-| 17 15:40 | 800    | 3      | 4      | 5000    | 3500    | insert:  57     update:103   | 53     | 19.30% | 第一轮 |
-| 17 9:47  | 800    | 3      | 4      | 5100    | 3600    | insert:  56     update:100   | 54     | 30.60% | 第二轮 |
+| threads | tidb | tikv | tidb CPU | tikv CPU | duration(95)                 | QPS(K) | scalability | remark |
+| ------- | ---- | ---- | -------- | -------- | ---------------------------- | ------ | ----------- | ------ |
+| 800     | 3    | 3    | 4700     | 3350     | insert:  60.5     update:110 | 49.8   |             |        |
+| 800     | 3    | 3    | 4400     | 3000     | insert:  61     update:111   | 49     |             |        |
+| 800     | 3    | 4    | 5000     | 3500     | insert:  57     update:103   | 53     | 19.30%      | round1 |
+| 800     | 3    | 4    | 5100     | 3600     | insert:  56     update:100   | 54     | 30.60%      | round2 |
 
 ​																					hot index scalability
 
 
 
-| 测试时间 | 并发数 | tidb数 | tikv数 | tidbCPU | tikvCPU | duration                    | QPS  | 扩展性 | 备注   |
-| -------- | ------ | ------ | ------ | ------- | ------- | --------------------------- | ---- | ------ | ------ |
-| 17 18:50 | 800    | 3      | 3      | 5200    | 3100    | insert: 60     update:110   | 47.5 |        | 第一轮 |
-| 17 19:30 | 800    | 3      | 3      | 5200    | 3000    | insert:  60     update:110  | 47.2 |        | 第二轮 |
-| 17 20:10 | 800    | 3      | 4      | 6200    | 3800    | insert:  56.5     update:88 | 57.5 | 63.20% | 第一轮 |
-| 17 20:40 | 800    | 3      | 4      | 6250    | 3800    | insert:  56.5     update:88 | 58.5 | 71.40% | 第二轮 |
+| threads | tidb | tikv | tidb CPU | tikv CPU | duration                    | QPS  | scalability | remark |
+| ------- | ---- | ---- | -------- | -------- | --------------------------- | ---- | ----------- | ------ |
+| 800     | 3    | 3    | 5200     | 3100     | insert: 60     update:110   | 47.5 |             |        |
+| 800     | 3    | 3    | 5200     | 3000     | insert:  60     update:110  | 47.2 |             |        |
+| 800     | 3    | 4    | 6200     | 3800     | insert:  56.5     update:88 | 57.5 | 63.20%      | round1 |
+| 800     | 3    | 4    | 6250     | 3800     | insert:  56.5     update:88 | 58.5 | 71.40%      | round2 |
 
 ​																					shard index scalability
 
-## Motivation
+
+
+Computing formula of scalability is  as bellow: `qps1` is the qps before expansion, `tikv1` is the tikv node count before expansion; `qps2` is the qps after expansion, `tikv2` is the tikv node count afterexpansion.
+
+![image-20220301152240006](.\imgs\scalability-formula.png)
+
+
+
+## Detailed design
 
 We made a new built-in function "tidb_shard()" as the expression prefix of shard index. There is only one integer parameter for tidb_shard function. What index is a shard index? It must meet the follower rules.
 
-- It is an unqie index
+- It is an unique index
 - The first field of index is tidb_shard(`a`) , the column `a` is integer type and is the second field of the index.
 
 When querying based on the original index field, the TiDB optimizer should automatically recognize the shard index and add the expression field `tidb_shard(a) = val` to the query condition.
 
 How to solve the hot index problem by shard index? For example, the definition of a table is `test(id int primary key clustered, a int, b int, unique key idx_a(a))` . The index `idx_a` is a hot index because of monotonically increasing data. We modify the definition of the index `idx_a` as follows `unique key idx_a((tidb_shard(a)),a)`. The written data of index `idx_a` is not monotonically increasing now. But here is a question, how the optimizer of TiDB chooses the index for original queries that are designed for `idx_a(a)`? e.g. `SELECT * FROM test WHERE a = 100`, it can't use the unique index 'idx_a((tidb_shard(a)),a' any more. We add a new rule for TiDB optimizer, if the access condition of a query contains all the fields of shard index except the first `tidb_shard(a)` expression, The optimizer adds the expression`tidb_shard(a) = xxx` to the access condition and the new query statement is like `SELECT * FROM test WHERE tidb_shard(a) = 8 AND a = 100`, so that the query can use the shard index.
-
-## Detailed design
 
 ### tidb_shard function
 
@@ -79,7 +109,7 @@ The follower are the functions used to  add the expresion `tidb_shard(xxx) = yyy
 
 #### (ds *DataSource) PredicatePushDown
 
-The entry point to add the `tidb_shard` expression is the function as bellow. We must add it before access condition was pushed down. Maybe this work should be down after sql parse, we do it here just for simplify the work.
+The entry point to add the `tidb_shard` expression is the function as bellow. We must add it before access condition was pushed down. Maybe this work should be done after sql parse, we do it here just for simplify the work.
 
 ```go
 
@@ -383,7 +413,7 @@ As I know @tiancaiamao is intended to do the shard index more comprehensively.
 
 The shard index is only valid for unique secondary index, not for primary key or non-unique secondary index, and it must meet the follower rules.
 
-- It is an unqie index
+- It is an unique index
 - The first field of index is tidb_shard(`a`) , the column `a` is integer type and is the second field of the index.
 
 ### Non-equivalent Condition Can't Use Index
