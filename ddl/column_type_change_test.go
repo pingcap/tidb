@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
@@ -129,7 +129,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -197,7 +197,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(hook, tbl, model.StateNone)
 	dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -955,7 +955,7 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	assertHasAlterWriteReorg := func(tbl table.Table) {
 		// Restore the assert result to false.
 		assertResult = false
-		hook := &ddl.TestDDLCallback{}
+		hook := &ddl.TestDDLCallback{Do: dom}
 		hook.OnJobRunBeforeExported = func(job *model.Job) {
 			if tbl.Meta().ID != job.TableID {
 				return
@@ -2005,14 +2005,14 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 
 	// set ddl hook
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	defer dom.DDL().SetHook(originalHook)
 
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
 	tbl := tk.GetTableByName("test", "ctc_goroutine_leak")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if jobID != 0 {
@@ -2030,15 +2030,14 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	var (
-		wg       = sync.WaitGroup{}
+		wg       util.WaitGroupWrapper
 		alterErr error
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
 		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
-	}()
+	})
+
 	<-ddl.TestReorgGoroutineRunning
 	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
 	wg.Wait()
@@ -2268,7 +2267,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	require.NotNil(t, tbl)
 	require.Equal(t, 1, len(tbl.Cols()))
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
 		checkErr1 error
 		checkErr2 error
