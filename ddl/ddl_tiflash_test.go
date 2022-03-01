@@ -22,8 +22,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -692,25 +696,35 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 }
 
 func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
-	timeOut := false
+	timeOut := atomicutil.NewBool(false)
 	ctx, cancel := context.WithTimeout(context.Background(), to)
+	defer cancel()
 	enabled := atomicutil.NewBool(false)
+	doneCh := make(chan int, 1)
+	var wg sync.WaitGroup
 	go func() {
+		defer wg.Done()
 		select {
-		case <-ctx.Done():
+		case <-doneCh:
+			// Exit normally
 			return
-		case <-time.After(to):
+		case <-ctx.Done():
+			// Exceed given timeout
 		}
-		timeOut = true
+		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
+		timeOut.Store(true)
 		enabled.Store(true)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}()
+	wg.Add(1)
 	_, err := tk.Exec(sql)
-	cancel()
+	doneCh <- 1
 	if enabled.Load() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone"))
 	}
-	return timeOut, err
+	// Must wait till `timeOut` is set.
+	wg.Wait()
+	return timeOut.Load(), err
 }
 
 func TestTiFlashBasicRateLimiter(t *testing.T) {
@@ -766,7 +780,7 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	}()
 	// This DDL can finish in 3 seconds, since we will force trigger its DDL to update schema cache.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
-	timeOut, err = execWithTimeout(t, tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Second*4, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(4, 4)
