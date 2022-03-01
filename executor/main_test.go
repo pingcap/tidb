@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
+		conf.OOMAction = config.OOMActionLog
 	})
 	tikv.EnableFailpoints()
 
