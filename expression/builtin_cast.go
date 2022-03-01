@@ -1937,7 +1937,24 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
-	return BuildCastFunction(ctx, expr, tp)
+	castExpr := BuildCastFunction(ctx, expr, tp)
+	// For const item, we can use find-grained precision and scale by the result.
+	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
+		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		if !isnull && err == nil {
+			precision, frac := val.PrecisionAndFrac()
+			castTp := castExpr.GetType()
+			castTp.Decimal = frac
+			castTp.Flen = precision
+			if castTp.Flen > mysql.MaxDecimalWidth {
+				castTp.Flen = mysql.MaxDecimalWidth
+			}
+			if castTp.Decimal > mysql.MaxDecimalScale {
+				castTp.Decimal = mysql.MaxDecimalScale
+			}
+		}
+	}
+	return castExpr
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is

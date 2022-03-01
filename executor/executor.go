@@ -462,6 +462,7 @@ type DDLJobRetriever struct {
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
+	TZLoc          *time.Location
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
@@ -510,9 +511,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	createTime := ts2Time(job.StartTS)
-	startTime := ts2Time(job.RealStartTS)
-	finishTime := ts2Time(finishTS)
+	createTime := ts2Time(job.StartTS, e.TZLoc)
+	startTime := ts2Time(job.RealStartTS, e.TZLoc)
+	finishTime := ts2Time(finishTS, e.TZLoc)
 
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
@@ -541,11 +542,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendString(11, job.State.String())
 }
 
-func ts2Time(timestamp uint64) types.Time {
+func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
-	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
+	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
