@@ -77,6 +77,7 @@ func (rs *RegionSplitter) Split(
 	ctx context.Context,
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
+	isRawKv bool,
 	onSplit OnSplitFunc,
 ) error {
 	if len(ranges) == 0 {
@@ -111,7 +112,7 @@ SplitRegions:
 			}
 			return errors.Trace(errScan)
 		}
-		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions, true)
+		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions, isRawKv)
 		regionMap := make(map[uint64]*RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
