@@ -45,6 +45,7 @@ func CalculateAsOfTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (u
 	return oracle.GoTimeToTS(tsTime), nil
 }
 
+// CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
 func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
 	nowVal, err := expression.GetStmtTimestamp(sctx)
 	if err != nil {
