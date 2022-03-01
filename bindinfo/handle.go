@@ -106,8 +106,7 @@ type bindRecordUpdate struct {
 func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle := &BindHandle{}
 	handle.sctx.Context = ctx
-	memCapacity := ctx.GetSessionVars().MemQuotaBindCache
-	handle.bindInfo.Value.Store(newBindCache(memCapacity))
+	handle.bindInfo.Value.Store(newBindCache())
 	handle.bindInfo.parser = parser.New()
 	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -1060,8 +1059,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
-	memCapacity := h.bindInfo.Value.Load().(*bindCache).GetMemCapacity()
-	h.bindInfo.Store(newBindCache(memCapacity))
+	h.bindInfo.Store(newBindCache())
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
@@ -1077,9 +1075,9 @@ func (h *BindHandle) FlushBindings() error {
 
 // ReloadBindings clears existing binding cache and do a full load from mysql.bind_info.
 // It is used to maintain consistency between cache and mysql.bind_info if the table is deleted or truncated.
-func (h *BindHandle) ReloadBindings(memCapacity int64) error {
+func (h *BindHandle) ReloadBindings() error {
 	h.bindInfo.Lock()
-	h.bindInfo.Store(newBindCache(memCapacity))
+	h.bindInfo.Store(newBindCache())
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	return h.Update(true)

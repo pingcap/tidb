@@ -1906,8 +1906,6 @@ type MemQuota struct {
 	MemQuotaQuery int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
-	// MemQuotaBindCache defines the memory capacity for bind cache.
-	MemQuotaBindCache int64
 
 	// The variables below do not take any effect anymore, it's remaining for compatibility.
 	// TODO: remove them in v4.1

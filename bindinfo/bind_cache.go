@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"sync"
 
 	"github.com/cznic/mathutil"
@@ -47,13 +48,13 @@ func calBindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	return int64(len(key.Hash())) + valMem
 }
 
-func newBindCache(memCapacity int64) *bindCache {
+func newBindCache() *bindCache {
 	// since bindCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
 	c := bindCache{
 		cache:       cache,
-		memCapacity: memCapacity,
+		memCapacity: variable.MemQuotaBindCache.Load(),
 		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
 	}
 	return &c
@@ -199,7 +200,7 @@ func (c *bindCache) GetMemCapacity() int64 {
 func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	newCache := newBindCache(c.memCapacity)
+	newCache := newBindCache()
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)

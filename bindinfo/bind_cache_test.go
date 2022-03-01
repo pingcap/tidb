@@ -15,20 +15,18 @@
 package bindinfo
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBindCache(t *testing.T) {
-	ctx := mock.NewContext()
-	memCapacity := int64(100)
-	ctx.GetSessionVars().MemQuotaBindCache = memCapacity
-	bindCache := newBindCache(memCapacity)
+	variable.MemQuotaBindCache.Store(100)
+	bindCache := newBindCache()
 
 	value := make([][]*BindRecord, 3)
 	key := make([]bindCacheKey, 3)
