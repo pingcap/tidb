@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -609,6 +610,103 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk2.MustExec("admin capture bindings")
 	rows = tk2.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0) // filtered by the table filter
+}
+
+func TestCaptureWildcardFilter(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	dbs := []string{"db11", "db12", "db2"}
+	tbls := []string{"t11", "t12", "t2"}
+	for _, db := range dbs {
+		tk.MustExec(fmt.Sprintf(`drop database if exists %v`, db))
+		tk.MustExec(fmt.Sprintf(`create database %v`, db))
+		tk.MustExec(fmt.Sprintf(`use %v`, db))
+		for _, tbl := range tbls {
+			tk.MustExec(fmt.Sprintf(`create table %v(a int)`, tbl))
+		}
+	}
+	mustExecTwice := func() {
+		for _, db := range dbs {
+			for _, tbl := range tbls {
+				tk.MustExec(fmt.Sprintf(`select * from %v.%v where a>10`, db, tbl))
+				tk.MustExec(fmt.Sprintf(`select * from %v.%v where a>10`, db, tbl))
+			}
+		}
+	}
+	checkBindings := func(dbTbls ...string) {
+		m := make(map[string]bool) // map[query]existed
+		for _, dbTbl := range dbTbls {
+			tmp := strings.Split(dbTbl, ".")
+			q := fmt.Sprintf("select * from `%v` . `%v` where `a` > ?", tmp[0], tmp[1])
+			m[q] = false
+		}
+
+		tk.MustExec("admin capture bindings")
+		rows := tk.MustQuery("show global bindings").Sort().Rows()
+		require.Len(t, rows, len(dbTbls))
+		for _, r := range rows {
+			q := r[0].(string)
+			if _, exist := m[q]; !exist { // encounter an unexpected binding
+				t.Fatalf("unexpected binding %v", q)
+			}
+			m[q] = true
+		}
+		for q, exist := range m {
+			if !exist { // a expected binding is not existed
+				t.Fatalf("missed binding %v", q)
+			}
+		}
+	}
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db11.t1*')`)
+	mustExecTwice()
+	checkBindings("db11.t2", "db12.t11", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db11.t12 are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t11')`)
+	mustExecTwice()
+	checkBindings("db11.t12", "db11.t2", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 and db12.t11 are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.t1*')`)
+	mustExecTwice()
+	checkBindings("db11.t2", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // db11.t11 / db12.t11 / db11.t12 / db12.t12 are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db1*.*')`)
+	mustExecTwice()
+	checkBindings("db2.t11", "db2.t12", "db2.t2") // db11.* / db12.* are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', '*.t1*')`)
+	mustExecTwice()
+	checkBindings("db11.t2", "db12.t2", "db2.t2") // *.t11 and *.t12 are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db*.t*')`)
+	mustExecTwice()
+	checkBindings() // all are filtered
 }
 
 func TestCaptureFilter(t *testing.T) {
