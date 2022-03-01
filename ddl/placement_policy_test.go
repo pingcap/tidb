@@ -122,7 +122,6 @@ func TestPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop placement policy if exists x")
 
 	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	hook := &ddl.TestDDLCallback{}
 	var policyID int64
@@ -136,7 +135,7 @@ func TestPlacementPolicy(t *testing.T) {
 			return
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk.MustExec("create placement policy x " +
 		"LEARNERS=1 " +
@@ -181,16 +180,15 @@ func TestPlacementPolicy(t *testing.T) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\" ")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8238 Placement policy 'X' already exists"))
-
+	dom.DDL().SetHook(originalHook)
 	bundles, err := infosync.GetAllRuleBundles(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, len(bundles), 0)
 
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("drop placement policy x", mysql.ErrPlacementPolicyNotExists)
-	tk.MustGetErrCode("drop placement policy if exists x", mysql.ErrPlacementPolicyNotExists)
-	//tk.MustExec("drop placement policy if exists x")
-	//tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
 
 	// TODO: privilege check & constraint syntax check.
 }
