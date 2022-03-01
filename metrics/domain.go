@@ -83,4 +83,13 @@ var (
 			Name:      "handle_schema_validate",
 			Help:      "Counter of handle schema validate",
 		}, []string{LblType})
+
+	// DomainMinStartTsGauge is the gauge that records the minmum start ts.
+	DomainMinStartTsGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "min_start_ts",
+			Help:      "The minimum start ts of transactions in TiDB.",
+		})
 )

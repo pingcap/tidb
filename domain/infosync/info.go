@@ -627,6 +627,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 			minStartTS = info.CurTxnStartTS
 		}
 	}
+	metrics.DomainMinStartTsGauge.Set(float64(minStartTS))
 
 	is.minStartTS = minStartTS
 	err = is.storeMinStartTS(context.Background())
