@@ -101,19 +101,6 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64, tsEvaluator StalenessTSEvaluat
 	return nil
 }
 
-func (p *baseProcessor) useStmtOrTxnReadTS(stmtTS uint64) (ts uint64, err error) {
-	staleReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if staleReadTS != 0 && stmtTS != 0 {
-		return 0, errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
-	}
-
-	if staleReadTS == 0 {
-		staleReadTS = stmtTS
-	}
-
-	return staleReadTS, nil
-}
-
 type staleReadProcessor struct {
 	baseProcessor
 }
