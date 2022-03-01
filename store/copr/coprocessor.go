@@ -1461,6 +1461,11 @@ func (r *RateLimiter) OnAllocated(bytesAllocated int64) {
 				r.sendRate.PutToken()
 				r.curCapacity += 1
 			}
+			tokensToRemoveNow := r.curCapacity - r.requestsInFlight - r.targetCapacity
+			if tokensToRemoveNow > 0 {
+				r.sendRate.GetToken(r.finishCh)
+				tokensToRemoveNow -= 1
+			}
 		}
 	}
 }
