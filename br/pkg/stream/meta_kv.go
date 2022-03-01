@@ -122,6 +122,7 @@ type RawWriteCFValue struct {
 	gcFence               uint64
 }
 
+// ParseFrom decodes the value to get the struct `RawWriteCFValue`.
 func (v *RawWriteCFValue) ParseFrom(data []byte) error {
 	if len(data) < 9 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
@@ -144,9 +145,9 @@ l_for:
 	for len(data) > 0 {
 		switch data[0] {
 		case flagShortValuePrefix:
-			len := uint8(data[1])
-			v.shortValue = data[2 : len+2]
-			data = data[len+2:]
+			vlen := data[1]
+			v.shortValue = data[2 : vlen+2]
+			data = data[vlen+2:]
 		case flagOverlappedRollback:
 			v.hasOverlappedRollback = true
 			data = data[1:]
@@ -163,18 +164,22 @@ l_for:
 	return nil
 }
 
+// HasShortValue checks whether short value is stored in write cf.
 func (v *RawWriteCFValue) HasShortValue() bool {
 	return len(v.shortValue) > 0
 }
 
+// UpdateShortValue gets the shortValue field.
 func (v *RawWriteCFValue) GetShortValue() []byte {
 	return v.shortValue
 }
 
+// UpdateShortValue updates the shortValue field.
 func (v *RawWriteCFValue) UpdateShortValue(value []byte) {
 	v.shortValue = value
 }
 
+// EncodeTo encodes the RawWriteCFValue to get encoded value.
 func (v *RawWriteCFValue) EncodeTo() []byte {
 	data := make([]byte, 0, 9)
 	data = append(data, v.t)

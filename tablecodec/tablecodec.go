@@ -194,6 +194,7 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 	return datumValues, nil
 }
 
+// EncodeMetaKey encodes the key and field into meta key.
 func EncodeMetaKey(key []byte, field []byte) kv.Key {
 	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
 	ek = append(ek, metaPrefix...)

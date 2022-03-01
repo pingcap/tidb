@@ -185,10 +185,12 @@ func (m *Meta) dbKey(dbID int64) []byte {
 	return DBkey(dbID)
 }
 
+// DBkey encodes the dbID into dbKey.
 func DBkey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
 }
 
+// ParseDBKey decodes the dbkey to get dbID.
 func ParseDBKey(dbkey []byte) (int64, error) {
 	if !IsDBkey(dbkey) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse dbKey")
@@ -199,8 +201,9 @@ func ParseDBKey(dbkey []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func IsDBkey(dbkey []byte) bool {
-	return strings.HasPrefix(string(dbkey), mDBPrefix+":")
+// IsDBkey checks whether the dbKey comes from DBKey().
+func IsDBkey(dbKey []byte) bool {
+	return strings.HasPrefix(string(dbKey), mDBPrefix+":")
 }
 
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
@@ -219,14 +222,17 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return TableKey(tableID)
 }
 
+// TableKey encodes the tableID into tableKey.
 func TableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
+// IsTableKey checks whether the tableKey comes from TableKey().
 func IsTableKey(tableKey []byte) bool {
 	return strings.HasPrefix(string(tableKey), mTablePrefix+":")
 }
 
+// ParseTableKey decodes the tableKey to get tableID.
 func ParseTableKey(tableKey []byte) (int64, error) {
 	if !strings.HasPrefix(string(tableKey), mTablePrefix) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse tableKey")

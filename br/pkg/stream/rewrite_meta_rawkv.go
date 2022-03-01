@@ -32,7 +32,7 @@ type SchemasInfo struct {
 	Tables map[string]*model.TableInfo // tableName -> *model.TableInfo
 }
 
-// SchemasReplace specifies schemas infomation mapping old schemas to new schemas.
+// SchemasReplace specifies schemas information mapping old schemas to new schemas.
 type SchemasReplace struct {
 	OldDBs     map[int64]*model.DBInfo
 	OldTables  map[int64]*model.TableInfo

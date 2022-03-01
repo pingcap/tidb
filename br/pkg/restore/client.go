@@ -1498,7 +1498,7 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
-// initSchemasRepalceForDDL gets schemas infomation Mapping from old schemas to new schemas.
+// initSchemasRepalceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) initSchemasRepalceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
 	var (
