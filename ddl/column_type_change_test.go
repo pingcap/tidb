@@ -23,15 +23,14 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	parser_mysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -59,8 +58,8 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 	require.Equal(t, "[ddl:1265]Data truncated for column 'a' at row 1", err.Error())
 
 	// Modify column from null to not null in different type will cause WarnDataTruncated.
-	tk.MustGetErrCode("alter table t modify column a tinyint not null", mysql.WarnDataTruncated)
-	tk.MustGetErrCode("alter table t modify column a bigint not null", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify column a tinyint not null", errno.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify column a bigint not null", errno.WarnDataTruncated)
 
 	// Modify column not null to null.
 	tk.MustExec("drop table if exists t")
@@ -101,10 +100,10 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint)")
 	tk.MustExec("insert into t(a) values (9223372036854775807)")
-	tk.MustGetErrCode("alter table t modify column a int", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify column a mediumint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify column a smallint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify column a tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a int", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a mediumint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a smallint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a tinyint", errno.ErrDataOutOfRange)
 	_, err = tk.Exec("admin check table t")
 	require.NoError(t, err)
 }
@@ -154,7 +153,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
 				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			} else if internalTK.GetModifyColumn("test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
+			} else if internalTK.GetModifyColumn("test", "t", "c2", true).Flag&mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
 			} else if internalTK.GetModifyColumn("test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
@@ -174,9 +173,9 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.Equal(t, 2, len(tbl.Cols()))
 	col := tk.GetModifyColumn("test", "t", "c2", false)
 	require.NotNil(t, col)
-	require.Equal(t, true, parser_mysql.HasNotNullFlag(col.Flag))
-	require.NotEqual(t, 0, col.Flag&parser_mysql.NoDefaultValueFlag)
-	require.Equal(t, parser_mysql.TypeTiny, col.Tp)
+	require.Equal(t, true, mysql.HasNotNullFlag(col.Flag))
+	require.NotEqual(t, 0, col.Flag&mysql.NoDefaultValueFlag)
+	require.Equal(t, mysql.TypeTiny, col.Tp)
 	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -253,7 +252,7 @@ func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
 	col := tk.GetModifyColumn("test", "t", "c2", false)
 	require.NotNil(t, col)
 	require.Equal(t, uint(0), col.Flag)
-	require.Equal(t, parser_mysql.TypeLonglong, col.Tp)
+	require.Equal(t, mysql.TypeLonglong, col.Tp)
 	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -290,37 +289,37 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a varchar(10)")
 	modifiedColumn := tk.GetModifyColumn("test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeVarchar, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b char(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeString, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	tk.MustExec("alter table t modify c binary(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeString, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
 
 	tk.MustExec("alter table t modify d varbinary(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeVarchar, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	tk.MustExec("alter table t modify e blob(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeTinyBlob, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeTinyBlob, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
 
 	// integer to decimal
@@ -328,7 +327,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a decimal(2,1)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeNewDecimal, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeNewDecimal, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
 
 	// integer to year
@@ -336,21 +335,21 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify b year")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeYear, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeYear, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
 
 	// integer to time
 	tk.MustExec("alter table t modify c time")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeDuration, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDuration, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
 
 	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
 	tk.MustExec("alter table t modify d date")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeDate, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDate, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
 
 	// integer to timestamp (according to what timezone you have set)
@@ -358,14 +357,14 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("set @@session.time_zone=UTC")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeTimestamp, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTimestamp, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeDatetime, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDatetime, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
 
 	// integer to floating-point values
@@ -373,20 +372,20 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a float")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeFloat, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeFloat, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b double")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeDouble, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDouble, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	// integer to bit
 	tk.MustExec("alter table t modify c bit(10)")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeBit, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeBit, modifiedColumn.Tp)
 	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
 	tk.MustQuery("select c from t").Check(testkit.Rows("\x00o"))
 
@@ -394,7 +393,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify d json")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeJSON, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeJSON, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	// integer to enum
@@ -403,21 +402,21 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeEnum, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeEnum, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
 
 	// TiDB take integer as the set element offset to cast.
 	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
 	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, parser_mysql.TypeSet, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeSet, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
 
 	// TiDB can't take integer as the enum element string to cast, while the MySQL can.
-	tk.MustGetErrCode("alter table t modify d enum(\"11111\", \"22222\")", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify d enum(\"11111\", \"22222\")", errno.WarnDataTruncated)
 
 	// TiDB can't take integer as the set element string to cast, while the MySQL can.
-	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", errno.WarnDataTruncated)
 }
 
 func TestColumnTypeChangeBetweenVarcharAndNonVarchar(t *testing.T) {
@@ -519,12 +518,12 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	// bit
 	reset(tk)
 	tk.MustExec("insert into t values ('1', '1', '1', '1', '1', '1', '123', '123')")
-	tk.MustGetErrCode("alter table t modify c bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify vc bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify bny bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify vbny bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify bb bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify txt bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify c bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify vc bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify bny bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify vbny bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify bb bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify txt bit", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("alter table t modify e bit")
 	tk.MustExec("alter table t modify s bit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1\x00\x00\x00\x00\x00\x00\x00 1 1 1 \x01 \x01"))
@@ -533,7 +532,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
 	tk.MustExec("alter table t modify c decimal(7, 4)")
 	tk.MustExec("alter table t modify vc decimal(7, 4)")
-	tk.MustGetErrCode("alter table t modify bny decimal(7, 4)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify bny decimal(7, 4)", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify vbny decimal(7, 4)")
 	tk.MustExec("alter table t modify bb decimal(7, 4)")
 	tk.MustExec("alter table t modify txt decimal(7, 4)")
@@ -563,9 +562,9 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify vbny date")
 	tk.MustExec("alter table t modify bb date")
 	// Alter text '08-26 19:35:41' to date will error. (same as mysql does)
-	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify e date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify s date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify txt date", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify e date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s date", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-26 2020-08-26 2020-08-26 2020-08-26 2020-08-26 08-26 19:35:41 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
 	// time
 	reset(tk)
@@ -576,8 +575,8 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify vbny time")
 	tk.MustExec("alter table t modify bb time")
 	tk.MustExec("alter table t modify txt time")
-	tk.MustGetErrCode("alter table t modify e time", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify s time", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify e time", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s time", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("19:35:41 19:35:41 19:35:41 19:35:41 19:35:41 19:35:41 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
 	// datetime
 	reset(tk)
@@ -592,8 +591,8 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify vbny datetime")
 	tk.MustExec("alter table t modify bb datetime")
 	tk.MustExec("alter table t modify txt datetime")
-	tk.MustGetErrCode("alter table t modify e datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify s datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify e datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s datetime", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
 	// timestamp
 	reset(tk)
@@ -608,8 +607,8 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify vbny timestamp")
 	tk.MustExec("alter table t modify bb timestamp")
 	tk.MustExec("alter table t modify txt timestamp")
-	tk.MustGetErrCode("alter table t modify e timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify s timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify e timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s timestamp", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
 	// year
 	reset(tk)
@@ -643,24 +642,24 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 
 	reset(tk)
 	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
-	tk.MustGetErrCode("alter table t modify c int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify c int", errno.ErrTruncatedWrongValue)
 
-	tk.MustGetErrCode("alter table t modify vc smallint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify vc smallint", errno.ErrTruncatedWrongValue)
 
-	tk.MustGetErrCode("alter table t modify bny bigint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify bny bigint", errno.ErrTruncatedWrongValue)
 
-	tk.MustGetErrCode("alter table t modify vbny datetime", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify vbny datetime", errno.ErrTruncatedWrongValue)
 
-	tk.MustGetErrCode("alter table t modify bb timestamp", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify bb timestamp", errno.ErrTruncatedWrongValue)
 
-	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify txt date", errno.ErrTruncatedWrongValue)
 
 	reset(tk)
 	tk.MustExec("alter table t modify vc varchar(20)")
 	tk.MustExec("insert into t(c, vc) values ('1x', '20200915110836')")
-	tk.MustGetErrCode("alter table t modify c year", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify c year", errno.ErrTruncatedWrongValue)
 
-	// Special cases about different behavior between TiDB and MySQL.
+	// Special cases about different behavior between TiDB and errno.
 	// MySQL will get warning but TiDB not.
 	// MySQL will get "Warning 1292 Incorrect time value: '20200915110836' for column 'vc'"
 	tk.MustExec("alter table t modify vc time")
@@ -671,11 +670,11 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("alter table t modify c char(15)")
 	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
-	tk.MustGetErrCode("alter table t modify c json", mysql.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify c json", errno.ErrInvalidJSONText)
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
-	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", mysql.ErrBadNumber)
+	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", errno.ErrBadNumber)
 }
 
 func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
@@ -711,12 +710,12 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	// tinyint
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify n tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify r tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify db tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify d tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify n tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify r tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify db tinyint", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify f32 tinyint")
-	tk.MustGetErrCode("alter table t modify f64 tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify f64 tinyint", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify b tinyint")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111 -222222222222.22223 21"))
 	// int
@@ -727,7 +726,7 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify r int")
 	tk.MustExec("alter table t modify db int")
 	tk.MustExec("alter table t modify f32 int")
-	tk.MustGetErrCode("alter table t modify f64 int", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify f64 int", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify b int")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258 333 2000000 323232323 -111 -222222222222.22223 21"))
 	// bigint
@@ -745,14 +744,14 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
 	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'd' at row 1".
-	tk.MustGetErrCode("alter table t modify d bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify d bigint unsigned", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify n bigint unsigned")
 	tk.MustExec("alter table t modify r bigint unsigned")
 	tk.MustExec("alter table t modify db bigint unsigned")
 	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'f32' at row 1".
-	tk.MustGetErrCode("alter table t modify f32 bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify f32 bigint unsigned", errno.ErrDataOutOfRange)
 	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'f64' at row 1".
-	tk.MustGetErrCode("alter table t modify f64 bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify f64 bigint unsigned", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify b int")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333 2000000 323232323 -111.111115 -222222222222.22223 21"))
 
@@ -789,13 +788,13 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	// binary
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify d binary(10)", errno.WarnDataTruncated)
 	tk.MustExec("alter table t modify n binary(10)")
-	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.WarnDataTruncated)
-	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify r binary(10)", errno.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify db binary(10)", errno.WarnDataTruncated)
 	// MySQL will run with no error.
-	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.WarnDataTruncated)
-	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify f32 binary(10)", errno.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify f64 binary(10)", errno.WarnDataTruncated)
 	tk.MustExec("alter table t modify b binary(10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21\x00\x00\x00\x00\x00\x00\x00\x00"))
 
@@ -842,25 +841,25 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	// enum
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify n enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify r enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify db enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f32 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify b enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111 -222222222222.22223 \x15"))
 
 	// set
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify n set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify r set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify db set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f32 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify b set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111 -222222222222.22223 \x15"))
 
 	// To date and time data types.
@@ -868,57 +867,57 @@ func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustGetErrCode("alter table t modify d datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d datetime", errno.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustGetErrCode("alter table t modify n datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify r datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify db datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f32 datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify b datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 datetime", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b datetime", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// time
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	tk.MustExec("alter table t modify d time")
 	tk.MustExec("alter table t modify n time")
-	tk.MustGetErrCode("alter table t modify r time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify r time", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify db time")
 	tk.MustExec("alter table t modify f32 time")
 	tk.MustExec("alter table t modify f64 time")
-	tk.MustGetErrCode("alter table t modify b time", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b time", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("20:08:05 00:03:07 20200805.11111111 11:13:07 10:00:00 11:13:07 \x15"))
 	// date
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '200805.1100000' for column 'd' at row 1".
-	tk.MustGetErrCode("alter table t modify d date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d date", errno.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '307.33' for column 'n' at row 1".
-	tk.MustGetErrCode("alter table t modify n date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify r date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify db date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f32 date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify b date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 date", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b date", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// timestamp
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustGetErrCode("alter table t modify d timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d timestamp", errno.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustGetErrCode("alter table t modify n timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify r timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify db timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f32 timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify b timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 timestamp", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b timestamp", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// year
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")
 	tk.MustGetErrMsg("alter table t modify d year", "[types:1264]Out of range value for column 'd', the value is '200805.1100000'")
-	tk.MustGetErrCode("alter table t modify n year", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify n year", errno.ErrWarnDataOutOfRange)
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'r' at row 1".
 	tk.MustExec("alter table t modify r year")
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'db' at row 1".
@@ -1019,19 +1018,19 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	// tinyint
 	reset(tk)
 	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
-	tk.MustGetErrCode("alter table t modify d tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify t tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify dt tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify tmp tinyint", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify y tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify d tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify t tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify dt tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify tmp tinyint", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify y tinyint", errno.ErrDataOutOfRange)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
 	// int
 	reset(tk)
 	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
 	tk.MustExec("alter table t modify d int")
 	tk.MustExec("alter table t modify t int")
-	tk.MustGetErrCode("alter table t modify dt int", mysql.ErrDataOutOfRange)
-	tk.MustGetErrCode("alter table t modify tmp int", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify dt int", errno.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify tmp int", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify y int")
 	tk.MustQuery("select * from t").Check(testkit.Rows("20201030 193825 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
 	// bigint
@@ -1046,11 +1045,11 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	// bit
 	reset(tk)
 	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
-	tk.MustGetErrCode("alter table t modify d bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify dt bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify tmp bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify y bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y bit", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
 	// decimal
 	reset(tk)
@@ -1139,21 +1138,21 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	// enum
 	reset(tk)
 	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
-	tk.MustGetErrCode("alter table t modify d enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify dt enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify tmp enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify y enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
 
 	// set
 	reset(tk)
 	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
-	tk.MustGetErrCode("alter table t modify d set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify dt set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify tmp set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify y set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify d set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
 
 	// To json data type.
@@ -1204,20 +1203,20 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj tinyint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj tinyint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
-	tk.MustGetErrCode("alter table t modify arr tinyint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr tinyint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil tinyint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil tinyint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t tinyint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
 	tk.MustExec("alter table t modify f tinyint")
 	tk.MustExec("alter table t modify i tinyint")
 	tk.MustExec("alter table t modify ui tinyint")
-	tk.MustGetErrCode("alter table t modify f64 tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify f64 tinyint", errno.ErrDataOutOfRange)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
-	tk.MustGetErrCode("alter table t modify str tinyint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str tinyint", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul tinyint")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323.32323235 \"json string\" <nil>"))
 
@@ -1225,11 +1224,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj int", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
-	tk.MustGetErrCode("alter table t modify arr int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr int", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil int", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t int")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1238,7 +1237,7 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify ui int")
 	tk.MustExec("alter table t modify f64 int")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
-	tk.MustGetErrCode("alter table t modify str int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str int", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul int")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
@@ -1246,11 +1245,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj bigint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj bigint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
-	tk.MustGetErrCode("alter table t modify arr bigint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr bigint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil bigint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil bigint", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t bigint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1259,7 +1258,7 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify ui bigint")
 	tk.MustExec("alter table t modify f64 bigint")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
-	tk.MustGetErrCode("alter table t modify str bigint", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str bigint", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul bigint")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
@@ -1267,55 +1266,55 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj bigint unsigned", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj bigint unsigned", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 1".
-	tk.MustGetErrCode("alter table t modify arr bigint unsigned", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr bigint unsigned", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil bigint unsigned", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil bigint unsigned", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t bigint unsigned")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
 	tk.MustExec("alter table t modify f bigint unsigned")
 	// MySQL will get "ERROR 1264 (22003) Out of range value for column 'i' at row 1".
-	tk.MustGetErrCode("alter table t modify i bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify i bigint unsigned", errno.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify ui bigint unsigned")
 	tk.MustExec("alter table t modify f64 bigint unsigned")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
-	tk.MustGetErrCode("alter table t modify str bigint unsigned", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str bigint unsigned", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul bigint unsigned")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323 \"json string\" <nil>"))
 
 	// bit
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
-	tk.MustGetErrCode("alter table t modify obj bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify arr bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nil bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify i bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify ui bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify str bit", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nul bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify obj bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify arr bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nil bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify i bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify ui bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify str bit", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nul bit", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// decimal
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column obj at row 1".
-	tk.MustGetErrCode("alter table t modify obj decimal(20, 10)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj decimal(20, 10)", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column arr at row 1".
-	tk.MustGetErrCode("alter table t modify arr decimal(20, 10)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr decimal(20, 10)", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 3156 (22001) Invalid JSON value for CAST to DECIMAL from column nil at row 1".
-	tk.MustGetErrCode("alter table t modify nil decimal(20, 10)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil decimal(20, 10)", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify t decimal(20, 10)")
 	tk.MustExec("alter table t modify f decimal(20, 10)")
 	tk.MustExec("alter table t modify i decimal(20, 10)")
 	tk.MustExec("alter table t modify ui decimal(20, 10)")
 	tk.MustExec("alter table t modify f64 decimal(20, 10)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1".
-	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrBadNumber)
+	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", errno.ErrBadNumber)
 	tk.MustExec("alter table t modify nul decimal(20, 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\" <nil>"))
 
@@ -1323,11 +1322,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj double", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj double", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'arr' at row 1".
-	tk.MustGetErrCode("alter table t modify arr double", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr double", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil double", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil double", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 't' at row 1".
 	tk.MustExec("alter table t modify t double")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'f' at row 1".
@@ -1336,7 +1335,7 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify ui double")
 	tk.MustExec("alter table t modify f64 double")
 	// MySQL will get "ERROR 1265 (01000): Data truncated for column 'str' at row 1".
-	tk.MustGetErrCode("alter table t modify str double", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str double", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul double")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1 0 -22 22 323232323.32323235 \"json string\" <nil>"))
 
@@ -1442,42 +1441,42 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	// enum
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
-	tk.MustGetErrCode("alter table t modify obj enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify arr enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nil enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify i enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify ui enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify str enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nul enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify obj enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify arr enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nil enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify i enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify ui enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify str enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nul enum('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// set
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"', null)")
-	tk.MustGetErrCode("alter table t modify obj set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify arr set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nil set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify t set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify i set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify ui set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify f64 set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify str set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify nul set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify obj set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify arr set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nil set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify i set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify ui set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify str set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify nul set('{\"obj\": 100}', '[-1]', 'null', 'true', 'false', '-22', '22', '323232323.3232323232', '\"json string\"')", errno.ErrUnsupportedDDLOperation)
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1] null true false -22 22 323232323.32323235 \"json string\" <nil>"))
 
 	// To date and time data types.
 	// datetime
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
-	tk.MustGetErrCode("alter table t modify obj datetime", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify arr datetime", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify nil datetime", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify t datetime", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify f datetime", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj datetime", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr datetime", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil datetime", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify t datetime", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify f datetime", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify i datetime")
 	tk.MustExec("alter table t modify ui datetime")
 	tk.MustExec("alter table t modify f64 datetime")
@@ -1490,15 +1489,15 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '200805', '1111', '200805.11', '\"19:35:41\"', null)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj time", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: '[-1, 0, 1]' for column 'arr' at row 11".
-	tk.MustGetErrCode("alter table t modify arr time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr time", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil time", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: 'true' for column 't' at row 1".
-	tk.MustGetErrCode("alter table t modify t time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify t time", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect time value: 'true' for column 't' at row 1".
-	tk.MustGetErrCode("alter table t modify f time", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify f time", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify i time")
 	tk.MustExec("alter table t modify ui time")
 	tk.MustExec("alter table t modify f64 time")
@@ -1510,11 +1509,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	// date
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
-	tk.MustGetErrCode("alter table t modify obj date", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify arr date", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify nil date", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify t date", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify f date", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj date", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr date", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil date", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify t date", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify f date", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify i date")
 	tk.MustExec("alter table t modify ui date")
 	tk.MustExec("alter table t modify f64 date")
@@ -1526,11 +1525,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	// timestamp
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '\"2020-08-26 17:35:01.123456\"', null)")
-	tk.MustGetErrCode("alter table t modify obj timestamp", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify arr timestamp", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify nil timestamp", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify t timestamp", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify f timestamp", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj timestamp", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr timestamp", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil timestamp", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify t timestamp", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify f timestamp", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify i timestamp")
 	tk.MustExec("alter table t modify ui timestamp")
 	tk.MustExec("alter table t modify f64 timestamp")
@@ -1543,11 +1542,11 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("insert into t values ('{\"obj\": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '2020', '91', '9', '\"2020\"', null)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '{"obj": 100}' for column 'obj' at row 1".
-	tk.MustGetErrCode("alter table t modify obj year", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify obj year", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '[-1, 0, 1]' for column 'arr' at row 11".
-	tk.MustGetErrCode("alter table t modify arr year", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify arr year", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'null' for column 'nil' at row 1".
-	tk.MustGetErrCode("alter table t modify nil year", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify nil year", errno.ErrTruncatedWrongValue)
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'true' for column 't' at row 1".
 	tk.MustExec("alter table t modify t year")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: 'false' for column 'f' at row 1".
@@ -1851,13 +1850,13 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
 	tbl := tk.GetTableByName("test", "orders")
-	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
+	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
 	tbl = tk.GetTableByName("test", "orders")
 	require.Equal(t, "user_id2", tbl.Meta().Columns[1].Name.L)
-	require.Equal(t, false, parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
+	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
@@ -1866,7 +1865,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	require.Equal(t, "-1", tbl.Meta().Columns[1].DefaultValue.(string))
 
 	prepare()
-	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
+	tk.MustGetErrCode("alter table orders modify user_id bigint", errno.ErrFKIncompatibleColumns)
 
 	tk.MustExec("drop table if exists orders, users")
 }
@@ -1879,11 +1878,11 @@ func TestAlterPrimaryKeyToNull(t *testing.T) {
 
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int not null, b int not null, primary key(a, b));")
-	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
-	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t modify a bigint null;", errno.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", errno.ErrPrimaryCantHaveNull)
 	tk.MustExec("create table t1(a int not null, b int not null, primary key(a));")
-	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
-	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t modify a bigint null;", errno.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", errno.ErrPrimaryCantHaveNull)
 }
 
 // Close https://github.com/pingcap/tidb/issues/24839.
@@ -1896,16 +1895,16 @@ func TestChangeUnsignedIntToDatetime(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
 	tk.MustExec("insert into t values (1, 1, 1);")
-	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column a datetime;", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", errno.ErrTruncatedWrongValue)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
 	tk.MustExec("insert into t values (4294967295, 18446744073709551615, 255);")
-	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column a datetime;", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", errno.ErrTruncatedWrongValue)
 }
 
 // Close issue #23202
@@ -2057,14 +2056,14 @@ func TestCTCShouldCastTheDefaultValue(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("alter table t add column b bit(51) default 1512687856625472")                 // virtual fill the column data
-	tk.MustGetErrCode("alter table t modify column b decimal(30,18)", mysql.ErrDataOutOfRange) // because 1512687856625472 is out of range.
+	tk.MustGetErrCode("alter table t modify column b decimal(30,18)", errno.ErrDataOutOfRange) // because 1512687856625472 is out of range.
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table tbl_1 (col int)")
 	tk.MustExec("insert into tbl_1 values (9790)")
 	tk.MustExec("alter table tbl_1 add column col1 blob(6) collate binary not null")
 	tk.MustQuery("select col1 from tbl_1").Check(testkit.Rows(""))
-	tk.MustGetErrCode("alter table tbl_1 change column col1 col2 int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table tbl_1 change column col1 col2 int", errno.ErrTruncatedWrongValue)
 	tk.MustQuery("select col1 from tbl_1").Check(testkit.Rows(""))
 
 	tk.MustExec("drop table if exists t")
@@ -2072,7 +2071,7 @@ func TestCTCShouldCastTheDefaultValue(t *testing.T) {
 	tk.MustExec("replace into tbl values (89687.448)")
 	tk.MustExec("alter table tbl add column col_279 binary(197) collate binary default 'RAWTdm' not null")
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
-	tk.MustGetErrCode("alter table tbl change column col_279 col_287 int", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table tbl change column col_279 col_287 int", errno.ErrTruncatedWrongValue)
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
 }
 
@@ -2139,7 +2138,7 @@ func TestChangePrefixedIndexColumnToNonPrefixOne(t *testing.T) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(700), key(a(700)));")
-	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
+	tk.MustGetErrCode("alter table t change column a a tinytext;", errno.ErrBlobKeyWithoutLength)
 }
 
 // Fix issue https://github.com/pingcap/tidb/issues/25469
@@ -2154,14 +2153,14 @@ func TestCastToTimeStampDecodeError(t *testing.T) {
 		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
 		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
 	tk.MustExec("insert into `t` values();")
-	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", errno.ErrTruncatedWrongValue)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
 		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
 	tk.MustExec("insert into `t` values();")
-	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", errno.ErrTruncatedWrongValue)
 	tk.MustExec("drop table if exists t")
 
 	// Normal cast datetime to timestamp can succeed.
@@ -2185,8 +2184,8 @@ func TestCastFromZeroIntToTimeError(t *testing.T) {
 		sqlMode string
 		errCode int
 	}{
-		{"STRICT_TRANS_TABLES", mysql.ErrTruncatedWrongValue},
-		{"STRICT_ALL_TABLES", mysql.ErrTruncatedWrongValue},
+		{"STRICT_TRANS_TABLES", errno.ErrTruncatedWrongValue},
+		{"STRICT_ALL_TABLES", errno.ErrTruncatedWrongValue},
 		{"NO_ZERO_IN_DATE", errCodeNone},
 		{"NO_ZERO_DATE", errCodeNone},
 		{"ALLOW_INVALID_DATES", errCodeNone},
@@ -2208,9 +2207,9 @@ func TestCastFromZeroIntToTimeError(t *testing.T) {
 			prepare()
 			tk.MustExec("alter table t modify column a timestamp;")
 		} else {
-			tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
-			tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
-			tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a date;", errno.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a datetime;", errno.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a timestamp;", errno.ErrTruncatedWrongValue)
 		}
 	}
 	tk.MustExec("drop table if exists t;")
@@ -2235,9 +2234,9 @@ func TestChangeFromTimeToYear(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id bigint primary key, a time);")
 	tk.MustExec("replace into t values (1, '10:10:10');")
-	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a year;", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("replace into t values (1, '12:13:14');")
-	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column a year;", errno.ErrWarnDataOutOfRange)
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("alter table t modify column a year;")
 	tk.MustQuery("show warnings").Check(
