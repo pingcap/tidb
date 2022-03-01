@@ -413,6 +413,7 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
 }
 
+// GetModifyColumn is used to get the changed column name after ALTER TABLE.
 func (tk *TestKit) GetModifyColumn(db, tbl, colName string, allColumn bool) *table.Column {
 	t := tk.GetTableByName(db, tbl)
 	colName = strings.ToLower(colName)
