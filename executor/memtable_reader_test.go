@@ -457,7 +457,7 @@ type testServer struct {
 	logFile string
 }
 
-// TODO: migrate to setupClusterGRPCServer(t *testing.T) in inspection_result_test.go
+// TODO: migrate to createClusterGRPCServer(t *testing.T) in inspection_result_test.go
 func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServer {
 	// tp => testServer
 	testServers := map[string]*testServer{}

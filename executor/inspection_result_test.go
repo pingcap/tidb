@@ -479,7 +479,7 @@ func TestThresholdCheckInspection3(t *testing.T) {
 		"store-available-balance tikv tikv-1 tikv-1s 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
-func setupClusterGRPCServer(t *testing.T) map[string]*testServer {
+func createClusterGRPCServer(t testing.TB) map[string]*testServer {
 	// tp => testServer
 	testServers := map[string]*testServer{}
 
@@ -515,7 +515,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	testServers := setupClusterGRPCServer(t)
+	testServers := createClusterGRPCServer(t)
 	defer func() {
 		for _, s := range testServers {
 			s.server.Stop()
