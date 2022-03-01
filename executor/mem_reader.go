@@ -217,9 +217,9 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	resultRows := make([]types.Datum, 0, len(m.columns))
+	resultRows := make([]types.Datum, len(m.columns))
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
-		err := m.decodeRecordKeyValue(key, value, resultRows)
+		err := m.decodeRecordKeyValue(key, value, &resultRows)
 		if err != nil {
 			return err
 		}
@@ -230,6 +230,7 @@ func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 			return err
 		}
 		m.addedRows = append(m.addedRows, resultRows)
+		resultRows = make([]types.Datum, len(m.columns))
 		return nil
 	})
 	if err != nil {
@@ -243,7 +244,7 @@ func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows []types.Datum) error {
+func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows *[]types.Datum) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
@@ -252,19 +253,18 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows []ty
 }
 
 // decodeRowData uses to decode row data value.
-func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows []types.Datum) error {
+func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows *[]types.Datum) error {
 	values, err := m.getRowData(handle, value)
 	if err != nil {
 		return err
 	}
-	resultRows = resultRows[0:0]
-	for _, col := range m.columns {
+	for i, col := range m.columns {
 		offset := m.colIDs[col.ID]
 		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}
-		resultRows = append(resultRows, d)
+		(*resultRows)[i] = d
 	}
 	return nil
 }
