@@ -1684,15 +1684,14 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 
 // Binding status types.
 const (
-	BindingStatusTypeUsing uint8 = iota
-	BindingStatusTypeIgnored
+	BindingStatusTypeEnable uint8 = iota
+	BindingStatusTypeDisable
 )
 
 // SetBindingStmt sets sql binding status.
 type SetBindingStmt struct {
 	stmtNode
 
-	GlobalScope       bool
 	BindingStatusType uint8
 	OriginNode        StmtNode
 	HintedNode        StmtNode
@@ -1700,17 +1699,12 @@ type SetBindingStmt struct {
 
 func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET ")
-	if n.GlobalScope {
-		ctx.WriteKeyWord("GLOBAL ")
-	} else {
-		ctx.WriteKeyWord("SESSION ")
-	}
 	ctx.WriteKeyWord("BINDING ")
 	switch n.BindingStatusType {
-	case BindingStatusTypeUsing:
-		ctx.WriteKeyWord("USING ")
-	case BindingStatusTypeIgnored:
-		ctx.WriteKeyWord("IGNORED ")
+	case BindingStatusTypeEnable:
+		ctx.WriteKeyWord("ENABLE ")
+	case BindingStatusTypeDisable:
+		ctx.WriteKeyWord("DISABLE ")
 	}
 	ctx.WriteKeyWord("FOR ")
 	if err := n.OriginNode.Restore(ctx); err != nil {

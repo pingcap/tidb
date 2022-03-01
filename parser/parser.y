@@ -3419,13 +3419,13 @@ StatsType:
 	}
 
 BindingStatusType:
-	"USING"
+	"ENABLE"
 	{
-		$$ = ast.BindingStatusTypeUsing
+		$$ = ast.BindingStatusTypeEnable
 	}
-|	"IGNORED"
+|	"DISABLE"
 	{
-		$$ = ast.BindingStatusTypeIgnored
+		$$ = ast.BindingStatusTypeDisable
 	}
 
 CreateStatisticsStmt:
@@ -11016,6 +11016,7 @@ Statement:
 		$$ = sel
 	}
 |	SetStmt
+|	SetBindingStmt
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
@@ -12667,34 +12668,32 @@ DropBindingStmt:
 	}
 
 SetBindingStmt:
-	"SET" GlobalScope "BINDING" BindingStatusType "FOR" BindableStmt
+	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		originStmt := $6
+		originStmt := $5
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
-			GlobalScope:       $2.(bool),
-			BindingStatusType: $4.(uint8),
+			BindingStatusType: $3.(uint8),
 			OriginNode:        originStmt,
 		}
 
 		$$ = x
 	}
-|	"SET" GlobalScope "BINDING" BindingStatusType "FOR" BindableStmt "USING" BindableStmt
+|	"SET" "BINDING" BindingStatusType "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
-		originStmt := $6
+		originStmt := $5
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
-		hintedStmt := $8
+		hintedStmt := $7
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
-			GlobalScope:       $2.(bool),
-			BindingStatusType: $4.(uint8),
+			BindingStatusType: $3.(uint8),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
 		}
