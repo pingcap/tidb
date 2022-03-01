@@ -2829,10 +2829,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b)").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "round(test.t.b, 2)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b,2)").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "date(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where date(d)").
 		CheckAt([]int{0, 3, 6}, rows)
