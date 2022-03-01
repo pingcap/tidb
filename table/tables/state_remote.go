@@ -284,7 +284,7 @@ func (h *stateRemoteHandle) renewWriteLease(ctx context.Context, tid int64, newL
 }
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
-	_, err := h.execSQL(ctx, "begin")
+	_, err := h.execSQL(ctx, "begin optimistic")
 	return err
 }
 
