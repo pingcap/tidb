@@ -655,7 +655,6 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 }
 
 type captureFilter struct {
-	dbs          map[string]struct{}
 	frequency    int64
 	tableFilters []tablefilter.Filter
 	users        map[string]struct{}
@@ -688,12 +687,11 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tableFilters) == 0 && len(cf.users) == 0
+	return len(cf.tableFilters) == 0 && len(cf.users) == 0
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
-		dbs:       make(map[string]struct{}),
 		frequency: 1,
 		users:     make(map[string]struct{}),
 	}

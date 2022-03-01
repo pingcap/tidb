@@ -671,7 +671,7 @@ func TestCaptureFilter(t *testing.T) {
 	// Valid database filter.
 	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('db', 'mysql')")
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mysql.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec("admin capture bindings")
@@ -754,7 +754,7 @@ func TestCaptureFilter(t *testing.T) {
 
 	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('Db', 'mySQl')")
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'mySQl.*')")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
 	tk.MustExec("admin capture bindings")
