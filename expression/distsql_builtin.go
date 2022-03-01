@@ -436,6 +436,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinTruncateRealSig{base}
 	case tipb.ScalarFuncSig_TruncateDecimal:
 		f = &builtinTruncateDecimalSig{base}
+	case tipb.ScalarFuncSig_TruncateUint:
+		f = &builtinTruncateUintSig{base}
 	case tipb.ScalarFuncSig_LogicalAnd:
 		f = &builtinLogicAndSig{base}
 	case tipb.ScalarFuncSig_LogicalOr:
