@@ -142,6 +142,32 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 		"    └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p2 keep order:false, stats:pseudo"))
 }
 
+func TestRangeColumnPartitionPruningForInString(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test_range_col_in_string")
+	tk.MustExec("create database test_range_col_in_string")
+	defer tk.MustExec("drop database test_range_col_in_string")
+
+	tk.MustExec("use test_range_col_in_string")
+	tk.MustExec("set @@session.tidb_partition_prune_mode='static'")
+	tk.MustExec(`create table t3 (a varchar(10) charset utf8mb4 collation utf8mb4_general_ci) partition by range columns(a) (` +
+		`partition pNull values less than (""),` +
+		`partition p0 values less than ("aaa"),` +
+		`partition p1 values less than ("AAAA"),` +
+		`partition p2 values less than ("Räksmörgås"),` +
+		`partition p3 values less than ("CCC"),` +
+		`partition pBeers values less than ("🍺🍺🍺")` +
+		`partition pMax values less than (MAXVALUE))`)
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a IS NULL`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AA'`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AAA'`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'AB'`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a = 'aB'`).Sort().Check(testkit.Rows("kalle"))
+	tk.MustQuery(`explain format = 'brief' select * from t3 where a = '🍣'`).Sort().Check(testkit.Rows("kalle"))
+}
+
 func TestListPartitionPruner(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
