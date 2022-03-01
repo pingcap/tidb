@@ -40,7 +40,7 @@ func (key bindCacheKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
-func calBindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
+func calcBindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	var valMem int64
 	for _, bindRecord := range value {
 		valMem += int64(bindRecord.size())
@@ -76,21 +76,21 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
 func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
-	mem := calBindCacheKVMem(key, value)
+	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		return false
 	}
 	bindRecords := c.get(key)
 	if bindRecords != nil {
 		// Remove the origin key-value pair.
-		mem -= calBindCacheKVMem(key, bindRecords)
+		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
 			return false
 		}
-		c.memTracker.Consume(-calBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
+		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
@@ -102,7 +102,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
 func (c *bindCache) delete(key bindCacheKey) bool {
 	bindRecords := c.get(key)
 	if bindRecords != nil {
-		mem := calBindCacheKVMem(key, bindRecords)
+		mem := calcBindCacheKVMem(key, bindRecords)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
 	}
