@@ -92,6 +92,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.NotNil(t, panicErr)
 		require.True(t, mockOpr.closed)
 	}()
-	_, err = explainExec.generateExplainInfo(tmpCtx)
+	_, _ = explainExec.generateExplainInfo(tmpCtx)
 	require.FailNow(t, "generateExplainInfo should panic")
 }
