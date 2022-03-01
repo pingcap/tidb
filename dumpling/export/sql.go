@@ -101,7 +101,7 @@ func ShowCreateTable(tctx *tcontext.Context, db *BaseConn, database, table strin
 }
 
 // ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
-// returns (createPoilicySQL, error)
+// returns (createPolicySQL, error)
 func ShowCreatePlacementPolicy(tctx *tcontext.Context, db *BaseConn, policy string) (string, error) {
 	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {
