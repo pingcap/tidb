@@ -1453,6 +1453,9 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 		})
 	}
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
+	if skipFile > 0 {
+		log.Debug("table id in full backup storage", zap.Any("tables", rules))
+	}
 
 	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
