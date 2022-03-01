@@ -453,7 +453,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	return false
 }
 
-// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
+// DecodeToBytesNoHandle decodes raw byte slice to row data without handle.
 func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
 	return decoder.decodeToBytesInternal(outputOffset, nil, value, nil)
 }
