@@ -2,7 +2,7 @@ Last updated: 2019-09-12
 
 ## BR 关于 Key rewrite 的讨论
 
-### Key rewirte 结构
+### Key rewrite 结构
 
 Key Rewrite 的目的有二：
 

@@ -125,7 +125,7 @@ TiKV 对 Region 的大小是有限制的，默认为 96MB，超出该阈值则�
 现在使用的方案已经不再使用 tikv-importer（它也预计会在 4.0 被移除），转而使用了 TiKV 一组能够下载/导入 SST 文件的新 API。相关的信息可以在[这里](./2019-09-17-design-of-reorganize-importSST-to-TiKV.md)找到。
 
 1. 使用备份的 schema 信息创建新表。
-2. 通过备份的元数据构建 key-value 的范围，同时依照新表 ID 构建 rewirte rules。
+2. 通过备份的元数据构建 key-value 的范围，同时依照新表 ID 构建 rewrite rules。
 4. 依照 rewrite rules 和 key 范围分割并打散 regions。
 5. 调用 download 和 ingest API 完成导入。
 
