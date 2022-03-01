@@ -38,7 +38,7 @@ func TestBindCache(t *testing.T) {
 		record := &BindRecord{OriginalSQL: cacheKey, Db: ""}
 		value[i] = []*BindRecord{record}
 
-		require.Equal(t, int64(100), bindCacheKVMem(key[i], value[i]))
+		require.Equal(t, int64(100), calBindCacheKVMem(key[i], value[i]))
 	}
 
 	ok := bindCache.set(key[0], value[0])
