@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1641,7 +1640,7 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
 		p.ReadReplicaScope = config.GetTxnScopeFromConfig()
 	} else {
-		p.ReadReplicaScope = kv.GlobalReplicaScope
+		p.ReadReplicaScope = p.ctx.GetSessionVars().TxnCtx.TxnScope
 	}
 
 	p.initedLastSnapshotTS = true
