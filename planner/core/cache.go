@@ -213,7 +213,6 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
-	StmtText            string
 	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}

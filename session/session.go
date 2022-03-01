@@ -329,7 +329,7 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
+				stmtText, stmtDB = preparedObj.NormalizedSQL, preparedObj.StmtDB
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
