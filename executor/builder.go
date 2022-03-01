@@ -1110,23 +1110,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
-		tbl := x.Table()
-		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-			cachedTable := tbl.(table.CachedTable)
-			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-			// Determine whether the cache can be used.
-			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
-			if cacheData != nil {
-				sessionVars.StmtCtx.ReadFromTableCache = true
-				x.dummy = true
-				us.cacheTable = cacheData
-			} else {
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
-					store := b.ctx.GetStore()
-					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-				}
-			}
-		}
+		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1140,24 +1124,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
-
-		tbl := x.Table()
-		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-			cachedTable := tbl.(table.CachedTable)
-			// Determine whether the cache can be used.
-			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
-			if cacheData != nil {
-				sessionVars.StmtCtx.ReadFromTableCache = true
-				x.dummy = true
-				us.cacheTable = cacheData
-			} else {
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
-					store := b.ctx.GetStore()
-					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-				}
-			}
-		}
+		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1172,24 +1139,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-
-		tbl := x.Table()
-		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-			cachedTable := tbl.(table.CachedTable)
-			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-			// Determine whether the cache can be used.
-			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
-			if cacheData != nil {
-				sessionVars.StmtCtx.ReadFromTableCache = true
-				x.dummy = true
-				us.cacheTable = cacheData
-			} else {
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
-					store := b.ctx.GetStore()
-					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-				}
-			}
-		}
+		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
 		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -1201,6 +1151,31 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return originReader
 	}
 	return us
+}
+
+type bypassDataSourceExecutor interface {
+	dataSourceExecutor
+	setDummy()
+}
+
+func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
+	tbl := x.Table()
+	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		cachedTable := tbl.(table.CachedTable)
+		// Determine whether the cache can be used.
+		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+		cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+		if cacheData != nil {
+			vars.StmtCtx.ReadFromTableCache = true
+			x.setDummy()
+			us.cacheTable = cacheData
+		} else {
+			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
+				store := b.ctx.GetStore()
+				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+			}
+		}
+	}
 }
 
 // buildMergeJoin builds MergeJoinExec executor.

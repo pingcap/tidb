@@ -137,6 +137,10 @@ func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
 }
 
+func (e *TableReaderExecutor) setDummy() {
+	e.dummy = true
+}
+
 // Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
