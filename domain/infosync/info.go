@@ -627,7 +627,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 			minStartTS = info.CurTxnStartTS
 		}
 	}
-	metrics.DomainMinStartTsGauge.Set(float64(minStartTS))
+	phyMinStartTs := oracle.ExtractPhysical(minStartTS)
+	metrics.DomainMinStartTsGauge.Set(float64(phyMinStartTs))
 
 	is.minStartTS = minStartTS
 	err = is.storeMinStartTS(context.Background())
