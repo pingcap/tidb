@@ -237,7 +237,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
-	is := d.infoCache.GetLatest()
+	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
