@@ -218,3 +218,102 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		ass.Equal(tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
 	}
 }
+
+func TestFDSet_ExtractFDForApply(t *testing.T) {
+	t.Parallel()
+	ass := assert.New(t)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	par := parser.New()
+	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
+	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
+	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+
+	tests := []struct {
+		sql  string
+		best string
+		fd   string
+	}{
+		{
+			sql: "select * from X where exists (select * from Y where m=a limit 1)",
+			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			//   +- datasource(x)
+			//   +- limit
+			//     +- datasource(Y)
+			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection",
+			// Since semi join will keep the **all** rows of the outer table, it's FD can be derived.
+			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+		},
+		{
+			sql: "select a, b from X where exists (select * from Y where m=a limit 1)",
+			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			//   +- datasource(x)
+			//   +- limit
+			//     +- datasource(Y)
+			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection", // semi join
+			// Since semi join will keep the **part** rows of the outer table, it's FD can be derived.
+			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2)}",
+		},
+		{
+			// Limit will refuse to de-correlate apply to join while this won't.
+			sql:  "select * from X where exists (select * from Y where m=a and p=1)",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
+			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+		},
+		{
+			sql:  "select * from X where exists (select * from Y where m=a and p=q)",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
+			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+		},
+		{
+			sql:  "select * from X where exists (select * from Y where m=a and b=1)",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
+			// b=1 is semi join's left condition which should be conserved.
+			fd: "{(1)-->(3-5), (2,3)~~>(1,4,5), ()-->(2)} >>> {(1)-->(3-5), (2,3)~~>(1,4,5), ()-->(2)}",
+		},
+		{
+			sql:  "select * from (select b,c,d,e from X) X1 where exists (select * from Y where p=q and n=1) ",
+			best: "Dual->Projection",
+			fd:   "{}",
+		},
+		{
+			sql:  "select * from (select b,c,d,e from X) X1 where exists (select * from Y where p=b and n=1) ",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.b,test.y.p)->Projection", // semi join
+			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(2,3)~~>(4,5)}",
+		},
+		{
+			sql:  "select * from X where exists (select m, p, q from Y where n=a and p=1)",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.n)->Projection",
+			// p=1 is semi join's right condition which should **NOT** be conserved.
+			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
+		},
+	}
+
+	ctx := context.TODO()
+	is := testGetIS(ass, tk.Session())
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := par.ParseOneStmt(tt.sql, "", "")
+		ass.Nil(err, comment)
+		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanColumnID = 0
+		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		ass.Nil(err)
+		tk.Session().PrepareTSFuture(ctx)
+		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
+		// extract FD to every OP
+		p, err := builder.Build(ctx, stmt)
+		ass.Nil(err)
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		ass.Nil(err)
+		ass.Equal(tt.best, plannercore.ToString(p), comment)
+		// extract FD to every OP
+		p.(plannercore.LogicalPlan).ExtractFD()
+		ass.Equal(tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+	}
+}

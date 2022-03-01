@@ -4269,10 +4269,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			notnullColsUniqueIDs := extractNotNullFromConds(ds.allConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.allConds, ds, fds)
+			constUniqueIDs := extractConstantCols(ds.allConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds, fds)
+			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)

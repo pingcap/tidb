@@ -181,6 +181,99 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
+// ExtractFD implements the interface LogicalPlan.
+func (p *LogicalJoin) ExtractFD() *fd.FDSet {
+	switch p.JoinType {
+	case InnerJoin:
+		return p.extractFDForInnerJoin()
+	case LeftOuterJoin, RightOuterJoin:
+		return p.extractFDForOuterJoin()
+	case SemiJoin:
+		return p.extractFDForSemiJoin()
+	default:
+		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	}
+}
+
+func (p *LogicalJoin) extractFDForSemiJoin() *fd.FDSet {
+	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
+	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
+	outerFD, _ := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	fds := outerFD
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	constUniqueIDs := extractConstantCols(p.LeftConditions, p.SCtx(), fds)
+
+	fds.MakeNotNull(notNullColsFromFilters)
+	fds.AddConstants(constUniqueIDs)
+	p.fdSet = fds
+	return fds
+}
+
+func (p *LogicalJoin) extractFDForInnerJoin() *fd.FDSet {
+	leftFD, rightFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	fds := leftFD
+	fds.MakeCartesianProduct(rightFD)
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	constUniqueIDs := extractConstantCols(eqCondSlice, p.SCtx(), fds)
+
+	equivUniqueIDs := extractEquivalenceCols(eqCondSlice, p.SCtx(), fds)
+
+	fds.MakeNotNull(notNullColsFromFilters)
+	fds.AddConstants(constUniqueIDs)
+	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	p.fdSet = fds
+	return fds
+}
+
+func (p *LogicalJoin) extractFDForOuterJoin() *fd.FDSet {
+	outerFD, innerFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	innerCondition := p.RightConditions
+	outerCols, innerCols := fd.NewFastIntSet(), fd.NewFastIntSet()
+	for _, col := range p.children[0].Schema().Columns {
+		outerCols.Insert(int(col.UniqueID))
+	}
+	for _, col := range p.children[1].Schema().Columns {
+		innerCols.Insert(int(col.UniqueID))
+	}
+	if p.JoinType == RightOuterJoin {
+		innerFD, outerFD = outerFD, innerFD
+		innerCondition = p.LeftConditions
+		innerCols, outerCols = outerCols, innerCols
+	}
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, innerCondition...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	filterFD := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+
+	constUniqueIDs := extractConstantCols(eqCondSlice, p.SCtx(), filterFD)
+
+	equivUniqueIDs := extractEquivalenceCols(eqCondSlice, p.SCtx(), filterFD)
+
+	filterFD.AddConstants(constUniqueIDs)
+	for _, equiv := range equivUniqueIDs {
+		filterFD.AddEquivalence(equiv[0], equiv[1])
+	}
+	filterFD.MakeNotNull(notNullColsFromFilters)
+
+	fds := outerFD
+	fds.MakeOuterJoin(innerFD, filterFD, outerCols, innerCols)
+	p.fdSet = fds
+	return fds
+}
+
 // GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
 // join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
 // means whether there is a `NullEQ` of a join key.
@@ -657,7 +750,7 @@ func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(Conditions []expression.Expression, p LogicalPlan, fds *fd.FDSet) fd.FastIntSet {
+func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -665,18 +758,18 @@ func extractConstantCols(Conditions []expression.Expression, p LogicalPlan, fds 
 		constObjs      []expression.Expression
 		constUniqueIDs = fd.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(p.SCtx(), constObjs, Conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, Conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
 			constUniqueIDs.Insert(int(x.UniqueID))
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				constUniqueIDs.Insert(uniqueID)
 			} else {
-				scalarUniqueID := int(p.SCtx().GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), scalarUniqueID)
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
 				constUniqueIDs.Insert(scalarUniqueID)
 			}
 		}
@@ -684,7 +777,7 @@ func extractConstantCols(Conditions []expression.Expression, p LogicalPlan, fds 
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(Conditions []expression.Expression, p LogicalPlan, fds *fd.FDSet) [][]fd.FastIntSet {
+func extractEquivalenceCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, Conditions)
 	equivUniqueIDs := make([][]fd.FastIntSet, 0, len(equivObjsPair))
@@ -698,12 +791,12 @@ func extractEquivalenceCols(Conditions []expression.Expression, p LogicalPlan, f
 		case *expression.Column:
 			lhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				lhsUniqueID = uniqueID
 			} else {
-				scalarUniqueID := int(p.SCtx().GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), scalarUniqueID)
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
 				lhsUniqueID = scalarUniqueID
 			}
 		}
@@ -712,12 +805,12 @@ func extractEquivalenceCols(Conditions []expression.Expression, p LogicalPlan, f
 		case *expression.Column:
 			rhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				rhsUniqueID = uniqueID
 			} else {
-				scalarUniqueID := int(p.SCtx().GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), scalarUniqueID)
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
 				rhsUniqueID = scalarUniqueID
 			}
 		}
@@ -743,10 +836,10 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
 
 	// extract the constant cols from selection conditions.
-	constUniqueIDs := extractConstantCols(p.Conditions, p, fds)
+	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
 
 	// extract equivalence cols.
-	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p, fds)
+	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
 
 	// apply operator's characteristic's FD setting.
 	fds.MakeNotNull(notnullColsUniqueIDs)

@@ -500,8 +500,49 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 	}
 }
 
-func (s *FDSet) MakeLeftOuter(lhs, filterFDs *FDSet, lCols, rCols, notNullCols FastIntSet) {
-	// TODO:
+// MakeApply maintain the FD relationship between outer and inner table after Apply OP is done.
+// Since Apply is implemented by join, it seems the fd can be extracted through its inner join directly.
+func (s *FDSet) MakeApply(inner *FDSet) {
+}
+
+// MakeOuterJoin generates the records the fdSet of the outer join.
+// As we know, the outer join would generate null extended rows compared with inner join.
+// So we cannot directly do the same thing with the inner join. This function deals with the special cases of the outer join.
+func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols FastIntSet) {
+	for _, edge := range innerFDs.fdEdges {
+		// We don't maintain the equiv edges and lax edges currently.
+		if edge.equiv || !edge.strict {
+			continue
+		}
+		// If the one of the column from the inner child's functional dependency's left side is not null, this FD
+		// can be remained.
+		// This is because that the outer join would generate null-extended rows. So if at least one row from the left side
+		// is not null. We can guarantee that the there's no same part between the original rows and the generated rows.
+		// So the null extended rows would not break the original functional dependency.
+		if edge.from.SubsetOf(innerFDs.NotNullCols) {
+			s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+		} else if edge.from.SubsetOf(filterFDs.NotNullCols) {
+			// If we can make sure the filters of the join would filter out all nulls of this FD's left side
+			// and this FD is from the join's inner child. This FD can be remained.
+			// This is because the outer join filters out the null values. The generated null-extended rows would not
+			// find the same row from the original rows of the inner child. So it won't break the original functional dependency.
+			s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+		}
+	}
+	for _, edge := range filterFDs.fdEdges {
+		// We don't maintain the equiv edges and the lax edges currently.
+		if edge.equiv || !edge.strict {
+			continue
+		}
+		if edge.from.SubsetOf(innerCols) && edge.to.SubsetOf(innerCols) && edge.from.SubsetOf(filterFDs.NotNullCols) {
+			// The functional dependency generated from the join filter would be reserved if it meets the following conditions:
+			//  1. All columns from this functional dependency are the columns from the inner side.
+			//  2. The join keys can filter out the null values from the left side of the FD.
+			// This is the same with the above cases. If the join filters can filter out the null values of the FD's left side,
+			// We won't find a same row between the original rows of the inner side and the generated null-extended rows.
+			s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+		}
+	}
 }
 
 func (s FDSet) AllCols() FastIntSet {

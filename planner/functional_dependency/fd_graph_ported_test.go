@@ -65,7 +65,7 @@ func TestFuncDeps_ColsAreKey(t *testing.T) {
 	loj = *abcde
 	loj.MakeCartesianProduct(mnpq)
 	loj.AddConstants(NewFastIntSet(3))
-	loj.MakeLeftOuter(abcde, &FDSet{}, preservedCols, nullExtendedCols, NewFastIntSet(1, 10, 11))
+	loj.MakeOuterJoin(nil, &FDSet{}, preservedCols, nullExtendedCols)
 	loj.AddEquivalence(NewFastIntSet(1), NewFastIntSet(10))
 
 	testcases := []struct {
@@ -329,4 +329,8 @@ func makeJoinFD(ass *assert.Assertions) *FDSet {
 	// lax to can be null, so it could be passive with strict FD.
 	testColsAreLaxKey(ass, join, NewFastIntSet(2, 3, 11), join.AllCols(), false)
 	return join
+}
+
+func TestFuncDeps_OuterJoin(t *testing.T) {
+
 }

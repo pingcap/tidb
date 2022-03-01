@@ -67,6 +67,10 @@ func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *DataSource:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
+	case *LogicalApply:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
+	case *LogicalJoin:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
 	default:
 	}
 	return strs, idxs
