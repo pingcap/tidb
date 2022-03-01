@@ -1008,8 +1008,9 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec,
-			tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracDec:
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+			// We don't push round with frac due to mysql's round with frac has its special behavior:
+			// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 			return true
 		}
 	case ast.Rand:

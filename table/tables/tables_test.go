@@ -696,7 +696,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err := tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.Error(t, err)
 		ch <- 2
 	}()

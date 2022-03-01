@@ -150,7 +150,6 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 }
 
 type testSerialSuite struct {
-	CommonHandleSuite
 	store   kv.Storage
 	cluster testutils.Cluster
 	dom     *domain.Domain
