@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	tablefilter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -654,10 +655,10 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 }
 
 type captureFilter struct {
-	dbs       map[string]struct{}
-	frequency int64
-	tables    map[stmtctx.TableEntry]struct{}
-	users     map[string]struct{}
+	dbs          map[string]struct{}
+	frequency    int64
+	tableFilters []tablefilter.Filter
+	users        map[string]struct{}
 
 	fail      bool
 	currentDB string
@@ -673,10 +674,10 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if x.Schema.L == "" {
 			tblEntry.DB = cf.currentDB
 		}
-		if _, ok := cf.dbs[tblEntry.DB]; ok {
-			cf.fail = true
-		} else if _, ok := cf.tables[tblEntry]; ok {
-			cf.fail = true
+		for _, tableFilter := range cf.tableFilters {
+			if tableFilter.MatchTable(tblEntry.DB, tblEntry.Table) {
+				cf.fail = true
+			}
 		}
 	}
 	return in, cf.fail
@@ -687,14 +688,13 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tables) == 0 && len(cf.users) == 0
+	return len(cf.dbs) == 0 && len(cf.tableFilters) == 0 && len(cf.users) == 0
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
 		dbs:       make(map[string]struct{}),
 		frequency: 1,
-		tables:    make(map[stmtctx.TableEntry]struct{}),
 		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
@@ -709,19 +709,13 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		filterTp := strings.ToLower(row.GetString(0))
 		valStr := strings.ToLower(row.GetString(1))
 		switch filterTp {
-		case "db":
-			filter.dbs[valStr] = struct{}{}
 		case "table":
-			strs := strings.Split(valStr, ".")
-			if len(strs) != 2 {
+			tfilter, err := tablefilter.Parse([]string{valStr})
+			if err != nil {
 				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
 				continue
 			}
-			tblEntry := stmtctx.TableEntry{
-				DB:    strs[0],
-				Table: strs[1],
-			}
-			filter.tables[tblEntry] = struct{}{}
+			filter.tableFilters = append(filter.tableFilters, tfilter)
 		case "user":
 			filter.users[valStr] = struct{}{}
 		case "frequency":
