@@ -707,6 +707,12 @@ func TestCaptureWildcardFilter(t *testing.T) {
 	tk.MustExec(`insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'db*.t*')`)
 	mustExecTwice()
 	checkBindings() // all are filtered
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	mustExecTwice()
+	checkBindings("db11.t11", "db11.t12", "db11.t2", "db12.t11", "db12.t12", "db12.t2", "db2.t11", "db2.t12", "db2.t2") // no filter, all can be captured
 }
 
 func TestCaptureFilter(t *testing.T) {
