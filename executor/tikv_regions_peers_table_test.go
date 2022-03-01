@@ -64,21 +64,6 @@ var storesRegionsInfo = map[uint64]*helper.RegionsInfo{
 	3: storeRegionsInfo,
 }
 
-type tikvRegionPeersTableSuite struct {
-	httpServer *httptest.Server
-	mockAddr   string
-	startTime  time.Time
-}
-
-func createTikvRegionPeersTableSuite() (*tikvRegionPeersTableSuite, func()) {
-	s := new(tikvRegionPeersTableSuite)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	return s, func() {
-		s.httpServer.Close()
-	}
-}
-
 func storesRegionsInfoHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
@@ -99,7 +84,8 @@ func regionsInfoHandler(w http.ResponseWriter, r *http.Request) {
 	writeResp(w, regionsInfo[uint64(id)])
 }
 
-func (s *tikvRegionPeersTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
+func TestTikvRegionPeers(t *testing.T) {
+	startTime := time.Now()
 	// mock PD http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
@@ -114,24 +100,18 @@ func (s *tikvRegionPeersTableSuite) setUpMockPDHTTPServer() (*httptest.Server, s
 		}{
 			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
-			StartTimestamp: s.startTime.Unix(),
+			StartTimestamp: startTime.Unix(),
 		}, nil
 	}))
 	// mock get regionsInfo by store id
 	router.HandleFunc(pdapi.StoreRegions+"/"+"{id}", storesRegionsInfoHandler)
 	// mock get regionInfo by region id
 	router.HandleFunc(pdapi.RegionByID+"/"+"{id}", regionsInfoHandler)
-	return server, mockAddr
-}
-
-func TestTikvRegionPeers(t *testing.T) {
-	s, clean := createTikvRegionPeersTableSuite()
-	defer clean()
+	defer server.Close()
 
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	mockAddr := s.mockAddr
 	store = &mockStore{
 		store.(helper.Storage),
 		mockAddr,
