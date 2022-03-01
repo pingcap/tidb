@@ -121,9 +121,7 @@ func TestPlacementPolicy(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
 
-	originalHook := dom.DDL().GetHook()
-
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var policyID int64
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if policyID != 0 {
@@ -180,7 +178,7 @@ func TestPlacementPolicy(t *testing.T) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\" ")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8238 Placement policy 'X' already exists"))
-	dom.DDL().SetHook(originalHook)
+
 	bundles, err := infosync.GetAllRuleBundles(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, len(bundles), 0)
