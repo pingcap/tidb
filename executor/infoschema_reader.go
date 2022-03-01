@@ -794,7 +794,7 @@ ForColumnsTag:
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 			if col.Tp == mysql.TypeBit {
 				defaultValBinaryLiteral := types.BinaryLiteral(columnDefault)
-				columnDefault = fmt.Sprintf("%s", defaultValBinaryLiteral.ToBitLiteralString(true))
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 			}
 		}
 		record := types.MakeDatums(
