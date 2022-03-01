@@ -655,9 +655,9 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 }
 
 type captureFilter struct {
-	frequency    int64
-	tableFilters []tablefilter.Filter
-	users        map[string]struct{}
+	frequency int64
+	tables    []tablefilter.Filter // `schema.table`
+	users     map[string]struct{}
 
 	fail      bool
 	currentDB string
@@ -673,9 +673,9 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if x.Schema.L == "" {
 			tblEntry.DB = cf.currentDB
 		}
-		for _, tableFilter := range cf.tableFilters {
+		for _, tableFilter := range cf.tables {
 			if tableFilter.MatchTable(tblEntry.DB, tblEntry.Table) {
-				cf.fail = true
+				cf.fail = true // some filter is matched
 			}
 		}
 	}
@@ -687,7 +687,7 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.tableFilters) == 0 && len(cf.users) == 0
+	return len(cf.tables) == 0 && len(cf.users) == 0
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
@@ -713,7 +713,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
 				continue
 			}
-			filter.tableFilters = append(filter.tableFilters, tfilter)
+			filter.tables = append(filter.tables, tfilter)
 		case "user":
 			filter.users[valStr] = struct{}{}
 		case "frequency":
