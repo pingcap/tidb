@@ -259,12 +259,13 @@ func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRow
 		return err
 	}
 	for i, col := range m.columns {
+		var datum types.Datum
 		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
+		err := tablecodec.DecodeColumnValueWithDatum(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location(), &datum)
 		if err != nil {
 			return err
 		}
-		(*resultRows)[i] = d
+		(*resultRows)[i] = datum
 	}
 	return nil
 }
