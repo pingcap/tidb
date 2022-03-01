@@ -39,7 +39,7 @@ func checkApplyPlan(t *testing.T, tk *testkit.TestKit, sql string, parallel int)
 				if parallel > 1 {
 					str += fmt.Sprintf("%v", parallel)
 				}
-				require.True(t, strings.Contains(line, str))
+				require.Contains(t, line, str)
 			}
 			containApply = true
 			break
@@ -262,10 +262,10 @@ func TestSetTiDBEnableParallelApply(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_enable_parallel_apply=off")
 	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("0"))
-	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=-1"))
-	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=2"))
-	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=1000"))
-	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=-1"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=2"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=1000"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"))
 }
 
 func TestMultipleApply(t *testing.T) {
@@ -612,17 +612,17 @@ func TestApplyGoroutinePanic(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("4", "4", "4", "4", "4", "4", "6", "6", "6", "6"))
 
 	// panic in a inner worker
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic", "panic"))
 	err := tk.QueryToErr(sql)
 	require.Error(t, err)
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic"))
 
 	for _, panicName := range []string{"parallelApplyInnerWorkerPanic", "parallelApplyOuterWorkerPanic", "parallelApplyGetCachePanic", "parallelApplySetCachePanic"} {
 		panicPath := fmt.Sprintf("github.com/pingcap/tidb/executor/%v", panicName)
-		require.Nil(t, failpoint.Enable(panicPath, "panic"))
+		require.NoError(t, failpoint.Enable(panicPath, "panic"))
 		err := tk.QueryToErr(sql)
 		require.Error(t, err)
-		require.Nil(t, failpoint.Disable(panicPath))
+		require.NoError(t, failpoint.Disable(panicPath))
 	}
 }
 
