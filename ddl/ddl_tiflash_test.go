@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	atomicutil "go.uber.org/atomic"
 )
 
 type tiflashContext struct {
@@ -690,26 +691,26 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
-func execWithTimeout(tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
+func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
+	timeOut := false
 	ctx, cancel := context.WithTimeout(context.Background(), to)
-	defer cancel()
-	doneCh := make(chan error, 1)
-
-	go func(c context.Context) {
-		stmts, _ := tk.Session().Parse(context.Background(), sql)
-		for _, stmt := range stmts {
-			_, err := tk.Session().ExecuteStmt(ctx, stmt)
-			doneCh <- err
+	enabled := atomicutil.NewBool(false)
+	go func() {
+		select {
+		case <-ctx.Done():
 			return
+		case <-time.After(to):
 		}
-		doneCh <- nil
-	}(ctx)
-	select {
-	case e := <-doneCh:
-		return false, e
-	case <-ctx.Done():
-		return true, nil
+		timeOut = true
+		enabled.Store(true)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
+	}()
+	_, err := tk.Exec(sql)
+	cancel()
+	if enabled.Load() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone"))
 	}
+	return timeOut, err
 }
 
 func TestTiFlashBasicRateLimiter(t *testing.T) {
@@ -731,7 +732,7 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
 	// The following statement shall fail, because it reaches limit
-	timeOut, err := execWithTimeout(tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err := execWithTimeout(t, tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
 	require.True(t, timeOut)
 
@@ -765,7 +766,7 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	}()
 	// This DDL can finish in 3 seconds, since we will force trigger its DDL to update schema cache.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
-	timeOut, err = execWithTimeout(tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(4, 4)
@@ -773,7 +774,7 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 
 	// However, we still have force check next time.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+2))
-	timeOut, err = execWithTimeout(tk, time.Second*1, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Millisecond*500, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
 	require.NoError(t, err)
 	require.True(t, timeOut)
 	check(4, 5)

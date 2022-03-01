@@ -235,7 +235,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 	*pendingCount = cnt
 }
 
-func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
@@ -269,12 +269,20 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 		configWaitTime = time.Second
 	})
 
-	for _, tbl := range dbInfo.Tables {
-		select {
-		case <-ctx.Done():
+	isDone := func() bool {
+		done := false
+		failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
+			done = val.(bool)
+		})
+		if done {
 			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
+		}
+		return done
+	}
+
+	for _, tbl := range dbInfo.Tables {
+		if isDone() {
 			return nil
-		default:
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -291,10 +299,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 			forceCheck = true
 			pendingFunc := func() bool {
 				for retry := 0; retry < configRetry; retry += 1 {
-					select {
-					case <-ctx.Done():
+					if isDone() {
 						return true
-					default:
 					}
 					d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
 					delay := time.Duration(0)
@@ -306,10 +312,9 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx context.Context, sctx sessionctx
 						forceCheck = false
 						return false
 					}
-					select {
-					case <-ctx.Done():
+					time.Sleep(delay)
+					if isDone() {
 						return true
-					case <-time.After(delay):
 					}
 				}
 				logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
@@ -423,7 +428,7 @@ func checkMultiSchemaSpecs(sctx sessionctx.Context, specs []*ast.DatabaseOption)
 	return nil
 }
 
-func (d *ddl) AlterSchema(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
 		toCharset, toCollate                                         string
@@ -478,7 +483,7 @@ func (d *ddl) AlterSchema(ctx context.Context, sctx sessionctx.Context, stmt *as
 		}
 	}
 	if isTiFlashReplica {
-		if err = d.ModifySchemaSetTiFlashReplica(ctx, sctx, stmt, tiflashReplica); err != nil {
+		if err = d.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
 			return err
 		}
 	}
