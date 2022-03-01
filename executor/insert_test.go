@@ -1924,3 +1924,20 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
+}

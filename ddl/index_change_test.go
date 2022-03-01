@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,14 +38,11 @@ type testIndexChangeSuiteToVerify struct {
 }
 
 func TestIndexChangeSuite(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	require.NoError(t, err)
-
 	suite.Run(t, new(testIndexChangeSuiteToVerify))
 }
 
 func (s *testIndexChangeSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_index_change")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
@@ -63,7 +59,7 @@ func (s *testIndexChangeSuiteToVerify) SetupSuite() {
 }
 
 func (s *testIndexChangeSuiteToVerify) TearDownSuite() {
-	s.store.Close()
+	s.Require().NoError(s.store.Close())
 }
 
 func (s *testIndexChangeSuiteToVerify) TestIndexChange() {
