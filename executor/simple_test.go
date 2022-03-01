@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -374,7 +373,7 @@ func TestUser(t *testing.T) {
 	tk.MustGetErrCode(createUserSQL, mysql.ErrCannotUser)
 	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3163|User 'test'@'localhost' already exists."))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3163|User 'test'@'localhost' already exists."))
 	dropUserSQL := `DROP USER IF EXISTS 'test'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 	// Create user test.
@@ -406,12 +405,12 @@ func TestUser(t *testing.T) {
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test2" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
 	tk.MustExec(alterUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test3" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("333")))
 
@@ -435,7 +434,7 @@ func TestUser(t *testing.T) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
 
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
