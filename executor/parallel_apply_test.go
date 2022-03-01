@@ -17,17 +17,18 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
+func checkApplyPlan(t *testing.T, tk *testkit.TestKit, sql string, parallel int) {
 	results := tk.MustQuery("explain analyze " + sql)
 	containApply := false
 	for _, row := range results.Rows() {
@@ -38,35 +39,39 @@ func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 				if parallel > 1 {
 					str += fmt.Sprintf("%v", parallel)
 				}
-				c.Assert(strings.Contains(line, str), IsTrue)
+				require.True(t, strings.Contains(line, str))
 			}
 			containApply = true
 			break
 		}
 	}
-	c.Assert(containApply, IsTrue)
+	require.True(t, containApply)
 }
 
-func (s *testSuite) TestParallelApply(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestParallelApplyPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
 
 	q1 := "select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a)"
-	checkApplyPlan(c, tk, q1, 0)
+	checkApplyPlan(t, tk, q1, 0)
 	tk.MustQuery(q1).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 	tk.MustExec("set tidb_enable_parallel_apply=true")
-	checkApplyPlan(c, tk, q1, 1)
+	checkApplyPlan(t, tk, q1, 1)
 	tk.MustQuery(q1).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 
 	q2 := "select * from t t0 where t0.b <= (select max(t1.b) from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a and t0.a > t2.a));"
-	checkApplyPlan(c, tk, q2, 1) // only the outside apply can be parallel
+	checkApplyPlan(t, tk, q2, 1) // only the outside apply can be parallel
 	tk.MustQuery(q2).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
 }
 
-func (s *testSuite) TestApplyColumnType(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyColumnType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// int
@@ -75,7 +80,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec("insert into t values(1,1), (2,2), (5,5), (2, 4), (5, 2), (9, 4)")
 	tk.MustExec("insert into t1 values(2, 3), (4, 9), (10, 4), (1, 10)")
 	sql := "select * from t where t.b > (select min(t1.b) from t1 where t1.a > t.a)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("5 5"))
 
 	// varchar
@@ -85,7 +90,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t1 values("aa", "bb"), ("aa", "tikv"), ("bb", "cc"), ("bb", "ee")`)
 	tk.MustExec(`insert into t2 values("kk"), ("aa"), ("dd"), ("bb")`)
 	sql = "select (select min(t2.a) from t2 where t2.a > t1.a) from t1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("bb", "bb", "dd", "dd"))
 
 	// bit
@@ -95,7 +100,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t1 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)`)
 	tk.MustExec(`insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)`)
 	sql = "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 
 	// char
@@ -105,7 +110,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t1 values("abc", 1), ("abc", "5"), ("fff", 4), ("fff", 9), ("tidb", 6), ("tidb", 5)`)
 	tk.MustExec(`insert into t2 values()`)
 	sql = "select t1.b from t1 where t1.b > (select max(t2.b) from t2 where t2.a > t1.a)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows())
 
 	// double
@@ -115,7 +120,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec("insert into t1 values(1, 2.12), (1, 1.11), (2, 3), (2, 4.56), (5, 55), (5, -4)")
 	tk.MustExec("insert into t2 values(1, 3.22), (3, 4.5), (5, 2.3), (4, 5.55)")
 	sql = "select * from t1 where t1.a < (select avg(t2.a) from t2 where t2.b > t1.b)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1.11", "1 2.12", "2 3", "2 4.56"))
 
 	// date
@@ -134,7 +139,7 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t1 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:00", 2), ("2020-06-06 00:00:00", 3), ("2020-06-06 00:00:00", 4), ("2020-09-08 00:00:00", 4)`)
 	tk.MustExec(`insert into t2 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:01", 2), ("2020-08-20 00:00:00", 4)`)
 	sql = "select b from t1 where t1.b >= (select max(t2.b) from t2 where t2.a > t1.a)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("4"))
 
 	// timestamp
@@ -144,12 +149,14 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec(`insert into t1 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:00", 2), ("2020-06-06 00:00:00", 3), ("2020-06-06 00:00:00", 4), ("2020-09-08 00:00:00", 4)`)
 	tk.MustExec(`insert into t2 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:01", 2), ("2020-08-20 00:00:00", 4)`)
 	sql = "select b from t1 where t1.b >= (select max(t2.b) from t2 where t2.a > t1.a)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("4"))
 }
 
-func (s *testSuite) TestApplyMultiColumnType(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyMultiColumnType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// int & int
@@ -158,7 +165,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (1, 1), (2, 2), (2, 3), (2, 3), (1, 1), (1, 1), (2, 2), (2, 3), (2, 3)")
 	tk.MustExec("insert into t2 values (2, 2), (3,3), (-1, 1), (5, 4), (2, 2), (3,3), (-1, 1), (5, 4)")
 	sql := "select (select count(*) from t2 where t2.a > t1.a and t2.b > t1.a) from t1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("4", "4", "4", "4", "4", "4", "6", "6", "6", "6"))
 
 	// int & char
@@ -168,7 +175,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec(`insert into t1 values (1, "a"), (2, "b"), (3, "c"), (1, "a"), (2, "b"), (3, "c")`)
 	tk.MustExec(`insert into t2 values (1, "a"), (2, "b"), (3, "c"), (1, "a"), (2, "b"), (3, "c")`)
 	sql = "select (select sum(t2.a) from t2 where t2.a > t1.a or t2.b < t1.b) from t1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("10", "10", "6", "6", "8", "8"))
 
 	// int & bit
@@ -178,7 +185,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec(`insert into t1 values (1, '1', 1), (2, '2', 4), (3, '3', 6), (4, '4', 8), (1, '1', 1), (2, '2', 4), (3, '3', 6), (4, '4', 8)`)
 	tk.MustExec(`insert into t2 values (1, 1111, 11), (2, 2222, 22), (1, 1111, 11), (2, 2222, 22)`)
 	sql = "select a, c from t1 where (select max(t2.c) from t2 where t2.a > t1.a and t2.b > t1.b) > 4"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1", "1 1"))
 
 	// char & char
@@ -188,7 +195,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec(`insert into t1 values ('7', '7'), ('8', '8'), ('9', '9'), ('7', '7'), ('8', '8'), ('9', '9')`)
 	tk.MustExec(`insert into t2 values ('7', '7'), ('8', '8'), ('9', '9'), ('7', '7'), ('8', '8'), ('9', '9')`)
 	sql = "select count(*) from t1 where (select sum(t2.a) from t2 where t2.a >= t1.a and t2.b >= t1.b) > 4"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("6"))
 
 	// enum & char
@@ -198,7 +205,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec(`insert into t1 values ('1', 'a'), ('2', 'b'), ('3', 'c'), ('1', 'a'), ('2', 'b'), ('3', 'c')`)
 	tk.MustExec(`insert into t2 values ('1', 100), ('2', 200), ('3', 300), ('4', 400), ('1', 100), ('2', 200), ('3', 300), ('4', 400)`)
 	sql = "select * from t1 where (select sum(t2.b) from t2 where t2.a > t1.a and t2.b * 2 > t1.b) > 0"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 a", "1 a", "2 b", "2 b", "3 c", "3 c"))
 
 	// char & bit
@@ -208,7 +215,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec("insert into t1 values ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4'), ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4')")
 	tk.MustExec("insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
 	sql = "select a from t1 where (select sum(t2.b) from t2 where t2.a > t1.a and t2.b < t1.b) > 4"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "1", "2", "2", "3", "3"))
 
 	// int & double
@@ -218,7 +225,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec("insert into t1 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)")
 	tk.MustExec("insert into t2 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)")
 	sql = "select * from t1 where (select min(t2.a) from t2 where t2.a < t1.a and t2.a > 1 and t2.b < t1.b) > 0"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("3 3.3", "3 3.3", "4 4.4", "4 4.4"))
 
 	// int & datetime
@@ -228,7 +235,7 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec(`insert into t1 values (1, "2020-01-01"), (2, "2020-02-02"), (3, "2020-03-03"), (1, "2020-01-01"), (2, "2020-02-02"), (3, "2020-03-03")`)
 	tk.MustExec(`insert into t2 values (1, "2020-01-01"), (2, "2020-02-02"), (3, "2020-03-03"), (1, "2020-01-01"), (2, "2020-02-02"), (3, "2020-03-03")`)
 	sql = `select * from t1 where (select count(*) from t2 where t2.a >= t1.a and t2.b between t1.b and "2020-09-07 00:00:00") > 1`
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 2020-01-01 00:00:00", "1 2020-01-01 00:00:00", "2 2020-02-02 00:00:00", "2 2020-02-02 00:00:00", "3 2020-03-03 00:00:00", "3 2020-03-03 00:00:00"))
 
 	// int & int & char
@@ -238,13 +245,15 @@ func (s *testSuite) TestApplyMultiColumnType(c *C) {
 	tk.MustExec("insert into t1 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
 	tk.MustExec("insert into t2 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
 	sql = "select (select min(t2.a) from t2 where t2.a > t1.a and t2.b > t1.b and t2.c > t1.c) from t1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "<nil>", "<nil>"))
 }
 
-func (s *testSuite) TestSetTiDBEnableParallelApply(c *C) {
+func TestSetTiDBEnableParallelApply(t *testing.T) {
 	// validate the tidb_enable_parallel_apply's value
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=0")
 	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_enable_parallel_apply=1")
@@ -253,14 +262,16 @@ func (s *testSuite) TestSetTiDBEnableParallelApply(c *C) {
 	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_enable_parallel_apply=off")
 	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("0"))
-	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=-1"), NotNil)
-	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=2"), NotNil)
-	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=1000"), NotNil)
-	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"), NotNil)
+	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=-1"))
+	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=2"))
+	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply=1000"))
+	require.NotNil(t, tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"))
 }
 
-func (s *testSuite) TestMultipleApply(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestMultipleApply(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// compare apply with constant values
@@ -270,7 +281,7 @@ func (s *testSuite) TestMultipleApply(c *C) {
 	tk.MustExec(`insert into t1 values ("1", "a"), ("2", "b"), ("3", "c"), ("4", "d"), ("1", "a"), ("2", "b"), ("3", "c"), ("4", "d")`)
 	tk.MustExec(`insert into t2 values ("1", 1), ("2", 2), ("3", 3), ("4", 4), ("1", 1), ("2", 2), ("3", 3), ("4", 4)`)
 	sql := "select * from t1 where (select sum(t2.b) from t2 where t2.a > t1.a) >= (select sum(t2.b) from t2 where t2.b > t1.b)"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 a", "1 a", "2 b", "2 b", "3 c", "3 c"))
 
 	// 2 apply operators in where conditions
@@ -280,7 +291,7 @@ func (s *testSuite) TestMultipleApply(c *C) {
 	tk.MustExec("insert into t1 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)")
 	tk.MustExec("insert into t2 values (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4), (1, 1.1), (2, 2.2), (3, 3.3), (4, 4.4)")
 	sql = "select * from t1 where (select min(t2.a) from t2 where t2.a < t1.a and t2.a > 1) * (select min(t2.a) from t2 where t2.b < t1.b) > 1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("3 3.3", "3 3.3", "4 4.4", "4 4.4"))
 
 	// 2 apply operators and compare it with constant values
@@ -290,7 +301,7 @@ func (s *testSuite) TestMultipleApply(c *C) {
 	tk.MustExec("insert into t1 values ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4'), ('1', '1'), ('2', '2'), ('3', '3'), ('4', '4')")
 	tk.MustExec("insert into t2 values ('1', 1111), ('2', 2222), ('3', 3333), ('4', 4444), ('1', 1111), ('2', 2222), ('3', 3333), ('4', 4444)")
 	sql = "select a from t1 where (select sum(t2.b) from t2 where t2.a > t1.a) > 4 and (select sum(t2.b) from t2 where t2.b > t1.b) > 4"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "1", "2", "2", "3", "3"))
 
 	// multiple fields and where conditions
@@ -300,12 +311,14 @@ func (s *testSuite) TestMultipleApply(c *C) {
 	tk.MustExec("insert into t1 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4')")
 	tk.MustExec("insert into t2 values (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4'), (1, 1, '1'), (2, 2, '2'), (3, 3, '3'), (4, 4, '4')")
 	sql = "select (select min(t2.a) from t2 where t2.a > t1.a and t2.b > t1.b), (select max(t2.a) from t2 where t2.a > t1.a and t2.b > t1.b) from t1 where (select count(*) from t2 where t2.c > t1.c) > 3"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2 4", "2 4", "3 4", "3 4"))
 }
 
-func (s *testSuite) TestApplyWithOtherOperators(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyWithOtherOperators(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// hash join
@@ -315,7 +328,7 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	sql := "select /*+ hash_join(t1) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "0", "0", "2", "2", "2", "2", "4", "4", "4", "4"))
 
 	// merge join
@@ -325,7 +338,7 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	sql = "select /*+ merge_join(t1) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "0", "0", "2", "2", "2", "2", "4", "4", "4", "4"))
 
 	// index merge join
@@ -335,10 +348,10 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	sql = "select /*+ inl_merge_join(t1) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "2", "2", "4", "4"))
 	sql = "select /*+ inl_merge_join(t2) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "2", "2", "4", "4"))
 
 	// index hash join
@@ -348,10 +361,10 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
 	sql = "select /*+ inl_hash_join(t1) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "0", "0", "2", "2", "2", "2", "4", "4", "4", "4"))
 	sql = "select /*+ inl_hash_join(t2) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "0", "0", "0", "2", "2", "2", "2", "4", "4", "4", "4"))
 
 	// index join
@@ -361,10 +374,10 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 	sql = "select /*+ inl_join(t1) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "1", "2"))
 	sql = "select /*+ inl_join(t2) */ (select count(t2.b) from t2 where t1.a > t2.a) from t1, t2 where t1.a = t2.a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0", "1", "2"))
 
 	// index merge
@@ -372,7 +385,7 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idxa(a), unique index idxb(b))")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (1, 5, 1), (2, 6, 2), (3, 7, 3), (4, 8, 4)")
 	sql = "select /*+ use_index_merge(t) */ * from t where (a > 0 or b < 0) and (select count(*) from t t1 where t1.c > t.a) > 0"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "1 5 1", "2 2 2", "2 6 2", "3 3 3", "3 7 3"))
 
 	// aggregation
@@ -380,15 +393,17 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4)")
 	sql = "select /*+ stream_agg() */ a from t where (select count(*) from t1 where t1.b > t.a) > 1 group by a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1"))
 	sql = "select /*+ hash_agg() */ a from t where (select count(*) from t1 where t1.b > t.a) > 1 group by a"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1"))
 }
 
-func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyWithOtherFeatures(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// collation 1
@@ -423,7 +438,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	core.SetPreparedPlanCache(orgEnable)
 
 	// cluster index
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t, t2")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, c))")
@@ -431,7 +446,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	// partitioning table
 	tk.MustExec("drop table if exists t1, t2")
@@ -443,8 +458,10 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("0 15", "0 <nil>", "0 <nil>"))
 }
 
-func (s *testSuite) TestApplyInDML(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyInDML(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// delete
@@ -497,8 +514,10 @@ func (s *testSuite) TestApplyInDML(c *C) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2 5"))
 }
 
-func (s *testSuite) TestApplyConcurrency(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyConcurrency(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// tidb_executor_concurrency
@@ -507,9 +526,9 @@ func (s *testSuite) TestApplyConcurrency(c *C) {
 	tk.MustExec("create table t2(a int, b int)")
 	sql := "select * from t1 where t1.b > (select sum(t2.b) from t2 where t2.a > t1.a)"
 	tk.MustExec("set tidb_executor_concurrency = 3")
-	checkApplyPlan(c, tk, sql, 3)
+	checkApplyPlan(t, tk, sql, 3)
 	tk.MustExec("set tidb_executor_concurrency = 5")
-	checkApplyPlan(c, tk, sql, 5)
+	checkApplyPlan(t, tk, sql, 5)
 
 	// concurrency
 	tk.MustExec("drop table if exists t")
@@ -530,8 +549,10 @@ func (s *testSuite) TestApplyConcurrency(c *C) {
 	}
 }
 
-func (s *testSuite) TestApplyCacheRatio(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestApplyCacheRatio(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -550,32 +571,34 @@ func (s *testSuite) TestApplyCacheRatio(c *C) {
 	}
 	// 10%
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (1, 1)")
-	c.Assert(checkRatio("10.000%"), IsTrue)
+	require.True(t, checkRatio("10.000%"))
 	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
-	c.Assert(checkRatio(""), IsFalse)
+	require.False(t, checkRatio(""))
 	tk.MustExec("set tidb_mem_quota_apply_cache = 33554432")
 
 	// 20%
 	tk.MustExec("truncate t1")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (2, 2), (1, 1)")
-	c.Assert(checkRatio("20.000%"), IsTrue)
+	require.True(t, checkRatio("20.000%"))
 	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
-	c.Assert(checkRatio(""), IsFalse)
+	require.False(t, checkRatio(""))
 	tk.MustExec("set tidb_mem_quota_apply_cache = 33554432")
 	// 50%
 	tk.MustExec("truncate t1")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
-	c.Assert(checkRatio("50.000%"), IsTrue)
+	require.True(t, checkRatio("50.000%"))
 	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
-	c.Assert(checkRatio(""), IsFalse)
+	require.False(t, checkRatio(""))
 }
 
-func (s *testSuite) TestApplyGoroutinePanic(c *C) {
+func TestApplyGoroutinePanic(t *testing.T) {
 	if israce.RaceEnabled {
-		c.Skip("race detected, skip it temporarily and fix it before 20210619")
+		t.Skip("race detected, skip it temporarily and fix it before 20210619")
 	}
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
@@ -585,26 +608,28 @@ func (s *testSuite) TestApplyGoroutinePanic(c *C) {
 
 	// no panic
 	sql := "select (select count(*) from t2 where t2.a > t1.a and t2.b > t1.a) from t1"
-	checkApplyPlan(c, tk, sql, 1)
+	checkApplyPlan(t, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("4", "4", "4", "4", "4", "4", "6", "6", "6", "6"))
 
 	// panic in a inner worker
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic", "panic"), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic", "panic"))
 	err := tk.QueryToErr(sql)
-	c.Assert(err, NotNil) // verify errors are not be ignored
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic"), IsNil)
+	require.Error(t, err)
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic"))
 
 	for _, panicName := range []string{"parallelApplyInnerWorkerPanic", "parallelApplyOuterWorkerPanic", "parallelApplyGetCachePanic", "parallelApplySetCachePanic"} {
 		panicPath := fmt.Sprintf("github.com/pingcap/tidb/executor/%v", panicName)
-		c.Assert(failpoint.Enable(panicPath, "panic"), IsNil)
+		require.Nil(t, failpoint.Enable(panicPath, "panic"))
 		err := tk.QueryToErr(sql)
-		c.Assert(err, NotNil) // verify errors are not be ignored
-		c.Assert(failpoint.Disable(panicPath), IsNil)
+		require.Error(t, err)
+		require.Nil(t, failpoint.Disable(panicPath))
 	}
 }
 
-func (s *testSuite) TestIssue24930(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue24930(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKitWithInit(t, store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int)")

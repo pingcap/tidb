@@ -73,6 +73,13 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 	}
 }
 
+// NewTestKitWithInit returns a new *TestKit and use test db.
+func NewTestKitWithInit(t testing.TB, store kv.Storage) *TestKit {
+	tk := NewTestKit(t, store)
+	tk.MustExec("use test")
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
