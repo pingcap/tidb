@@ -1041,7 +1041,7 @@ func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Ex
 			return pruner.fullRange()
 		}
 		switch constExpr.Value.Kind() {
-		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support int and datetime now
+		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
 		case types.KindNull:
 			result = append(result, partitionRange{0, 1})
 			continue
