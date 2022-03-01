@@ -55,10 +55,12 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/keydecoder"
@@ -161,7 +163,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(sctx)
+			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		}
@@ -2755,9 +2757,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
+	skipValidateTable := false
 	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
@@ -2774,6 +2777,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 			},
 		}
 		err = nil
+		skipValidateTable = true
 	})
 
 	if err != nil {
@@ -2783,10 +2787,19 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	rows := make([][]types.Datum, 0, len(rules))
 	for _, rule := range rules {
 		skip := true
-		dbName, tableName, err := checkRule(rule)
+		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
 			return err
 		}
+		tableID, err := decodeTableIDFromRule(rule)
+		if err != nil {
+			return err
+		}
+
+		if !skipValidateTable && tableOrPartitionNotExist(dbName, tableName, partitionName, is, tableID) {
+			continue
+		}
+
 		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
 			skip = false
 		}
@@ -2855,7 +2868,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
-func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
+func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
 	s := strings.Split(rule.ID, "/")
 	if len(s) < 3 {
 		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
@@ -2875,5 +2888,55 @@ func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
 	}
 	dbName = s[1]
 	tableName = s[2]
+	if len(s) > 3 {
+		partitionName = s[3]
+	}
 	return
+}
+
+func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
+	if len(rule.Data) == 0 {
+		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		return
+	}
+	data := rule.Data[0]
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		return
+	}
+	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
+	if err != nil {
+		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		return
+	}
+	_, bs, err := codec.DecodeBytes(key, nil)
+	if err == nil {
+		key = bs
+	}
+	tableID = tablecodec.DecodeTableID(key)
+	if tableID == 0 {
+		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		return
+	}
+	return
+}
+
+func tableOrPartitionNotExist(dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
+	if len(partitionName) == 0 {
+		curTable, _ := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if curTable == nil {
+			return true
+		}
+		curTableID := curTable.Meta().ID
+		if curTableID != tableID {
+			return true
+		}
+	} else {
+		_, _, partInfo := is.FindTableByPartitionID(tableID)
+		if partInfo == nil {
+			return true
+		}
+	}
+	return false
 }
