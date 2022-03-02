@@ -17,7 +17,6 @@ package executor_test
 import (
 	"archive/zip"
 	"context"
-	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -114,13 +113,10 @@ var _ = Suite(&testSuite5{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
-var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
@@ -165,40 +161,18 @@ type baseTestSuite struct {
 	ctx *mock.Context // nolint:structcheck
 }
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-
-	dom, err := session.BootstrapSession(store)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, dom, errors.Trace(err)
-}
-
-var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
-
 func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
+	)
+	c.Assert(err, IsNil)
+	s.store = store
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
@@ -206,9 +180,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionLog
-	})
 }
 
 func (s *testSuiteWithData) SetUpSuite(c *C) {
@@ -425,7 +396,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
@@ -441,7 +412,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 11)
+	c.Assert(row.Len(), Equals, 12)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -568,13 +539,49 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
-	c.Assert(row[9], Equals, "<nil>")
+	c.Assert(row[10], Equals, "<nil>")
 
 	// Test the START_TIME and END_TIME field.
-	re = tk.MustQuery("admin show ddl jobs where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
+	re = tk.MustQuery("admin show ddl jobs where end_time is not NULL")
 	row = re.Rows()[0]
-	c.Assert(row[2], Equals, "t")
-	c.Assert(row[9], Equals, "<nil>")
+	createTime, err := types.ParseDatetime(nil, row[8].(string))
+	c.Assert(err, IsNil)
+	startTime, err := types.ParseDatetime(nil, row[9].(string))
+	c.Assert(err, IsNil)
+	endTime, err := types.ParseDatetime(nil, row[10].(string))
+	c.Assert(err, IsNil)
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	re = tk.MustQuery("admin show ddl jobs where end_time is not NULL")
+	row2 := re.Rows()[0]
+	c.Assert(row[8], Not(Equals), row2[8])
+	c.Assert(row[9], Not(Equals), row2[9])
+	c.Assert(row[10], Not(Equals), row2[10])
+	createTime2, err := types.ParseDatetime(nil, row2[8].(string))
+	c.Assert(err, IsNil)
+	startTime2, err := types.ParseDatetime(nil, row2[9].(string))
+	c.Assert(err, IsNil)
+	endTime2, err := types.ParseDatetime(nil, row2[10].(string))
+	c.Assert(err, IsNil)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	loc2, err := time.LoadLocation("Europe/Amsterdam")
+	c.Assert(err, IsNil)
+	t, err := createTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err := createTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
+	t, err = startTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err = startTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
+	t, err = endTime.GoTime(loc)
+	c.Assert(err, IsNil)
+	t2, err = endTime2.GoTime(loc2)
+	c.Assert(err, IsNil)
+	c.Assert(t.In(time.UTC), Equals, t2.In(time.UTC))
 }
 
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
@@ -3012,6 +3019,22 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec(`alter table t add index(b);`)
 	tk.MustExec("admin check table t")
 	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec("admin check table t")
+
+	// 1. add a timestamp general column
+	// 2. add the index
+	tk.MustExec(`drop table if exists t`)
+	// change timezone
+	tk.MustExec(`set time_zone = 'Asia/Shanghai'`)
+	tk.MustExec(`create table t(a timestamp default current_timestamp)`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add column b timestamp as (a+1) virtual;`)
+	// change timezone
+	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`alter table t add index(b);`)
+	tk.MustExec("admin check table t")
+	tk.MustExec(`set time_zone = '-03:00'`)
 	tk.MustExec("admin check table t")
 }
 
