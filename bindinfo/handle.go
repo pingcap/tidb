@@ -537,16 +537,6 @@ func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
 	h.bindInfo.Load().(*bindCache).SetMemCapacity(capacity)
 }
 
-// GetMemUsage returns the memory usage for the bind cache.
-func (h *BindHandle) GetMemUsage() (memUsage int64) {
-	return h.bindInfo.Load().(*bindCache).GetMemUsage()
-}
-
-// GetMemCapacity returns the memory capacity for the bind cache.
-func (h *BindHandle) GetMemCapacity() (memCapacity int64) {
-	return h.bindInfo.Load().(*bindCache).GetMemCapacity()
-}
-
 // newBindRecord builds BindRecord from a tuple in storage.
 func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	hint := Binding{

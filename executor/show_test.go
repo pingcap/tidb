@@ -1748,38 +1748,3 @@ func TestShowBindingCache(t *testing.T) {
 	res = tk.MustQuery("show global bindings")
 	require.Equal(t, 2, len(res.Rows()))
 }
-
-func TestShowBindingCacheStatus(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"0 0 0 67108864"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
-	result := tk.MustQuery("show global bindings")
-	rows := result.Rows()
-	require.Equal(t, len(rows), 0)
-	tk.MustExec("create global binding for select * from t using select * from t")
-
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 157 67108864"))
-
-	tk.MustExec(`set session tidb_mem_quota_bind_cache = 250`)
-	tk.MustQuery(`select @@tidb_mem_quota_bind_cache`).Check(testkit.Rows("250"))
-	tk.MustExec("admin reload bindings;")
-	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"2 1 185 250"))
-}
