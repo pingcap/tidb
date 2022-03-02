@@ -1017,6 +1017,7 @@ type Column struct {
 	Count      int64
 	Info       *model.ColumnInfo
 	IsHandle   bool
+	Loaded     bool
 	ErrorRate
 	Flag           int64
 	LastAnalyzePos types.Datum
@@ -1080,20 +1081,23 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if c.Histogram.NDV > 0 && c.notNullCount() == 0 && stmtctx != nil {
+		if !c.Loaded && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
-			HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			// In some tests, the c.Info is not set, so we add this check here.
+			if c.Info != nil {
+				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			}
 		}
 	}
-	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || !c.Loaded
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.Histogram.NDV > 0 && c.notNullCount() == 0
+	return (!collPseudo || !c.NotAccurate()) && !c.Loaded
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1651,6 +1655,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
+		newCol.Loaded = oldCol.Loaded
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {

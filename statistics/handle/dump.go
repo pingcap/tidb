@@ -322,6 +322,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				StatsVer:   statsVer,
+				Loaded:     true,
 			}
 			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col

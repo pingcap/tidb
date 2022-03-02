@@ -640,6 +640,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			FMSketch:   fms,
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
+			Loaded:     true,
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -828,6 +829,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
 				StatsVer:   statsVer,
+				Loaded:     true,
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
