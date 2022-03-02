@@ -225,6 +225,13 @@ type CachedPrepareStmt struct {
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
+
+	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
+	//  for the query `select * from t where a>1 and b<?`, then
+	//  NormalizedSQL: select * from `t` where `a` > ? and `b` < ? --> constants are normalized to '?',
+	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
+	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
+	StmtText string
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
