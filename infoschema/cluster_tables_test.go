@@ -387,6 +387,60 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
 }
 
+func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
+	// setup suite
+	var clean func()
+	s := new(clusterTablesSuite)
+	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("drop table if exists test_summary")
+	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = s.newTestKitWithRoot(t)
+	tk.MustExec("use test;")
+	tk.MustExec("set time_zone = '+08:00';")
+	tk.MustExec("select sleep(0.1);")
+	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	require.NoError(t, err)
+	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	require.NoError(t, err)
+	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
+	tk.MustExec("set time_zone = '+01:00';")
+	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	require.NoError(t, err)
+	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	require.NoError(t, err)
+	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
+
+	require.Less(t, date1First.Unix(), date8First.Unix())
+	require.Less(t, date1Last.Unix(), date8Last.Unix())
+	require.Less(t, date1Begin.Unix(), date8Begin.Unix())
+	require.Less(t, date1End.Unix(), date8End.Unix())
+}
+
 func TestStmtSummaryHistoryTable(t *testing.T) {
 	// setup suite
 	var clean func()

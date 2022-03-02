@@ -1800,7 +1800,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
-		param, err := expression.ParamMarkerExpression(ctx, v)
+		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -4165,53 +4165,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
-	// Init commonHandleCols and commonHandleLens for data source.
-	if tableInfo.IsCommonHandle {
-		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
-	}
-	// Init FullIdxCols, FullIdxColLens for accessPaths.
-	for _, path := range ds.possibleAccessPaths {
-		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
-		}
-	}
-
-	var result LogicalPlan = ds
-	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty || tableInfo.TempTableType == model.TempTableLocal {
-		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
-		us.SetChildren(ds)
-		result = us
-	}
-	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
-		cachedTable := tbl.(table.CachedTable)
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
-		if cacheData != nil {
-			sessionVars.StmtCtx.ReadFromTableCache = true
-			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
-			us.SetChildren(ds)
-			result = us
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
-				startTS := txn.StartTS()
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(ctx, store, startTS, leaseDuration)
-			}
-		}
-	}
-
-	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
-		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	}
-	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
-
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
@@ -4225,6 +4178,45 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+
+	// Init commonHandleCols and commonHandleLens for data source.
+	if tableInfo.IsCommonHandle {
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
+	}
+	// Init FullIdxCols, FullIdxColLens for accessPaths.
+	for _, path := range ds.possibleAccessPaths {
+		if !path.IsIntHandlePath {
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+
+			// check whether the path's index has a tidb_shard() prefix and the index column count
+			// more than 1. e.g. index(tidb_shard(a), a)
+			// set UkShardIndexPath only for unique secondary index
+			if !path.IsCommonHandlePath {
+				// tidb_shard expression must be first column of index
+				col := path.FullIdxCols[0]
+				if col != nil &&
+					expression.GcColumnExprIsTidbShard(col.VirtualExpr) &&
+					len(path.Index.Columns) > 1 &&
+					path.Index.Unique {
+					path.IsUkShardIndexPath = true
+					ds.containExprPrefixUk = true
+				}
+			}
+		}
+	}
+
+	var result LogicalPlan = ds
+	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	if dirty || tableInfo.TempTableType == model.TempTableLocal {
+		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		us.SetChildren(ds)
+		result = us
+	}
+
+	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	}
+	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	return result, nil
 }
@@ -4783,8 +4775,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 }
 
 type tblUpdateInfo struct {
-	name      string
-	pkUpdated bool
+	name                string
+	pkUpdated           bool
+	partitionColUpdated bool
 }
 
 // CheckUpdateList checks all related columns in updatable state.
@@ -4793,7 +4786,12 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
-		var update, updatePK bool
+		var update, updatePK, updatePartitionCol bool
+		var partitionColumnNames []model.CIStr
+		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
+			partitionColumnNames = pt.GetPartitionColumnNames()
+		}
+
 		for i, col := range tbl.WritableCols() {
 			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
@@ -4803,19 +4801,25 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 				if mysql.HasPriKeyFlag(col.Flag) {
 					updatePK = true
 				}
+				for _, partColName := range partitionColumnNames {
+					if col.Name.L == partColName.L {
+						updatePartitionCol = true
+					}
+				}
 			}
 		}
 		if update {
 			// Check for multi-updates on primary key,
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
-				if otherTable.pkUpdated || updatePK {
+				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
 					return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
 				}
 			} else {
 				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:      updt.names[content.Start].TblName.O,
-					pkUpdated: updatePK,
+					name:                updt.names[content.Start].TblName.O,
+					pkUpdated:           updatePK,
+					partitionColUpdated: updatePartitionCol,
 				}
 			}
 		}

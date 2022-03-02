@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
@@ -170,9 +169,6 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 }
 
 func TestEncodeDecodePlan(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -678,12 +674,11 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
 			"Limit 3.20 root  offset:0, count:960",
-			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
-			"  └─IndexLookUp 3.20 root  paging:true",
-			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
-			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+			"└─IndexLookUp 3.20 root  paging:true",
+			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 
 	// limit 961 exceeds the threshold, it should not go paging
@@ -701,12 +696,11 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
 			"Limit 3.20 root  offset:0, count:961",
-			"└─Selection 2.56 root  gt(mod(test.t.id, 2), 0)",
-			"  └─IndexLookUp 3.20 root  ",
-			"    ├─Selection(Build) 819.20 cop[tikv]  le(test.t.id, 1024)",
-			"    │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"    └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"      └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+			"└─IndexLookUp 3.20 root  ",
+			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 }
 

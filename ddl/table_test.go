@@ -281,7 +281,7 @@ func ExportTestTable(t *testing.T) {
 	testCheckJobDoneT(t, ddl, job, true)
 	checkTableNoCacheTest(t, ddl, dbInfo1, tblInfo)
 
-	testDropSchemaT(t, testNewContext(ddl), ddl, dbInfo)
+	testDropSchema(t, testNewContext(ddl), ddl, dbInfo)
 	err = ddl.Stop()
 	require.NoError(t, err)
 	err = store.Close()

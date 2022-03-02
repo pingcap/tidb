@@ -17,6 +17,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -33,16 +34,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -325,8 +324,8 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 }
 
 // GetPlacementRules return the current placement rules.
-func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]placement.Rule, error) {
-	var placementRules []placement.Rule
+func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pdtypes.Rule, error) {
+	var placementRules []pdtypes.Rule
 	i := 0
 	errRetry := utils.WithRetry(ctx, func() error {
 		var err error
@@ -525,13 +524,14 @@ func (rc *Client) GoCreateTables(
 			close(outCh)
 			return outCh
 			// fall back to old create table (sequential create table)
-		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
+		} else if utils.FallBack2CreateTable(err) {
 			log.Info("fall back to the sequential create table")
 		} else {
 			errCh <- err
 			close(outCh)
 			return outCh
 		}
+
 	}
 
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
@@ -617,6 +617,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := dbPool[id%uint64(len(dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
+			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
+				if val.(bool) {
+					err = errors.New("sample error without extra message")
+				}
+			})
 			if err != nil {
 				log.Error("create tables fail")
 				return err
@@ -1113,7 +1118,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},

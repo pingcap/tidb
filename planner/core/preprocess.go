@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -787,8 +788,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = err
-			return
+			// Try to convert to BLOB or TEXT, see issue #30328
+			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.hasAutoConvertWarning(colDef) {
+				p.err = err
+				return
+			}
 		}
 		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
@@ -836,6 +840,16 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
+	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
 	}
 }
 
@@ -1106,6 +1120,14 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
 				p.err = ErrInternal.GenWithStack(msg)
 				return
+			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
 			}
 		default:
 			// Nothing to do now.
@@ -1740,4 +1762,18 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})
+}
+
+func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
+	sessVars := p.ctx.GetSessionVars()
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
+		colDef.Tp.Tp = mysql.TypeBlob
+		if colDef.Tp.Charset == charset.CharsetBin {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+		} else {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+		}
+		return true
+	}
+	return false
 }
