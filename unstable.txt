@@ -1,6 +1,5 @@
 ddl TestTestSerialStatSuite
 ddl testSerialDBSuite.TestModifyColumnTypeWhenInterception
-ddl TestDDLStatsInfo
 ddl TestStateChange
 ddl testDBSuite1.TestAddIndexWithSplitTable
 util/cpuprofile TestGetCPUProfile
