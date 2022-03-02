@@ -53,7 +53,7 @@ Documentation
 
 <!-- bugfix or new feature needs a release note -->
 
-Before writing the release note, please refer to [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html).
+If you do not know how to write a good release note, please refer to [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html).
 
 ```release-note
 None
