@@ -556,4 +556,6 @@ const (
 	LabelForIndexJoinInnerWorker int = -20
 	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
 	LabelForIndexJoinOuterWorker int = -21
+	// LabelForBindCache represents the label of the bind cache
+	LabelForBindCache int = -22
 )
