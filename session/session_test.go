@@ -74,7 +74,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -2132,16 +2132,29 @@ func (s *testSessionSuite2) TestDeletePanic(c *C) {
 func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
 	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
 	// Make sure t1 is greater than t.
 	time.Sleep(time.Second)
 	tk.MustExec("alter table t modify c int default 11")
 	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	ret2 := tk.MustQuery("show table status like 't'")
+	c.Assert(ret1.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
 	t, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	t1, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	r := t1.Compare(t)
+	c.Assert(r, Equals, 1)
+	// Check that time_zone changes makes the create_time different
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
+	ret2 = tk.MustQuery(`show table status like 't'`)
+	c.Assert(ret.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
+	t, err = types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
+	r = t1.Compare(t)
 	c.Assert(r, Equals, 1)
 }
 

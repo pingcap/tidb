@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -207,10 +208,55 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	_, ok := is.SchemaByName(dbName)
+	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
+	total := len(dbInfo.Tables)
+	succ := 0
+	skip := 0
+	fail := 0
+	oneFail := int64(0)
+
+	if total == 0 {
+		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
+	}
+	err := checkTiFlashReplicaCount(ctx, tiflashReplica.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, tbl := range dbInfo.Tables {
+		tbReplicaInfo := tbl.TiFlashReplica
+		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
+			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			skip += 1
+			continue
+		}
+		job := &model.Job{
+			SchemaID:   dbInfo.ID,
+			SchemaName: dbInfo.Name.L,
+			TableID:    tbl.ID,
+			Type:       model.ActionSetTiFlashReplica,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{*tiflashReplica},
+		}
+		err := d.doDDLJob(ctx, job)
+		err = d.callHookOnChanged(err)
+		if err != nil {
+			oneFail = tbl.ID
+			fail += 1
+			logutil.BgLogger().Info("processing schema table error", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()), zap.Error(err))
+		} else {
+			succ += 1
+		}
+	}
+	failStmt := ""
+	if fail > 0 {
+		failStmt = fmt.Sprintf("(including table %v)", oneFail)
+	}
+	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
+	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 	return nil
 }
 
@@ -548,7 +594,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, colCollate string, sessVars *variable.SessionVars) error {
 	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
@@ -572,9 +618,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 		}
 	} else {
 		// Adjust the field type for blob/text types if the flen is set.
-		err = adjustBlobTypesFlen(tp, colCharset)
+		if err = adjustBlobTypesFlen(tp, colCharset); err != nil {
+			return err
+		}
 	}
-	return err
+	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
@@ -606,7 +654,7 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -4304,7 +4352,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4379,6 +4427,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -4389,6 +4438,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
 		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
@@ -4617,6 +4667,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -4629,6 +4681,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
@@ -4822,6 +4875,19 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replicaInfo *ast.TiFlashReplicaSpec) bool {
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4844,18 +4910,8 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
-		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
-		changed := false
-		for i, label := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != label {
-				changed = true
-				break
-			}
-		}
-		if !changed {
-			return nil
-		}
+	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
+		return nil
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
@@ -5429,6 +5485,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return errors.Trace(err)
 	}
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -5441,6 +5499,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -5618,6 +5677,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -5628,6 +5689,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -6907,4 +6969,24 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 
 	err = d.doDDLJob(ctx, job)
 	return d.callHookOnChanged(err)
+}
+
+// checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
+// in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
+func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
+	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.Tp == mysql.TypeVarchar {
+		err := IsTooBigFieldLength(tp.Flen, colName, tp.Charset)
+		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
+			tp.Tp = mysql.TypeBlob
+			if err = adjustBlobTypesFlen(tp, tp.Charset); err != nil {
+				return err
+			}
+			if tp.Charset == charset.CharsetBin {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARBINARY", "BLOB"))
+			} else {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARCHAR", "TEXT"))
+			}
+		}
+	}
+	return nil
 }
