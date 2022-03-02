@@ -407,6 +407,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
+		failpoint.Inject("mockSlowAnalyze", func() {
+			if worker.req.Tp == kv.ReqTypeAnalyze {
+				time.Sleep(5 * time.Second)
+			}
+		})
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan

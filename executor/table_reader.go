@@ -16,9 +16,7 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/failpoint"
 	"sort"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
@@ -455,12 +453,6 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 		}
 		tr.optionalFinished = true
 	}
-	failpoint.Inject("make-analyze-slow", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(10 * time.Second)
-		}
-	})
-	time.Sleep(10 * time.Second)
 	data, err = tr.result.NextRaw(ctx)
 	if err != nil {
 		return nil, err

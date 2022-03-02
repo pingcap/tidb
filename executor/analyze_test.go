@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
@@ -2625,8 +2626,6 @@ func TestKillAutoAnalyze(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
-	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
-	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
@@ -2637,19 +2636,22 @@ func TestKillAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	resChan := make(chan bool)
-	go func() {
-		res := h.HandleAutoAnalyze(is)
-		resChan <- res
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze"))
 	}()
-	time.Sleep(time.Second)
-	rows := tk.MustQuery("show processlist").Rows()
-	require.Len(t, rows, 2)
-	for _, row := range rows {
-		if row[0] == "1" {
-			tk.MustExec(fmt.Sprintf("kill tidb %s", rows[0]))
-		}
-	}
-	res := <- resChan
-	require.False(t, res)
+	ch := make(chan bool)
+	go func() {
+		analyzed := h.HandleAutoAnalyze(is)
+		ch <- analyzed
+	}()
+	// wait 500ms to let auto-analyze be running
+	time.Sleep(500 * time.Millisecond)
+	dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+	analyzed := <- ch
+	require.True(t, analyzed)
+	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = '' and job_info = 'auto analyze table'").Rows()
+	require.Equal(t, "failed", rows[len(rows)-1][7])
 }
