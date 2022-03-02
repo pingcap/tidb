@@ -1541,7 +1541,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKitWithSession(t, store, se)
 
-	// test handle
+	// test handle for point get
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key)")
@@ -1565,7 +1565,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// test indexValues
+	// test indexValues for point get
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int, unique index idx(pk))")
 	tk.MustExec("insert into t values(1)")
@@ -1588,7 +1588,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// test _tidb_rowid
+	// test _tidb_rowid for point get
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int);")
@@ -1598,6 +1598,46 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 8"))
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 7"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// test handle for batch point get
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk in (1, ?, ?)'`)
+	tk.MustExec(`set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5`)
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0, @a4`).Sort().Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1_1, @a5`).Sort().Check(testkit.Rows("1", "5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test indexValues for batch point get
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int, unique index idx(pk))")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk in (1, ?, ?)'`)
+	tk.MustExec(`set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5`)
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0, @a4`).Sort().Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1_1, @a5`).Sort().Check(testkit.Rows("1", "5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test _tidb_rowid for batch point get
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9), (1, 10);")
+	tk.MustExec(`prepare stmt from 'select * from t where _tidb_rowid in (1, ?, ?)'`)
+	tk.MustExec(`set @a2=2, @a3=3`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
+	tk.MustExec(`set @a2=4, @a3=2`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
@@ -1747,7 +1787,7 @@ func TestPrepareForGroupByMultiItems(t *testing.T) {
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
 }
 
-func TestInvisibleIndex(t *testing.T) {
+func TestInvisibleIndexPrepare(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2125,7 +2165,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 
 	// test PointGet + non cluster index
@@ -2153,7 +2193,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 }
 
