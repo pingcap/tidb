@@ -1270,16 +1270,6 @@ func NewSessionVars() *SessionVars {
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
-
-		// The variables below do not take any effect anymore, it's remaining for compatibility.
-		// TODO: remove them in v4.1
-		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
-		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
-		MemQuotaSort:              DefTiDBMemQuotaSort,
-		MemQuotaTopn:              DefTiDBMemQuotaTopn,
-		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
-		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
-		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -1552,9 +1542,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 		return strconv.Itoa(s.SysWarningCount), true
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
-	}
-	if name == TiDBSlowLogMasking {
-		name = TiDBRedactLog
 	}
 	if val, ok := s.stmtVars[name]; ok {
 		return val, ok
@@ -1905,23 +1892,6 @@ type MemQuota struct {
 	MemQuotaQuery int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
-
-	// The variables below do not take any effect anymore, it's remaining for compatibility.
-	// TODO: remove them in v4.1
-	// MemQuotaHashJoin defines the memory quota for a hash join executor.
-	MemQuotaHashJoin int64
-	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
-	MemQuotaMergeJoin int64
-	// MemQuotaSort defines the memory quota for a sort executor.
-	MemQuotaSort int64
-	// MemQuotaTopn defines the memory quota for a top n executor.
-	MemQuotaTopn int64
-	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
-	MemQuotaIndexLookupReader int64
-	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
-	MemQuotaIndexLookupJoin int64
-	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
-	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
