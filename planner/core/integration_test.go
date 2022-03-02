@@ -6034,3 +6034,60 @@ func TestIssue31240(t *testing.T) {
 	}
 	tk.MustExec("drop table if exists t31240")
 }
+
+func TestIssue32632(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `partsupp` (" +
+		" `PS_PARTKEY` bigint(20) NOT NULL," +
+		"`PS_SUPPKEY` bigint(20) NOT NULL," +
+		"`PS_AVAILQTY` bigint(20) NOT NULL," +
+		"`PS_SUPPLYCOST` decimal(15,2) NOT NULL," +
+		"`PS_COMMENT` varchar(199) NOT NULL," +
+		"PRIMARY KEY (`PS_PARTKEY`,`PS_SUPPKEY`) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustExec("CREATE TABLE `supplier` (" +
+		"`S_SUPPKEY` bigint(20) NOT NULL," +
+		"`S_NAME` char(25) NOT NULL," +
+		"`S_ADDRESS` varchar(40) NOT NULL," +
+		"`S_NATIONKEY` bigint(20) NOT NULL," +
+		"`S_PHONE` char(15) NOT NULL," +
+		"`S_ACCTBAL` decimal(15,2) NOT NULL," +
+		"`S_COMMENT` varchar(101) NOT NULL," +
+		"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("analyze table partsupp;")
+	tk.MustExec("analyze table supplier;")
+	tk.MustExec("set @@tidb_enforce_mpp = 1")
+
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "supplier", L: "supplier"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	h := dom.StatsHandle()
+	statsTbl1 := h.GetTableStats(tbl1.Meta())
+	statsTbl1.Count = 800000
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	statsTbl2.Count = 10000
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+	tk.MustExec("drop table if exists partsupp")
+	tk.MustExec("drop table if exists supplier")
+}

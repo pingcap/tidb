@@ -6559,6 +6559,26 @@
           "  └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "Name": "TestIssue32632",
+        "Cases": [
+          {
+            "SQL": "explain format = 'brief' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
+            "Plan": [
+              "HashAgg 1.00 root  funcs:sum(Column#15)->Column#14",
+              "└─TableReader 1.00 root  data:ExchangeSender",
+              "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+              "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column#15",
+              "      └─Projection 12500.00 batchCop[tiflash]  test.partsupp.ps_supplycost",
+              "        └─HashJoin 12500.00 batchCop[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
+              "          ├─ExchangeReceiver(Build) 10000.00 batchCop[tiflash]  ",
+              "          │ └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: Broadcast",
+              "          │   └─TableFullScan 10000.00 batchCop[tiflash] table:supplier keep order:false",
+              "          └─TableFullScan(Probe) 800000.00 batchCop[tiflash] table:partsupp keep order:false"
+            ]
+          }
+        ]
       }
     ]
   }
