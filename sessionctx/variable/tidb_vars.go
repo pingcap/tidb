@@ -438,6 +438,11 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBAuditRedactLog indicates whether audit to redact the log. In TiDB 5.2+ this sysvar
+	// is registered with the sysvar API by the plugin directly, but in 4.0 we need
+	// to register it with the server like this.
+	TiDBAuditRedactLog = "tidb_audit_redact_log"
 )
 
 // Default TiDB system variable values.
@@ -542,6 +547,7 @@ const (
 	DefTiDBEnableAmendPessimisticTxn   = false
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableOrderedResultMode     = false
+	DefTiDBAuditRedactLog              = true
 )
 
 // Process global variables.
