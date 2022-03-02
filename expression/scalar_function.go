@@ -187,6 +187,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildFromBinaryFunction(ctx, args[0], retType), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
+	case ast.Sysdate:
+		if ctx.GetSessionVars().SysdateIsNow {
+			funcName = ast.Now
+		}
 	}
 	fc, ok := funcs[funcName]
 	if !ok {

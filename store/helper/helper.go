@@ -772,10 +772,17 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	return &regionsInfo, err
 }
 
+// GetStoreRegionsInfo gets the region in given store.
+func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
 // GetRegionInfoByID gets the region information of the region ID by using PD's api.
 func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GET", pdapi.RegionByID+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -1132,23 +1139,42 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 
 // ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
 func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
-	ns, _, _ := reader.ReadLine()
-	n, err := strconv.ParseInt(string(ns), 10, 64)
+	ns, err := reader.ReadString('\n')
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := int64(0); i < n; i++ {
-		rs, _, _ := reader.ReadLine()
+	// The count
+	ns = strings.Trim(ns, "\r\n\t")
+	n, err := strconv.ParseInt(ns, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The regions
+	regions, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regions = strings.Trim(regions, "\r\n\t")
+	splits := strings.Split(regions, " ")
+	realN := int64(0)
+	for _, s := range splits {
 		// For (`table`, `store`), has region `r`
-		r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
+		if s == "" {
+			continue
+		}
+		realN += 1
+		r, err := strconv.ParseInt(s, 10, 32)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if i, ok := (*regionReplica)[r]; ok {
-			(*regionReplica)[r] = i + 1
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
 		} else {
 			(*regionReplica)[r] = 1
 		}
+	}
+	if n != realN {
+		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
 	}
 	return nil
 }

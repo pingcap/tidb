@@ -75,9 +75,15 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoin returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -586,6 +592,10 @@ type DataSource struct {
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
 	isForUpdateRead bool
+
+	// contain unique index and the first field is tidb_shard(),
+	// such as (tidb_shard(a), a ...), the fields are more than 2
+	containExprPrefixUk bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1261,6 +1271,8 @@ type ShowContents struct {
 type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.

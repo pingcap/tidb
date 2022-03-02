@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -29,12 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
-	TestingT(t)
-}
 
 func kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
@@ -110,7 +103,7 @@ func TestSleep(t *testing.T) {
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
-	sessVars.StrictSQLMode = false
+	sessVars.StmtCtx.BadNullAsWarning = true
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -127,7 +120,7 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, int64(0), ret)
 
 	// for error case under the strict model
-	sessVars.StrictSQLMode = true
+	sessVars.StmtCtx.BadNullAsWarning = false
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -552,7 +545,7 @@ func TestUnaryOp(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(tt.result), result, Commentf("%d", i))
+		require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
 	}
 
 	tbl = []struct {
@@ -576,7 +569,7 @@ func TestUnaryOp(t *testing.T) {
 		expect := types.NewDatum(tt.result)
 		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
 		require.NoError(t, err)
-		require.Equal(t, 0, ret, Commentf("%v %s", tt.arg, tt.op))
+		require.Equalf(t, 0, ret, "%v %s", tt.arg, tt.op)
 	}
 }
 

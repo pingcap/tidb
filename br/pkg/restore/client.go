@@ -38,11 +38,11 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -65,8 +65,10 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-	databases  map[string]*utils.Database
-	ddlJobs    []*model.Job
+	databases map[string]*utils.Database
+	ddlJobs   []*model.Job
+	// ddlJobsMap record the tables' auto id need to restore after create table
+	ddlJobsMap map[UniqueTableName]bool
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -323,8 +325,8 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 }
 
 // GetPlacementRules return the current placement rules.
-func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]placement.Rule, error) {
-	var placementRules []placement.Rule
+func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pdtypes.Rule, error) {
+	var placementRules []pdtypes.Rule
 	i := 0
 	errRetry := utils.WithRetry(ctx, func() error {
 		var err error
@@ -424,7 +426,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables)
+		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -460,12 +462,11 @@ func (rc *Client) createTable(
 	dom *domain.Domain,
 	table *metautil.Table,
 	newTS uint64,
-	ddlTables map[UniqueTableName]bool,
 ) (CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, ddlTables)
+		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -504,7 +505,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	ddlTables := rc.DDLJobsMap()
+	rc.GenerateDDLJobsMap()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -540,7 +541,7 @@ func (rc *Client) GoCreateTables(
 		default:
 
 		}
-		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
+		rt, err := rc.createTable(c, db, dom, t, newTS)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Error(err),
@@ -748,7 +749,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
+				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 
@@ -789,7 +790,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
+				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -1112,7 +1113,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},
@@ -1230,22 +1231,25 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
+// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
 // if we execute some DDLs before create table.
 // we may get two situation that need to rebase auto increment/random id.
 // 1. truncate table: truncate will generate new id cache.
 // 2. create table/create and rename table: the first create table will lock down the id cache.
 // because we cannot create onExistReplace table.
 // so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
-	m := make(map[UniqueTableName]bool)
+func (rc *Client) GenerateDDLJobsMap() {
+	rc.ddlJobsMap = make(map[UniqueTableName]bool)
 	for _, job := range rc.ddlJobs {
 		switch job.Type {
 		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
+			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
 		}
 	}
-	return m
+}
+
+func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
+	return rc.ddlJobsMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.

@@ -27,20 +27,15 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // CompareUnorderedStringSlice compare two string slices.
@@ -79,46 +74,6 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 	return len(m) == 0
 }
 
-// datumEqualsChecker is a checker for DatumEquals.
-type datumEqualsChecker struct {
-	*check.CheckerInfo
-}
-
-// DatumEquals checker verifies that the obtained value is equal to
-// the expected value.
-// For example:
-//     c.Assert(value, DatumEquals, NewDatum(42))
-// TODO: please use trequire.DatumEqual to replace this function to migrate to testify
-var DatumEquals check.Checker = &datumEqualsChecker{
-	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
-}
-
-func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
-	defer func() {
-		if v := recover(); v != nil {
-			result = false
-			error = fmt.Sprint(v)
-			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
-				zap.Reflect("r", v),
-				zap.Stack("stack trace"))
-		}
-	}()
-	paramFirst, ok := params[0].(types.Datum)
-	if !ok {
-		panic("the first param should be datum")
-	}
-	paramSecond, ok := params[1].(types.Datum)
-	if !ok {
-		panic("the second param should be datum")
-	}
-	sc := new(stmtctx.StatementContext)
-	res, err := paramFirst.Compare(sc, &paramSecond, collate.GetBinaryCollator())
-	if err != nil {
-		panic(err)
-	}
-	return res == 0, ""
-}
-
 // MustNewCommonHandle create a common handle with given values.
 // TODO: please use testkit.MustNewCommonHandle to replace this function to migrate to testify
 func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
@@ -127,64 +82,6 @@ func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
 	ch, err := kv.NewCommonHandle(encoded)
 	c.Assert(err, check.IsNil)
 	return ch
-}
-
-// CommonHandleSuite is used to adapt kv.CommonHandle to existing kv.IntHandle tests.
-//  Usage:
-//   type MyTestSuite struct {
-//       CommonHandleSuite
-//   }
-//   func (s *MyTestSuite) TestSomething(c *C) {
-//       // ...
-//       s.RerunWithCommonHandleEnabled(c, s.TestSomething)
-//   }
-type CommonHandleSuite struct {
-	IsCommonHandle bool
-}
-
-// RerunWithCommonHandleEnabled runs a test function with IsCommonHandle enabled.
-func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*check.C)) {
-	if !chs.IsCommonHandle {
-		chs.IsCommonHandle = true
-		f(c)
-		chs.IsCommonHandle = false
-	}
-}
-
-// NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
-func (chs *CommonHandleSuite) NewHandle() *commonHandleSuiteNewHandleBuilder {
-	return &commonHandleSuiteNewHandleBuilder{isCommon: chs.IsCommonHandle}
-}
-
-type commonHandleSuiteNewHandleBuilder struct {
-	isCommon   bool
-	intVal     int64
-	commonVals []interface{}
-}
-
-func (c *commonHandleSuiteNewHandleBuilder) Int(v int64) *commonHandleSuiteNewHandleBuilder {
-	c.intVal = v
-	return c
-}
-
-func (c *commonHandleSuiteNewHandleBuilder) Common(vs ...interface{}) kv.Handle {
-	c.commonVals = vs
-	return c.Build()
-}
-
-func (c *commonHandleSuiteNewHandleBuilder) Build() kv.Handle {
-	if c.isCommon {
-		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(c.commonVals...)...)
-		if err != nil {
-			panic(err)
-		}
-		ch, err := kv.NewCommonHandle(encoded)
-		if err != nil {
-			panic(err)
-		}
-		return ch
-	}
-	return kv.IntHandle(c.intVal)
 }
 
 type handleEqualsChecker struct {
@@ -199,7 +96,7 @@ var HandleEquals = &handleEqualsChecker{
 	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
 }
 
-func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
 	if params[0] == nil && params[1] == nil {
 		return true, ""
 	}
@@ -405,17 +302,4 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	}()
 	_, err = file.Write(buf.Bytes())
 	return err
-}
-
-// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
-func MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
-	const signBitCount = 1
-	shiftBitsCount := 64 - typeBitsLength + shardBitsCount + signBitCount
-	ordered := make([]int64, len(handles))
-	for i, h := range handles {
-		ordered[i] = h << shiftBitsCount >> shiftBitsCount
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
-	return ordered
 }
