@@ -36,6 +36,7 @@ type innerTxnStartTsBox struct {
 	innerTxnStartTsMap map[uint64]uint64
 }
 
+// InitInnerTxnStartTsBox initializes globalInnerTxnTsBox
 func InitInnerTxnStartTsBox() {
 	iTxnTsBox := &innerTxnStartTsBox{
 		innerTxnStartTsMap: make(map[uint64]uint64, 100),

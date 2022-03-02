@@ -1071,7 +1071,7 @@ func StoreInternalSession(addr unsafe.Pointer) {
 	sm.StoreInternalSession(addr)
 }
 
-// StoreInternalSession is the entry function for delete an internal session from SessionManager
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager
 func DeleteInternalSession(addr unsafe.Pointer) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

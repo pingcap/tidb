@@ -818,7 +818,7 @@ func (s *Server) DeleteInternalSession(addr unsafe.Pointer) {
 	s.isRwlock.Unlock()
 }
 
-// DeleteInternalSession implements SessionManager interface.
+// GetInterSessionStartTSList implements SessionManager interface.
 func (s *Server) GetInterSessionStartTSList() []uint64 {
 	s.isRwlock.RLock()
 	defer s.isRwlock.RUnlock()
