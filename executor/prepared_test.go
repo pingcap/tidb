@@ -1355,9 +1355,6 @@ func TestTemporaryTable4PlanCache(t *testing.T) {
 }
 
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("race test for this case takes too long time")
-	}
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()

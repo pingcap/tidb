@@ -602,10 +602,6 @@ func TestApplyCacheRatio(t *testing.T) {
 }
 
 func TestApplyGoroutinePanic(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("race detected, skip it temporarily and fix it before 20210619")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

@@ -2226,10 +2226,6 @@ func TestIssue30100(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -2362,10 +2358,6 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestPartitionWithVariedDataSources(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
