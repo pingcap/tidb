@@ -32,7 +32,7 @@ type SessionHandle struct {
 }
 
 // NewSessionBindHandle creates a new SessionBindHandle.
-func NewSessionBindHandle(ctx sessionctx.Context, parser *parser.Parser) *SessionHandle {
+func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 	sessionHandle := &SessionHandle{parser: parser}
 	sessionHandle.ch = newBindCache()
 	return sessionHandle

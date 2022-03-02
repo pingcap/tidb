@@ -172,7 +172,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		if len(newRecord.Bindings) > 0 {
 			newCache.SetBindRecord(hash, newRecord)
 		} else {
-			newCache.RemoveDeletedBindRecord(hash, newRecord)
+			newCache.RemoveBindRecord(hash, newRecord)
 		}
 		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), true)
 	}
@@ -586,7 +586,7 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
 	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.RemoveDeletedBindRecord(hash, meta)
+	newCache.RemoveBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), false)
 }

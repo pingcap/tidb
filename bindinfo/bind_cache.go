@@ -153,9 +153,9 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 	c.set(cacheKey, []*BindRecord{meta})
 }
 
-// RemoveDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
+// RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) RemoveDeletedBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	metas := c.get(bindCacheKey(hash))
