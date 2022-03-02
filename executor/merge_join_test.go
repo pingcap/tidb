@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -226,21 +225,16 @@ func checkMergeAndRun(tk *testkit.TestKit, t *testing.T, sql string) *testkit.Re
 	explainedSQL := "explain format = 'brief' " + sql
 	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
-	if !strings.ContainsAny(resultStr, "MergeJoin") {
-		t.Error("Expected MergeJoin in plan.")
-	}
+	require.Contains(t, resultStr, "MergeJoin")
 	return tk.MustQuery(sql)
 }
 
 func checkPlanAndRun(tk *testkit.TestKit, t *testing.T, plan string, sql string) *testkit.Result {
 	explainedSQL := "explain format = 'brief' " + sql
-	tk.MustQuery(explainedSQL)
-
+	/* result := */ tk.MustQuery(explainedSQL)
 	// TODO: Reopen it after refactoring explain.
 	// resultStr := fmt.Sprintf("%v", result.Rows())
-	// if plan != resultStr {
-	//     c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
-	// }
+	// require.Equal(t, resultStr, plan)
 	return tk.MustQuery(sql)
 }
 
