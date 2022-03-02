@@ -27,13 +27,11 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
@@ -304,17 +302,4 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	}()
 	_, err = file.Write(buf.Bytes())
 	return err
-}
-
-// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
-func MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
-	const signBitCount = 1
-	shiftBitsCount := 64 - typeBitsLength + shardBitsCount + signBitCount
-	ordered := make([]int64, len(handles))
-	for i, h := range handles {
-		ordered[i] = h << shiftBitsCount >> shiftBitsCount
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
-	return ordered
 }
