@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -49,7 +49,7 @@ func TestJSONType(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Expected"][0], d)
+		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestJSONQuote(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Expected"][0], d)
+		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
@@ -982,7 +982,7 @@ func TestJSONValid(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Expected"][0], d)
+		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 

@@ -17,7 +17,6 @@ package executor_test
 import (
 	"archive/zip"
 	"context"
-	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -121,7 +120,6 @@ var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
@@ -182,24 +180,18 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	return store, dom, errors.Trace(err)
 }
 
-var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
-
 func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
+	)
+	c.Assert(err, IsNil)
+	s.store = store
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
@@ -207,9 +199,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionLog
-	})
 }
 
 func (s *testSuiteWithData) SetUpSuite(c *C) {

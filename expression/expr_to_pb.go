@@ -108,6 +108,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
+	case types.KindMysqlBit:
+		tp = tipb.ExprType_MysqlBit
+		val = d.GetBytes()
 	case types.KindBytes:
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
@@ -179,7 +182,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	case mysql.TypeEnum:
 		if !IsPushDownEnabled("enum", kv.UnSpecified) {
