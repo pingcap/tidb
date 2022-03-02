@@ -48,13 +48,31 @@ import (
 	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
 )
+
+var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
+
+type testIntegrationSuite1 struct{ *testIntegrationSuite }
+type testIntegrationSuite2 struct{ *testIntegrationSuite }
+
+func (s *testIntegrationSuite2) TearDownTest(c *C) {
+	tearDownIntegrationSuiteTest(s.testIntegrationSuite, c)
+}
+
+type testIntegrationSuite3 struct{ *testIntegrationSuite }
+type testIntegrationSuite4 struct{ *testIntegrationSuite }
+type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -367,8 +385,6 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -900,6 +916,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		{
 			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((+1,1)));",
 			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,a) ( partition p values in ((1,1)));",
+			ddl.ErrSameNamePartitionField,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1,1)));",
+			ddl.ErrSameNamePartitionField,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list columns (id) (
@@ -3380,8 +3404,6 @@ func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -3551,4 +3573,48 @@ func TestRenameTables(t *testing.T) {
 	defer clean()
 
 	ddl.ExportTestRenameTables(t)
+}
+
+func TestCreateTables(t *testing.T) {
+	_, clean := ntestkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestRenameTables(t)
+}
+
+func (s *testIntegrationSuite1) TestDuplicatePartitionNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database DuplicatePartitionNames")
+	defer tk.MustExec("drop database DuplicatePartitionNames")
+	tk.MustExec("use DuplicatePartitionNames")
+
+	tk.MustExec("set @@tidb_enable_list_partition=on")
+	tk.MustExec("create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3))")
+	tk.MustExec("insert into t1 values (1),(2),(3)")
+	tk.MustExec("alter table t1 truncate partition p1,p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustExec("insert into t1 values (1)")
+	err := tk.ExecToErr("alter table t1 drop partition p1,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1507]Error in list of partitions to DROP")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1507]Error in list of partitions to DROP")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p1,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9,p1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("alter table t1 drop partition p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("Show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p2` VALUES IN (2),\n" +
+		" PARTITION `p3` VALUES IN (3))"))
 }

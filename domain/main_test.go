@@ -17,7 +17,6 @@ package domain_test
 import (
 	"testing"
 
-	. "github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
@@ -25,16 +24,8 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-// TestDomainSerial handles tests in serial
-func TestDomainSerial(t *testing.T) {
-	// these tests should run in serial for failpoint is global
-	t.Run("info", SubTestInfo)
-	t.Run("domain", SubTestDomain)
-	t.Run("domainSession", SubTestDomainSession)
 }

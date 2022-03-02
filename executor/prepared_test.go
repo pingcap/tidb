@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,7 +106,7 @@ func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
 	return pl
 }
 
-func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, notNil bool) {
+func (sm *mockSessionManager2) GetProcessInfo(_ uint64) (pi *util.ProcessInfo, notNil bool) {
 	pi = sm.se.ShowProcess()
 	if pi != nil {
 		notNil = true
@@ -116,24 +114,18 @@ func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, 
 	return
 }
 
-func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
+func (sm *mockSessionManager2) Kill(_ uint64, _ bool) {
 	atomic.StoreInt32(&sm.killed, 1)
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
-func (sm *mockSessionManager2) KillAllConnections()             {}
-func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
-func (sm *mockSessionManager2) ServerID() uint64 {
-	return 1
-}
+func (sm *mockSessionManager2) KillAllConnections()           {}
+func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
+func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
 
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-		dom.Close()
-	}()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -150,13 +142,39 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
-func TestIssue29850(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+func TestPreparedNullParam(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
-		require.NoError(t, store.Close())
-		dom.Close()
+		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
+
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int not null, KEY id (id))")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		tk.MustExec("prepare stmt from 'select * from t where id = ?'")
+		tk.MustExec("set @a= null")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"TableDual_5 8000.00 root  rows:0"))
+	}
+}
+
+func TestIssue29850(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -228,18 +246,14 @@ func TestIssue29850(t *testing.T) {
 }
 
 func TestIssue28064(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t28064")
 	tk.MustExec("CREATE TABLE `t28064` (" +
@@ -275,18 +289,14 @@ func TestIssue28064(t *testing.T) {
 }
 
 func TestPreparePlanCache4Blacklist(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -365,18 +375,14 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 }
 
 func TestPlanCacheClusterIndex(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -485,19 +491,14 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 }
 
 func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -576,18 +577,14 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 }
 
 func TestPlanCacheOperators(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 	type ExecCase struct {
 		Parameters []string
 		UseCache   bool
@@ -918,18 +915,14 @@ func TestPlanCacheOperators(t *testing.T) {
 }
 
 func TestIssue28782(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
@@ -944,19 +937,14 @@ func TestIssue28782(t *testing.T) {
 }
 
 func TestIssue29101(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec(`CREATE TABLE customer (
@@ -1025,19 +1013,14 @@ func TestIssue29101(t *testing.T) {
 }
 
 func TestIssue28087And28162(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-
 	// issue 28087
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists IDT_26207`)
@@ -1068,19 +1051,14 @@ func TestIssue28087And28162(t *testing.T) {
 }
 
 func TestParameterPushDown(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-	require.NoError(t, err)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
@@ -1127,19 +1105,14 @@ func TestParameterPushDown(t *testing.T) {
 }
 
 func TestPreparePlanCache4Function(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 
@@ -1171,19 +1144,14 @@ func TestPreparePlanCache4Function(t *testing.T) {
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
-
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 
@@ -1291,18 +1259,14 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 }
 
 func TestTemporaryTable4PlanCache(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("drop table if exists tmp2")
@@ -1322,10 +1286,7 @@ func TestTemporaryTable4PlanCache(t *testing.T) {
 }
 
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("race test for this case takes too long time")
-	}
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -1338,7 +1299,6 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
