@@ -1994,15 +1994,21 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 
 	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SET GLOBAL tidb_top_sql_max_time_series_count = 100")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
 	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@global.tidb_top_sql_max_time_series_count")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
 	tk.Session().Auth(&auth.UserIdentity{
