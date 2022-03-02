@@ -819,14 +819,7 @@ func TestTiFlashBatchKill(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
 
 	go func() {
-		//connID := tk.Session().GetSessionVars().ConnectionID
-		//sql := fmt.Sprintf("kill tidb %v", connID)
 		time.Sleep(time.Millisecond * 100)
-		//tk2 := testkit.NewTestKit(t, s.store)
-		//logutil.BgLogger().Info(fmt.Sprintf("do %v", sql))
-		//tk2.MustExec(sql)
-		//tk2.Session().GetSessionManager().Kill(connID, false)
-
 		sessVars := tk.Session().GetSessionVars()
 		atomic.StoreUint32(&sessVars.Killed, 1)
 		logutil.BgLogger().Info("session killed")
