@@ -189,13 +189,13 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 	return rs, ok
 }
 
-func (msm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
+func (sm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
 }
 
-func (msm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
+func (sm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
 }
 
-func (msm *mockSessionManager) GetInterSessionStartTSList() []uint64 {
+func (sm *mockSessionManager) GetInterSessionStartTSList() []uint64 {
 	return nil
 }
 
