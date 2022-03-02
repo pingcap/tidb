@@ -679,6 +679,10 @@ func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property
 
 func (ds *DataSource) isPointGetConvertableSchema() bool {
 	for _, col := range ds.Columns {
+		if col.Name.L == model.ExtraHandleName.L {
+			continue
+		}
+
 		// Only handle tables that all columns are public.
 		if col.State != model.StatePublic {
 			return false
