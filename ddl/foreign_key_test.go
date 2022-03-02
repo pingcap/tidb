@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -95,12 +94,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func TestForeignKey(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	store := testCreateStoreT(t, "test_foreign")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
