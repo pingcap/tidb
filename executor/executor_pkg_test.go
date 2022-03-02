@@ -98,6 +98,16 @@ func (msm *mockSessionManager) SetServerID(serverID uint64) {
 	msm.serverID = serverID
 }
 
+func (msm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager) GetInterSessionStartTSList() []uint64 {
+	return nil
+}
+
 func TestShowProcessList(t *testing.T) {
 	// Compose schema.
 	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}

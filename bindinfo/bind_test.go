@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -74,6 +75,16 @@ func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 
 func (msm *mockSessionManager1) ServerID() uint64 {
 	return 1
+}
+
+func (msm *mockSessionManager1) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager1) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager1) GetInterSessionStartTSList() []uint64 {
+	return nil
 }
 
 func TestPrepareCacheWithBinding(t *testing.T) {

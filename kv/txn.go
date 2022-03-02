@@ -19,6 +19,8 @@ import (
 	"errors"
 	"math"
 	"math/rand"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -27,6 +29,83 @@ import (
 	"go.uber.org/zap"
 )
 
+var globalInnerTxnTsBox atomic.Value
+
+type innerTxnStartTsBox struct {
+	innerTSLock        sync.Mutex
+	innerTxnStartTsMap map[uint64]uint64
+}
+
+func InitInnerTxnStartTsBox() {
+	iTxnTsBox := &innerTxnStartTsBox{
+		innerTxnStartTsMap: make(map[uint64]uint64, 100),
+	}
+	globalInnerTxnTsBox.Store(iTxnTsBox)
+}
+
+// wrapStoreInterTxnTS is the entry function used to store the startTS of an internal transaction to globalInnerTxnTsBox
+// @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
+func wrapStoreInterTxnTS(startTS uint64) {
+	// ib := getGlobalInnerTxnTsBox()
+	v := globalInnerTxnTsBox.Load()
+	if v == nil {
+		logutil.BgLogger().Info("Fail to store internal txn startTS, globalInnerTxnTsBox is nil")
+		return
+	}
+	ib := v.(*innerTxnStartTsBox)
+	ib.storeInterTxnTS(startTS)
+}
+
+func (ib *innerTxnStartTsBox) storeInterTxnTS(startTS uint64) {
+	ib.innerTSLock.Lock()
+	ib.innerTxnStartTsMap[startTS] = startTS
+	ib.innerTSLock.Unlock()
+}
+
+// wrapDeleteInterTxnTS delete the startTS from globalInnerTxnTsBox when the transaciotn is commted
+// @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
+func wrapDeleteInterTxnTS(startTS uint64) {
+	// ib := getGlobalInnerTxnTsBox()
+	v := globalInnerTxnTsBox.Load()
+	if v == nil {
+		logutil.BgLogger().Info("Fail to delete internal txn startTS, globalInnerTxnTsBox is nil")
+		return
+	}
+	ib := v.(*innerTxnStartTsBox)
+	ib.deleteInterTxnTS(startTS)
+}
+
+func (ib *innerTxnStartTsBox) deleteInterTxnTS(startTS uint64) {
+	ib.innerTSLock.Lock()
+	delete(ib.innerTxnStartTsMap, startTS)
+	ib.innerTSLock.Unlock()
+}
+
+// WrapGetMinStartTs get the min StatTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
+func WrapGetMinStartTs(startTSLowerLimit uint64,
+	curMinStartTS uint64) uint64 {
+	// ib := getGlobalInnerTxnTsBox()
+	v := globalInnerTxnTsBox.Load()
+	if v == nil {
+		return curMinStartTS
+	}
+	ib := v.(*innerTxnStartTsBox)
+	return ib.getMinStartTs(startTSLowerLimit, curMinStartTS)
+}
+
+func (ib *innerTxnStartTsBox) getMinStartTs(startTSLowerLimit uint64,
+	curMinStartTS uint64) uint64 {
+	minStartTS := curMinStartTS
+	ib.innerTSLock.Lock()
+	for _, interTS := range ib.innerTxnStartTsMap {
+		if interTS > startTSLowerLimit && interTS < minStartTS {
+			minStartTS = interTS
+		}
+	}
+	ib.innerTSLock.Unlock()
+	return minStartTS
+}
+
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
@@ -34,6 +113,11 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		originalTxnTS uint64
 		txn           Transaction
 	)
+
+	defer func() {
+		wrapDeleteInterTxnTS(originalTxnTS)
+	}()
+
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
@@ -44,6 +128,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()
+			wrapStoreInterTxnTS(originalTxnTS)
 		}
 
 		err = f(ctx, txn)

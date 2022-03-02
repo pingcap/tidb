@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -121,6 +122,16 @@ func (sm *mockSessionManager2) Kill(_ uint64, _ bool) {
 func (sm *mockSessionManager2) KillAllConnections()           {}
 func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
 func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
+
+func (sm *mockSessionManager2) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (sm *mockSessionManager2) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (sm *mockSessionManager2) GetInterSessionStartTSList() []uint64 {
+	return nil
+}
 
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535

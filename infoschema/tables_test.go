@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -315,6 +316,16 @@ func (sm *mockSessionManager) KillAllConnections() {}
 func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
 
 func (sm *mockSessionManager) ServerID() uint64 { return 1 }
+
+func (sm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (sm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (sm *mockSessionManager) GetInterSessionStartTSList() []uint64 {
+	return nil
+}
 
 func TestSomeTables(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)

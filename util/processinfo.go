@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -169,6 +170,12 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(addr unsafe.Pointer)
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(addr unsafe.Pointer)
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInterSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

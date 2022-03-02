@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -612,6 +613,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	pl := is.manager.ShowProcessList()
+	interTsList := is.manager.GetInterSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -629,7 +631,13 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	is.minStartTS = minStartTS
+	for _, interTS := range interTsList {
+		if interTS > startTSLowerLimit && interTS < minStartTS {
+			minStartTS = interTS
+		}
+	}
+
+	is.minStartTS = kv.WrapGetMinStartTs(startTSLowerLimit, minStartTS)
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
@@ -1046,4 +1054,34 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		}
 	}
 	return nil
+}
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager
+func StoreInternalSession(addr unsafe.Pointer) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		logutil.BgLogger().Info("Fail to store internal session, infoSyncer is nil")
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		logutil.BgLogger().Info("Fail to store internal session, session manager is nil")
+		return
+	}
+	sm.StoreInternalSession(addr)
+}
+
+// StoreInternalSession is the entry function for delete an internal session from SessionManager
+func DeleteInternalSession(addr unsafe.Pointer) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		logutil.BgLogger().Info("Fail to delete internal session, infoSyncer is nil")
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		logutil.BgLogger().Info("Fail to delete internal session, session manager is nil")
+		return
+	}
+	sm.DeleteInternalSession(addr)
 }

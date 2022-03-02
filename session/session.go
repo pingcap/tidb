@@ -33,12 +33,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1745,6 +1747,9 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 
+	// Put the internal session to the map of SessionManager
+	infosync.StoreInternalSession(unsafe.Pointer(se))
+
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
@@ -1760,6 +1765,8 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		// Delete the internal session to the map of SessionManager
+		infosync.DeleteInternalSession(unsafe.Pointer(se))
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2799,6 +2806,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	kv.InitInnerTxnStartTsBox()
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -3201,6 +3209,18 @@ func (s *session) GetStore() kv.Storage {
 func (s *session) ShowProcess() *util.ProcessInfo {
 	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
+	if tmp != nil {
+		pi = tmp.(*util.ProcessInfo)
+	}
+	return pi
+}
+
+// ShowProcessByPointer returns the ProcessInfo in the session whose
+// address is `addr`
+func ShowProcessByPointer(addr unsafe.Pointer) *util.ProcessInfo {
+	var pi *util.ProcessInfo
+	se := (*session)(addr)
+	tmp := se.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(*util.ProcessInfo)
 	}

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -132,6 +133,9 @@ type Server struct {
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 	inShutdownMode bool
+
+	isRwlock         sync.RWMutex
+	internalSessions map[uint64]unsafe.Pointer
 }
 
 // ConnectionCount gets current connection count.
@@ -191,6 +195,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
+		internalSessions:  make(map[uint64]unsafe.Pointer, 100),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -795,6 +800,35 @@ func (s *Server) kickIdleConnection() {
 // ServerID implements SessionManager interface.
 func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
+}
+
+// StoreInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) StoreInternalSession(addr unsafe.Pointer) {
+	s.isRwlock.Lock()
+	s.internalSessions[(uint64)(uintptr(addr))] = addr
+	s.isRwlock.Unlock()
+}
+
+// DeleteInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) DeleteInternalSession(addr unsafe.Pointer) {
+	s.isRwlock.Lock()
+	delete(s.internalSessions, (uint64)(uintptr(addr)))
+	s.isRwlock.Unlock()
+}
+
+// DeleteInternalSession implements SessionManager interface.
+func (s *Server) GetInterSessionStartTSList() []uint64 {
+	s.isRwlock.RLock()
+	defer s.isRwlock.RUnlock()
+	tsList := make([]uint64, len(s.internalSessions))
+	for _, addr := range s.internalSessions {
+		if pi := session.ShowProcessByPointer(addr); pi != nil {
+			tsList = append(tsList, pi.CurTxnStartTS)
+		}
+	}
+	return tsList
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

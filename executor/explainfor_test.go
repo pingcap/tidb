@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
@@ -58,6 +59,16 @@ func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bo
 		}
 	}
 	return &util.ProcessInfo{}, false
+}
+
+func (msm *mockSessionManager1) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager1) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager1) GetInterSessionStartTSList() []uint64 {
+	return nil
 }
 
 func (msm *mockSessionManager1) Kill(_ uint64, _ bool)         {}
