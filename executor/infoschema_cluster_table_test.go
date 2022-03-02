@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
@@ -186,6 +187,16 @@ func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
 	return rs, ok
+}
+
+func (msm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
+}
+
+func (msm *mockSessionManager) GetInterSessionStartTSList() []uint64 {
+	return nil
 }
 
 func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
