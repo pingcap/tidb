@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,20 +218,20 @@ func TestInsertOnDuplicateKey(t *testing.T) {
 	tk.MustExec("insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20)")
 	tk.MustExec("insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3")
 	require.Equal(t, uint64(3), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>"))
 	tk.MustExec("insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3")
 	require.Equal(t, uint64(1), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>",
 		"4/<nil>/<nil>/<nil>"))
 	tk.MustExec("insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3")
 	require.Equal(t, uint64(2), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>",
@@ -1139,7 +1138,7 @@ func TestInsertFloatOverflow(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
 	require.NoError(t, err)
-	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
+	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "2"))
 	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
 	tk.MustExec("drop table if exists t,t1")
 }
@@ -1587,7 +1586,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
-		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
 
 		tk.MustExec("begin pessimistic;")
 		tk.MustExec("insert into t values ('a7', 'a', 10);")
@@ -1852,7 +1851,7 @@ func TestStringtoDecimal(t *testing.T) {
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
 	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }
@@ -1873,7 +1872,7 @@ func TestIssue17745(t *testing.T) {
 	tk.MustExec("drop table if exists tt1")
 	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
 	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
 }
 
 // TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
@@ -1923,4 +1922,21 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
+}
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
 }
