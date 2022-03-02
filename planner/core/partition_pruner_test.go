@@ -196,14 +196,17 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		// Lower case partition names due to issue#32719
 		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
 		{sql: `select * from t where a = 'AA'`, partitions: "paaaa", rows: []string{"AA"}},
-		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found!
+		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
 		{sql: `select * from t where a = 'aa'`, partitions: "paaa", rows: []string{"aa"}},
-		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found!
+		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
 		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA"}},
 		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "paaa", rows: []string{}},
 		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
 		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "paaaa,paaa", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "paaaa,paaa", rows: []string{"AA", "AAA", "aa"}}, // aaa missing due to #32749
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "paaaa", rows: []string{"AA", "AAA"}},            // aa, aaa missing due to #32749
 	}
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
@@ -227,11 +230,14 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		{sql: `select * from t where a = 'AA'`, partitions: "paaa", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'AA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{"AA"}},
 		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA", "aaa"}},
-		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{}}, // Notice that the it uses _bin collation for partition => not found!
+		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{}}, // Notice that the it uses _bin collation for partition => not found! #32749
 		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "pccc", rows: []string{}},
 		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
 		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,paaaa", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa", rows: []string{"aa"}},          // AAA missing due to #32749, why is AA missing?
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaaa,psushi", rows: []string{"AAA"}}, // aa, aaa missing due to #32749 also all missing paaa
 	}
 
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
