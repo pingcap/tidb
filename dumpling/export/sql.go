@@ -177,10 +177,11 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 // ShowCreateTable constructs the create table SQL for a specified table
 // returns (createTableSQL, error)
 func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string) (string, error) {
-	var oneRow [4]string
+	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {
-		return rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3])
+		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
+	var createSequenceSQL strings.Builder
 	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`", escapeString(sequence))
 	err := db.QuerySQL(tctx, handleOneRow, func() {
 		oneRow[0], oneRow[1] = "", ""
@@ -188,26 +189,30 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 	if err != nil {
 		return "", err
 	}
+	createSequenceSQL.WriteString(oneRow[1])
+	createSequenceSQL.WriteString(";\n")
 	query = fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
 	if err != nil {
 		return "", err
 	}
-	var nextNotCachedValue string
+	var nextNotCachedValue int64
 	for _, oneRow := range results {
 		nextGlobalRowId, idType := oneRow[0], oneRow[1]
 		if idType == "SEQUENCE" {
-			nextNotCachedValue = nextGlobalRowId
+			nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
 		}
 	}
-	query = fmt.Sprintf("SELECT SETVAL(`%s`,`%s`)", escapeString(sequence), nextNotCachedValue)
+	query = fmt.Sprintf("SELECT SETVAL(%s,%d)", escapeString(sequence), nextNotCachedValue)
 	err = db.QuerySQL(tctx, handleOneRow, func() {
-		oneRow[2], oneRow[3] = "", ""
+		oneRow[0], oneRow[1] = "", ""
 	}, query)
 	if err != nil {
 		return "", err
 	}
-	return oneRow[1] + oneRow[3], nil
+	createSequenceSQL.WriteString(oneRow[1])
+	createSequenceSQL.WriteString(";\n")
+	return createSequenceSQL.String(), nil
 }
 
 // SetCharset builds the set charset SQLs

@@ -368,6 +368,37 @@ func TestShowCreateView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestShowCreateSequence(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	tctx := tcontext.Background().WithLogger(appLogger)
+	baseConn := newBaseConn(conn, true, nil)
+
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `s`").
+		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "Create Sequence"}).
+			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	mock.ExpectQuery("SHOW TABLE `test`.`s` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "s", nil, 1001, "SEQUENCE"))
+
+	mock.ExpectQuery("SELECT SETVAL(`s`,1001)").
+		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "nextNotCachedValue"}).
+			AddRow("s", "1001"))
+
+	createSequenceSQL, err := ShowCreateSequence(tctx, baseConn, "test", "s")
+
+	require.NoError(t, err)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVALS(s, 1001);\n", createSequenceSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestShowCreatePolicy(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
