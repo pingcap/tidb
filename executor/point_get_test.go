@@ -51,7 +51,7 @@ func TestPointGet(t *testing.T) {
 	require.NoError(t, err)
 	fields := result.Fields()
 	require.Equal(t, "ident", fields[0].ColumnAsName.O)
-	require.Nil(t, result.Close())
+	require.NoError(t, result.Close())
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
@@ -364,6 +364,7 @@ func TestForUpdateRetry(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select * from t where pk = 1 for update")
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
 	_, err = tk.Exec("commit")
@@ -514,7 +515,7 @@ func TestClusterIndexCBOPointGet(t *testing.T) {
 
 func mustExecDDL(tk *testkit.TestKit, t *testing.T, sql string, dom *domain.Domain) {
 	tk.MustExec(sql)
-	require.Nil(t, dom.Reload())
+	require.NoError(t, dom.Reload())
 }
 
 func TestMemCacheReadLock(t *testing.T) {
@@ -567,26 +568,26 @@ func TestMemCacheReadLock(t *testing.T) {
 		require.Regexp(t, ".*num_rpc.*", explain)
 
 		rows = tk.MustQuery(ca.sql).Rows()
-		require.Equal(t, 1, len(rows))
+		require.Len(t, rows, 1)
 		explain = fmt.Sprintf("%v", rows[0])
 		ok := strings.Contains(explain, "num_rpc")
 		require.Equalf(t, ok, ca.r1, "%v", ca.sql)
 		mustExecDDL(tk, t, "unlock tables", dom)
 
 		rows = tk.MustQuery(ca.sql).Rows()
-		require.Equal(t, 1, len(rows))
+		require.Len(t, rows, 1)
 		explain = fmt.Sprintf("%v", rows[0])
 		require.Regexp(t, ".*num_rpc.*", explain)
 
 		// Test cache release after unlocking tables.
 		mustExecDDL(tk, t, "lock tables point read", dom)
 		rows = tk.MustQuery(ca.sql).Rows()
-		require.Equal(t, 1, len(rows))
+		require.Len(t, rows, 1)
 		explain = fmt.Sprintf("%v", rows[0])
 		require.Regexp(t, ".*num_rpc.*", explain)
 
 		rows = tk.MustQuery(ca.sql).Rows()
-		require.Equal(t, 1, len(rows))
+		require.Len(t, rows, 1)
 		explain = fmt.Sprintf("%v", rows[0])
 		ok = strings.Contains(explain, "num_rpc")
 		require.Equal(t, ok, ca.r2, "%v", ca.sql)
@@ -595,7 +596,7 @@ func TestMemCacheReadLock(t *testing.T) {
 		mustExecDDL(tk, t, "lock tables point read", dom)
 
 		rows = tk.MustQuery(ca.sql).Rows()
-		require.Equal(t, 1, len(rows))
+		require.Len(t, rows, 1)
 		explain = fmt.Sprintf("%v", rows[0])
 		require.Regexp(t, ".*num_rpc.*", explain)
 
@@ -663,7 +664,7 @@ func TestPointGetWriteLock(t *testing.T) {
 		`1 1 a`,
 	))
 	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Equal(t, 1, len(rows))
+	require.Len(t, rows, 1)
 	explain := fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*num_rpc.*", explain)
 	tk.MustExec("unlock tables")
@@ -674,7 +675,7 @@ func TestPointGetWriteLock(t *testing.T) {
 		`1 3 a`,
 	))
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Equal(t, 1, len(rows))
+	require.Len(t, rows, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*num_rpc.*", explain)
 	tk.MustExec("unlock tables")
