@@ -464,7 +464,7 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 // 	locateBucket(val0): false, 0, false, false
 // 	locateBucket(val1): false, 1, true, true
 // 	locateBucket(val2): false, 2, false, false
-// 	locateBucket(val3): false, 3, true, false
+// 	locateBucket(val3): false, 2, true, false
 // 	locateBucket(val4): true, 3, false, false
 func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	// Empty histogram
