@@ -277,6 +277,8 @@ load stats 's/imdbload_stats/person_info.json';
 load stats 's/imdbload_stats/movie_info.json';
 load stats 's/imdbload_stats/cast_info.json';
 
+-- The statistics and actual row count are from the latest imdb dataset that is distributed as old text files.
+
 -- Actual row count: 1
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 
