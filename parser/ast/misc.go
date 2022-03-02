@@ -1682,9 +1682,12 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// BindingStatusType defines the status type for the binding
+type BindingStatusType int8
+
 // Binding status types.
 const (
-	BindingStatusTypeEnable uint8 = iota
+	BindingStatusTypeEnable BindingStatusType = iota
 	BindingStatusTypeDisable
 )
 
@@ -1692,7 +1695,7 @@ const (
 type SetBindingStmt struct {
 	stmtNode
 
-	BindingStatusType uint8
+	BindingStatusType BindingStatusType
 	OriginNode        StmtNode
 	HintedNode        StmtNode
 }

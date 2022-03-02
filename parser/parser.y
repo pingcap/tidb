@@ -12673,7 +12673,7 @@ SetBindingStmt:
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
-			BindingStatusType: $3.(uint8),
+			BindingStatusType: $3.(ast.BindingStatusType),
 			OriginNode:        originStmt,
 		}
 
@@ -12691,7 +12691,7 @@ SetBindingStmt:
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
-			BindingStatusType: $3.(uint8),
+			BindingStatusType: $3.(ast.BindingStatusType),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
 		}
