@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 

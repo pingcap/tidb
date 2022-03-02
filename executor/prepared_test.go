@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
