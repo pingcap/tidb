@@ -23,6 +23,8 @@ linters:
     - unconvert
     - makezero
     - durationcheck
+    - prealloc
+    - predeclared
 
 linters-settings:
   staticcheck:

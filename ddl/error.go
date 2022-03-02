@@ -30,7 +30,6 @@ var (
 	errCantDecodeRecord      = dbterror.ClassDDL.NewStd(mysql.ErrCantDecodeRecord)
 	errInvalidDDLJob         = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	errCancelledDDLJob       = dbterror.ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
-	errFileNotFound          = dbterror.ClassDDL.NewStd(mysql.ErrFileNotFound)
 	errRunMultiSchemaChanges = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
 	errWaitReorgTimeout      = dbterror.ClassDDL.NewStdErr(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidStoreVersion)
@@ -146,6 +145,8 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
+	// ErrWrongPartitionName returns for wrong partition name.
+	ErrWrongPartitionName = dbterror.ClassDDL.NewStd(mysql.ErrWrongPartitionName)
 	// ErrWrongUsage returns for wrong ddl syntax usage.
 	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
@@ -177,6 +178,8 @@ var (
 	ErrDropPartitionNonExistent = dbterror.ClassDDL.NewStd(mysql.ErrDropPartitionNonExistent)
 	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartition)
+	// ErrSameNamePartitionField returns duplicate partition field.
+	ErrSameNamePartitionField = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartitionField)
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
 	ErrRangeNotIncreasing = dbterror.ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
@@ -268,9 +271,6 @@ var (
 
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
-
-	// ErrPlacementDisabled  is returned when tidb_enable_alter_placement = 0
-	ErrPlacementDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Alter Placement Rule is disabled, please set 'tidb_enable_alter_placement' if you need to enable it", nil))
 
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)

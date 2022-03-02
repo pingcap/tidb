@@ -89,6 +89,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
+	b.curClause = fieldList
 	rewriter := b.getExpressionRewriter(ctx, mockPlan)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
 	// not nil means certain previous procedure has not handled this error.
@@ -1074,7 +1075,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
-		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
+		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -1230,7 +1231,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 }
 
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
-	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
 	return nil
@@ -1522,8 +1523,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 }
 
 // deriveCollationForIn derives collation for in expression.
-func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
-	coll := make([]*expression.ExprCollation, 0, colLen)
+// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
+func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) *expression.ExprCollation {
 	if colLen == 1 {
 		// a in (x, y, z) => coll[0]
 		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
@@ -1531,46 +1532,39 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkL
 		if er.err != nil {
 			return nil
 		}
-		coll = append(coll, coll2)
-	} else {
-		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
-		for i := 0; i < colLen; i++ {
-			args := make([]expression.Expression, 0, elemCnt)
-			for j := stkLen - elemCnt - 1; j < stkLen; j++ {
-				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
-				args = append(args, rowFunc.GetArgs()[i])
-			}
-			coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
-			er.err = err
-			if er.err != nil {
-				return nil
-			}
-			coll = append(coll, coll2)
-		}
+		return coll2
 	}
-	return coll
+	return nil
 }
 
 // castCollationForIn casts collation info for arguments in the `in clause` to make sure the used collation is correct after we
 // rewrite it to equal expression.
-func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll []*expression.ExprCollation) {
+func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll *expression.ExprCollation) {
+	// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
+	if colLen != 1 {
+		return
+	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
-		if colLen == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
+		if er.ctxStack[i].GetType().EvalType() == types.ETString {
+			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
+			if ok && rowFunc.FuncName.String() == ast.RowFunc {
+				continue
+			}
+			// Don't convert it if it's charset is binary. So that we don't convert 0x12 to a string.
+			if er.ctxStack[i].GetType().Collate == coll.Collation {
+				continue
+			}
 			tp := er.ctxStack[i].GetType().Clone()
-			tp.Charset, tp.Collate = coll[0].Charset, coll[0].Collation
-			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
-			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
-		} else {
-			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
-			for j := 0; j < colLen; j++ {
-				if er.ctxStack[i].GetType().EvalType() != types.ETString {
+			if er.ctxStack[i].GetType().Hybrid() {
+				if expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString {
+					tp = types.NewFieldType(mysql.TypeVarString)
+				} else {
 					continue
 				}
-				tp := rowFunc.GetArgs()[j].GetType().Clone()
-				tp.Charset, tp.Collate = coll[j].Charset, coll[j].Collation
-				rowFunc.GetArgs()[j] = expression.BuildCastFunction(er.sctx, rowFunc.GetArgs()[j], tp)
-				rowFunc.GetArgs()[j].SetCoercibility(expression.CoercibilityExplicit)
 			}
+			tp.Charset, tp.Collate = coll.Charset, coll.Collation
+			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
+			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		}
 	}
 }
@@ -1750,9 +1744,14 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll)
-	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll)
-	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll)
+	// Handle enum or set. We need to know their real type to decide whether to cast them.
+	lt := expression.GetAccurateCmpType(expr, lexp)
+	rt := expression.GetAccurateCmpType(expr, rexp)
+	enumOrSetRealTypeIsStr := lt != types.ETInt && rt != types.ETInt
+
+	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll, enumOrSetRealTypeIsStr)
+	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll, enumOrSetRealTypeIsStr)
+	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
 	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
@@ -2015,15 +2014,14 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
 	var val *expression.Constant
 	switch {
-	case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
-		// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
-		val = expression.NewNull()
-	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
-		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
+	case isCurrentTimestamp && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, col.Decimal)
+		if err != nil {
+			return
+		}
 		val = &expression.Constant{
-			Value:   types.NewDatum(zero),
-			RetType: types.NewFieldType(mysql.TypeTimestamp),
+			Value:   t,
+			RetType: types.NewFieldType(col.Tp),
 		}
 	default:
 		// for other columns, just use what it is

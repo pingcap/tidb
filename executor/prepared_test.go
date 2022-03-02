@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -148,6 +147,40 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
 	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
+}
+
+func TestPreparedNullParam(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int not null, KEY id (id))")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		tk.MustExec("prepare stmt from 'select * from t where id = ?'")
+		tk.MustExec("set @a= null")
+		tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"TableDual_5 8000.00 root  rows:0"))
+	}
 }
 
 func TestIssue29850(t *testing.T) {
@@ -937,9 +970,10 @@ func TestIssue28782(t *testing.T) {
 
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// TODO(Reminiscent): Support cache more tableDual plan.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestIssue29101(t *testing.T) {
@@ -1157,7 +1191,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 1, @b = null;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
@@ -1324,7 +1358,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	if israce.RaceEnabled {
 		t.Skip("race test for this case takes too long time")
 	}
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -1337,7 +1371,6 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)

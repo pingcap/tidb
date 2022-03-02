@@ -930,7 +930,7 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		monotonous = getMonotoneMode(raw.FuncName.L)
 		// Check the partitionExpr is in the form: fn(col, ...)
 		// There should be only one column argument, and it should be the first parameter.
-		if expression.ExtractColumnSet(args).Len() == 1 {
+		if expression.ExtractColumnSet(args...).Len() == 1 {
 			if col1, ok := args[0].(*expression.Column); ok {
 				col = col1
 			}
@@ -963,6 +963,9 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 		} else if op.FuncName.L == ast.In {
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
+				return result.intersection(newRange)
+			} else if p, ok := pruner.(*rangeColumnsPruner); ok {
+				newRange := partitionRangeColumnForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
 			}
 			return result
@@ -1022,6 +1025,43 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	tmp1 := partitionRangeForExpr(sctx, expr1, pruner, pruner.fullRange())
 	tmp2 := partitionRangeForExpr(sctx, expr2, pruner, pruner.fullRange())
 	return tmp1.union(tmp2)
+}
+
+func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	pruner *rangeColumnsPruner) partitionRangeOR {
+	col, ok := args[0].(*expression.Column)
+	if !ok || col.ID != pruner.partCol.ID {
+		return pruner.fullRange()
+	}
+
+	var result partitionRangeOR
+	for i := 1; i < len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			return pruner.fullRange()
+		}
+		switch constExpr.Value.Kind() {
+		case types.KindInt64, types.KindUint64, types.KindMysqlTime: // for safety, only support int and datetime now
+		case types.KindNull:
+			result = append(result, partitionRange{0, 1})
+			continue
+		default:
+			return pruner.fullRange()
+		}
+
+		// convert all elements to EQ-exprs and prune them one by one
+		sf, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
+		if err != nil {
+			return pruner.fullRange()
+		}
+		start, end, ok := pruner.partitionRangeForExpr(sctx, sf)
+		if !ok {
+			return pruner.fullRange()
+		}
+		result = append(result, partitionRange{start, end})
+	}
+
+	return result.simplify()
 }
 
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
@@ -1581,7 +1621,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		return
 	}
 	var action, reason func() string
-	var used []model.PartitionDefinition
+	used := make([]model.PartitionDefinition, 0, len(usedMap))
 	for _, def := range usedMap {
 		used = append(used, def)
 	}

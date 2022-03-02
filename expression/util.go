@@ -190,7 +190,7 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
@@ -754,13 +754,13 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
-	if useCache || isPointExec {
+	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
 			ctx:   ctx,
@@ -795,7 +795,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr))
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
@@ -1180,11 +1180,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParamsInternal(ctx, stmt, inValues...)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmtNode)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}

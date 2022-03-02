@@ -177,12 +177,13 @@ func TestGetCPUProfile(t *testing.T) {
 	defer cancel()
 	testutil.MockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
 	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			var err error
 			buf := bytes.NewBuffer(nil)
-			err = getCPUProfile(time.Millisecond*400, buf)
+			err = getCPUProfile(time.Millisecond*1000, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)
@@ -194,7 +195,7 @@ func TestGetCPUProfile(t *testing.T) {
 					labelCnt++
 				}
 			}
-			require.True(t, labelCnt > 1)
+			require.True(t, labelCnt > 0)
 		}()
 	}
 	wg.Wait()
@@ -212,12 +213,12 @@ func TestProfileHTTPHandler(t *testing.T) {
 	router.HandleFunc("/debug/pprof/profile", ProfileHTTPHandler)
 	httpServer := &http.Server{Handler: router, WriteTimeout: time.Second * 60}
 	go func() {
-		if err = httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			require.NoError(t, err)
 		}
 	}()
 	defer func() {
-		err = httpServer.Close()
+		err := httpServer.Close()
 		require.NoError(t, err)
 	}()
 

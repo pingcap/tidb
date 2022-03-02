@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -394,14 +396,14 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
 		return ""
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return ""
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -412,7 +414,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if globalHandle == nil {
 		return ""
 	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -427,20 +429,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	if prepared.UseCache {
-		// disable the cache if cache table in prepared statement
-		for _, vInfo := range preparedStmt.VisitInfos {
-			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
-			// if table does not exist, skip it, maybe it is a `create table` statement
-			if err != nil {
-				continue
-			}
-			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-				prepared.UseCache = false
-				break
-			}
-		}
-	}
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
@@ -449,6 +437,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -554,8 +543,11 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.SkipPlanCache {
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -584,6 +576,22 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containTableDual(child)
+	}
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
@@ -700,18 +708,25 @@ func (e *Execute) rebuildRange(p Plan) error {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
-		if x.HandleParam != nil {
-			var iv int64
-			iv, err = x.HandleParam.Datum.ToInt64(sc)
+		if x.HandleConstant != nil {
+			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
+			if err != nil {
+				return err
+			}
+			iv, err := dVal.ToInt64(sc)
 			if err != nil {
 				return err
 			}
 			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
-		for i, param := range x.IndexValueParams {
+		for i, param := range x.IndexConstants {
 			if param != nil {
-				x.IndexValues[i] = param.Datum
+				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
+				if err != nil {
+					return err
+				}
+				x.IndexValues[i] = *dVal
 			}
 		}
 		return nil
@@ -754,8 +769,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				var iv int64
-				iv, err = param.Datum.ToInt64(sc)
+				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				if err != nil {
+					return err
+				}
+				iv, err := dVal.ToInt64(sc)
 				if err != nil {
 					return err
 				}
@@ -768,7 +786,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = param.Datum
+					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					if err != nil {
+						return err
+					}
+					x.IndexValues[i][j] = *dVal
 				}
 			}
 		}
@@ -803,6 +825,23 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
+	dVal, err := val.ConvertTo(sc, target)
+	if err != nil {
+		return nil, err
+	}
+	// The converted result must be same as original datum.
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	if err != nil || cmp != 0 {
+		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
+	}
+	return &dVal, nil
 }
 
 func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
@@ -1410,7 +1449,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 		}
 		copStats := runtimeStatsColl.GetCopStats(explainID)
 		analyzeInfo += copStats.String()
-		actRows = fmt.Sprint(copStats.GetActRows())
+		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())

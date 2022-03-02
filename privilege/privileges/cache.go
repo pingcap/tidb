@@ -1168,7 +1168,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 }
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
-	var gs []string
+	var gs []string // nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
@@ -1231,19 +1231,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
 		if record.fullyMatch(user, host) {
-			if _, ok := dbPrivTable[record.DB]; ok {
-				dbPrivTable[record.DB] |= record.Privileges
-			} else {
-				dbPrivTable[record.DB] = record.Privileges
-			}
+			dbPrivTable[record.DB] |= record.Privileges
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
-					if _, ok := dbPrivTable[record.DB]; ok {
-						dbPrivTable[record.DB] |= record.Privileges
-					} else {
-						dbPrivTable[record.DB] = record.Privileges
-					}
+					dbPrivTable[record.DB] |= record.Privileges
 				}
 			}
 		}
@@ -1273,19 +1265,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
 		if user == record.User && host == record.Host {
-			if _, ok := dbPrivTable[record.DB]; ok {
-				tablePrivTable[recordKey] |= record.TablePriv
-			} else {
-				tablePrivTable[recordKey] = record.TablePriv
-			}
+			tablePrivTable[recordKey] |= record.TablePriv
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
-					if _, ok := dbPrivTable[record.DB]; ok {
-						tablePrivTable[recordKey] |= record.TablePriv
-					} else {
-						tablePrivTable[recordKey] = record.TablePriv
-					}
+					tablePrivTable[recordKey] |= record.TablePriv
 				}
 			}
 		}

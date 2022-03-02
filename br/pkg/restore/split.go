@@ -13,7 +13,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -21,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/tikv/pd/pkg/codec"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -48,6 +47,10 @@ const (
 	RejectStoreCheckRetryTimes  = 64
 	RejectStoreCheckInterval    = 100 * time.Millisecond
 	RejectStoreMaxCheckInterval = 2 * time.Second
+)
+
+var (
+	ScanRegionAttemptTimes = 30
 )
 
 // RegionSplitter is a executor of region split by rules.
@@ -93,8 +96,8 @@ func (rs *RegionSplitter) Split(
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
-	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
-	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
+	minKey := codec.EncodeBytes(nil, sortedRanges[0].StartKey)
+	maxKey := codec.EncodeBytes(nil, sortedRanges[len(sortedRanges)-1].EndKey)
 	interval := SplitRetryInterval
 	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
@@ -128,7 +131,7 @@ SplitRegions:
 						log.Error("split regions no valid key",
 							logutil.Key("startKey", region.Region.StartKey),
 							logutil.Key("endKey", region.Region.EndKey),
-							logutil.Key("key", codec.EncodeBytes(key)),
+							logutil.Key("key", codec.EncodeBytes(nil, key)),
 							rtree.ZapRanges(ranges))
 					}
 					return errors.Trace(errSplit)
@@ -182,12 +185,27 @@ SplitRegions:
 	return nil
 }
 
-func (rs *RegionSplitter) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := rs.client.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return regionInfo != nil, nil
+	// the region hasn't get ready.
+	if regionInfo == nil {
+		return false, nil
+	}
+
+	// check whether the region is healthy and report.
+	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
+	for _, peer := range regionInfo.PendingPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+	}
+	for _, peer := range regionInfo.DownPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+	}
+	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
+	// (or once there is a peer down, we may get stuck at waiting region get ready.)
+	return len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
@@ -215,7 +233,7 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
 	interval := SplitCheckInterval
 	for i := 0; i < SplitCheckMaxRetryTimes; i++ {
-		ok, err := rs.hasRegion(ctx, regionID)
+		ok, err := rs.hasHealthyRegion(ctx, regionID)
 		if err != nil {
 			log.Warn("wait for split failed", zap.Error(err))
 			return
@@ -300,7 +318,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 		for _, region := range newRegionSet {
 			err := rs.client.ScatterRegion(ctx, region)
 			if err == nil {
-				// it is safe accroding to the Go language spec.
+				// it is safe according to the Go language spec.
 				delete(newRegionSet, region.Region.Id)
 			} else if !pdErrorCanRetry(err) {
 				log.Warn("scatter meet error cannot be retried, skipping",
@@ -319,7 +337,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			logutil.ShortError(err),
 			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
 				m := i.(map[uint64]*RegionInfo)
-				result := make([]string, len(m))
+				result := make([]string, 0, len(m))
 				for id := range m {
 					result = append(result, strconv.Itoa(int(id)))
 				}
@@ -455,7 +473,7 @@ type scanRegionBackoffer struct {
 
 func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: 30,
+		attempt: ScanRegionAttemptTimes,
 	}
 }
 
@@ -505,7 +523,7 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
 	if len(splitKey) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes(splitKey)
+	splitKey = codec.EncodeBytes(nil, splitKey)
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
@@ -528,35 +546,4 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRu
 	}
 
 	return s, nil
-}
-
-func beforeEnd(key []byte, end []byte) bool {
-	return bytes.Compare(key, end) < 0 || len(end) == 0
-}
-
-func intersectRange(region *metapb.Region, rg Range) Range {
-	var startKey, endKey []byte
-	if len(region.StartKey) > 0 {
-		_, startKey, _ = codec.DecodeBytes(region.StartKey)
-	}
-	if bytes.Compare(startKey, rg.Start) < 0 {
-		startKey = rg.Start
-	}
-	if len(region.EndKey) > 0 {
-		_, endKey, _ = codec.DecodeBytes(region.EndKey)
-	}
-	if beforeEnd(rg.End, endKey) {
-		endKey = rg.End
-	}
-
-	return Range{Start: startKey, End: endKey}
-}
-
-func insideRegion(region *metapb.Region, meta *sst.SSTMeta) bool {
-	rg := meta.GetRange()
-	return keyInsideRegion(region, rg.GetStart()) && keyInsideRegion(region, rg.GetEnd())
-}
-
-func keyInsideRegion(region *metapb.Region, key []byte) bool {
-	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }

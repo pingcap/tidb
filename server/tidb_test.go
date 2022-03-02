@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
@@ -83,8 +82,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	require.NoError(t, err)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -130,15 +127,17 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	}()
 
 	dbt := testkit.NewDBTestKit(t, db)
-	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
-	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
-	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	dbt.MustExec("set @@global.tidb_top_sql_max_time_series_count=5;")
 
 	err = cpuprofile.StartCPUProfiler()
 	require.NoError(t, err)
 	cleanFn := func() {
 		cleanup()
 		cpuprofile.StopCPUProfiler()
+		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
 	}
 	return ts, cleanFn
 }
@@ -249,26 +248,25 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
-	require.NoError(t, err)
-	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
-	require.NoError(t, err)
+	dir := t.TempDir()
 
-	defer func() {
-		os.Remove("/tmp/ca-key-2.pem")
-		os.Remove("/tmp/ca-cert-2.pem")
-		os.Remove("/tmp/server-key-2.pem")
-		os.Remove("/tmp/server-cert-2.pem")
-	}()
+	fileName := func(file string) string {
+		return filepath.Join(dir, file)
+	}
+
+	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, fileName("ca-key-2.pem"), fileName("ca-cert-2.pem"))
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, fileName("server-key-2.pem"), fileName("server-cert-2.pem"))
+	require.NoError(t, err)
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
-	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
-	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
-	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
+	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
+	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
+	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
@@ -294,15 +292,17 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
-	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
-	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
-	client1KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-a.pem")
-	client1CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-a.pem")
-	client2KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-b.pem")
-	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
+	dir := t.TempDir()
 
-	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
+	caPath := filepath.Join(dir, "ca-cert-cn.pem")
+	serverKeyPath := filepath.Join(dir, "server-key-cn.pem")
+	serverCertPath := filepath.Join(dir, "server-cert-cn.pem")
+	client1KeyPath := filepath.Join(dir, "client-key-cn-check-a.pem")
+	client1CertPath := filepath.Join(dir, "client-cert-cn-check-a.pem")
+	client2KeyPath := filepath.Join(dir, "client-key-cn-check-b.pem")
+	client2CertPath := filepath.Join(dir, "client-cert-cn-check-b.pem")
+
+	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(dir, "ca-key-cn.pem"), caPath)
 	require.NoError(t, err)
 	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
 	require.NoError(t, err)
@@ -377,11 +377,8 @@ func TestMultiStatements(t *testing.T) {
 }
 
 func TestSocketForwarding(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
@@ -413,11 +410,8 @@ func TestSocketForwarding(t *testing.T) {
 }
 
 func TestSocket(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
@@ -452,11 +446,8 @@ func TestSocket(t *testing.T) {
 }
 
 func TestSocketAndIp(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -621,11 +612,8 @@ func TestSocketAndIp(t *testing.T) {
 
 // TestOnlySocket for server configuration without network interface for mysql clients
 func TestOnlySocket(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -1302,7 +1290,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
 	})
-	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select
@@ -1757,6 +1745,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			found++
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
+			require.Equal(t, uint64(ExecCountPerSQL), item.DurationCount, sqlStr)
 			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
 			require.True(t, item.SumDurationNs < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
 			if strings.HasPrefix(sqlStr, "set global") {
@@ -1794,11 +1783,8 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn fu
 }
 
 func TestLocalhostClientMapping(t *testing.T) {
-	osTempDir := os.TempDir()
-	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
-	defer os.RemoveAll(tempDir)
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()

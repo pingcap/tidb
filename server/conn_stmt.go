@@ -169,7 +169,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		paramValues []byte
 	)
 	cc.initInputEncoder(ctx)
-	defer cc.inputDecoder.clean()
 	numParams := stmt.NumParams()
 	args := make([]types.Datum, numParams)
 	if numParams > 0 {
