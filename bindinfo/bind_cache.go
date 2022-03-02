@@ -187,6 +187,14 @@ func (c *bindCache) SetMemCapacity(capacity int64) {
 	c.memCapacity = capacity
 }
 
+// GetMemUsage get the memory Usage for the cache.
+// The function is thread-safe.
+func (c *bindCache) GetMemUsage() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.memTracker.BytesConsumed()
+}
+
 // GetMemCapacity get the memory capacity for the cache.
 // The function is thread-safe.
 func (c *bindCache) GetMemCapacity() int64 {
