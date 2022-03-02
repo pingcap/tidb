@@ -442,7 +442,7 @@ const (
 )
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, flag uint, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
+func resolveType4Extremum(args []Expression) (_ *types.FieldType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
 	aggType := aggregateType(args)
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
@@ -471,7 +471,7 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, flag uint, field
 	} else if aggType.Tp == mysql.TypeDatetime || aggType.Tp == mysql.TypeTimestamp {
 		timeType = GLRetDatetime
 	}
-	return aggType.EvalType(), aggType.Flag, timeType, cmpStringMode
+	return aggType, timeType, cmpStringMode
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -493,27 +493,28 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, flag, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	argTp := tp
+	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	resTp := resFieldType.EvalType()
+	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
-	} else if tp == types.ETJson {
+	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
-		tp = types.ETString
+		resTp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	switch argTp {
 	case types.ETInt:
-		bf.tp.Flag |= flag
+		bf.tp.Flag |= resFieldType.Flag
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -550,16 +551,16 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 }
 
 func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
-    for _, arg := range args {
-        argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
-        if argFlen > flen {
-            flen = argFlen
-        }
-        if argDecimal > decimal {
-            decimal = argDecimal
-        }
-    }
-    return flen, decimal
+	for _, arg := range args {
+		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
+		if argFlen > flen {
+			flen = argFlen
+		}
+		if argDecimal > decimal {
+			decimal = argDecimal
+		}
+	}
+	return flen, decimal
 }
 
 type builtinGreatestIntSig struct {
@@ -801,27 +802,28 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, flag, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	argTp := tp
+	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	resTp := resFieldType.EvalType()
+	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
-	} else if tp == types.ETJson {
+	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
-		tp = types.ETString
+		resTp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	switch tp {
+	switch argTp {
 	case types.ETInt:
-		bf.tp.Flag |= flag
+		bf.tp.Flag |= resFieldType.Flag
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
