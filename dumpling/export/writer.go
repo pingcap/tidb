@@ -169,11 +169,11 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 // WriteSequenceMeta writes sequence meta to a file
 func (w *Writer) WriteSequenceMeta(db, sequence, createSQL string) error {
 	tctx, conf := w.tctx, w.conf
-	fileName, err := (&outputFileNamer{DB: db, Table: sequence}).render(conf.OutputFileTemplate, outputFileTemplateTable)
+	fileName, err := (&outputFileNamer{DB: db, Table: sequence}).render(conf.OutputFileTemplate, outputFileTemplateSequence)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+"s-schema-sequence.sql", conf.CompressType)
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteTableData writes table data to a file with retry
