@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -2355,6 +2356,13 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			if (isTopN || isLimit) && considerIndexMerge {
 				return false // TopN and Limit cannot be pushed down to IndexMerge
 			}
+			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+				// Don't push to cop for cached table, it brings more harm than good:
+				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
+				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
+				// Once aggregation is pushed to cop, the cache data can't be use any more.
+				return false
+			}
 		case *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, true)
@@ -2498,6 +2506,9 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		}
 		if !la.canPushToCop(kv.TiKV) {
 			taskTypes = []property.TaskType{property.RootTaskType}
+			if la.canPushToCop(kv.TiFlash) {
+				taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
+			}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)

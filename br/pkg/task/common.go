@@ -31,7 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
 )
