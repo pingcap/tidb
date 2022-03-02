@@ -163,22 +163,6 @@ type baseTestSuite struct {
 	ctx *mock.Context // nolint:structcheck
 }
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-
-	dom, err := session.BootstrapSession(store)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, dom, errors.Trace(err)
-}
-
 func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	store, err := mockstore.NewMockStore(
