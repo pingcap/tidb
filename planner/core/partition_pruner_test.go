@@ -149,7 +149,6 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_range_col_in_string")
 	tk.MustExec("create database test_range_col_in_string")
-	defer tk.MustExec("drop database test_range_col_in_string")
 
 	tk.MustExec("use test_range_col_in_string")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
@@ -158,16 +157,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	type testStruct struct {
 		sql        string
 		partitions string
-	}
-	tests := []testStruct{
-		// Lower case partition names due to issue#32719
-		{sql: `explain select * from t where a IS NULL`, partitions: "pnull"},
-		{sql: `explain select * from t where a = 'AA'`, partitions: "paaaa"},
-		{sql: `explain select * from t where a = 'AAA'`, partitions: "paaaa"},
-		{sql: `explain select * from t where a = 'AB'`, partitions: "pccc"},
-		{sql: `explain select * from t where a = 'aB'`, partitions: "paaa"},
-		{sql: `explain select * from t where a = '🍣'`, partitions: "psushi"},
-		{sql: `explain select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax"},
+		rows       []string
 	}
 
 	extractPartitions := func(res *testkit.Result) string {
@@ -186,9 +176,10 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		for _, mode := range modes {
 			tk.MustExec(`set @@tidb_partition_prune_mode = '` + mode + `'`)
 			for _, test := range tests {
-				result := tk.MustQuery(test.sql)
-				partitions := strings.ToLower(extractPartitions(result))
+				explainResult := tk.MustQuery("explain format = 'brief' " + test.sql)
+				partitions := strings.ToLower(extractPartitions(explainResult))
 				require.Equal(t, test.partitions, partitions, "Mode: %s sql: %s", mode, test.sql)
+				tk.MustQuery(test.sql).Sort().Check(testkit.Rows(test.rows...))
 			}
 		}
 	}
@@ -200,7 +191,20 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		`partition paaa values less than ("aaa"),` +
 		`partition pSushi values less than ("🍣🍣🍣"),` +
 		`partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest")`)
+	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
+	tests := []testStruct{
+		// Lower case partition names due to issue#32719
+		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a = 'AA'`, partitions: "paaaa", rows: []string{"AA"}},
+		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found!
+		{sql: `select * from t where a = 'aa'`, partitions: "paaa", rows: []string{"aa"}},
+		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found!
+		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
+		{sql: `select * from t where a = 'aB'`, partitions: "paaa", rows: []string{}},
+		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
+	}
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
 	checkColumnStringPruningTests(tests)
@@ -215,17 +219,19 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		`partition pShrimpsandwich values less than ("Räksmörgås"),` +
 		`partition pSushi values less than ("🍣🍣🍣"),` +
 		`partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest")`)
+	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
 
 	tests = []testStruct{
 		// Lower case partition names due to issue#32719
-		{sql: `explain select * from t where a IS NULL`, partitions: "pnull"},
-		{sql: `explain select * from t where a = 'AA'`, partitions: "paaa"},
-		{sql: `explain select * from t where a = 'AAA'`, partitions: "paaaa"},
-		{sql: `explain select * from t where a = 'AB'`, partitions: "pccc"},
-		{sql: `explain select * from t where a = 'aB'`, partitions: "pccc"},
-		{sql: `explain select * from t where a = '🍣'`, partitions: "psushi"},
-		{sql: `explain select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax"},
+		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a = 'AA'`, partitions: "paaa", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a = 'AA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{"AA"}},
+		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA", "aaa"}},
+		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{}}, // Notice that the it uses _bin collation for partition => not found!
+		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
+		{sql: `select * from t where a = 'aB'`, partitions: "pccc", rows: []string{}},
+		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
 	}
 
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
@@ -234,7 +240,6 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_unicode_ci`)
 	checkColumnStringPruningTests(tests)
-	tk.MustExec("set @@session.tidb_partition_prune_mode=Default")
 }
 
 func TestListPartitionPruner(t *testing.T) {
