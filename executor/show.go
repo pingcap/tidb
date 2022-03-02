@@ -343,14 +343,13 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
-	// TODO: Should we need to check the privilege for the mysql.bind_info table in PlanBuilder.buildShow
+	// TODO: Should we need to check the privilege for the mysql.bind_info table
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM mysql.bind_info where status = 'using';`)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: should we check the length of the rows
 
 	handle := domain.GetDomain(e.ctx).BindHandle()
 
