@@ -95,6 +95,7 @@ const (
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
+	ActionMultiSchemaChange             ActionType = 61
 )
 
 var actionMap = map[ActionType]string{
@@ -157,6 +158,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter table cache",
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+	ActionMultiSchemaChange:             "alter table multi-schema change",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -255,7 +257,27 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
+	Warnings   []*errors.Error
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+}
+
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		Warnings:   nil,
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []interface{}   `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
 }
 
 // Job is for a DDL operation.
@@ -336,6 +358,12 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
+func (job *Job) MarkNonRevertible() {
+	if job.MultiSchemaInfo != nil {
+		job.MultiSchemaInfo.Revertible = false
+	}
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
@@ -377,6 +405,18 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		job.RawArgs, err = json.Marshal(job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of last executing sub-job.
+				if sub.Args == nil {
+					continue
+				}
+				sub.RawArgs, err = json.Marshal(sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
 		}
 	}
 
@@ -501,6 +541,17 @@ func (job *Job) IsDone() bool {
 // IsRunning returns whether job is still running or not.
 func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
+}
+
+func (m *MultiSchemaInfo) MergeSubJob(job *Job) {
+	m.SubJobs = append(m.SubJobs, &SubJob{
+		Type:        job.Type,
+		Args:        job.Args,
+		RawArgs:     job.RawArgs,
+		SchemaState: job.SchemaState,
+		SnapshotVer: job.SnapshotVer,
+		Revertible:  true,
+	})
 }
 
 // JobState is for job state.
