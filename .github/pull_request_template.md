@@ -51,9 +51,9 @@ Documentation
 
 ### Release note
 
-<!-- bugfix or new feature needs a release note -->
+<!-- compatibility change, improvement, bugfix, and new feature need a release note -->
 
-If you do not know how to write a good release note, please refer to [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html).
+If you do not know how to write a good release note, please refer to [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) to write a quality release note.
 
 ```release-note
 None
