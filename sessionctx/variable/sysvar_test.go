@@ -888,7 +888,7 @@ func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has autoconvert out of range.
-	require.Equal(t, "1", val)
+	require.Equal(t, "0", val)
 
 	val, err = sv.Validate(vars, "9999", ScopeSession)
 	require.NoError(t, err)

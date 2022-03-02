@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -727,7 +728,7 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 	return timeOut.Load(), err
 }
 
-func TestTiFlashBasicRateLimiter(t *testing.T) {
+func TestTiFlashBatchRateLimiter(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
@@ -804,5 +805,39 @@ func TestTiFlashBasicRateLimiter(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(5, 5)
+	time.Sleep(time.Second * 2)
+}
+
+func TestTiFlashBatchKill(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	threshold := 0
+	tk.MustExec("create database tiflash_ddl_limit")
+	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
+	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
+
+	go func() {
+		//connID := tk.Session().GetSessionVars().ConnectionID
+		//sql := fmt.Sprintf("kill tidb %v", connID)
+		time.Sleep(time.Millisecond * 100)
+		//tk2 := testkit.NewTestKit(t, s.store)
+		//logutil.BgLogger().Info(fmt.Sprintf("do %v", sql))
+		//tk2.MustExec(sql)
+		//tk2.Session().GetSessionManager().Kill(connID, false)
+
+		sessVars := tk.Session().GetSessionVars()
+		atomic.StoreUint32(&sessVars.Killed, 1)
+		logutil.BgLogger().Info("session killed")
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables", `return(2)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables"))
+	}()
+	timeOut, err := execWithTimeout(t, tk, time.Second*2000, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	require.Error(t, err, "[executor:1317]Query execution was interrupted")
+	require.False(t, timeOut)
 	time.Sleep(time.Second * 2)
 }

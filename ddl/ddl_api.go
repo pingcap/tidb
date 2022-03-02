@@ -271,11 +271,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 	isDone := func() bool {
 		done := false
+		if sctx.GetSessionVars().Killed == 1 {
+			done = true
+		}
 		failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
 			done = val.(bool)
 		})
 		if done {
-			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", sctx.GetSessionVars().Killed))
 		}
 		return done
 	}
