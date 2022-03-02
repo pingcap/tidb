@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -48,14 +47,11 @@ type testColumnSuiteToVerify struct {
 }
 
 func TestColumnSuite(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	require.NoError(t, err)
-
 	suite.Run(t, new(testColumnSuiteToVerify))
 }
 
 func (s *testColumnSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_column")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),

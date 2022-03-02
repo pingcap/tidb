@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package keydecoder_test
+package keydecoder
 
 import (
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	. "github.com/pingcap/tidb/util/keydecoder"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -86,7 +86,7 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, "", decodedKey.IndexName)
 	assert.Nil(t, decodedKey.IndexValues)
 
-	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	encodedCommonKey := ch.Encoded()
 	key := []byte{
 		't',
