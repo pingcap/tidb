@@ -79,12 +79,37 @@ func (p *baseProcessor) OnSelectTable(_ *ast.TableName) error {
 	return errors.New("not supported")
 }
 
-func (p *baseProcessor) setEvaluatedTS(ts uint64, tsEvaluator StalenessTSEvaluator) error {
+func (p *baseProcessor) setAsNonStaleRead() error {
+	return p.setEvaluatedValues(0, nil, nil)
+}
+
+func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
+	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
+	if err != nil {
+		return err
+	}
+	return p.setEvaluatedValues(ts, is, func(sctx sessionctx.Context) (uint64, error) {
+		return ts, nil
+	})
+}
+
+func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) error {
+	ts, err := evaluator(p.sctx)
+	if err != nil {
+		return err
+	}
+
+	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
+	if err != nil {
+		return err
+	}
+
+	return p.setEvaluatedValues(ts, is, evaluator)
+}
+
+func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, tsEvaluator StalenessTSEvaluator) error {
 	if p.evaluated {
-		if ts != p.ts {
-			return errAsOf.GenWithStack("can not set different time in the as of")
-		}
-		return nil
+		return errors.New("already evaluated")
 	}
 
 	if ts != 0 {
@@ -103,6 +128,7 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64, tsEvaluator StalenessTSEvaluat
 
 type staleReadProcessor struct {
 	baseProcessor
+	stmtAsOfTs uint64
 }
 
 // NewStaleReadProcessor creates a new stale read processor
@@ -114,51 +140,60 @@ func NewStaleReadProcessor(sctx sessionctx.Context) Processor {
 
 // OnSelectTable will be called when process table in select statement
 func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
-	// Try to get ts from '... as of timestamp ...'
-	ts, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
+	if p.sctx.GetSessionVars().InTxn() {
+		// When in explicit txn, it is not allowed to declare stale read in statement
+		// and the sys variables should also be ignored no matter it is set or not
+		if tn.AsOf != nil {
+			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+
+		if p.evaluated {
+			return nil
+		}
+
+		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
+			return p.setEvaluatedValues(
+				txnCtx.StartTS,
+				temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
+				nil,
+			)
+		}
+		return p.setAsNonStaleRead()
+	}
+
+	stmtAsOfTS, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
 	if err != nil {
 		return err
 	}
 
-	if p.sctx.GetSessionVars().InTxn() {
-		// When in explicit txn, it is not allowed to declare stale read in statement
-		// and the sys variables should also be ignored no matter it is set or not
-		if ts != 0 {
-			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-		}
-
-		p.evaluated = true
-		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
-			p.ts = txnCtx.StartTS
-			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema))
+	if p.evaluated {
+		if p.stmtAsOfTs != stmtAsOfTS {
+			return errAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
 
-	// Try to get ts from variable `txn_read_ts`, when it is present 'as of' clause in statement should not be allowed
-	if txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS(); txnReadTS != 0 {
-		if ts != 0 {
-			return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
-		}
-		ts = txnReadTS
+	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if txnReadTS > 0 && stmtAsOfTS > 0 {
+		// `as of` and `@@tx_read_ts` cannot be set in the same time
+		return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 	}
 
-	if ts != 0 {
-		return p.setEvaluatedTS(ts, func(sctx sessionctx.Context) (uint64, error) {
-			return ts, nil
-		})
+	if stmtAsOfTS > 0 {
+		p.stmtAsOfTs = stmtAsOfTS
+		return p.setEvaluatedTS(stmtAsOfTS)
 	}
 
-	// Try to get ts from variable `tidb_read_staleness`
-	evaluator := getTsEvaluatorFromReadStaleness(p.sctx)
-	if evaluator != nil {
-		ts, err = evaluator(p.sctx)
-		if err != nil {
-			return err
-		}
+	if txnReadTS > 0 {
+		return p.setEvaluatedTS(txnReadTS)
 	}
 
-	return p.setEvaluatedTS(ts, evaluator)
+	// set ts from `@@tidb_read_staleness` when both `as of` and `@@tx_read_ts` are not set
+	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
+		return p.setEvaluatedEvaluator(evaluator)
+	}
+
+	return p.setAsNonStaleRead()
 }
 
 func parseAndValidateAsOf(sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64, error) {
