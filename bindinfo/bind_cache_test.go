@@ -19,16 +19,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBindCache(t *testing.T) {
-	ctx := mock.NewContext()
-	memCapacity := int64(100)
-	ctx.GetSessionVars().MemQuotaBindCache = memCapacity
-	bindCache := newBindCache(memCapacity)
+	variable.MemQuotaBindCache.Store(100)
+	bindCache := newBindCache()
 
 	value := make([][]*BindRecord, 3)
 	key := make([]bindCacheKey, 3)
@@ -38,7 +36,7 @@ func TestBindCache(t *testing.T) {
 		record := &BindRecord{OriginalSQL: cacheKey, Db: ""}
 		value[i] = []*BindRecord{record}
 
-		require.Equal(t, int64(100), bindCacheKVMem(key[i], value[i]))
+		require.Equal(t, int64(100), calcBindCacheKVMem(key[i], value[i]))
 	}
 
 	ok := bindCache.set(key[0], value[0])

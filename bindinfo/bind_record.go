@@ -271,7 +271,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation)
+	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 

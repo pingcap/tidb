@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
@@ -25,7 +26,7 @@ import (
 
 // bindCache uses the LRU cache to store the bindRecord.
 // The key of the LRU cache is original sql, the value is a slice of BindRecord.
-// Note: The bindCache is thread-safe.
+// Note: The bindCache should be accessed with lock.
 type bindCache struct {
 	lock        sync.Mutex
 	cache       *kvcache.SimpleLRUCache
@@ -39,7 +40,7 @@ func (key bindCacheKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
-func bindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
+func calcBindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	var valMem int64
 	for _, bindRecord := range value {
 		valMem += int64(bindRecord.size())
@@ -47,13 +48,13 @@ func bindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
 	return int64(len(key.Hash())) + valMem
 }
 
-func newBindCache(memCapacity int64) *bindCache {
+func newBindCache() *bindCache {
 	// since bindCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
-	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
+	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
 	c := bindCache{
 		cache:       cache,
-		memCapacity: memCapacity,
+		memCapacity: variable.MemQuotaBindCache.Load(),
 		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
 	}
 	return &c
@@ -75,21 +76,21 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
 func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
-	mem := bindCacheKVMem(key, value)
+	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		return false
 	}
 	bindRecords := c.get(key)
 	if bindRecords != nil {
 		// Remove the origin key-value pair.
-		mem -= bindCacheKVMem(key, bindRecords)
+		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
 			return false
 		}
-		c.memTracker.Consume(-bindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
+		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
@@ -101,7 +102,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
 func (c *bindCache) delete(key bindCacheKey) bool {
 	bindRecords := c.get(key)
 	if bindRecords != nil {
-		mem := bindCacheKVMem(key, bindRecords)
+		mem := calcBindCacheKVMem(key, bindRecords)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
 	}
@@ -152,9 +153,9 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 	c.set(cacheKey, []*BindRecord{meta})
 }
 
-// RemoveDeletedBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
+// RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) RemoveDeletedBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	metas := c.get(bindCacheKey(hash))
@@ -194,20 +195,12 @@ func (c *bindCache) GetMemCapacity() int64 {
 	return c.memCapacity
 }
 
-// GetMemUsage get the memory Usage for the cache.
-// The function is thread-safe.
-func (c *bindCache) GetMemUsage() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.memTracker.BytesConsumed()
-}
-
-// Copy copys a new bindCache from the origin cache.
+// Copy copies a new bindCache from the origin cache.
 // The function is thread-safe.
 func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	newCache := newBindCache(c.memCapacity)
+	newCache := newBindCache()
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
