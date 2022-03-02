@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -414,5 +415,67 @@ func TestForApplyAndUnionScan(t *testing.T) {
 	tk.MustExec("insert into t values (59, 'suspicious feistel', '2020-01-29 19:52:14')")
 	tk.MustExec("insert into t1 values (60, 'practical thompson', '2020-03-25 04:33:10')")
 	tk.MustQuery("select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2").Check(testkit.Rows())
+	tk.MustExec("rollback")
+}
+
+func TestIssue32422(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (id int, c int, index(id));")
+	tk.MustExec("insert into t values (3,3), (4,4), (5,5);")
+	tk.MustExec("alter table t cache;")
+
+	var cacheUsed bool
+	for i := 0; i < 20; i++ {
+		tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			cacheUsed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.True(t, cacheUsed)
+
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+
+	// Some extra tests.
+	// Since cached table use UnionScanExec utilities, check what happens when they work together.
+	// In these cases, the cache data serve as the snapshot, tikv is skipped, and txn membuffer works the same way.
+	tk.MustExec("begin")
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	tk.MustExec("insert into t values (6, 6)")
+	// Check for the new added data.
+	tk.HasPlan("select id+1, c from t where c = 6;", "UnionScan")
+	tk.MustQuery("select id+1, c from t where c = 6;").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	// Check for the old data.
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Point get
+	tk.HasPlan("select id+1, c from t where id = 6", "PointGet")
+	tk.MustQuery("select id+1, c from t where id = 6").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id+1, c from t where id = 4").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Index Lookup
+	tk.HasPlan("select id+1, c from t where id = 6", "IndexLookUp")
+	tk.MustQuery("select id+1, c from t use index(id) where id = 6").Check(testkit.Rows("7 6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id+1, c from t use index(id) where id = 4").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Index Reader
+	tk.HasPlan("select id from t where id = 6", "IndexReader")
+	tk.MustQuery("select id from t use index(id) where id = 6").Check(testkit.Rows("6"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id from t use index(id) where id = 4").Check(testkit.Rows("4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
 	tk.MustExec("rollback")
 }

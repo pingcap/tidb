@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -46,6 +45,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -1067,7 +1067,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return x
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
-	us.cacheTable = v.CacheTable
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
@@ -1083,6 +1082,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
 	}
 
+	startTS, err := b.getSnapshotTS()
+	sessionVars := b.ctx.GetSessionVars()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -1090,6 +1096,23 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			// Determine whether the cache can be used.
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1103,6 +1126,24 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
+
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			// Determine whether the cache can be used.
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1117,6 +1158,24 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
+
+		tbl := x.Table()
+		if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+			cachedTable := tbl.(table.CachedTable)
+			leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+			// Determine whether the cache can be used.
+			cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+			if cacheData != nil {
+				sessionVars.StmtCtx.ReadFromTableCache = true
+				x.dummy = true
+				us.cacheTable = cacheData
+			} else {
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+					store := b.ctx.GetStore()
+					cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				}
+			}
+		}
 	case *IndexMergeReaderExecutor:
 		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -3138,6 +3197,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
+	}
+
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -3365,6 +3428,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 		return nil
 	}
 
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
+	}
+
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3528,6 +3595,10 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if err != nil {
 		b.err = err
 		return nil
+	}
+
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
@@ -4782,25 +4853,15 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	sessVars := b.ctx.GetSessionVars()
+	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
-		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
 	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logutil.BgLogger().Error("panic in the recoverable goroutine",
-						zap.Reflect("r", r),
-						zap.Stack("stack trace"))
-				}
-			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
-			if err != nil {
-				log.Warn("Update Lock Info Error")
-			}
-		}()
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }
