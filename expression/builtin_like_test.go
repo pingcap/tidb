@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -57,7 +57,7 @@ func TestLike(t *testing.T) {
 		require.NoError(t, err, comment)
 		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
 		require.NoError(t, err, comment)
-		trequire.DatumEqual(t, types.NewDatum(tt.match), r, comment)
+		testutil.DatumEqual(t, types.NewDatum(tt.match), r, comment)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestRegexp(t *testing.T) {
 		match, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
+			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
 		} else {
 			require.True(t, terror.ErrorEqual(err, tt.err))
 		}
@@ -141,7 +141,7 @@ func TestCILike(t *testing.T) {
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, comment)
-		trequire.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
+		testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
 	}
 
 	for _, tt := range tests {
@@ -153,6 +153,6 @@ func TestCILike(t *testing.T) {
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, comment)
-		trequire.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
+		testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 	}
 }

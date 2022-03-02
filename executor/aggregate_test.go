@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
@@ -1390,7 +1389,7 @@ func TestIssue20658(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	mustParseAndSort := func(rows [][]interface{}, cmt CommentInterface) []float64 {
+	mustParseAndSort := func(rows [][]interface{}, cmt string) []float64 {
 		ret := make([]float64, len(rows))
 		for i := 0; i < len(rows); i++ {
 			rowStr := rows[i][0].(string)
@@ -1408,9 +1407,9 @@ func TestIssue20658(t *testing.T) {
 	for _, sql := range sqls {
 		tk.MustExec("set @@tidb_streamagg_concurrency = 1;")
 		exp := tk.MustQuery(sql).Rows()
-		expected := mustParseAndSort(exp, Commentf("sql: %s; seed: %d", sql, randSeed))
+		expected := mustParseAndSort(exp, fmt.Sprintf("sql: %s; seed: %d", sql, randSeed))
 		for _, con := range []int{2, 4, 8} {
-			comment := Commentf("sql: %s; concurrency: %d, seed: %d", sql, con, randSeed)
+			comment := fmt.Sprintf("sql: %s; concurrency: %d, seed: %d", sql, con, randSeed)
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			ok := false
