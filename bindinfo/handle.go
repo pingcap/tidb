@@ -539,9 +539,14 @@ func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
 
 // newBindRecord builds BindRecord from a tuple in storage.
 func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
+	status := row.GetString(3)
+	// For compatibility, the 'Using' status binding will be converted to the 'Enable' status binding.
+	if status == Using {
+		status = Enable
+	}
 	hint := Binding{
 		BindSQL:    row.GetString(1),
-		Status:     row.GetString(3),
+		Status:     status,
 		CreateTime: row.GetTime(4),
 		UpdateTime: row.GetTime(5),
 		Charset:    row.GetString(6),
