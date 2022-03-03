@@ -986,6 +986,12 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1028,6 +1034,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
 			return err
 		}
+		statsVer = version
 	} else {
 		modifyCnt := curModifyCnt - results.BaseModifyCnt
 		if modifyCnt < 0 {
@@ -1040,6 +1047,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
 			return err
 		}
+		statsVer = version
 	}
 	// 2. Save histograms.
 	for _, result := range results.Ars {
@@ -1151,6 +1159,12 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 // SaveStatsToStorage saves the stats to storage.
 // TODO: refactor to reduce the number of parameters
 func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1177,6 +1191,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
+	statsVer = version
 	cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return err
@@ -1254,6 +1269,12 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 
 // SaveMetaToStorage will save stats_meta to storage.
 func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1271,6 +1292,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	}
 	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	statsVer = version
 	return err
 }
 
@@ -1447,6 +1469,12 @@ const (
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	sort.Slice(colIDs, func(i, j int) bool { return colIDs[i] < colIDs[j] })
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
@@ -1492,6 +1520,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
+	statsVer = version
 	// Remove the existing 'deleted' records.
 	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
 		return err
@@ -1511,6 +1540,12 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	ctx := context.Background()
 	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, StatsStatusInited, StatsStatusAnalyzed)
 	if err != nil {
@@ -1548,6 +1583,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
+	statsVer = version
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
 		return err
 	}
@@ -1717,6 +1753,12 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(tableID, statsVer)
+		}
+	}()
 	if extStats == nil || len(extStats.Stats) == 0 {
 		return nil
 	}
@@ -1758,6 +1800,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		if _, err := exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 			return err
 		}
+		statsVer = version
 	}
 	return nil
 }
@@ -1958,9 +2001,51 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return variable.TiDBOptOn(val), nil
+}
+
+func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error {
+	if tableID == 0 || version == 0 {
+		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
+	}
+	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
+	if err != nil {
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+	}
+	if !historicalStatsEnabled {
+		return nil
+	}
+
+	ctx := context.Background()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rows, _, err := h.execRestrictedSQL(ctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.New("no historical meta stats can be recorded")
+	}
+	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
+
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+
+	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
+	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }

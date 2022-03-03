@@ -380,6 +380,18 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFil
 	return uploaderWriter, nil
 }
 
+func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	data, err := s.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.WriteFile(ctx, newFileName, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.DeleteFile(ctx, oldFileName)
+}
+
 type azblobObjectReader struct {
 	blobClient azblob.BlockBlobClient
 
