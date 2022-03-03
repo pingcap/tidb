@@ -235,36 +235,36 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists temporary_table")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1")
-	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
+	err := tk.ExecToErr("create table temporary_table_t1 like temporary_table")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	tk.MustExec("drop table if exists temporary_table")
 
 	// Test create temporary table like.
 	// Test auto_random.
 	tk.MustExec("drop table if exists auto_random_table")
-	_, err = tk.Exec("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255))")
+	err = tk.ExecToErr("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255))")
 	defer tk.MustExec("drop table if exists auto_random_table")
 	tk.MustExec("drop table if exists auto_random_temporary_global")
-	_, err = tk.Exec("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows")
+	err = tk.ExecToErr("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
 
 	// Test pre split regions.
 	tk.MustExec("drop table if exists table_pre_split")
-	_, err = tk.Exec("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2")
+	err = tk.ExecToErr("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2")
 	defer tk.MustExec("drop table if exists table_pre_split")
 	tk.MustExec("drop table if exists temporary_table_pre_split")
-	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS")
+	err = tk.ExecToErr("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 
 	// Test shard_row_id_bits.
 	tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
-	_, err = tk.Exec("create table shard_row_id_table (a int) shard_row_id_bits = 5")
-	_, err = tk.Exec("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows")
+	err = tk.ExecToErr("create table shard_row_id_table (a int) shard_row_id_bits = 5")
+	err = tk.ExecToErr("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 	tk.MustExec("create table shard_row_id_table_plus (a int)")
 	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
-	_, err = tk.Exec("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
+	err = tk.ExecToErr("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
 	require.Equal(t, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 
 	// Test partition.
@@ -297,7 +297,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into test_gv_ddl_temp values (1, default, default)")
 	tk.MustQuery("select * from test_gv_ddl_temp").Check(testkit.Rows("1 9 11"))
-	_, err = tk.Exec("commit")
+	err = tk.ExecToErr("commit")
 	require.NoError(t, err)
 
 	// Test foreign key.
@@ -359,25 +359,25 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	// Test from->local temporary, to->local temporary
 	tk.MustExec("drop table if exists tb13, tb14")
 	tk.MustExec("create temporary table tb13 (i int primary key, j int)")
-	_, err = tk.Exec("create temporary table tb14 like tb13")
+	err = tk.ExecToErr("create temporary table tb14 like tb13")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb13, tb14")
 	// Test from->local temporary, to->normal
 	tk.MustExec("drop table if exists tb15, tb16")
 	tk.MustExec("create temporary table tb15 (i int primary key, j int)")
-	_, err = tk.Exec("create table tb16 like tb15")
+	err = tk.ExecToErr("create table tb16 like tb15")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb15, tb16")
 
 	tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2")
-	_, err = tk.Exec("create temporary table tmp_pre_split like table_pre_split")
+	err = tk.ExecToErr("create temporary table tmp_pre_split like table_pre_split")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 
 	tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2")
-	_, err = tk.Exec("create temporary table tmp_shard_row_id like table_shard_row_id")
+	err = tk.ExecToErr("create temporary table tmp_shard_row_id like table_shard_row_id")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 
@@ -405,9 +405,9 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table placement_table1(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists placement_table1")
 
-	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
+	err = tk.ExecToErr("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
-	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
+	err = tk.ExecToErr("create temporary table l_tmp_placement1 like placement_table1")
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
