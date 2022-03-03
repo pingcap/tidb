@@ -1184,7 +1184,7 @@ func TestStaleSessionQuery(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"))
 	// assert stale read is not exist after empty the variable
-	tk.MustExec(`set @@tidb_read_staleness=""`)
+	tk.MustExec(`set @@tidb_read_staleness="0"`)
 	require.Len(t, tk.MustQuery("select * from t10").Rows(), 3)
 }
 
