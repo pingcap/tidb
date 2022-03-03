@@ -623,9 +623,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
