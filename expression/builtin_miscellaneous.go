@@ -137,7 +137,8 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	sessVars := b.ctx.GetSessionVars()
 	if isNull || val < 0 {
-		if sessVars.StrictSQLMode {
+		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+		if !sessVars.StmtCtx.BadNullAsWarning {
 			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 		err := errIncorrectArgs.GenWithStackByArgs("sleep")

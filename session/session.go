@@ -1672,12 +1672,18 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeVer != 0 {
 		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
+	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
+	prevStmtType := s.sessionVars.StmtCtx.StmtType
+	prevTables := s.sessionVars.StmtCtx.Tables
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
+		s.sessionVars.StmtCtx.StmtType = prevStmtType
+		s.sessionVars.StmtCtx.Tables = prevTables
 	}, nil
 }
 
