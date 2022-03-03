@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -477,8 +478,22 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
 				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-					e.idxInfo.Name.O, e.handles[i])
+				return (&consistency.Reporter{
+					HandleEncode: func(_ kv.Handle) kv.Key {
+						return key
+					},
+					IndexEncode: func(_ *consistency.RecordData) kv.Key {
+						return indexKeys[i]
+					},
+					Tbl:  e.tblInfo,
+					Idx:  e.idxInfo,
+					Sctx: e.ctx,
+				}).ReportLookupInconsistent(ctx,
+					1, 0,
+					e.handles[i:i+1],
+					e.handles,
+					[]consistency.RecordData{{}},
+				)
 			}
 			continue
 		}
@@ -525,7 +540,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}

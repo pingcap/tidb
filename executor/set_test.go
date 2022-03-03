@@ -22,8 +22,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -34,76 +34,45 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSerialSuite1) TestSetVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	testSQL := "SET @a = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = `SET @a = "1";`
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @a = null;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@global.autocommit = 1;"
-	tk.MustExec(testSQL)
+func TestSetVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET @a = 1;")
+	tk.MustExec(`SET @a = "1";`)
+	tk.MustExec("SET @a = null;")
+	tk.MustExec("SET @@global.autocommit = 1;")
 
 	// TODO: this test case should returns error.
-	// testSQL = "SET @@global.autocommit = null;"
-	// _, err := tk.Exec(testSQL)
+	// err := tk.ExecToErr("SET @@global.autocommit = null;")
 	// c.Assert(err, NotNil)
 
-	testSQL = "SET @@autocommit = 1;"
-	tk.MustExec(testSQL)
-
-	testSQL = "SET @@autocommit = null;"
-	_, err := tk.Exec(testSQL)
-	c.Assert(err, NotNil)
-
-	errTestSQL := "SET @@date_format = 1;"
-	_, err = tk.Exec(errTestSQL)
-	c.Assert(err, NotNil)
-
-	errTestSQL = "SET @@rewriter_enabled = 1;"
-	_, err = tk.Exec(errTestSQL)
-	c.Assert(err, NotNil)
-
-	errTestSQL = "SET xxx = abcd;"
-	_, err = tk.Exec(errTestSQL)
-	c.Assert(err, NotNil)
-
-	errTestSQL = "SET @@global.a = 1;"
-	_, err = tk.Exec(errTestSQL)
-	c.Assert(err, NotNil)
-
-	errTestSQL = "SET @@global.timestamp = 1;"
-	_, err = tk.Exec(errTestSQL)
-	c.Assert(err, NotNil)
+	tk.MustExec("SET @@autocommit = 1;")
+	require.Error(t, tk.ExecToErr("SET @@autocommit = null;"))
+	require.Error(t, tk.ExecToErr("SET @@date_format = 1;"))
+	require.Error(t, tk.ExecToErr("SET @@rewriter_enabled = 1;"))
+	require.Error(t, tk.ExecToErr("SET xxx = abcd;"))
+	require.Error(t, tk.ExecToErr("SET @@global.a = 1;"))
+	require.Error(t, tk.ExecToErr("SET @@global.timestamp = 1;"))
 
 	// For issue 998
-	testSQL = "SET @issue998a=1, @issue998b=5;"
-	tk.MustExec(testSQL)
+	tk.MustExec("SET @issue998a=1, @issue998b=5;")
 	tk.MustQuery(`select @issue998a, @issue998b;`).Check(testkit.Rows("1 5"))
-	testSQL = "SET @@autocommit=0, @issue998a=2;"
-	tk.MustExec(testSQL)
+	tk.MustExec("SET @@autocommit=0, @issue998a=2;")
 	tk.MustQuery(`select @issue998a, @@autocommit;`).Check(testkit.Rows("2 0"))
-	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
-	tk.MustExec(testSQL)
+	tk.MustExec("SET @@global.autocommit=1, @issue998b=6;")
 	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
 
 	// For issue 4302
-	testSQL = "use test;drop table if exists x;create table x(a int);insert into x value(1);"
-	tk.MustExec(testSQL)
-	testSQL = "SET @issue4302=(select a from x limit 1);"
-	tk.MustExec(testSQL)
+	tk.MustExec("use test;drop table if exists x;create table x(a int);insert into x value(1);")
+	tk.MustExec("SET @issue4302=(select a from x limit 1);")
 	tk.MustQuery(`select @issue4302;`).Check(testkit.Rows("1"))
 
 	// Set default
@@ -124,34 +93,33 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
 
 	// Test session variable states.
-	vars := tk.Se.(sessionctx.Context).GetSessionVars()
-	err = tk.Se.CommitTxn(context.TODO())
-	c.Assert(err, IsNil)
+	vars := tk.Session().(sessionctx.Context).GetSessionVars()
+	require.NoError(t, tk.Session().CommitTxn(context.TODO()))
 	tk.MustExec("set @@autocommit = 1")
-	c.Assert(vars.InTxn(), IsFalse)
-	c.Assert(vars.IsAutocommit(), IsTrue)
+	require.False(t, vars.InTxn())
+	require.True(t, vars.IsAutocommit())
 	tk.MustExec("set @@autocommit = 0")
-	c.Assert(vars.IsAutocommit(), IsFalse)
+	require.False(t, vars.IsAutocommit())
 
 	tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
-	c.Assert(vars.StrictSQLMode, IsTrue)
+	require.True(t, vars.StrictSQLMode)
 	tk.MustExec("set @@sql_mode = ''")
-	c.Assert(vars.StrictSQLMode, IsFalse)
+	require.False(t, vars.StrictSQLMode)
 
 	tk.MustExec("set names utf8")
 	charset, collation := vars.GetCharsetInfo()
-	c.Assert(charset, Equals, "utf8")
-	c.Assert(collation, Equals, "utf8_bin")
+	require.Equal(t, "utf8", charset)
+	require.Equal(t, "utf8_bin", collation)
 
-	tk.MustExec("set names latin1 collate latin1_swedish_ci")
+	tk.MustExec("set names latin1 collate latin1_bin")
 	charset, collation = vars.GetCharsetInfo()
-	c.Assert(charset, Equals, "latin1")
-	c.Assert(collation, Equals, "latin1_swedish_ci")
+	require.Equal(t, "latin1", charset)
+	require.Equal(t, "latin1_bin", collation)
 
 	tk.MustExec("set names utf8 collate default")
 	charset, collation = vars.GetCharsetInfo()
-	c.Assert(charset, Equals, "utf8")
-	c.Assert(collation, Equals, "utf8_bin")
+	require.Equal(t, "utf8", charset)
+	require.Equal(t, "utf8_bin", collation)
 
 	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
 	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
@@ -170,23 +138,23 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	tk.MustExec("set @@session.ddl_slow_threshold=12345")
 	tk.MustQuery("select @@session.ddl_slow_threshold").Check(testkit.Rows("12345"))
-	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(12345))
+	require.Equal(t, uint32(12345), variable.DDLSlowOprThreshold)
 	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
 	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
-	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(54321))
+	require.Equal(t, uint32(54321), variable.DDLSlowOprThreshold)
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	// error
-	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err := tk.ExecToErr("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	// Fails
-	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
@@ -195,38 +163,37 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
-	_, err = tk.Exec("SET SESSION tx_isolation = 'READ-UNCOMMITTED'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET SESSION tx_isolation = 'READ-UNCOMMITTED'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	// fails
-	_, err = tk.Exec("SET SESSION transaction_isolation = 'SERIALIZABLE'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	// fails
-	_, err = tk.Exec("SET GLOBAL transaction_isolation = 'SERIALIZABLE'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL transaction_isolation = 'SERIALIZABLE'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
-	_, err = tk.Exec("SET GLOBAL transaction_isolation = 'READ-UNCOMMITTED'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL transaction_isolation = 'READ-UNCOMMITTED'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
-	_, err = tk.Exec("SET GLOBAL tx_isolation = 'SERIALIZABLE'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL tx_isolation = 'SERIALIZABLE'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-	_, err = tk.Exec(`INSERT INTO t VALUES ("sdfsdf")`)
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr(`INSERT INTO t VALUES ("sdfsdf")`))
 	tk.MustExec("COMMIT")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
@@ -264,8 +231,7 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
 	tk.MustExec(`set tidb_force_priority = "abc"`)
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
-	_, err = tk.Exec(`set global tidb_force_priority = ""`)
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr(`set global tidb_force_priority = ""`))
 
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
@@ -276,10 +242,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_batch_commit;").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustQuery("select @@session.tidb_batch_commit;").Check(testkit.Rows("1"))
-	_, err = tk.Exec("set global tidb_batch_commit = 0")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("set global tidb_batch_commit = 2")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("set global tidb_batch_commit = 0"))
+	require.Error(t, tk.ExecToErr("set global tidb_batch_commit = 2"))
 
 	// test skip isolation level check: init
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
@@ -292,13 +256,13 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	// test skip isolation level check: error
-	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
-	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
@@ -338,10 +302,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_scatter_region = 0")
 	tk.MustQuery(`select @@global.tidb_scatter_region;`).Check(testkit.Rows("0"))
-	_, err = tk.Exec("set session tidb_scatter_region = 0")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(`select @@session.tidb_scatter_region;`)
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("set session tidb_scatter_region = 0"))
+	require.Error(t, tk.ExecToErr(`select @@session.tidb_scatter_region;`))
 
 	// test for tidb_wait_split_region_timeout
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
@@ -419,8 +381,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set @@global.tidb_dml_batch_size = 200")                    // now permitted due to TiDB #19809
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
 
-	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	err = tk.ExecToErr("set tidb_enable_parallel_apply=-1")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar))
 
 	// test for tidb_mem_quota_apply_cache
 	defVal := fmt.Sprintf("%v", variable.DefTiDBMemQuotaApplyCache)
@@ -432,6 +394,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_mem_quota_apply_cache = 123`)
 	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_mem_quota_apply_cache`).Check(testkit.Rows("123"))
+
+	// test for tidb_mem_quota_bind_cache
+	defVal = fmt.Sprintf("%v", variable.DefTiDBMemQuotaBindCache)
+	tk.MustQuery(`select @@tidb_mem_quota_bind_cache`).Check(testkit.Rows(defVal))
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 0`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 123`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("123"))
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("123"))
 
 	// test for tidb_enable_parallel_apply
 	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
@@ -457,8 +430,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set tidb_general_log = off")
 	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
-	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
-	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
+	require.Error(t, tk.ExecToErr("set tidb_general_log = abc"))
+	require.Error(t, tk.ExecToErr("set tidb_general_log = 123"))
 
 	tk.MustExec(`SET @@character_set_results = NULL;`)
 	tk.MustQuery(`select @@character_set_results;`).Check(testkit.Rows(""))
@@ -575,14 +548,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time").Check(testkit.Rows("10"))
-	c.Assert(tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 1"), NotNil)
+	require.Error(t, tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 1"))
 
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 1")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
-	c.Assert(tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"), NotNil)
+	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -600,13 +573,15 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
-	c.Assert(tk.ExecToErr("select @@session.tidb_enable_column_tracking"), NotNil)
-	c.Assert(tk.ExecToErr("set tidb_enable_column_tracking = 0"), NotNil)
-	c.Assert(tk.ExecToErr("set global tidb_enable_column_tracking = -1"), NotNil)
+	require.Error(t, tk.ExecToErr("select @@session.tidb_enable_column_tracking"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
+	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 }
 
-func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestTruncateIncorrectIntSessionVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	testCases := []struct {
 		sessionVarName string
@@ -636,10 +611,11 @@ func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
 	}
 }
 
-func (s *testSuite5) TestSetCharset(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	ctx := tk.Se.(sessionctx.Context)
-	sessionVars := ctx.GetSessionVars()
+func TestSetCharset(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	sessionVars := tk.Session().GetSessionVars()
 
 	var characterSetVariables = []string{
 		"character_set_client",
@@ -654,8 +630,8 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	check := func(args ...string) {
 		for i, v := range characterSetVariables {
 			sVar, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v)
-			c.Assert(err, IsNil)
-			c.Assert(sVar, Equals, args[i], Commentf("%d: %s", i, characterSetVariables[i]))
+			require.NoError(t, err)
+			require.Equal(t, args[i], sVar, fmt.Sprintf("%d: %s", i, characterSetVariables[i]))
 		}
 	}
 
@@ -737,9 +713,12 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	)
 }
 
-func (s *testSuite5) TestSetCollationAndCharset(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	ctx := tk.Se.(sessionctx.Context)
+func TestSetCollationAndCharset(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ctx := tk.Session().(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 
 	cases := []struct {
@@ -753,48 +732,51 @@ func (s *testSuite5) TestSetCollationAndCharset(c *C) {
 		{variable.CharacterSetServer, variable.CollationServer, "utf8", "utf8_bin"},
 	}
 
-	for _, t := range cases {
-		tk.MustExec(fmt.Sprintf("set %s = %s;", t.charset, t.expectCharset))
-		sVar, ok := sessionVars.GetSystemVar(t.charset)
-		c.Assert(ok, IsTrue)
-		c.Assert(sVar, Equals, t.expectCharset)
-		sVar, ok = sessionVars.GetSystemVar(t.collation)
-		c.Assert(ok, IsTrue)
-		c.Assert(sVar, Equals, t.expectCollation)
+	for _, c := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", c.charset, c.expectCharset))
+		sVar, ok := sessionVars.GetSystemVar(c.charset)
+		require.True(t, ok)
+		require.Equal(t, c.expectCharset, sVar)
+		sVar, ok = sessionVars.GetSystemVar(c.collation)
+		require.True(t, ok)
+		require.Equal(t, c.expectCollation, sVar)
 	}
 
-	tk = testkit.NewTestKitWithInit(c, s.store)
-	ctx = tk.Se.(sessionctx.Context)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ctx = tk.Session().(sessionctx.Context)
 	sessionVars = ctx.GetSessionVars()
 
-	for _, t := range cases {
-		tk.MustExec(fmt.Sprintf("set %s = %s;", t.collation, t.expectCollation))
-		sVar, ok := sessionVars.GetSystemVar(t.charset)
-		c.Assert(ok, IsTrue)
-		c.Assert(sVar, Equals, t.expectCharset)
-		sVar, ok = sessionVars.GetSystemVar(t.collation)
-		c.Assert(ok, IsTrue)
-		c.Assert(sVar, Equals, t.expectCollation)
+	for _, c := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", c.collation, c.expectCollation))
+		sVar, ok := sessionVars.GetSystemVar(c.charset)
+		require.True(t, ok)
+		require.Equal(t, c.expectCharset, sVar)
+		sVar, ok = sessionVars.GetSystemVar(c.collation)
+		require.True(t, ok)
+		require.Equal(t, c.expectCollation, sVar)
 	}
 }
 
-func (s *testSuite5) TestValidateSetVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestValidateSetVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
-	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	err := tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set global tidb_distsql_scan_concurrency=-2;")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_distsql_scan_concurrency value: '-2'"))
 
-	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@tidb_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=-2;")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_distsql_scan_concurrency value: '-2'"))
 
-	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@tidb_batch_delete='ok';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@tidb_batch_delete='On';")
 	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("1"))
@@ -822,36 +804,36 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@tidb_enable_streaming=1;")
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@tidb_batch_delete=3;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@tidb_batch_delete=3;")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@group_concat_max_len=1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
 	result := tk.MustQuery("select @@group_concat_max_len;")
 	result.Check(testkit.Rows("4"))
 
-	_, err = tk.Exec("set @@group_concat_max_len = 18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@group_concat_max_len = 18446744073709551616")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	// Test illegal type
-	_, err = tk.Exec("set @@group_concat_max_len='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@group_concat_max_len='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@default_week_format=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
 	result = tk.MustQuery("select @@default_week_format;")
 	result.Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@default_week_format=9")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
 	result = tk.MustQuery("select @@default_week_format;")
 	result.Check(testkit.Rows("7"))
 
-	_, err = tk.Exec("set @@error_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@error_count = 0")
+	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err %v", err))
 
-	_, err = tk.Exec("set @@warning_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@warning_count = 0")
+	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set time_zone='SySTeM'")
 	result = tk.MustQuery("select @@time_zone;")
@@ -860,118 +842,118 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	// The following cases test value out of range and illegal type when setting system variables.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html for more details.
 	tk.MustExec("set @@global.max_connections=100001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
 	result = tk.MustQuery("select @@global.max_connections;")
 	result.Check(testkit.Rows("100000"))
 
 	tk.MustExec("set @@global.max_connections=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
 	result = tk.MustQuery("select @@global.max_connections;")
 	result.Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@global.max_connections='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.max_connections='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.thread_pool_size=65")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
 	result = tk.MustQuery("select @@global.thread_pool_size;")
 	result.Check(testkit.Rows("64"))
 
 	tk.MustExec("set @@global.thread_pool_size=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '-1'"))
 	result = tk.MustQuery("select @@global.thread_pool_size;")
 	result.Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@global.thread_pool_size='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.thread_pool_size='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.max_allowed_packet=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
 
-	_, err = tk.Exec("set @@global.max_allowed_packet='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.max_allowed_packet='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
 
 	tk.MustExec("set @@global.max_connect_errors=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connect_errors value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connect_errors value: '-1'"))
 	result = tk.MustQuery("select @@global.max_connect_errors;")
 	result.Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@global.max_connect_errors=18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.max_connect_errors=18446744073709551616")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.max_connections=100001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
 	result = tk.MustQuery("select @@global.max_connections;")
 	result.Check(testkit.Rows("100000"))
 
 	tk.MustExec("set @@global.max_connections=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
 	result = tk.MustQuery("select @@global.max_connections;")
 	result.Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@global.max_connections='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.max_connections='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@max_sort_length=1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '1'"))
 	result = tk.MustQuery("select @@max_sort_length;")
 	result.Check(testkit.Rows("4"))
 
 	tk.MustExec("set @@max_sort_length=-100")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '-100'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '-100'"))
 	result = tk.MustQuery("select @@max_sort_length;")
 	result.Check(testkit.Rows("4"))
 
 	tk.MustExec("set @@max_sort_length=8388609")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388609'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388609'"))
 	result = tk.MustQuery("select @@max_sort_length;")
 	result.Check(testkit.Rows("8388608"))
 
-	_, err = tk.Exec("set @@max_sort_length='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@max_sort_length='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.table_definition_cache=399")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '399'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '399'"))
 	result = tk.MustQuery("select @@global.table_definition_cache;")
 	result.Check(testkit.Rows("400"))
 
 	tk.MustExec("set @@global.table_definition_cache=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '-1'"))
 	result = tk.MustQuery("select @@global.table_definition_cache;")
 	result.Check(testkit.Rows("400"))
 
 	tk.MustExec("set @@global.table_definition_cache=524289")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '524289'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '524289'"))
 	result = tk.MustQuery("select @@global.table_definition_cache;")
 	result.Check(testkit.Rows("524288"))
 
-	_, err = tk.Exec("set @@global.table_definition_cache='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@global.table_definition_cache='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@old_passwords=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '-1'"))
 	result = tk.MustQuery("select @@old_passwords;")
 	result.Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@old_passwords=3")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '3'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '3'"))
 	result = tk.MustQuery("select @@old_passwords;")
 	result.Check(testkit.Rows("2"))
 
-	_, err = tk.Exec("set @@old_passwords='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@old_passwords='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@tmp_table_size=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '-1'"))
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("1024"))
 
 	tk.MustExec("set @@tmp_table_size=1020")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '1020'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '1020'"))
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("1024"))
 
@@ -983,19 +965,19 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("18446744073709551615"))
 
-	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@tmp_table_size=18446744073709551616")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
-	_, err = tk.Exec("set @@tmp_table_size='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@tmp_table_size='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@tidb_tmp_table_max_size=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '-1'"))
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
 	result.Check(testkit.Rows("1048576"))
 
 	tk.MustExec("set @@tidb_tmp_table_max_size=1048575")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '1048575'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '1048575'"))
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
 	result.Check(testkit.Rows("1048576"))
 
@@ -1008,15 +990,15 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("137438953472"))
 
 	tk.MustExec("set @@tidb_tmp_table_max_size=137438953473")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '137438953473'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '137438953473'"))
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
 	result.Check(testkit.Rows("137438953472"))
 
-	_, err = tk.Exec("set @@tidb_tmp_table_max_size='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	err = tk.ExecToErr("set @@tidb_tmp_table_max_size='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
 	tk.MustExec("set @@global.connect_timeout=1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '1'"))
 	result = tk.MustQuery("select @@global.connect_timeout;")
 	result.Check(testkit.Rows("2"))
 
@@ -1025,7 +1007,7 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("31536000"))
 
 	tk.MustExec("set @@global.connect_timeout=31536001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '31536001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '31536001'"))
 	result = tk.MustQuery("select @@global.connect_timeout;")
 	result.Check(testkit.Rows("31536000"))
 
@@ -1051,8 +1033,8 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@global.super_read_only;")
 	result.Check(testkit.Rows("0"))
 
-	_, err = tk.Exec("set @@global.super_read_only=-1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@global.super_read_only=-1")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@global.innodb_status_output_locks=-1")
 	result = tk.MustQuery("select @@global.innodb_status_output_locks;")
@@ -1070,8 +1052,8 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@global.innodb_file_per_table;")
 	result.Check(testkit.Rows("1"))
 
-	_, err = tk.Exec("set @@global.innodb_ft_enable_stopword=2")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@global.innodb_ft_enable_stopword=2")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@query_cache_type=0")
 	result = tk.MustQuery("select @@query_cache_type;")
@@ -1082,64 +1064,64 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("DEMAND"))
 
 	tk.MustExec("set @@global.sync_binlog=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
 
 	tk.MustExec("set @@global.sync_binlog=4294967299")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '4294967299'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '4294967299'"))
 
 	tk.MustExec("set @@global.flush_time=31536001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
 
 	tk.MustExec("set @@global.interactive_timeout=31536001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
 
 	tk.MustExec("set @@global.innodb_commit_concurrency = -1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '-1'"))
 
 	tk.MustExec("set @@global.innodb_commit_concurrency = 1001")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '1001'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '1001'"))
 
 	tk.MustExec("set @@global.innodb_fast_shutdown = -1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '-1'"))
 
 	tk.MustExec("set @@global.innodb_fast_shutdown = 3")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '3'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '3'"))
 
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
 
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
 	tk.MustExec("set @@innodb_lock_wait_timeout = 0")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
 
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
 	tk.MustExec("set @@global.validate_password_number_count=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
 
 	tk.MustExec("set @@global.validate_password_length=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
 
 	tk.MustExec("set @@global.validate_password_length=8")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
-	_, err = tk.Exec("set @@tx_isolation=''")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@tx_isolation=''")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
-	_, err = tk.Exec("set global tx_isolation=''")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set global tx_isolation=''")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
-	_, err = tk.Exec("set @@transaction_isolation=''")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@transaction_isolation=''")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
-	_, err = tk.Exec("set global transaction_isolation=''")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set global transaction_isolation=''")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
-	_, err = tk.Exec("set global tx_isolation='REPEATABLE-READ1'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set global tx_isolation='REPEATABLE-READ1'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set @@tx_isolation='READ-COMMITTED'")
 	result = tk.MustQuery("select @@tx_isolation;")
@@ -1155,15 +1137,17 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
-	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("set @@tx_isolation='SERIALIZABLE'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
 	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite5) TestSelectGlobalVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSelectGlobalVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
 	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
@@ -1177,13 +1161,15 @@ func (s *testSuite5) TestSelectGlobalVar(c *C) {
 
 	// test for unknown variable.
 	err := tk.ExecToErr("select @@invalid")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownSystemVar), fmt.Sprintf("err %v", err))
 	err = tk.ExecToErr("select @@global.invalid")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownSystemVar), fmt.Sprintf("err %v", err))
 }
 
-func (s *testSuite5) TestSetConcurrency(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSetConcurrency(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	// test default value
 	tk.MustQuery("select @@tidb_executor_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefExecutorConcurrency)))
@@ -1200,61 +1186,61 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefIndexSerialScanConcurrency)))
 
-	vars := tk.Se.(sessionctx.Context).GetSessionVars()
-	c.Assert(vars.ExecutorConcurrency, Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefTiDBStreamAggConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
+	vars := tk.Session().GetSessionVars()
+	require.Equal(t, variable.DefExecutorConcurrency, vars.ExecutorConcurrency)
+	require.Equal(t, variable.DefExecutorConcurrency, vars.IndexLookupConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashJoinConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashAggPartialConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashAggFinalConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, variable.DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.ProjectionConcurrency())
+	require.Equal(t, variable.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 
-	c.Assert(vars.IndexSerialScanConcurrency(), Equals, variable.DefIndexSerialScanConcurrency)
+	require.Equal(t, variable.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
 
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
 
 	checkSet := func(v string) {
 		tk.MustExec(fmt.Sprintf("set @@%s=1;", v))
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", fmt.Sprintf(warnTpl, v)))
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", fmt.Sprintf(warnTpl, v)))
 		tk.MustQuery(fmt.Sprintf("select @@%s;", v)).Check(testkit.Rows("1"))
 	}
 
 	checkSet(variable.TiDBIndexLookupConcurrency)
-	c.Assert(vars.IndexLookupConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.IndexLookupConcurrency())
 
 	checkSet(variable.TiDBIndexLookupJoinConcurrency)
-	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.IndexLookupJoinConcurrency())
 
 	checkSet(variable.TiDBHashJoinConcurrency)
-	c.Assert(vars.HashJoinConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.HashJoinConcurrency())
 
 	checkSet(variable.TiDBHashAggPartialConcurrency)
-	c.Assert(vars.HashAggPartialConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.HashAggPartialConcurrency())
 
 	checkSet(variable.TiDBHashAggFinalConcurrency)
-	c.Assert(vars.HashAggFinalConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.HashAggFinalConcurrency())
 
 	checkSet(variable.TiDBProjectionConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.ProjectionConcurrency())
 
 	checkSet(variable.TiDBWindowConcurrency)
-	c.Assert(vars.WindowConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.WindowConcurrency())
 
 	checkSet(variable.TiDBStreamAggConcurrency)
-	c.Assert(vars.StreamAggConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.StreamAggConcurrency())
 
 	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
 	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
-	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
+	require.Equal(t, 1, vars.DistSQLScanConcurrency())
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
-	c.Assert(vars.IndexSerialScanConcurrency(), Equals, 4)
+	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
@@ -1266,22 +1252,24 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	tk.MustExec("set @@tidb_streamagg_concurrency=-1;")
 	tk.MustExec("set @@tidb_projection_concurrency=-1;")
 
-	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
+	require.Equal(t, variable.DefExecutorConcurrency, vars.IndexLookupConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashJoinConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashAggPartialConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.HashAggFinalConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.StreamAggConcurrency())
+	require.Equal(t, variable.DefExecutorConcurrency, vars.ProjectionConcurrency())
 
 	tk.MustExec("set @@tidb_executor_concurrency=-1;")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_executor_concurrency value: '-1'"))
-	c.Assert(vars.ExecutorConcurrency, Equals, 1)
+	require.Equal(t, 1, vars.ExecutorConcurrency)
 }
 
-func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestEnableNoopFunctionsVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	defer func() {
 		// Ensure global settings are reset.
@@ -1297,10 +1285,10 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	_, err := tk.Exec(`select get_lock('lock1', 2);`)
-	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec(`select release_lock('lock1');`)
-	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err := tk.ExecToErr(`select get_lock('lock1', 2);`)
+	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
+	err = tk.ExecToErr(`select release_lock('lock1');`)
+	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	// change session var to 1
 	tk.MustExec(`set tidb_enable_noop_functions=1;`)
@@ -1314,16 +1302,14 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	_, err = tk.Exec(`select get_lock('lock2', 10);`)
-	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec(`select release_lock('lock2');`)
-	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr(`select get_lock('lock2', 10);`)
+	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
+	err = tk.ExecToErr(`select release_lock('lock2');`)
+	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	// set test
-	_, err = tk.Exec(`set tidb_enable_noop_functions='abc'`)
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(`set tidb_enable_noop_functions=11`)
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr(`set tidb_enable_noop_functions='abc'`))
+	require.Error(t, tk.ExecToErr(`set tidb_enable_noop_functions=11`))
 	tk.MustExec(`set tidb_enable_noop_functions="off";`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustExec(`set tidb_enable_noop_functions="on";`)
@@ -1331,21 +1317,21 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	_, err = tk.Exec("SET SESSION tx_read_only = 1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET SESSION tx_read_only = 1")
+	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("SET SESSION tx_read_only = 0")
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
 
-	_, err = tk.Exec("SET GLOBAL tx_read_only = 1") // should fail.
-	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL tx_read_only = 1") // should fail.
+	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 	tk.MustExec("SET GLOBAL tx_read_only = 0")
 	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
 
-	_, err = tk.Exec("SET SESSION transaction_read_only = 1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET SESSION transaction_read_only = 1")
+	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 	tk.MustExec("SET SESSION transaction_read_only = 0")
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
@@ -1357,8 +1343,8 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("1"))
 
 	// fails on GLOBAL because GLOBAL.tidb_enable_noop_functions still=0
-	_, err = tk.Exec("SET GLOBAL transaction_read_only = 1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	err = tk.ExecToErr("SET GLOBAL transaction_read_only = 1")
+	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 	tk.MustExec("SET GLOBAL tidb_enable_noop_functions = 1")
 	// now works
 	tk.MustExec("SET GLOBAL transaction_read_only = 1")
@@ -1368,8 +1354,7 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
 
-	_, err = tk.Exec("SET tidb_enable_noop_functions = 0") // fails because transaction_read_only/tx_read_only = 1
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("SET tidb_enable_noop_functions = 0")) // fails because transaction_read_only/tx_read_only = 1
 
 	tk.MustExec("SET transaction_read_only = 0")
 	tk.MustExec("SET tidb_enable_noop_functions = 0") // now works.
@@ -1381,8 +1366,7 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustExec("SET GLOBAL tidb_enable_noop_functions = 1")
 	tk.MustExec("SET GLOBAL transaction_read_only = 1")
 	// fails
-	_, err = tk.Exec("SET GLOBAL tidb_enable_noop_functions = 0")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("SET GLOBAL tidb_enable_noop_functions = 0"))
 
 	// reset for rest of tests.
 	tk.MustExec("SET GLOBAL transaction_read_only = 0")
@@ -1397,14 +1381,15 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	tk.MustExec("set global read_only = on")
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
-	_, err = tk.Exec("set global read_only = abc")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("set global read_only = abc"))
 
 }
 
 // https://github.com/pingcap/tidb/issues/29670
-func (s *testSuite5) TestDefaultBehavior(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestDefaultBehavior(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("InnoDB"))
 	tk.MustExec("SET GLOBAL default_storage_engine = 'somethingweird'")
@@ -1423,13 +1408,14 @@ func (s *testSuite5) TestDefaultBehavior(c *C) {
 
 	// Try sql_mode option which has validation
 	err := tk.ExecToErr("SET GLOBAL sql_mode = 'DEFAULT'") // illegal now
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'`)
+	require.EqualError(t, err, `ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'`)
 	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
 }
 
-func (s *testSuite5) TestRemovedSysVars(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRemovedSysVars(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	// test for tidb_enable_noop_functions
 	// In SET context, it just noops:
@@ -1444,8 +1430,10 @@ func (s *testSuite5) TestRemovedSysVars(c *C) {
 	tk.MustGetErrCode("SELECT @@tidb_enable_global_temporary_table", errno.ErrVariableNoLongerSupported)
 }
 
-func (s *testSuite5) TestSetClusterConfig(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestSetClusterConfig(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	serversInfo := []infoschema.ServerInfo{
@@ -1460,37 +1448,37 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
 		return serversInfo, serverInfoErr
 	}
-	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
+	tk.Session().SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
 
-	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
-	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
-	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
-	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
-	c.Assert(tk.ExecToErr("set config 'example.com:1111' log.level='info'"), ErrorMatches, "instance example.com:1111 is not found in this cluster") // name resolves.
-	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
-	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
+	require.EqualError(t, tk.ExecToErr("set config xxx log.level='info'"), "unknown type xxx")
+	require.EqualError(t, tk.ExecToErr("set config tidb log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
+	require.EqualError(t, tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
+	require.EqualError(t, tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
+	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.
+	require.EqualError(t, tk.ExecToErr("set config tikv log.level=null"), "can't set config to null")
+	require.EqualError(t, tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), "instance 1.1.1.1:1111 is not found in this cluster")
 
 	httpCnt := 0
-	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		httpCnt++
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
-	c.Assert(httpCnt, Equals, 2)
+	require.Equal(t, 2, httpCnt)
 
 	httpCnt = 0
 	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
-	c.Assert(httpCnt, Equals, 1)
+	require.Equal(t, 1, httpCnt)
 
 	httpCnt = 0
-	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("something wrong")
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 something wrong", "Warning 1105 something wrong"))
 
-	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewBufferString("WRONG"))}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
@@ -1498,9 +1486,9 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
 }
 
-func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+func TestSetClusterConfigJSONData(t *testing.T) {
 	var d types.MyDecimal
-	c.Assert(d.FromFloat64(123.456), IsNil)
+	require.NoError(t, d.FromFloat64(123.456))
 	tyBool := types.NewFieldType(mysql.TypeTiny)
 	tyBool.Flag |= mysql.IsBooleanFlag
 	cases := []struct {
@@ -1521,24 +1509,25 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 	}
 
 	ctx := mock.NewContext()
-	for _, t := range cases {
-		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
-		if t.succ {
-			c.Assert(t.result, Equals, result)
+	for _, c := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", c.val)
+		if c.succ {
+			require.Equal(t, result, c.result)
 		} else {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		}
 	}
 }
 
-func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+func TestSetTopSQLVariables(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
-		c.Assert(err, IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
@@ -1546,9 +1535,9 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count=20;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("20"))
-	c.Assert(topsqlstate.GlobalState.MaxStatementCount.Load(), Equals, int64(20))
-	_, err := tk.Exec("set @@global.tidb_top_sql_max_time_series_count='abc';")
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_time_series_count'")
+	require.Equal(t, int64(20), topsqlstate.GlobalState.MaxStatementCount.Load())
+	err := tk.ExecToErr("set @@global.tidb_top_sql_max_time_series_count='abc';")
+	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_time_series_count'")
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count='-1';")
 	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count='5001';")
@@ -1557,13 +1546,13 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_max_time_series_count=20;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_time_series_count;").Check(testkit.Rows("20"))
-	c.Assert(topsqlstate.GlobalState.MaxStatementCount.Load(), Equals, int64(20))
+	require.Equal(t, int64(20), topsqlstate.GlobalState.MaxStatementCount.Load())
 
 	tk.MustExec("set @@global.tidb_top_sql_max_meta_count=10000;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_meta_count;").Check(testkit.Rows("10000"))
-	c.Assert(topsqlstate.GlobalState.MaxCollect.Load(), Equals, int64(10000))
-	_, err = tk.Exec("set @@global.tidb_top_sql_max_meta_count='abc';")
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_meta_count'")
+	require.Equal(t, int64(10000), topsqlstate.GlobalState.MaxCollect.Load())
+	err = tk.ExecToErr("set @@global.tidb_top_sql_max_meta_count='abc';")
+	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_meta_count'")
 	tk.MustExec("set @@global.tidb_top_sql_max_meta_count='-1';")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_max_meta_count value: '-1'"))
 	tk.MustQuery("select @@global.tidb_top_sql_max_meta_count;").Check(testkit.Rows("1"))
@@ -1574,7 +1563,7 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_max_meta_count=5000;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_meta_count;").Check(testkit.Rows("5000"))
-	c.Assert(topsqlstate.GlobalState.MaxCollect.Load(), Equals, int64(5000))
+	require.Equal(t, int64(5000), topsqlstate.GlobalState.MaxCollect.Load())
 
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))

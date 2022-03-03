@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -61,18 +62,19 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -257,6 +259,33 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
+}
+
+func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+	if *withTiKV {
+		initPdAddrs()
+		pdAddr := <-pdAddrChan
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		require.NoError(t, err)
+		err = clearStorage(store)
+		require.NoError(t, err)
+		err = clearETCD(store.(kv.EtcdBackend))
+		require.NoError(t, err)
+		session.ResetStoreForWithTiKVTest(store)
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		return store, func() {
+			dom.Close()
+			store.Close()
+			pdAddrChan <- pdAddr
+		}
+	}
+	return newTestkit.CreateMockStore(t)
 }
 
 type mockBinlogPump struct {
@@ -2141,16 +2170,29 @@ func (s *testSessionSuite2) TestDeletePanic(c *C) {
 func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
 	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
 	// Make sure t1 is greater than t.
 	time.Sleep(time.Second)
 	tk.MustExec("alter table t modify c int default 11")
 	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	ret2 := tk.MustQuery("show table status like 't'")
+	c.Assert(ret1.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
 	t, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	t1, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	r := t1.Compare(t)
+	c.Assert(r, Equals, 1)
+	// Check that time_zone changes makes the create_time different
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
+	ret2 = tk.MustQuery(`show table status like 't'`)
+	c.Assert(ret.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
+	t, err = types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
+	r = t1.Compare(t)
 	c.Assert(r, Equals, 1)
 }
 
@@ -4943,8 +4985,6 @@ func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain
 }
 
 func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	defer s.cleanEnv(c, s.store, s.dom)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5965,13 +6005,16 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 	tk.MustQuery("select * from ct1").Check(testkit.Rows())
 	tk.MustQuery("select * from ct2").Check(testkit.Rows())
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Se.GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 50; i++ {
-		if tk.HasPlan("select * from ct1", "Union") {
-			if tk.HasPlan("select * from ct2", "Union") {
-				cached = true
-				break
-			}
+		tk.MustQuery("select * from ct1")
+		if lastReadFromCache(tk) {
+			cached = true
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -6012,4 +6055,14 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
 	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}
+
+func (s *testSessionSuite) TestSysdateIsNow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
+	tk.MustExec("set @@sysdate_is_now=true")
+	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

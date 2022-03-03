@@ -37,9 +37,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -951,7 +949,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
-	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
 }
 
@@ -1139,8 +1137,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4256,9 +4252,6 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4272,9 +4265,6 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4289,9 +4279,6 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

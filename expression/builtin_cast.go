@@ -589,7 +589,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	if b.args[0].GetType().Tp == mysql.TypeYear {
 		res, err = types.ParseTimeFromYear(b.ctx.GetSessionVars().StmtCtx, val)
 	} else {
-		res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, int8(b.tp.Decimal))
+		res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, b.tp.Decimal)
 	}
 
 	if err != nil {
@@ -617,7 +617,7 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Dur
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := types.NumberToDuration(val, int8(b.tp.Decimal))
+	dur, err := types.NumberToDuration(val, b.tp.Decimal)
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
@@ -890,7 +890,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTime(sc, fv, b.tp.Tp, int8(b.tp.Decimal))
+	res, err := types.ParseTime(sc, fv, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -916,7 +916,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), int8(b.tp.Decimal))
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
@@ -1068,7 +1068,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, int8(b.tp.Decimal))
+	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1094,7 +1094,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, true, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), int8(b.tp.Decimal))
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ErrTruncatedWrongVal needs to be considered NULL.
@@ -1288,7 +1288,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, val, b.tp.Tp, int8(b.tp.Decimal))
+	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1317,7 +1317,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, int8(b.tp.Decimal))
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
@@ -1349,7 +1349,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
-	res, err = res.RoundFrac(sc, int8(b.tp.Decimal))
+	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
@@ -1463,7 +1463,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
+	res, err = res.RoundFrac(b.tp.Decimal, b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1482,7 +1482,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
+	res, err = res.RoundFrac(b.tp.Decimal, b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1524,7 +1524,7 @@ func (b *builtinCastDurationAsRealSig) evalReal(row chunk.Row) (res float64, isN
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+	if val.Fsp, err = types.CheckFsp(val.Fsp); err != nil {
 		return res, false, err
 	}
 	res, err = val.ToNumber().ToFloat64()
@@ -1546,7 +1546,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+	if val.Fsp, err = types.CheckFsp(val.Fsp); err != nil {
 		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1614,7 +1614,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
-	res, err = res.RoundFrac(sc, int8(b.tp.Decimal))
+	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	return res, false, err
 }
 
@@ -1734,7 +1734,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, s, b.tp.Tp, int8(b.tp.Decimal))
+	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1764,7 +1764,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, int8(b.tp.Decimal))
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
@@ -1870,6 +1870,9 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		if expr.GetType().Tp == mysql.TypeBit {
+			tp.Flen = (expr.GetType().Flen + 7) / 8
+		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
@@ -1937,7 +1940,24 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
-	return BuildCastFunction(ctx, expr, tp)
+	castExpr := BuildCastFunction(ctx, expr, tp)
+	// For const item, we can use find-grained precision and scale by the result.
+	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
+		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		if !isnull && err == nil {
+			precision, frac := val.PrecisionAndFrac()
+			castTp := castExpr.GetType()
+			castTp.Decimal = frac
+			castTp.Flen = precision
+			if castTp.Flen > mysql.MaxDecimalWidth {
+				castTp.Flen = mysql.MaxDecimalWidth
+			}
+			if castTp.Decimal > mysql.MaxDecimalScale {
+				castTp.Decimal = mysql.MaxDecimalScale
+			}
+		}
+	}
+	return castExpr
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
@@ -1952,12 +1972,19 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	// into consideration, so we set `expr.GetType().Flen + 3` as the `argLen`.
 	// Since the length of float and double is not accurate, we do not handle
 	// them.
-	if exprTp.Tp == mysql.TypeNewDecimal && argLen != int(types.UnspecifiedFsp) {
+	if exprTp.Tp == mysql.TypeNewDecimal && argLen != types.UnspecifiedFsp {
 		argLen += 3
 	}
+
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
+		// For TypeBit, castAsString will make length as int(( bit_len + 7 ) / 8) bytes due to
+		// TiKV needs the bit's real len during calculating, eg: ascii(bit).
+		if exprTp.Tp == mysql.TypeBit {
+			argLen = (exprTp.Flen + 7) / 8
+		}
 	}
+
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
 	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1
@@ -1983,15 +2010,15 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	}
 	switch x := expr.GetType().EvalType(); x {
 	case types.ETInt:
-		tp.Decimal = int(types.MinFsp)
+		tp.Decimal = types.MinFsp
 	case types.ETString, types.ETReal, types.ETJson:
-		tp.Decimal = int(types.MaxFsp)
+		tp.Decimal = types.MaxFsp
 	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
 		tp.Decimal = expr.GetType().Decimal
 	case types.ETDecimal:
 		tp.Decimal = expr.GetType().Decimal
-		if tp.Decimal > int(types.MaxFsp) {
-			tp.Decimal = int(types.MaxFsp)
+		if tp.Decimal > types.MaxFsp {
+			tp.Decimal = types.MaxFsp
 		}
 	default:
 	}
@@ -2019,7 +2046,7 @@ func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression 
 	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate:
 		tp.Decimal = x.Decimal
 	default:
-		tp.Decimal = int(types.MaxFsp)
+		tp.Decimal = types.MaxFsp
 	}
 	tp.Flen = mysql.MaxDurationWidthNoFsp
 	if tp.Decimal > 0 {

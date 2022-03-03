@@ -85,7 +85,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 	}}
 
 	RegisterSysVar(&sv)
-	require.Equal(t, len(GetSysVars()), count+1)
+	require.Len(t, GetSysVars(), count+1)
 
 	sysVar := GetSysVar("mynewsysvar")
 	require.NotNil(t, sysVar)

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -2846,8 +2846,8 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 
 	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
 
-	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
 	tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
 
 	tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", errno.ErrCollationCharsetMismatch)
@@ -2867,8 +2867,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk = testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
@@ -3173,8 +3171,8 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default '1 ,4');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// Success when the new collation is enabled.
+	tk.MustExec("create table t_set (a set('1', '4', '10') default '1 ,4');")
 	// The type of default value is int.
 	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
@@ -3183,6 +3181,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 
 	// The type of default value is int.
 	// It's for successful cases
+	tk.MustExec("drop table if exists t_set")
 	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
 	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
@@ -3533,6 +3532,7 @@ func (s *testDBSuite5) TestAlterTableRenameTable(c *C) {
 func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
 	// for different databases
 	tk.MustExec("create table t (c1 int, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2)")
@@ -3572,19 +3572,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
@@ -3609,7 +3609,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	if isAlterTable {
 		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	}
 
 	// for the same table name
@@ -3728,13 +3728,13 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 
 	// for failure case
 	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")
@@ -6377,6 +6377,8 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	tk2.MustExec("alter table t1 read write")
 }
 
+type checkRet func(c *C, err1, err2 error)
+
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
@@ -7771,4 +7773,67 @@ func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
 	tk.MustExec("alter table t1 add column gc int as ((a+1))")
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
 	c.Assert(checkErr, IsNil)
+}
+
+func (s *testDBSuite1) TestGetTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		tzSQL  string
+		tzStr  string
+		tzName string
+		offset int
+		err    string
+	}{
+		{"set time_zone = '+00:00'", "", "UTC", 0, ""},
+		{"set time_zone = '-00:00'", "", "UTC", 0, ""},
+		{"set time_zone = 'UTC'", "UTC", "UTC", 0, ""},
+		{"set time_zone = '+05:00'", "", "UTC", 18000, ""},
+		{"set time_zone = '-08:00'", "", "UTC", -28800, ""},
+		{"set time_zone = '+08:00'", "", "UTC", 28800, ""},
+		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
+		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
+		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
+		{"set time_zone = 'Etc/GMT-12'", "Etc/GMT-12", "Etc/GMT-12", 0, ""},
+		{"set time_zone = 'EST'", "EST", "EST", 0, ""},
+		{"set time_zone = 'Australia/Lord_Howe'", "Australia/Lord_Howe", "Australia/Lord_Howe", 0, ""},
+	}
+	for _, tc := range testCases {
+		err := tk.ExecToErr(tc.tzSQL)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tc.err)
+		} else {
+			c.Assert(tc.err, Equals, "")
+		}
+		c.Assert(tk.Se.GetSessionVars().TimeZone.String(), Equals, tc.tzStr, Commentf("sql: %s", tc.tzSQL))
+		tz, offset := ddlutil.GetTimeZone(tk.Se)
+		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
+		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
+	}
+}
+
+// for issue #30328
+func (s *testDBSuite5) TestTooBigFieldLengthAutoConvert(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	err := tk.ExecToErr("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	c.Assert(types.ErrTooBigFieldLength.Equal(err), IsTrue)
+
+	// save previous sql_mode and change
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists i30328_1")
+		tk.MustExec("drop table if exists i30328_2")
+	}(r.Rows()[0][0].(string))
+	tk.MustExec("set @@sql_mode='NO_ENGINE_SUBSTITUTION'")
+
+	tk.MustExec("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARBINARY to BLOB", "Warning 1246 Converting column 'b' from VARCHAR to TEXT"))
+	tk.MustExec("create table i30328_2(a varchar(200))")
+	tk.MustExec("alter table i30328_2 modify a varchar(70000000);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARCHAR to TEXT"))
 }

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+//go:build !codes
+// +build !codes
+
+package testutil
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSession(t *testing.T) {
-	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890, RowFormatVersion: "1"})
-	_, err := session.Txn(true)
-	require.NoError(t, err)
+// DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
+func DatumEqual(t *testing.T, expected, actual types.Datum, msgAndArgs ...interface{}) {
+	sc := new(stmtctx.StatementContext)
+	res, err := actual.Compare(sc, &expected, collate.GetBinaryCollator())
+	require.NoError(t, err, msgAndArgs)
+	require.Zero(t, res, msgAndArgs)
 }
