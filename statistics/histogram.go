@@ -482,21 +482,14 @@ func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int
 		return false, bucketIdx, false, false
 	}
 	// The value matches the last value in this bucket
-	if (index%2 == 1 || hg.bucketIsPoint(bucketIdx)) && match {
+	// case 1: The LowerBound()'s return value tells us the value matches an upper bound of a bucket
+	// case 2: We compare and find that the value is equal to the upper bound of this bucket. This might happen when
+	//           the bucket's lower bound is equal to its upper bound.
+	if (index%2 == 1 && match) || chunk.Compare(hg.Bounds.GetRow(bucketIdx*2+1), 0, &value) == 0 {
 		return false, bucketIdx, true, true
 	}
 	// The value is in the bucket and isn't the last value in this bucket
 	return false, bucketIdx, true, false
-}
-
-// bucketIsPoint returns true if this Bucket's lower bound and upper bound are the same.
-// When invalid idx is passed, bucketIsPoint will also return false.
-func (hg *Histogram) bucketIsPoint(idx int) bool {
-	if idx < 0 || idx > hg.Len()-1 {
-		return false
-	}
-	cmp := chunk.GetCompareFunc(hg.Tp)
-	return cmp(hg.Bounds.GetRow(idx*2), 0, hg.Bounds.GetRow(idx*2+1), 0) == 0
 }
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
