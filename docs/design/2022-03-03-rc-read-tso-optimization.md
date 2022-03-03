@@ -26,7 +26,7 @@ The execution flow is like this:
 5. The read executor will try to fetch data to fill in a `chunk`. The bottommost executor could be a `pointGet`, `batchPointGet` or coprocessor task. What's different is a `RcReadCheckTS` flag will be set on the read requests.
 6. The read executor in storage layer will check the read results, if more recent version does exist then a `WriteConflict` error will be returned.
 7. For data write record, do check if there's new version compared with current `read_ts`.
-8. For lock record, return `ErrKeyIsLocked` though the `lock.ts` is greater than the `read_ts` as the `read_ts` could a stale one.
+8. For lock record, return `ErrKeyIsLocked` though the `lock.ts` is greater than the `read_ts` as the `read_ts` could be a stale one.
 9. If no error is returned the query is finished. Otherwise if there's no `chunk` responsed to client yet, do retry the whole query and this time a new `for_update_ts` will be fetched.
 
 
