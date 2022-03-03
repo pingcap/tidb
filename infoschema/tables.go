@@ -994,7 +994,7 @@ var tableClusterConfigCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "KEY", tp: mysql.TypeVarchar, size: 256},
-	{name: "VALUE", tp: mysql.TypeVarchar, size: 128},
+	{name: "VALUE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 var tableClusterLogCols = []columnInfo{
