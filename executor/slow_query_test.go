@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"runtime/pprof"
 	"strings"
 	"testing"
 	"time"
@@ -654,7 +655,60 @@ select 9;`
 	}
 }
 
+<<<<<<< HEAD
 func prepareLogs(c *C, logData []string, fileNames []string) {
+=======
+func TestCancelParseSlowLog(t *testing.T) {
+	fileName := "tidb-slow-2020-02-14T19-04-05.01.log"
+	slowLog := `# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;`
+	prepareLogs(t, []string{slowLog}, []string{fileName})
+	defer func() {
+		removeFiles([]string{fileName})
+	}()
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SlowQueryFile = fileName
+
+	retriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	var signal1, signal2 = make(chan int, 1), make(chan int, 1)
+	ctx := context.WithValue(context.Background(), "signals", []chan int{signal1, signal2})
+	ctx, cancel := context.WithCancel(ctx)
+	err = failpoint.Enable("github.com/pingcap/tidb/executor/mockReadSlowLogSlow", "return(true)")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockReadSlowLogSlow"))
+	}()
+	go func() {
+		_, err := retriever.retrieve(ctx, sctx)
+		require.Errorf(t, err, "context canceled")
+	}()
+	// Wait for parseSlowLog going to add tasks.
+	<-signal1
+	// Cancel the retriever and then dataForSlowLog exits.
+	cancel()
+	// Assume that there are already unprocessed tasks.
+	retriever.taskList <- slowLogTask{}
+	// Let parseSlowLog continue.
+	signal2 <- 1
+	// parseSlowLog should exit immediately.
+	time.Sleep(1 * time.Second)
+	require.False(t, checkGoroutineExists("parseSlowLog"))
+}
+
+func checkGoroutineExists(keyword string) bool {
+	buf := new(bytes.Buffer)
+	profile := pprof.Lookup("goroutine")
+	err := profile.WriteTo(buf, 1)
+	if err != nil {
+		panic(err)
+	}
+	str := buf.String()
+	return strings.Contains(str, keyword)
+}
+
+func prepareLogs(t *testing.T, logData []string, fileNames []string) {
+>>>>>>> 62ec7468e... executor: fix goroutine leak in querying slow log (#32757)
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		c.Assert(err, IsNil)
