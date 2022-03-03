@@ -361,15 +361,20 @@ func SplitRanges(
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
+	isRawKv bool,
 ) error {
+<<<<<<< HEAD
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
 		summary.CollectDuration("split region", elapsed)
 	}()
 	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig()))
+=======
+	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+>>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
-	return splitter.Split(ctx, ranges, rewriteRules, func(keys [][]byte) {
+	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

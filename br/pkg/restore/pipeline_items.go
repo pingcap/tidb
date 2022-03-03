@@ -230,12 +230,73 @@ func (b *tikvSender) splitWorker(ctx context.Context, ranges <-chan DrainResult,
 			if !ok {
 				return
 			}
+<<<<<<< HEAD
 			if err := SplitRanges(ctx, b.client, result.Ranges, result.RewriteRules, b.updateCh); err != nil {
 				log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 				b.sink.EmitError(err)
 				return
 			}
 			next <- result
+=======
+			// When the batcher has sent all ranges from a table, it would
+			// mark this table 'all done'(BlankTablesAfterSend), and then we can send it to checksum.
+			//
+			// When there a sole worker sequentially running those batch tasks, everything is fine, however,
+			// in the context of multi-workers, that become buggy, for example:
+			// |------table 1, ranges 1------|------table 1, ranges 2------|
+			// The batcher send batches: [
+			//		{Ranges: ranges 1},
+			// 		{Ranges: ranges 2, BlankTablesAfterSend: table 1}
+			// ]
+			// And there are two workers runs concurrently:
+			// 		worker 1: {Ranges: ranges 1}
+			//      worker 2: {Ranges: ranges 2, BlankTablesAfterSend: table 1}
+			// And worker 2 finished its job before worker 1 done. Note the table wasn't restored fully,
+			// hence the checksum would fail.
+			done := b.registerTableIsRestoring(result.TablesToSend)
+			pool.ApplyOnErrorGroup(eg, func() error {
+				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh, false)
+				if err != nil {
+					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
+					return err
+				}
+				next <- drainResultAndDone{
+					result: result,
+					done:   done,
+				}
+				return nil
+			})
+		}
+	}
+}
+
+// registerTableIsRestoring marks some tables as 'current restoring'.
+// Returning a function that mark the restore has been done.
+func (b *tikvSender) registerTableIsRestoring(ts []CreatedTable) func() {
+	wgs := make([]*sync.WaitGroup, 0, len(ts))
+	for _, t := range ts {
+		i, _ := b.tableWaiters.LoadOrStore(t.Table.ID, new(sync.WaitGroup))
+		wg := i.(*sync.WaitGroup)
+		wg.Add(1)
+		wgs = append(wgs, wg)
+	}
+	return func() {
+		for _, wg := range wgs {
+			wg.Done()
+		}
+	}
+}
+
+// waitTablesDone block the current goroutine,
+// till all tables provided are no more ‘current restoring’.
+func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
+	for _, t := range ts {
+		wg, ok := b.tableWaiters.LoadAndDelete(t.Table.ID)
+		if !ok {
+			log.Panic("bug! table done before register!",
+				zap.Any("wait-table-map", b.tableWaiters),
+				zap.Stringer("table", t.Table.Name))
+>>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 		}
 	}
 }
