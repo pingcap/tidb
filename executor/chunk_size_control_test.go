@@ -160,7 +160,6 @@ func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, 
 }
 
 func TestLimitAndTableScan(t *testing.T) {
-	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit, clean := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
 	defer clean()
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -192,7 +191,6 @@ func TestLimitAndTableScan(t *testing.T) {
 }
 
 func TestLimitAndIndexScan(t *testing.T) {
-	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit, clean := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
 	defer clean()
 	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
