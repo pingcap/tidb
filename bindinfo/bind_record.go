@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 )
 
@@ -81,9 +82,6 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	}
 	return time.Since(updateTime), nil
 }
-
-// cache is a k-v map, key is original sql, value is a slice of BindRecord.
-type cache map[string][]*BindRecord
 
 // BindRecord represents a sql bind record retrieved from the storage.
 type BindRecord struct {
@@ -234,6 +232,15 @@ func (br *BindRecord) isSame(other *BindRecord) bool {
 	return br.OriginalSQL == other.OriginalSQL
 }
 
+// size calculates the memory size of a BindRecord.
+func (br *BindRecord) size() float64 {
+	mem := float64(len(hack.Slice(br.OriginalSQL)) + len(hack.Slice(br.Db)))
+	for _, binding := range br.Bindings {
+		mem += binding.size()
+	}
+	return mem
+}
+
 var statusIndex = map[string]int{
 	Using:   0,
 	deleted: 1,
@@ -264,7 +271,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation)
+	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 
