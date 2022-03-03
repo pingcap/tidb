@@ -33,11 +33,44 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+type testMaxTableRowIDContext struct {
+	c   *C
+	d   ddl.DDL
+	tbl table.Table
+}
+
+func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
+	return &testMaxTableRowIDContext{
+		c:   c,
+		d:   d,
+		tbl: tbl,
+	}
+}
+
+func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
+	c := ctx.c
+	d := ctx.d
+	tbl := ctx.tbl
+	curVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
+	c.Assert(err, IsNil)
+	return maxHandle, emptyTable
+}
+
+func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
+	c := ctx.c
+	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
+	c.Assert(emptyTable, Equals, expectEmpty)
+	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
+}
 
 var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
 
