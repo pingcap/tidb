@@ -7255,43 +7255,6 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
 
-func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test;")
-	tk1.MustExec("drop table if exists partition_table;")
-	defer func() {
-		tk1.MustExec("drop table if exists partition_table;")
-	}()
-	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
-	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk1.MustExec("alter table partition_table truncate partition all;")
-	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
-}
-
-func (s *testSerialSuite) TestIssue23872(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists test_create_table;")
-	defer tk.MustExec("drop table if exists test_create_table;")
-	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
-	rs, err := tk.Exec("select * from test_create_table;")
-	c.Assert(err, IsNil)
-	cols := rs.Fields()
-	err = rs.Close()
-	c.Assert(err, IsNil)
-	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
-	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
-	tk.MustExec("create table t(a int default 1, primary key(a));")
-	defer tk.MustExec("drop table if exists t;")
-	rs1, err := tk.Exec("select * from t;")
-	c.Assert(err, IsNil)
-	cols1 := rs1.Fields()
-	err = rs1.Close()
-	c.Assert(err, IsNil)
-	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
-	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
-}
-
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
