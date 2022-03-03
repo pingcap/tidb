@@ -695,6 +695,11 @@ func killConn(conn *clientConn) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
+	if conn.bufReadConn != nil {
+		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+		}
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
