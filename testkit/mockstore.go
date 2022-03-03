@@ -18,6 +18,8 @@
 package testkit
 
 import (
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/tikv/client-go/v2/testutils"
 	"testing"
 	"time"
 
@@ -42,6 +44,24 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store, 0)
 	return store, dom, clean
+}
+
+// CreateMockStoreAndDomainWithTestGen return a new mock kv.Strorage plus a test generation config
+func CreateMockStoreAndDomainWithTestGen(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, dom *domain.Domain, clean func(), config *unistore.TestGenConfig) {
+	config = &unistore.TestGenConfig{}
+	opts = append(opts, mockstore.WithTestGen(config), mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		config.Cluster = c.(*unistore.Cluster)
+	}))
+	store, dom, clean = CreateMockStoreAndDomain(t, opts...)
+	config.Init(store, dom)
+	return
+}
+
+// CreateMockStoreWithTestGen return a new mock kv.Strorage plus a test generation config
+func CreateMockStoreWithTestGen(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func(), config *unistore.TestGenConfig) {
+	store, _, clean, config = CreateMockStoreAndDomainWithTestGen(t, opts...)
+	return
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {

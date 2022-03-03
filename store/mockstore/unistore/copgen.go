@@ -66,24 +66,6 @@ func (c *TestGenConfig) Serialize() ([]byte, error) {
 	return json.MarshalIndent(c, "", "  ")
 }
 
-func (c *TestGenConfig) SaveTestData(path string) error {
-	// create file if not exists
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	// serialize datat to JSON and write to file
-	data, err := c.Serialize()
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(data)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionInfo, error) {
 	mockStorage, ok := store.(*mockstorage.MockStorage)
 	if !ok {
@@ -142,19 +124,42 @@ func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionIn
 }
 
 // Init initializes the configuration with core facilities. Must call before calling other functions.
-func (c *TestGenConfig) Init(store kv.Storage, dom *domain.Domain) error {
+func (c *TestGenConfig) Init(store kv.Storage, dom *domain.Domain) {
 	c.store = store
 	c.dom = dom
 	c.TableData = make(map[int64]*TableInfo)
+}
+
+// AddTable adds a table into the table of interest.
+func (c *TestGenConfig) AddTable(dbName, tblName string) error {
+	tbl, err := c.dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	if err != nil {
+		return err
+	}
+	c.TableOfInterest = append(c.TableOfInterest, tbl.Meta().ID)
 	return nil
 }
 
-// AddTable adds a table into the table of interest. Table data is dumped at the same time. All DAG Reqeusts on this table will be recorded for replaying with the dumped data.
-func (c *TestGenConfig) AddTable(dbName, tblName string) error {
+// RemoveTable removes the table from the table of interest.
+func (c *TestGenConfig) RemoveTable(dbName, tblName string) error {
 	tbl, err := c.dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
-	c.TableOfInterest = append(c.TableOfInterest, tbl.Meta().ID)
-	fmt.Println(tbl.Meta().ID)
+	if err != nil {
+		return err
+	}
+	for i, id := range c.TableOfInterest {
+		if id == tbl.Meta().ID {
+			c.TableOfInterest = append(c.TableOfInterest[:i], c.TableOfInterest[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
 
+func (c *TestGenConfig) dumpTable(tblID int64) error {
+	tbl, exists := c.dom.InfoSchema().TableByID(tblID)
+	if !exists {
+		return fmt.Errorf("table %d does not exist", tblID)
+	}
 	var tableStart, tableEnd []byte
 	tableStart = tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	tableEnd = tablecodec.GenTableRecordPrefix(tbl.Meta().ID).PrefixNext()
@@ -189,14 +194,42 @@ func (c *TestGenConfig) AddTable(dbName, tblName string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("number of regions of table %s.%s is %d\n", dbName, tblName, len(regions))
+	fmt.Printf("number of regions of table %s is %d\n", tbl.Meta().Name.String(), len(regions))
 	tableInfo := &TableInfo{
 		ID:      tbl.Meta().ID,
 		Regions: regions,
 		Meta:    tbl.Meta(),
 	}
 	c.TableData[tbl.Meta().ID] = tableInfo
+	return nil
+}
 
+// Prepare prepares the data of table of interests, and afterward DAG requests on tables of interest will be recorded for replaying with the dumped data.
+func (c *TestGenConfig) Prepare() error {
+	for _, tblID := range c.TableOfInterest {
+		err := c.dumpTable(tblID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *TestGenConfig) Dump(path string) error {
+	// create file if not exists
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	// serialize datat to JSON and write to file
+	data, err := c.Serialize()
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -1,16 +1,12 @@
 package executor_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 type TestSuite struct {
@@ -19,13 +15,7 @@ type TestSuite struct {
 }
 
 func TestCopGen(t *testing.T) {
-	config := &unistore.TestGenConfig{}
-
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithTestGen(config), mockstore.WithClusterInspector(func(c testutils.Cluster) {
-		mockstore.BootstrapWithSingleStore(c)
-		config.Cluster = c.(*unistore.Cluster)
-	}))
-	config.Init(store, dom)
+	store, clean, testGen := testkit.CreateMockStoreWithTestGen(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -37,19 +27,13 @@ func TestCopGen(t *testing.T) {
 	tk.MustExec("insert into t(b, c) (select b, c from t)")
 	tk.MustExec("create table t2(a int auto_increment primary key, b int, c int)")
 	tk.MustExec("insert into t2(b, c) (select b, c from t)")
-	// fmt.Println("")
-	// fmt.Println("run select")
-	// tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 
-	err := config.AddTable("test", "t")
+	err := testGen.AddTable("test", "t")
 	require.NoError(t, err)
-	err = config.AddTable("test", "t2")
+	err = testGen.AddTable("test", "t2")
 	require.NoError(t, err)
 
-	fmt.Println("")
-	fmt.Println("")
+	require.NoError(t, testGen.Prepare())
 	tk.MustQuery("select * from t where a * 2 - 1 = 1").Check(testkit.Rows("1 1 1"))
-
-	err = config.SaveTestData("/tmp/copgen_test_data.json")
-	require.NoError(t, err)
+	require.NoError(t, testGen.Dump("/tmp/copgen_test_data.json"))
 }
