@@ -27,7 +27,15 @@ import (
 )
 
 const (
+	// Enable is the bind info's in enable status.
+	// It is the same as the previous 'Using' status.
+	// Only use 'Enable' status in the future, not the 'Using' status.
+	// The using status is preserved for compatibility.
+	Enable = "enable"
+	// Disable is the bind info's in disable status.
+	Disable = "disable"
 	// Using is the bind info's in use status.
+	// The 'Using' status is preserved for compatibility.
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
@@ -53,7 +61,7 @@ type Binding struct {
 	BindSQL string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. using: Binding is in the normal active mode.
+	// 2. enable, using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -72,6 +80,11 @@ func (b *Binding) isSame(rb *Binding) bool {
 	}
 	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
 	return b.BindSQL == rb.BindSQL
+}
+
+// IsBindingEnable returns whether the binding is enable.
+func (b *Binding) IsBindingEnable() bool {
+	return b.Status == Enable
 }
 
 // SinceUpdateTime returns the duration since last update time. Export for test.
@@ -94,7 +107,7 @@ type BindRecord struct {
 // HasUsingBinding checks if there are any using bindings in bind record.
 func (br *BindRecord) HasUsingBinding() bool {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using {
+		if binding.IsBindingEnable() {
 			return true
 		}
 	}
@@ -105,7 +118,7 @@ func (br *BindRecord) HasUsingBinding() bool {
 // There is at most one binding that can be used now
 func (br *BindRecord) FindUsingBinding() *Binding {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using {
+		if binding.IsBindingEnable() {
 			return &binding
 		}
 	}
@@ -242,7 +255,7 @@ func (br *BindRecord) size() float64 {
 }
 
 var statusIndex = map[string]int{
-	Using:   0,
+	Enable:  0,
 	deleted: 1,
 	Invalid: 2,
 }

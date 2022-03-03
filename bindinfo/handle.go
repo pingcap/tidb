@@ -738,7 +738,7 @@ func (h *BindHandle) CaptureBaselines() {
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
 			BindSQL:   bindSQL,
-			Status:    Using,
+			Status:    Enable,
 			Charset:   charset,
 			Collation: collation,
 			Source:    Capture,
@@ -1050,7 +1050,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 			zap.String("digestText", digestText),
 		)
 	} else {
-		binding.Status = Using
+		binding.Status = Enable
 	}
 	// We don't need to pass the `sctx` because the BindSQL has been validated already.
 	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})

@@ -109,7 +109,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	updateTime0 := rows0[0][1]
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enable', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -137,7 +137,7 @@ func TestBindParse(t *testing.T) {
 	originSQL := "select * from `test` . `t`"
 	bindSQL := "select * from `test` . `t` use index(index_t)"
 	defaultDb := "test"
-	status := "using"
+	status := "enable"
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	source := bindinfo.Manual
@@ -156,7 +156,7 @@ func TestBindParse(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "select * from `test` . `t` use index(index_t)", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, "enable", bind.Status)
 	require.Equal(t, "utf8mb4", bind.Charset)
 	require.Equal(t, "utf8mb4_bin", bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -240,13 +240,13 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Nil(t, dom.BindHandle().Update(false))
 	rows := tk.MustQuery("show global bindings").Sort().Rows()
 	require.Equal(t, 2, len(rows))
-	// Make sure this "using" binding is not overrided.
+	// Make sure this "enable" binding is not overrided.
 	require.Equal(t, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 	status := rows[0][3].(string)
-	require.True(t, status == "using")
+	require.True(t, status == "enable")
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
-	require.True(t, status == "using" || status == "rejected")
+	require.True(t, status == "enable" || status == "rejected")
 }
 
 var testSQLs = []struct {
@@ -395,10 +395,10 @@ func TestGlobalBinding(t *testing.T) {
 		}
 
 		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enable).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(1), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enable).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
@@ -410,7 +410,7 @@ func TestGlobalBinding(t *testing.T) {
 		bind := bindData.Bindings[0]
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
 		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, "using", bind.Status)
+		require.Equal(t, "enable", bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
 		require.NotNil(t, bind.CreateTime)
@@ -426,7 +426,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.Equal(t, testSQL.originSQL, row.GetString(0))
 		require.Equal(t, testSQL.bindSQL, row.GetString(1))
 		require.Equal(t, "test", row.GetString(2))
-		require.Equal(t, "using", row.GetString(3))
+		require.Equal(t, "enable", row.GetString(3))
 		require.NotNil(t, row.GetTime(4))
 		require.NotNil(t, row.GetTime(5))
 		require.NotNil(t, row.GetString(6))
@@ -443,7 +443,7 @@ func TestGlobalBinding(t *testing.T) {
 		bind = bindData.Bindings[0]
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
 		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, "using", bind.Status)
+		require.Equal(t, "enable", bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
 		require.NotNil(t, bind.CreateTime)
@@ -454,10 +454,10 @@ func TestGlobalBinding(t *testing.T) {
 		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
 
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enable).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enable).Write(pb)
 		require.NoError(t, err)
 		// From newly created global bind handle.
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
