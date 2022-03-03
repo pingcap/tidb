@@ -1641,9 +1641,14 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
 	}
 
+	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.
+	// They are different features and the value for `ReadReplicaScope` will be conflicted in some scenes.
+	// But because local txn is still an experimental feature, we should make stale read work first.
 	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		// When stale read or closet read is set, we read the tidb's locality as the read replica scope
 		p.ReadReplicaScope = config.GetTxnScopeFromConfig()
 	} else {
+		// Otherwise, use the scope from TxnCtx for local txn validation
 		p.ReadReplicaScope = p.ctx.GetSessionVars().TxnCtx.TxnScope
 	}
 
