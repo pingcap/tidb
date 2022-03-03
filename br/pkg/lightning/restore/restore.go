@@ -449,17 +449,11 @@ func (rc *Controller) Run(ctx context.Context) error {
 			rc.fullCompact,
 			rc.cleanCheckpoints,
 		}
-	} else if rc.cfg.CheckOnly.Mode == config.CheckModeNormal {
+	} else {
 		opts = []processFunc{
 			rc.setGlobalVariables,
 			rc.loadSchemaForCheckOnly,
 			rc.preCheckRequirements,
-		}
-	} else {
-		// rc.cfg.CheckOnly.Mode == config.CheckModeSample
-		opts = []processFunc{
-			rc.setGlobalVariables,
-			rc.loadSchemaForCheckOnly,
 			rc.checkDataBySample,
 		}
 	}
@@ -2038,10 +2032,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			}
 		}
 	}
-
-	if rc.tidbGlue.OwnsSQLExecutor() && (rc.cfg.CheckOnly != nil || rc.cfg.App.CheckRequirements) {
-		fmt.Println(rc.checkTemplate.Output())
-	}
 	if !rc.checkTemplate.Success() {
 		if !taskExist && rc.taskMgr != nil {
 			err := rc.taskMgr.CleanupTask(ctx)
@@ -2049,6 +2039,17 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				log.L().Warn("cleanup task failed", zap.Error(err))
 			}
 		}
+	}
+
+	if rc.cfg.CheckOnly != nil {
+		// check only, keep running and let sample check print the result
+		return nil
+	}
+
+	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
+		fmt.Println(rc.checkTemplate.Output())
+	}
+	if !rc.checkTemplate.Success() {
 		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil

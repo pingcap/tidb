@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
-func Test_dataSampleCheck_doCheck(t *testing.T) {
+func TestDataSampleCheckDoCheck(t *testing.T) {
 	ctx := context.Background()
 	fakeDataDir := t.TempDir()
 	store, err := storage.NewLocalStorage(fakeDataDir)
@@ -45,7 +45,6 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	cfg.Mydumper.ReadBlockSize = 1024
 	cfg.App.RegionConcurrency = 8
 	cfg.CheckOnly = &config.CheckOnly{
-		Mode: config.CheckModeSample,
 		Rate: 0.01,
 		Rows: 1,
 	}
@@ -95,39 +94,43 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
+	rc.checkTemplate = NewSimpleTemplate()
 	check := newDataSampleCheck(rc)
 
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.True(t, check.checkTemplate.Success())
+	require.True(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(1), check.totalRows.Load())
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = 2
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(2), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = 3
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(3), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
 	// more lines than file
 	cfg.CheckOnly.Rows = 1000
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(2), check.totalColumnCountMismatchRows.Load())
@@ -144,6 +147,7 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	rc.cfg.CheckOnly.Rate = 1
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.Error(t, err)
@@ -168,55 +172,114 @@ func Test_dataSampleCheck_doCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg.CheckOnly.Rows = 1
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.True(t, check.checkTemplate.Success())
+	require.True(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(1), check.totalRows.Load())
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = 2
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(2), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = 3
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(3), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = 4
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
 	cfg.CheckOnly.Rows = -1
+	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
-	require.False(t, check.checkTemplate.Success())
+	require.False(t, check.controller.checkTemplate.Success())
 	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
+
+	//
+	// csv with header, fewer columns than ddl, columns out of order
+	require.NoError(t, os.Remove(path.Join(fakeDataDir, tbl1FileZero)))
+	cfg.Mydumper.CSV.Header = true
+	tbl1FileZero = fmt.Sprintf("%s.%s.000000000.csv", fakeDBName, tbl1)
+	// 4 lines, 1 ok, 2 invalid gbk, 3 binary string contains utf-8 encoded str, 4 more column
+	err = store.WriteFile(ctx, tbl1FileZero, []byte("\"k\",\"i\"\n1,\"1\"\n2,\"中\"\n3,\"中\",1\n4\n"))
+	require.NoError(t, err)
+
+	mydumpLoader, err = mydump.NewMyDumpLoaderWithStore(ctx, rc.cfg, store)
+	require.NoError(t, err)
+	rc.dbMetas = mydumpLoader.GetDatabases()
+	err = rc.loadSchemaForCheckOnly(ctx)
+	require.NoError(t, err)
+
+	cfg.CheckOnly.Rows = 1
+	rc.checkTemplate = NewSimpleTemplate()
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.True(t, check.controller.checkTemplate.Success())
+	require.Equal(t, int64(1), check.totalRows.Load())
+	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
+
+	cfg.CheckOnly.Rows = 2
+	rc.checkTemplate = NewSimpleTemplate()
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.False(t, check.controller.checkTemplate.Success())
+	require.Equal(t, int64(2), check.totalRows.Load())
+	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
+
+	cfg.CheckOnly.Rows = 3
+	rc.checkTemplate = NewSimpleTemplate()
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.False(t, check.controller.checkTemplate.Success())
+	require.Equal(t, int64(3), check.totalRows.Load())
+	require.Equal(t, int64(2), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
+
+	cfg.CheckOnly.Rows = -1
+	rc.checkTemplate = NewSimpleTemplate()
+	check = newDataSampleCheck(rc)
+	err = check.doCheck(ctx)
+	require.NoError(t, err)
+	require.False(t, check.controller.checkTemplate.Success())
+	require.Equal(t, int64(3), check.totalRows.Load())
+	require.Equal(t, int64(2), check.totalInvalidCharRows.Load())
+	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 }
 
-func Test_dataSampleCheck_getRandomDataFiles(t *testing.T) {
+func TestDataSampleCheckGetRandomDataFiles(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.CheckOnly = &config.CheckOnly{
-		Mode: config.CheckModeSample,
 		Rate: 0.01,
 		Rows: 100,
 	}

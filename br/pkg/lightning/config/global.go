@@ -31,8 +31,7 @@ import (
 )
 
 const (
-	CheckModeNormal = "normal"
-	CheckModeSample = "sample"
+	checkOnlyDefault = "default"
 
 	DefaultSampleRate = 0.01
 	DefaultCheckRows  = 1000
@@ -97,9 +96,6 @@ type GlobalPostRestore struct {
 }
 
 type CheckOnly struct {
-	Mode string `toml:"-" json:"-"`
-
-	// take effects when Mode=CheckModeSample
 	Rate float64 `toml:"-" json:"-"`
 	Rows int64   `toml:"-" json:"-"`
 }
@@ -188,7 +184,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
 
-	checkOnlyCfg := fs.String("check-only", "", "do check only, supported value: normal, sample=rate,rows")
+	checkOnlyCfg := fs.String("check-only", "", "do check only, supported value: --check-only=default or --check-only=rate,rows")
 
 	var filter []string
 	flagext.StringsVar(fs, &filter, "f", "select tables to import")
@@ -314,34 +310,29 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 }
 
 func extractCheckOnlyCfg(str string) (*CheckOnly, error) {
-	splits := strings.Split(str, "=")
+	if str == checkOnlyDefault {
+		return &CheckOnly{
+			Rate: DefaultSampleRate,
+			Rows: DefaultCheckRows,
+		}, nil
+	}
+
 	invalidCfg := errors.New("invalid check-only config: " + str)
-	if len(splits) > 2 || (splits[0] != CheckModeNormal && splits[0] != CheckModeSample) {
+	if splits := strings.Split(str, ","); len(splits) != 2 {
 		return nil, invalidCfg
 	}
 
-	if splits[0] == CheckModeNormal {
-		if len(splits) != 1 {
-			return nil, invalidCfg
-		}
-		return &CheckOnly{Mode: CheckModeNormal}, nil
-	} else { // CheckModeSample
-		if len(splits) == 1 {
-			return &CheckOnly{Mode: CheckModeSample, Rate: DefaultSampleRate, Rows: DefaultCheckRows}, nil
-		}
-
-		var rate float64
-		var rows int64
-		n, err := fmt.Sscanf(str, "sample=%f,%d", &rate, &rows)
-		if n != 2 || err != nil {
-			return nil, invalidCfg
-		}
-		if rate > 1 || rate <= 0 {
-			return nil, errors.Wrap(invalidCfg, "rate should be in range (0, 1]")
-		}
-		if rows != CheckAllRows && rows <= 0 {
-			return nil, errors.Wrap(invalidCfg, "rows should be positive or -1(represent all)")
-		}
-		return &CheckOnly{Mode: CheckModeSample, Rate: rate, Rows: rows}, nil
+	var rate float64
+	var rows int64
+	n, err := fmt.Sscanf(str, "%f,%d", &rate, &rows)
+	if n != 2 || err != nil {
+		return nil, invalidCfg
 	}
+	if rate > 1 || rate <= 0 {
+		return nil, errors.Wrap(invalidCfg, "rate should be in range (0, 1]")
+	}
+	if rows != CheckAllRows && rows <= 0 {
+		return nil, errors.Wrap(invalidCfg, "rows should be positive or -1(represent all)")
+	}
+	return &CheckOnly{Rate: rate, Rows: rows}, nil
 }

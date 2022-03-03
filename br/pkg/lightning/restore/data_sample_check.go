@@ -40,7 +40,6 @@ type dataSampleCheck struct {
 	controller *Controller
 
 	checkCfg      *config.CheckOnly
-	checkTemplate Template
 	wg            sync.WaitGroup
 
 	totalRows                    atomic.Int64
@@ -51,7 +50,6 @@ type dataSampleCheck struct {
 func newDataSampleCheck(controller *Controller) *dataSampleCheck {
 	return &dataSampleCheck{
 		controller:    controller,
-		checkTemplate: NewSimpleTemplate(),
 		checkCfg:      controller.cfg.CheckOnly,
 	}
 }
@@ -94,12 +92,17 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			return
 		}
 
+		ddlColumnMap := make(map[string]*model.ColumnInfo, len(fileInfo.TableInfo.Columns))
+		for _, col := range fileInfo.TableInfo.Columns {
+			ddlColumnMap[col.Name.L] = col
+		}
+		var columnNames []string
 		var rowsChecked, columnCountMismatchRows, invalidCharRows, lastOffset int64
-		columnCount := len(fileInfo.TableInfo.Columns)
-		var i int64
+		columnCount := -1
+		var count int64
 		for {
-			i++
-			if d.checkCfg.Rows != config.CheckAllRows && i > d.checkCfg.Rows {
+			count++
+			if d.checkCfg.Rows != config.CheckAllRows && count > d.checkCfg.Rows {
 				break
 			}
 			err = fileParser.ReadRow()
@@ -116,6 +119,18 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			}
 
 			row := fileParser.LastRow()
+			if columnCount == -1 {
+				columnNames = fileParser.Columns()
+				if columnNames == nil {
+					columnCount = len(fileInfo.TableInfo.Columns)
+					columnNames = make([]string, columnCount)
+					for i, col := range fileInfo.TableInfo.Columns {
+						columnNames[i] = col.Name.L
+					}
+				} else {
+					columnCount = len(columnNames)
+				}
+			}
 			rowsChecked++
 			if len(row.Row) != columnCount {
 				columnCountMismatchRows++
@@ -127,8 +142,14 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 				if colIdx >= columnCount {
 					break
 				}
+
+				columnInfo := ddlColumnMap[columnNames[colIdx]]
+				if columnInfo == nil {
+					// we don't check this kind of error here
+					continue
+				}
+				colType := columnInfo.FieldType
 				// we only check non-binary string types here
-				colType := fileInfo.TableInfo.Columns[colIdx].FieldType
 				if !types.IsNonBinaryStr(&colType) {
 					continue
 				}
@@ -193,12 +214,12 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 	passed := d.totalColumnCountMismatchRows.Load() == 0 && d.totalInvalidCharRows.Load() == 0
 	msg := fmt.Sprintf("Total sample of %d rows of data checked, %d errors found.",
 		d.totalRows.Load(), d.totalColumnCountMismatchRows.Load()+d.totalInvalidCharRows.Load())
-	d.checkTemplate.Collect(Critical, passed, msg)
+	rc.checkTemplate.Collect(Critical, passed, msg)
 
 	if rc.tidbGlue.OwnsSQLExecutor() {
-		fmt.Println(d.checkTemplate.Output())
+		fmt.Println(rc.checkTemplate.Output())
 
-		if d.checkTemplate.Success() {
+		if rc.checkTemplate.Success() {
 			fmt.Println("All checks have been passed, but there may still be other types of errors that can only be found during the actual insertion of data.")
 		} else {
 			fmt.Println("Some checks failed, please check the log for more information.")
