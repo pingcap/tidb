@@ -504,3 +504,38 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
 }
+
+func checkGcTxnMaxWaitTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	ival, err := strconv.Atoi(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	GcLifeTimeStr, _ := getTiDBTableValue(vars, "tikv_gc_life_time", "10m0s")
+	GcLifeTimeDuration, err := time.ParseDuration(GcLifeTimeStr)
+	if err != nil {
+		// how to process the err
+		return originalValue, errors.Trace(err)
+	}
+	if GcLifeTimeDuration.Seconds() > (float64)(ival) {
+		// how to process this case
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCMaxWaitTime, normalizedValue))
+	}
+	return normalizedValue, nil
+}
+
+func checkTikvGclifeTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	GcLifeTimeDuration, err := time.ParseDuration(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	if GcLifeTimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
+	}
+	return normalizedValue, nil
+}

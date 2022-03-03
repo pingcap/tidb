@@ -608,6 +608,14 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
 	}},
+	{Scope: ScopeGlobal, Name: TiDBGCMaxWaitTime, Value: strconv.Itoa(DefTiDBGCMaxWaitTime), Type: TypeInt, MinValue: 600, MaxValue: 31536000,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			return checkGcTxnMaxWaitTime(vars, normalizedValue, originalValue, scope)
+		}, SetGlobal: func(s *SessionVars, val string) error {
+			ival, _ := strconv.Atoi(val)
+			GCMaxWaitTime.Store((int64)(ival))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
 		var val int64
 		val, err := strconv.ParseInt(sVal, 10, 64)
