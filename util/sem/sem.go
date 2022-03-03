@@ -154,7 +154,9 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBEnableCollectExecutionInfo,
 		variable.TiDBMemoryUsageAlarmRatio,
 		variable.TiDBRedactLog,
-		variable.TiDBRestrictedReadOnly:
+		variable.TiDBRestrictedReadOnly,
+		variable.TiDBTopSQLMaxTimeSeriesCount,
+		variable.TiDBTopSQLMaxMetaCount:
 		return true
 	}
 	return false

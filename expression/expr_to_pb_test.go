@@ -1263,11 +1263,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
 		},
-		{
-			functionName: ast.Truncate,
-			retType:      types.NewFieldType(mysql.TypeDouble),
-			args:         []Expression{intColumn, intColumn},
-		},
+		//{
+		//	functionName: ast.Truncate,
+		//	retType:      types.NewFieldType(mysql.TypeDouble),
+		//	args:         []Expression{intColumn, intColumn},
+		//},
 		{
 			functionName: ast.Bin,
 			retType:      types.NewFieldType(mysql.TypeString),
