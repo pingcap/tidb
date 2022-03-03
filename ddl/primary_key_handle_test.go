@@ -84,16 +84,6 @@ type testIntegrationSuite struct {
 	ctx     sessionctx.Context
 }
 
-func tearDownIntegrationSuiteTest(s *testIntegrationSuite, c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	s.lease = 50 * time.Millisecond
