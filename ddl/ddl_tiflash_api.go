@@ -61,7 +61,8 @@ type TiFlashReplicaStatus struct {
 type TiFlashTick float64
 
 // PollTiFlashBackoffElement records backoff for each TiFlash Table.
-// When `Counter` reached `Threshold`, `Threshold` shall grow.
+// `Counter` increases every `Tick`, if it reached `Threshold`, it will be reset to 0 while `Threshold` grows.
+// `TotalCounter` records total `Tick`s this element has since created.
 type PollTiFlashBackoffElement struct {
 	Counter      int
 	Threshold    TiFlashTick
@@ -120,30 +121,28 @@ type TiFlashManagementContext struct {
 }
 
 // Tick will first check increase Counter.
+// It returns:
+// 1. A bool indicates whether threshold is grown during this tick.
+// 2. A bool indicates whether this ID exists.
+// 3. A int indicates how many ticks ID has counted till now.
 func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
 	e, ok := b.Get(ID)
 	if !ok {
 		return false, false, 0
 	}
-	growed := e.MaybeGrow(b)
+	grew := e.MaybeGrow(b)
 	e.Counter += 1
 	e.TotalCounter += 1
-	return growed, true, e.TotalCounter
+	return grew, true, e.TotalCounter
 }
 
-func (e *PollTiFlashBackoffElement) limit() int {
-	return int(e.Threshold)
-}
-
-// NeedGrow returns if we need to grow
+// NeedGrow returns if we need to grow.
+// It is exported for testing.
 func (e *PollTiFlashBackoffElement) NeedGrow() bool {
-	return e.Counter >= e.limit()
+	return e.Counter >= int(e.Threshold)
 }
 
 func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {
-	defer func() {
-		e.Counter = 0
-	}()
 	if e.Threshold < b.MinTick {
 		e.Threshold = b.MinTick
 	}
@@ -152,9 +151,10 @@ func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {
 	} else {
 		e.Threshold *= b.Rate
 	}
+	e.Counter = 0
 }
 
-// MaybeGrow grows threshold and reset counter when need
+// MaybeGrow grows threshold and reset counter when needed.
 func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool {
 	if !e.NeedGrow() {
 		return false
@@ -163,7 +163,7 @@ func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool
 	return true
 }
 
-// Remove will reset table from backoff
+// Remove will reset table from backoff.
 func (b *PollTiFlashBackoffContext) Remove(ID int64) bool {
 	_, ok := b.elements[ID]
 	delete(b.elements, ID)
@@ -178,15 +178,15 @@ func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, b
 }
 
 // Put will record table into backoff pool, if there is enough room, or returns false.
-func (b *PollTiFlashBackoffContext) Put(ID int64) (*PollTiFlashBackoffElement, bool) {
-	e, ok := b.elements[ID]
+func (b *PollTiFlashBackoffContext) Put(ID int64) bool {
+	_, ok := b.elements[ID]
 	if ok {
-		return e, true
+		return true
 	} else if b.Len() < b.Capacity {
 		b.elements[ID] = NewPollTiFlashBackoffElement()
-		return b.elements[ID], true
+		return true
 	}
-	return nil, false
+	return false
 }
 
 // Len gets size of PollTiFlashBackoffContext.
@@ -400,8 +400,8 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
-			growed, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
-			if inqueue && !growed {
+			grown, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
+			if inqueue && !grown {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
 				continue
 			}
