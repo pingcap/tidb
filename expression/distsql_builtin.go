@@ -229,6 +229,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinGreatestCmpStringAsTimeSig{base, false}
 	case tipb.ScalarFuncSig_GreatestCmpStringAsDate:
 		f = &builtinGreatestCmpStringAsTimeSig{base, true}
+	case tipb.ScalarFuncSig_GreatestDuration:
+		f = &builtinGreatestDurationSig{base}
 	case tipb.ScalarFuncSig_LeastInt:
 		f = &builtinLeastIntSig{base}
 	case tipb.ScalarFuncSig_LeastReal:
@@ -245,6 +247,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLeastCmpStringAsTimeSig{base, false}
 	case tipb.ScalarFuncSig_LeastCmpStringAsDate:
 		f = &builtinLeastCmpStringAsTimeSig{base, true}
+	case tipb.ScalarFuncSig_LeastDuration:
+		f = &builtinLeastDurationSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
 		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
