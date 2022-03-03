@@ -7255,43 +7255,6 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
 
-func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test;")
-	tk1.MustExec("drop table if exists partition_table;")
-	defer func() {
-		tk1.MustExec("drop table if exists partition_table;")
-	}()
-	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
-	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk1.MustExec("alter table partition_table truncate partition all;")
-	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
-}
-
-func (s *testSerialSuite) TestIssue23872(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists test_create_table;")
-	defer tk.MustExec("drop table if exists test_create_table;")
-	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
-	rs, err := tk.Exec("select * from test_create_table;")
-	c.Assert(err, IsNil)
-	cols := rs.Fields()
-	err = rs.Close()
-	c.Assert(err, IsNil)
-	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
-	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
-	tk.MustExec("create table t(a int default 1, primary key(a));")
-	defer tk.MustExec("drop table if exists t;")
-	rs1, err := tk.Exec("select * from t;")
-	c.Assert(err, IsNil)
-	cols1 := rs1.Fields()
-	err = rs1.Close()
-	c.Assert(err, IsNil)
-	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
-	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
-}
-
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
@@ -7813,4 +7776,27 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
 	}
+}
+
+// for issue #30328
+func (s *testDBSuite5) TestTooBigFieldLengthAutoConvert(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	err := tk.ExecToErr("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	c.Assert(types.ErrTooBigFieldLength.Equal(err), IsTrue)
+
+	// save previous sql_mode and change
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists i30328_1")
+		tk.MustExec("drop table if exists i30328_2")
+	}(r.Rows()[0][0].(string))
+	tk.MustExec("set @@sql_mode='NO_ENGINE_SUBSTITUTION'")
+
+	tk.MustExec("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARBINARY to BLOB", "Warning 1246 Converting column 'b' from VARCHAR to TEXT"))
+	tk.MustExec("create table i30328_2(a varchar(200))")
+	tk.MustExec("alter table i30328_2 modify a varchar(70000000);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARCHAR to TEXT"))
 }
