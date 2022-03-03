@@ -26,7 +26,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -413,7 +412,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -465,13 +464,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Run(func() {
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{result, err})
 				<-ch
-			}()
+			})
 			offset.offset = e.fileLine
 			offset.length = 0
 			select {
