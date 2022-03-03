@@ -279,12 +279,8 @@ func newTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 	}
 }
 
-func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
-	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "fetch tso from pd failed")
-	}
-	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(physicalTS, logicalTS)).
+func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
+	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		Build()
 	if err != nil {
@@ -327,12 +323,16 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
-	err := e.manager.addOneJob(ctx, tbl, oracle.ComposeTS(time.Now().Unix()*1000, 0))
+	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
 	if err != nil {
+		return nil, errors.Annotate(err, "fetch tso from pd failed")
+	}
+	ts := oracle.ComposeTS(physicalTS, logicalTS)
+	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return e.checksumDB(ctx, tableInfo)
+	return e.checksumDB(ctx, tableInfo, ts)
 }
 
 type tableChecksumTS struct {
