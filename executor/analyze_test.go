@@ -2613,3 +2613,44 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	// 5. historical stats must be equal to the current stats
 	require.JSONEq(t, string(jsOrigin), string(jsCur))
 }
+
+func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("analyze table test.t")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// 1. switch off the tidb_enable_historical_stats, and there is no record in table `mysql.stats_meta_history`
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+	// insert demo tuples, and there is no record either.
+	insertNums := 5
+	for i := 0; i < insertNums; i++ {
+		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
+		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		require.NoError(t, err)
+	}
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+
+	// 2. switch on the tidb_enable_historical_stats and insert tuples to produce count/modifyCount delta change.
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
+
+	for i := 0; i < insertNums; i++ {
+		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
+		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		require.NoError(t, err)
+	}
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
+		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
+}
