@@ -42,8 +42,8 @@ type Processor interface {
 
 	// OnSelectTable will be called when process table in select statement
 	OnSelectTable(tn *ast.TableName) error
-	// OnExecutePrepared when process execute
-	OnExecutePrepared(tsEvaluator StalenessTSEvaluator) error
+	// OnExecutePreparedStmt when process execute
+	OnExecutePreparedStmt(tsEvaluator StalenessTSEvaluator) error
 }
 
 type baseProcessor struct {
@@ -167,7 +167,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, true)
 }
 
-func (p *staleReadProcessor) OnExecutePrepared(tsEvaluator StalenessTSEvaluator) (err error) {
+func (p *staleReadProcessor) OnExecutePreparedStmt(tsEvaluator StalenessTSEvaluator) (err error) {
 	if p.evaluated {
 		return errors.New("already evaluated")
 	}

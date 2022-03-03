@@ -2283,7 +2283,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	replicaReadScope := oracle.GlobalTxnScope
 
 	staleReadProcessor := staleread.NewStaleReadProcessor(s)
-	if err = staleReadProcessor.OnExecutePrepared(preparedStmt.SnapshotTSEvaluator); err != nil {
+	if err = staleReadProcessor.OnExecutePreparedStmt(preparedStmt.SnapshotTSEvaluator); err != nil {
 		return nil, err
 	}
 
