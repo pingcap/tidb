@@ -50,25 +50,6 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
-// CheckAt asserts the result of selected columns equals the expected results.
-func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
-	for _, e := range expected {
-		res.require.Equal(len(e), len(cols))
-	}
-
-	rows := make([][]string, 0, len(expected))
-	for i := range res.rows {
-		row := make([]string, 0, len(cols))
-		for _, r := range cols {
-			row = append(row, res.rows[i][r])
-		}
-		rows = append(rows, row)
-	}
-	got := fmt.Sprintf("%s", rows)
-	need := fmt.Sprintf("%s", expected)
-	res.require.Equal(need, got, res.comment)
-}
-
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)
@@ -117,4 +98,23 @@ func (res *Result) Rows() [][]interface{} {
 		ifacesSlice[i] = ifaces
 	}
 	return ifacesSlice
+}
+
+// CheckAt asserts the result of selected columns equals the expected results.
+func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	for _, e := range expected {
+		res.require.Equal(len(e), len(cols))
+	}
+
+	rows := make([][]string, 0, len(expected))
+	for i := range res.rows {
+		row := make([]string, 0, len(cols))
+		for _, r := range cols {
+			row = append(row, res.rows[i][r])
+		}
+		rows = append(rows, row)
+	}
+	got := fmt.Sprintf("%s", rows)
+	need := fmt.Sprintf("%s", expected)
+	res.require.Equal(need, got, res.comment)
 }
