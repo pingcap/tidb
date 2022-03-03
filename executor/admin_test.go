@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -335,7 +336,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	// Some index entries are missed.
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	cHandle := testkit.MustNewCommonHandle(t, "1", "3")
+	cHandle := testutil.MustNewCommonHandle(t, "1", "3")
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), cHandle)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
@@ -794,17 +795,17 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 		handle kv.Handle
 		idxVal []types.Datum
 	}{
-		{testkit.MustNewCommonHandle(t, "c1_10", "c3_10"), types.MakeDatums(10)},
-		{testkit.MustNewCommonHandle(t, "c1_10", "c3_11"), types.MakeDatums(11)},
-		{testkit.MustNewCommonHandle(t, "c1_12", "c3_12"), types.MakeDatums(12)},
+		{testutil.MustNewCommonHandle(t, "c1_10", "c3_10"), types.MakeDatums(10)},
+		{testutil.MustNewCommonHandle(t, "c1_10", "c3_11"), types.MakeDatums(11)},
+		{testutil.MustNewCommonHandle(t, "c1_12", "c3_12"), types.MakeDatums(12)},
 	}
 	c3DanglingIdx := []struct {
 		handle kv.Handle
 		idxVal []types.Datum
 	}{
-		{testkit.MustNewCommonHandle(t, "c1_13", "c3_13"), types.MakeDatums("c3_13")},
-		{testkit.MustNewCommonHandle(t, "c1_14", "c3_14"), types.MakeDatums("c3_14")},
-		{testkit.MustNewCommonHandle(t, "c1_15", "c3_15"), types.MakeDatums("c3_15")},
+		{testutil.MustNewCommonHandle(t, "c1_13", "c3_13"), types.MakeDatums("c3_13")},
+		{testutil.MustNewCommonHandle(t, "c1_14", "c3_14"), types.MakeDatums("c3_14")},
+		{testutil.MustNewCommonHandle(t, "c1_15", "c3_15"), types.MakeDatums("c3_15")},
 	}
 	txn, err := store.Begin()
 	require.NoError(t, err)

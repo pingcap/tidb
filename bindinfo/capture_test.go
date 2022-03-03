@@ -555,6 +555,62 @@ func TestIssue25505(t *testing.T) {
 	}
 }
 
+func TestCaptureUserFilter(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
+
+	// test user filter
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0) // cannot capture the stmt
+
+	// change another user
+	tk.MustExec(`create user usr1`)
+	tk.MustExec(`grant all on *.* to usr1 with grant option`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
+	tk2.MustExec("select * from t where a > 10")
+	tk2.MustExec("select * from t where a > 10")
+	tk2.MustExec("admin capture bindings")
+	rows = tk2.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1) // can capture the stmt
+
+	// use user-filter with other types of filter together
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('user', 'root')")
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
+	tk2.MustExec("select * from t where a > 10")
+	tk2.MustExec("select * from t where a > 10")
+	tk2.MustExec("admin capture bindings")
+	rows = tk2.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0) // filtered by the table filter
+}
+
 func TestCaptureFilter(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
