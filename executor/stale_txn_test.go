@@ -1229,7 +1229,7 @@ func TestStaleReadCompatibility(t *testing.T) {
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
 
 	// disable tidb_read_staleness
-	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 3)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"))
 }

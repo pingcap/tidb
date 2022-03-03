@@ -5830,7 +5830,6 @@ func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='100'")
 	c.Assert(err, NotNil)
-	tk.MustExec("set @@tidb_read_staleness=''")
 	tk.MustExec("set @@tidb_read_staleness='0'")
 }
 
