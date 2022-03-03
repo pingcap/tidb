@@ -1503,20 +1503,20 @@ func TestAddColumnDefaultNow(t *testing.T) {
 		require.Equal(t, "19", c4[:len("19")], "The datetime should start with '19'")
 	}
 
-	var amsterdam_c1_YMDH, shanghai_c1_YMDH, amsterdam_c1_MS, shanghai_c1_MS string
-	var amsterdam_c2_YMDH, shanghai_c2_YMDH, amsterdam_c2_MS, shanghai_c2_MS string
+	var amsterdamC1YMDH, shanghaiC1YMDH, amsterdamC1MS, shanghaiC1MS string
+	var amsterdamC2YMDH, shanghaiC2YMDH, amsterdamC2MS, shanghaiC2MS string
 
 	if c1, ok := row[0].(string); ok {
 		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
 
-		amsterdam_c1_YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
-		amsterdam_c1_MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+		amsterdamC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
 	}
 	if c2, ok := row[1].(string); ok {
 		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
 
-		amsterdam_c2_YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
-		amsterdam_c2_MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+		amsterdamC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
 	}
 
 	tk.MustExec("SET time_zone = 'Asia/Shanghai'")
@@ -1527,20 +1527,20 @@ func TestAddColumnDefaultNow(t *testing.T) {
 	if c1, ok := row[0].(string); ok {
 		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
 
-		shanghai_c1_YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
-		shanghai_c1_MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+		shanghaiC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
 	}
 	if c2, ok := row[1].(string); ok {
 		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
 
-		shanghai_c2_YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
-		shanghai_c2_MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+		shanghaiC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
 	}
 
-	require.True(t, amsterdam_c1_YMDH != shanghai_c1_YMDH, "The timestamp before 'hour' should not be equivalent")
-	require.True(t, amsterdam_c2_YMDH != shanghai_c2_YMDH, "The timestamp before 'hour' should not be equivalent")
-	require.Equal(t, amsterdam_c1_MS, shanghai_c1_MS, "The timestamp after 'hour' should be equivalent")
-	require.Equal(t, amsterdam_c2_MS, shanghai_c2_MS, "The timestamp after 'hour' should be equivalent")
+	require.True(t, amsterdamC1YMDH != shanghaiC1YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.True(t, amsterdamC2YMDH != shanghaiC2YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.Equal(t, amsterdamC1MS, shanghaiC1MS, "The timestamp after 'hour' should be equivalent")
+	require.Equal(t, amsterdamC2MS, shanghaiC2MS, "The timestamp after 'hour' should be equivalent")
 
 }
 
