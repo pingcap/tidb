@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -1165,12 +1166,12 @@ func TestDropDatabaseGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1225,12 +1226,12 @@ func TestDropTableGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1353,12 +1354,12 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1663,12 +1664,12 @@ func TestTruncateTableGCWithPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1798,12 +1799,12 @@ func TestTruncatePartitionGCWithPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2091,12 +2092,12 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

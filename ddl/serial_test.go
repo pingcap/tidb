@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -506,15 +507,15 @@ func TestRecoverTableByJobID(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
@@ -623,15 +624,15 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
-	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table util.
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -692,15 +693,15 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -157,15 +158,15 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 }
 
 func TempDisableEmulatorGC() func() {
-	ori := ddl.IsEmulatorGCEnable()
+	ori := util.IsEmulatorGCEnable()
 	f := func() {
 		if ori {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
 	}
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	return f
 }
 

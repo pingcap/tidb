@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/testkit"
@@ -32,18 +32,18 @@ import (
 
 // MockGC is used to make GC work in the test environment.
 func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
-	originGC := ddl.IsEmulatorGCEnable()
+	originGC := util.IsEmulatorGCEnable()
 	resetGC := func() {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
 	}
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)

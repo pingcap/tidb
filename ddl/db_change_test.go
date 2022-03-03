@@ -1538,15 +1538,15 @@ func (s *stateChangeSuite) TestParallelFlashbackTable() {
 	defer func(originGC bool) {
 		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
