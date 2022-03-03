@@ -622,10 +622,10 @@ func createStoreWithoutMockTiFlash(t *testing.T) (*kv.Storage, *domain.Domain, f
 }
 
 func TestAlterDatabaseErrorGrammar(t *testing.T) {
-	store, _, tear := createStoreWithoutMockTiFlash(t)
+	store, tear := testkit.CreateMockStore(t)
 	defer tear()
 
-	tk := testkit.NewTestKit(t, *store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
@@ -703,6 +703,7 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 	enabled := atomicutil.NewBool(false)
 	doneCh := make(chan int, 1)
 	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		select {
@@ -717,7 +718,6 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 		enabled.Store(true)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}()
-	wg.Add(1)
 	_, err := tk.Exec(sql)
 	doneCh <- 1
 	if enabled.Load() {

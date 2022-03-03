@@ -271,7 +271,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 	isDone := func() bool {
 		done := false
-		if sctx.GetSessionVars().Killed == 1 {
+		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
 			done = true
 		}
 		failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
