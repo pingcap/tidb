@@ -22,13 +22,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -43,9 +39,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
-	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 type tiflashContext struct {
@@ -697,35 +694,28 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 }
 
 func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
-	timeOut := atomicutil.NewBool(false)
 	ctx, cancel := context.WithTimeout(context.Background(), to)
 	defer cancel()
-	enabled := atomicutil.NewBool(false)
-	doneCh := make(chan int, 1)
-	var wg sync.WaitGroup
-	wg.Add(1)
+	doneCh := make(chan error, 1)
+
 	go func() {
-		defer wg.Done()
-		select {
-		case <-doneCh:
-			// Exit normally
-			return
-		case <-ctx.Done():
-			// Exceed given timeout
-		}
-		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
-		timeOut.Store(true)
-		enabled.Store(true)
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
+		_, err := tk.Exec(sql)
+		doneCh <- err
 	}()
-	_, err := tk.Exec(sql)
-	doneCh <- 1
-	if enabled.Load() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone"))
+
+	select {
+	case e := <-doneCh:
+		// Exit normally
+		return false, e
+	case <-ctx.Done():
+		// Exceed given timeout
+		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}
-	// Must wait till `timeOut` is set.
-	wg.Wait()
-	return timeOut.Load(), err
+
+	e := <-doneCh
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone"))
+	return true, e
 }
 
 func TestTiFlashBatchRateLimiter(t *testing.T) {
