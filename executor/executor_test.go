@@ -4106,19 +4106,6 @@ func (s *testSuite) TestLimit(c *C) {
 	))
 }
 
-func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a double)")
-	tk.MustExec("insert into t value(1.2)")
-	tk.MustExec("set @@session.tidb_enable_streaming = 1")
-
-	result := tk.MustQuery("select * from t where a/0 > 1")
-	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
-}
-
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
