@@ -534,15 +534,12 @@ func overrideConfig(cfg *config.Config) {
 
 func setVersions() {
 	cfg := config.GetGlobalConfig()
-
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
 	}
-
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 	}
-
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
