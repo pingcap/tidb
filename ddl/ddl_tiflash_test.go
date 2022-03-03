@@ -606,18 +606,6 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-func createStoreWithoutMockTiFlash(t *testing.T) (*kv.Storage, *domain.Domain, func()) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	session.SetSchemaLease(0)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	return &store, dom, func() {
-		require.NoError(t, store.Close())
-		dom.Close()
-	}
-}
-
 func TestAlterDatabaseErrorGrammar(t *testing.T) {
 	store, tear := testkit.CreateMockStore(t)
 	defer tear()
