@@ -388,14 +388,10 @@ func TestShowCreateSequence(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "s", nil, 1001, "SEQUENCE"))
 
-	mock.ExpectQuery("SELECT SETVAL(`s`,1001)").
-		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "nextNotCachedValue"}).
-			AddRow("s", "1001"))
-
 	createSequenceSQL, err := ShowCreateSequence(tctx, baseConn, "test", "s")
 
 	require.NoError(t, err)
-	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVALS(s, 1001);\n", createSequenceSQL)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -182,6 +182,7 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
 	var createSequenceSQL strings.Builder
+
 	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`", escapeString(sequence))
 	err := db.QuerySQL(tctx, handleOneRow, func() {
 		oneRow[0], oneRow[1] = "", ""
@@ -191,6 +192,7 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 	}
 	createSequenceSQL.WriteString(oneRow[1])
 	createSequenceSQL.WriteString(";\n")
+
 	query = fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
 	if err != nil {
@@ -203,15 +205,8 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 			nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
 		}
 	}
-	query = fmt.Sprintf("SELECT SETVAL(%s,%d)", escapeString(sequence), nextNotCachedValue)
-	err = db.QuerySQL(tctx, handleOneRow, func() {
-		oneRow[0], oneRow[1] = "", ""
-	}, query)
-	if err != nil {
-		return "", err
-	}
-	createSequenceSQL.WriteString(oneRow[1])
-	createSequenceSQL.WriteString(";\n")
+	fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+
 	return createSequenceSQL.String(), nil
 }
 
