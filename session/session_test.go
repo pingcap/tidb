@@ -773,6 +773,8 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	_, err = tk.Exec("select @@local.port")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'port' is a GLOBAL variable")
+	_, err = tk.Exec("set @@global.port = '40001'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
