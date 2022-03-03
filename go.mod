@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
 	github.com/pingcap/check v0.0.0-20211026125417-57bd13f7b5f0
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
-	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
+	github.com/pingcap/failpoint v0.0.0-20220303073211-00fea37feb66
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20220215045702-d229fcc888c8
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
