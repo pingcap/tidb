@@ -482,9 +482,6 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	if sValue > 0 {
-		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
-	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }

@@ -827,6 +827,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.
