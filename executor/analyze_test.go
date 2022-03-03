@@ -1012,17 +1012,6 @@ func TestAnalyzeIncremental(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.Session().GetSessionVars().EnableStreaming = false
-	testAnalyzeIncremental(tk, t, dom)
-}
-
-func TestAnalyzeIncrementalStreaming(t *testing.T) {
-	t.Skip("unistore hasn't support streaming yet.")
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableStreaming = true
 	testAnalyzeIncremental(tk, t, dom)
 }
 

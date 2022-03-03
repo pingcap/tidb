@@ -53,7 +53,6 @@ var (
 		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"CheckMb4ValueInUTF8":             {},
-		"EnableStreaming":                 {},
 		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
