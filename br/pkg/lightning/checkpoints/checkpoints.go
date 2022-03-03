@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/joho/sqltocsv"
@@ -1011,21 +1011,14 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 
 // createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
 func createExstorageByCompletePath(ctx context.Context, completePath string) (storage.ExternalStorage, string, error) {
-	purl, err := storage.ParseRawURL(completePath)
+	if completePath == "" {
+		return nil, "", nil
+	}
+	fileName, newPath, err := separateCompletePath(completePath)
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
-
-	fileName := path.Base(purl.Path)
-	fileDir := path.Dir(purl.Path)
-
-	purl.Path = fileDir
-	newURL, err := url.QueryUnescape(purl.String())
-	if err != nil {
-		return nil, "", errors.Trace(err)
-	}
-
-	u, err := storage.ParseBackend(newURL, nil)
+	u, err := storage.ParseBackend(newPath, nil)
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
@@ -1034,6 +1027,35 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (st
 		return nil, "", errors.Trace(err)
 	}
 	return s, fileName, nil
+}
+
+// separateCompletePath separates fileName from completePath, returns fileName and newPath.
+func separateCompletePath(completePath string) (string, string, error) {
+	if completePath == "" {
+		return "", "", nil
+	}
+	var fileName, newPath string
+	purl, err := storage.ParseRawURL(completePath)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	// not url format, we don't use url library to avoid being escaped or unescaped
+	if purl.Scheme == "" {
+		// no fileName, just path
+		if strings.HasSuffix(completePath, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(completePath)
+		newPath = path.Dir(completePath)
+	} else {
+		if strings.HasSuffix(purl.Path, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(purl.Path)
+		purl.Path = path.Dir(purl.Path)
+		newPath = purl.String()
+	}
+	return fileName, newPath, nil
 }
 
 func (cpdb *FileCheckpointsDB) save() error {

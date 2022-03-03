@@ -301,3 +301,41 @@ func TestCheckpointMarshallUnmarshall(t *testing.T) {
 	// if not recover empty map explicitly, it will become nil
 	require.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
 }
+
+func TestSeparateCompletePath(t *testing.T) {
+
+	testCases := []struct {
+		complete       string
+		expectFileName string
+		expectPath     string
+	}{
+		{"", "", ""},
+		{"/a/", "", "/a/"},
+		{"test.log", "test.log", "."},
+		{"./test.log", "test.log", "."},
+		{"./tmp/test.log", "test.log", "tmp"},
+		{"tmp/test.log", "test.log", "tmp"},
+		{"/test.log", "test.log", "/"},
+		{"/tmp/test.log", "test.log", "/tmp"},
+		{"/a%3F%2Fbc/a%3F%2Fbc.log", "a%3F%2Fbc.log", "/a%3F%2Fbc"},
+		{"/a??bc/a??bc.log", "a??bc.log", "/a??bc"},
+		{"/t-%C3%8B%21s%60t/t-%C3%8B%21s%60t.log", "t-%C3%8B%21s%60t.log", "/t-%C3%8B%21s%60t"},
+		{"/t-Ë!s`t/t-Ë!s`t.log", "t-Ë!s`t.log", "/t-Ë!s`t"},
+		{"file:///a%3F%2Fbc/a%3F%2Fcd.log", "cd.log", "file:///a%3F/bc/a%3F"},
+		{"file:///a?/bc/a?/cd.log", "a", "file:///?/bc/a?/cd.log"},
+		{"file:///a/?/bc/a?/cd.log", "", "file:///a/?/bc/a?/cd.log"},
+		{"file:///t-%C3%8B%21s%60t/t-%C3%8B%21s%60t.log", "t-Ë!s`t.log", "file:///t-%C3%8B%21s%60t"},
+		{"file:///t-Ë!s`t/t-Ë!s`t.log", "t-Ë!s`t.log", "file:///t-%C3%8B%21s%60t"},
+		{"s3://bucket2/test.log", "test.log", "s3://bucket2/"},
+		{"s3://bucket2/test/test.log", "test.log", "s3://bucket2/test"},
+		{"s3://bucket3/prefix/test.log?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", "test.log",
+			"s3://bucket3/prefix?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt%2BPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw"},
+	}
+
+	for _, testCase := range testCases {
+		fileName, newPath, err := separateCompletePath(testCase.complete)
+		require.NoError(t, err)
+		require.Equal(t, testCase.expectFileName, fileName)
+		require.Equal(t, testCase.expectPath, newPath)
+	}
+}
