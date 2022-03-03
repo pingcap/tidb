@@ -613,7 +613,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	pl := is.manager.ShowProcessList()
-	interTsList := is.manager.GetInterSessionStartTSList()
+	InnerSessionStartTSList := is.manager.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -631,7 +631,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	for _, interTS := range interTsList {
+	for _, interTS := range InnerSessionStartTSList {
 		if interTS > startTSLowerLimit && interTS < minStartTS {
 			minStartTS = interTS
 		}

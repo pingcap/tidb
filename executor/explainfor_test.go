@@ -67,7 +67,7 @@ func (msm *mockSessionManager1) StoreInternalSession(addr unsafe.Pointer) {
 func (msm *mockSessionManager1) DeleteInternalSession(addr unsafe.Pointer) {
 }
 
-func (msm *mockSessionManager1) GetInterSessionStartTSList() []uint64 {
+func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
