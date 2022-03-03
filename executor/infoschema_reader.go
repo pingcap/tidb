@@ -267,6 +267,7 @@ type statsCache struct {
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
+	dirty      bool
 }
 
 var tableStatsCache = &statsCache{}
@@ -274,9 +275,15 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
+func invalidInfoSchemaStatCache() {
+	tableStatsCache.mu.Lock()
+	defer tableStatsCache.mu.Unlock()
+	tableStatsCache.dirty = true
+}
+
 func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.RLock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
+	if !c.dirty && time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		tableRows, colLength := c.tableRows, c.colLength
 		c.mu.RUnlock()
 		return tableRows, colLength, nil
@@ -285,7 +292,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
+	if !c.dirty && time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		return c.tableRows, c.colLength, nil
 	}
 	tableRows, err := getRowCountAllTable(ctx, sctx)
@@ -300,6 +307,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
+	c.dirty = false
 	return tableRows, colLength, nil
 }
 
