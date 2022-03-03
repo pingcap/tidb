@@ -663,10 +663,10 @@ func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, valu
 }
 
 func TestTiFlashBatchAddVariables(t *testing.T) {
-	store, _, tear := createStoreWithoutMockTiFlash(t)
+	store, tear := testkit.CreateMockStore(t)
 	defer tear()
 
-	tk := testkit.NewTestKit(t, *store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
 	tk.MustExec("set GLOBAL tidb_batch_pending_tiflash_count=6")
 
@@ -677,7 +677,7 @@ func TestTiFlashBatchAddVariables(t *testing.T) {
 	tk.MustGetErrMsg("set GLOBAL tidb_batch_pending_tiflash_count=1.5", "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
 	checkBatchPandingNum(t, tk, "global", "6", true)
 
-	tk2 := testkit.NewTestKit(t, *store)
+	tk2 := testkit.NewTestKit(t, store)
 	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
