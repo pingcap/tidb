@@ -80,8 +80,8 @@ func NewPollTiFlashBackoffElement() *PollTiFlashBackoffElement {
 
 // PollTiFlashBackoffContext is a collection of all backoff states.
 type PollTiFlashBackoffContext struct {
-	MinTick TiFlashTick
-	MaxTick TiFlashTick
+	MinThreshold TiFlashTick
+	MaxThreshold TiFlashTick
 	// Capacity limits tables a backoff pool can handle, in order to limit handling of big tables.
 	Capacity int
 	Rate     TiFlashTick
@@ -89,12 +89,12 @@ type PollTiFlashBackoffContext struct {
 }
 
 // NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
-func NewPollTiFlashBackoffContext(MinTick, MaxTick TiFlashTick, Capacity int, Rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
-	if MaxTick < MinTick {
-		return nil, fmt.Errorf("`MaxTick` should always be larger than `MinTick`")
+func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capacity int, Rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
+	if MaxThreshold < MinThreshold {
+		return nil, fmt.Errorf("`MaxThreshold` should always be larger than `MinThreshold`")
 	}
-	if MinTick < 1 {
-		return nil, fmt.Errorf("`MinTick` should not be less than 1")
+	if MinThreshold < 1 {
+		return nil, fmt.Errorf("`MinThreshold` should not be less than 1")
 	}
 	if Capacity < 0 {
 		return nil, fmt.Errorf("negative `Capacity`")
@@ -103,11 +103,11 @@ func NewPollTiFlashBackoffContext(MinTick, MaxTick TiFlashTick, Capacity int, Ra
 		return nil, fmt.Errorf("`Rate` should always be larger than 1")
 	}
 	return &PollTiFlashBackoffContext{
-		MinTick:  MinTick,
-		MaxTick:  MaxTick,
-		Capacity: Capacity,
-		elements: make(map[int64]*PollTiFlashBackoffElement),
-		Rate:     Rate,
+		MinThreshold: MinThreshold,
+		MaxThreshold: MaxThreshold,
+		Capacity:     Capacity,
+		elements:     make(map[int64]*PollTiFlashBackoffElement),
+		Rate:         Rate,
 	}, nil
 }
 
@@ -143,11 +143,11 @@ func (e *PollTiFlashBackoffElement) NeedGrow() bool {
 }
 
 func (e *PollTiFlashBackoffElement) doGrow(b *PollTiFlashBackoffContext) {
-	if e.Threshold < b.MinTick {
-		e.Threshold = b.MinTick
+	if e.Threshold < b.MinThreshold {
+		e.Threshold = b.MinThreshold
 	}
-	if e.Threshold*b.Rate > b.MaxTick {
-		e.Threshold = b.MaxTick
+	if e.Threshold*b.Rate > b.MaxThreshold {
+		e.Threshold = b.MaxThreshold
 	} else {
 		e.Threshold *= b.Rate
 	}
@@ -400,8 +400,8 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
-			grown, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
-			if inqueue && !grown {
+			enabled, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
+			if inqueue && !enabled {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
 				continue
 			}
