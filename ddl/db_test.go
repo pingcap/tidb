@@ -6377,6 +6377,8 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	tk2.MustExec("alter table t1 read write")
 }
 
+type checkRet func(c *C, err1, err2 error)
+
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
@@ -7811,4 +7813,27 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
 	}
+}
+
+// for issue #30328
+func (s *testDBSuite5) TestTooBigFieldLengthAutoConvert(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	err := tk.ExecToErr("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	c.Assert(types.ErrTooBigFieldLength.Equal(err), IsTrue)
+
+	// save previous sql_mode and change
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists i30328_1")
+		tk.MustExec("drop table if exists i30328_2")
+	}(r.Rows()[0][0].(string))
+	tk.MustExec("set @@sql_mode='NO_ENGINE_SUBSTITUTION'")
+
+	tk.MustExec("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARBINARY to BLOB", "Warning 1246 Converting column 'b' from VARCHAR to TEXT"))
+	tk.MustExec("create table i30328_2(a varchar(200))")
+	tk.MustExec("alter table i30328_2 modify a varchar(70000000);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARCHAR to TEXT"))
 }
