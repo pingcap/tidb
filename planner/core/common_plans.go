@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -270,13 +271,23 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
-	if isStaleness {
-		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			return errors.Trace(err)
+
+	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
+		if isStaleness != sctx.GetSessionVars().StmtCtx.IsStaleness {
+			panic(fmt.Sprintf("%v != %v", isStaleness, sctx.GetSessionVars().StmtCtx.IsStaleness))
 		}
-		sctx.GetSessionVars().StmtCtx.IsStaleness = true
-	}
+
+		if isStaleness {
+			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+			if err != nil {
+				panic(err)
+			}
+
+			if is.SchemaMetaVersion() != is2.SchemaMetaVersion() {
+				panic(fmt.Sprintf("%d != %d", is.SchemaMetaVersion(), is2.SchemaMetaVersion()))
+			}
+		}
+	})
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -318,6 +329,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	return nil
 }
 
+// Deprecated: it will be removed later
 func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0

@@ -29,7 +29,18 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func enableStalereadCommonFailPoint(t *testing.T) func() {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
+	return func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
+	}
+}
+
 func TestExactStalenessTransaction(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
 	testcases := []struct {
 		name             string
 		preSQL           string
@@ -93,6 +104,9 @@ func TestExactStalenessTransaction(t *testing.T) {
 }
 
 func TestSelectAsOf(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -248,6 +262,9 @@ func TestSelectAsOf(t *testing.T) {
 }
 
 func TestStaleReadKVRequest(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -343,6 +360,9 @@ func TestStaleReadKVRequest(t *testing.T) {
 }
 
 func TestStalenessAndHistoryRead(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -427,6 +447,9 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 }
 
 func TestTimeBoundedStalenessTxn(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -523,6 +546,9 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 }
 
 func TestSetTransactionReadOnlyAsOf(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	t1, err := time.Parse(types.TimeFormat, "2016-09-21 09:53:04")
 	require.NoError(t, err)
 	store, clean := testkit.CreateMockStore(t)
@@ -590,6 +616,9 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 }
 
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	testcases := []struct {
@@ -769,6 +798,9 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 }
 
 func TestSpecialSQLInStalenessTxn(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -824,6 +856,9 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 }
 
 func TestAsOfTimestampCompatibility(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -881,6 +916,9 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 }
 
 func TestSetTransactionInfoSchema(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -922,6 +960,9 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 }
 
 func TestStaleSelect(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1008,6 +1049,9 @@ func TestStaleReadFutureTime(t *testing.T) {
 }
 
 func TestStaleReadPrepare(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1054,6 +1098,9 @@ func TestStaleReadPrepare(t *testing.T) {
 }
 
 func TestStmtCtxStaleFlag(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1149,6 +1196,9 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 }
 
 func TestStaleSessionQuery(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1189,6 +1239,9 @@ func TestStaleSessionQuery(t *testing.T) {
 }
 
 func TestStaleReadCompatibility(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1235,6 +1288,9 @@ func TestStaleReadCompatibility(t *testing.T) {
 }
 
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
+	disableCommonFailPoint := enableStalereadCommonFailPoint(t)
+	defer disableCommonFailPoint()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

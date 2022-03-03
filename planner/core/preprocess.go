@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1452,9 +1451,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOfAndReadTS(tn)
-	if p.err != nil {
-		return
+	if p.stmtTp == TypeSelect {
+		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
+			return
+		}
+		p.updateStateFromStaleReadProcessor()
 	}
 
 	table, err := p.tableByName(tn)
@@ -1535,22 +1536,8 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		return
 	}
 
-	if prepared.SnapshotTSEvaluator != nil {
-		snapshotTS, err := prepared.SnapshotTSEvaluator(p.ctx)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		p.LastSnapshotTS = snapshotTS
-		p.initedLastSnapshotTS = true
-		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
+	if p.err = p.staleReadProcessor.OnExecutePrepared(prepared.SnapshotTSEvaluator); p.err == nil {
+		p.updateStateFromStaleReadProcessor()
 	}
 }
 
@@ -1613,24 +1600,7 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
-	if p.stmtTp != TypeSelect {
-		return
-	}
-	defer func() {
-		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
-		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
-		// in stmtCtx
-		if p.flag&inPrepare == 0 && p.IsStaleness {
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
-		}
-	}()
-
-	if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
-		return
-	}
-
+func (p *preprocessor) updateStateFromStaleReadProcessor() {
 	if p.initedLastSnapshotTS {
 		return
 	}
@@ -1639,6 +1609,12 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&inPrepare == 0 {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+		}
 	}
 
 	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {

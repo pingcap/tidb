@@ -42,6 +42,8 @@ type Processor interface {
 
 	// OnSelectTable will be called when process table in select statement
 	OnSelectTable(tn *ast.TableName) error
+	// OnExecutePrepared when process execute
+	OnExecutePrepared(tsEvaluator StalenessTSEvaluator) error
 }
 
 type baseProcessor struct {
@@ -79,11 +81,15 @@ func (p *baseProcessor) OnSelectTable(_ *ast.TableName) error {
 	return errors.New("not supported")
 }
 
+func (p *baseProcessor) OnExecutePrepared(_ StalenessTSEvaluator) error {
+	return errors.New("not supported")
+}
+
 func (p *baseProcessor) setAsNonStaleRead() error {
 	return p.setEvaluatedValues(0, nil, nil)
 }
 
-func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
+func (p *baseProcessor) setEvaluatedTS(ts uint64, setEvaluator bool) (err error) {
 	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
 	if err != nil {
 		return err
@@ -123,7 +129,7 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 
 type staleReadProcessor struct {
 	baseProcessor
-	stmtAsOfTs uint64
+	stmtTs uint64
 }
 
 // NewStaleReadProcessor creates a new stale read processor
@@ -136,24 +142,14 @@ func NewStaleReadProcessor(sctx sessionctx.Context) Processor {
 // OnSelectTable will be called when process table in select statement
 func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	if p.sctx.GetSessionVars().InTxn() {
-		// When in explicit txn, it is not allowed to declare stale read in statement
-		// and the sys variables should also be ignored no matter it is set or not
 		if tn.AsOf != nil {
 			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 
-		if p.evaluated {
-			return nil
+		if !p.evaluated {
+			return p.evaluateFromTxn()
 		}
-
-		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
-			return p.setEvaluatedValues(
-				txnCtx.StartTS,
-				temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
-				nil,
-			)
-		}
-		return p.setAsNonStaleRead()
+		return nil
 	}
 
 	stmtAsOfTS, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
@@ -162,25 +158,62 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	if p.evaluated {
-		if p.stmtAsOfTs != stmtAsOfTS {
+		if p.stmtTs != stmtAsOfTS {
 			return errAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
 
+	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, true)
+}
+
+func (p *staleReadProcessor) OnExecutePrepared(tsEvaluator StalenessTSEvaluator) (err error) {
+	if p.evaluated {
+		return errors.New("already evaluated")
+	}
+
+	if p.sctx.GetSessionVars().InTxn() {
+		if tsEvaluator != nil {
+			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+		return p.evaluateFromTxn()
+	}
+
+	var stmtTS uint64
+	if tsEvaluator != nil {
+		if stmtTS, err = tsEvaluator(p.sctx); err != nil {
+			return err
+		}
+	}
+	return p.evaluateFromStmtTSOrSysVariable(stmtTS, false)
+}
+
+func (p *staleReadProcessor) evaluateFromTxn() error {
+	// sys variables should be ignored when in an explicit transaction
+	if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
+		return p.setEvaluatedValues(
+			txnCtx.StartTS,
+			temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
+			nil,
+		)
+	}
+	return p.setAsNonStaleRead()
+}
+
+func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setEvaluator bool) error {
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if txnReadTS > 0 && stmtAsOfTS > 0 {
+	if txnReadTS > 0 && stmtTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
 		return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 	}
 
-	if stmtAsOfTS > 0 {
-		p.stmtAsOfTs = stmtAsOfTS
-		return p.setEvaluatedTS(stmtAsOfTS)
+	if stmtTS > 0 {
+		p.stmtTs = stmtTS
+		return p.setEvaluatedTS(stmtTS, setEvaluator)
 	}
 
 	if txnReadTS > 0 {
-		return p.setEvaluatedTS(txnReadTS)
+		return p.setEvaluatedTS(txnReadTS, setEvaluator)
 	}
 
 	// set ts from `@@tidb_read_staleness` when both `as of` and `@@tx_read_ts` are not set
