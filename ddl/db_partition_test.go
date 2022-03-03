@@ -3342,9 +3342,8 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 		conf.Log.SlowThreshold = 10000
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithoutZeroSchemaLease(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
-	dom.SetStatsUpdating(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
