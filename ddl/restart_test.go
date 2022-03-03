@@ -111,10 +111,9 @@ func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 }
 
 func TestSchemaResume(t *testing.T) {
-	store := testCreateStore(t, "test_schema_resume")
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
+		require.NoError(t, store.Close())
 	}()
 
 	d1, err := testNewDDLAndStart(
@@ -149,11 +148,10 @@ func TestSchemaResume(t *testing.T) {
 	testCheckSchemaState(t, d1, dbInfo, model.StateNone)
 }
 
-func (s *testStatSuiteToVerify) TestStat() {
-	store := testCreateStore(s.T(), "test_stat")
+func TestStat(t *testing.T) {
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		require.NoError(s.T(), err)
+		require.NoError(t, store.Close())
 	}()
 
 	d, err := testNewDDLAndStart(
@@ -161,15 +159,14 @@ func (s *testStatSuiteToVerify) TestStat() {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	require.NoError(s.T(), err)
+	require.NoError(t, err)
 	defer func() {
-		err := d.Stop()
-		require.NoError(s.T(), err)
+		require.NoError(t, d.Stop())
 	}()
 
 	dbInfo, err := testSchemaInfo(d, "test_restart")
-	require.NoError(s.T(), err)
-	testCreateSchema(s.T(), testNewContext(d), d, dbInfo)
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
 	//	m, err := d.Stats(nil)
@@ -188,20 +185,20 @@ func (s *testStatSuiteToVerify) TestStat() {
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-	ver := s.getDDLSchemaVer(d)
+	ver := getDDLSchemaVer(t, d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			require.Nil(s.T(), err)
-			require.GreaterOrEqual(s.T(), s.getDDLSchemaVer(d), ver)
+			require.Nil(t, err)
+			require.GreaterOrEqual(t, getDDLSchemaVer(t, d), ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			require.Nil(s.T(), err)
+			require.Nil(t, err)
 			break LOOP
 		}
 	}
