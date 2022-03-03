@@ -88,6 +88,7 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
 	if err != nil {
 		return err
 	}
+	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
 	return p.setEvaluatedValues(ts, is, func(sctx sessionctx.Context) (uint64, error) {
 		return ts, nil
 	})
@@ -100,6 +101,7 @@ func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) er
 	}
 
 	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
+	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
 	if err != nil {
 		return err
 	}
@@ -112,15 +114,8 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 		return errors.New("already evaluated")
 	}
 
-	if ts != 0 {
-		is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
-		if err != nil {
-			return err
-		}
-		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
-	}
-
 	p.ts = ts
+	p.is = is
 	p.evaluated = true
 	p.tsEvaluator = tsEvaluator
 	return nil
