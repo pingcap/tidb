@@ -792,6 +792,11 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+			if col.Tp == mysql.TypeBit {
+				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			}
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal,                // TABLE_CATALOG
