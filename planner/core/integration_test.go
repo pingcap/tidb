@@ -2696,6 +2696,28 @@ func TestBitColumnPushDown(t *testing.T) {
 	sql = "select a from t1 where cast(a as char)='A'"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = [][]interface{}{
+		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	sql = "select a from t1 where cast(a as char)='A'"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name='bit'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	sql = "select a from t1 where ascii(a)=65"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	rows = [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 }
 
 func TestScalarFunctionPushDown(t *testing.T) {

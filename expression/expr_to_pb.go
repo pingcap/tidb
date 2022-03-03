@@ -182,6 +182,10 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
+	case mysql.TypeBit:
+		if !IsPushDownEnabled("bit", kv.TiKV) {
+			return nil
+		}
 	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	case mysql.TypeEnum:
