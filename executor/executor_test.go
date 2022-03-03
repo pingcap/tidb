@@ -110,12 +110,10 @@ var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
 var _ = Suite(&testSuite5{&baseTestSuite{}})
-var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testRecoverTable{})
-var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
@@ -161,22 +159,6 @@ type baseTestSuite struct {
 	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context // nolint:structcheck
-}
-
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-
-	dom, err := session.BootstrapSession(store)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, dom, errors.Trace(err)
 }
 
 func (s *baseTestSuite) SetUpSuite(c *C) {
