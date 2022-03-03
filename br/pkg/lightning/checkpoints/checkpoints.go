@@ -972,7 +972,11 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 	cpdb.fileName = fileName
 	cpdb.exStorage = s
 
-	exist, err := cpdb.exStorage.FileExists(ctx, fileName)
+	if cpdb.fileName == "" {
+		return nil, errors.NotValidf("checkpoint's file DSN %s should not be a path", path)
+	}
+
+	exist, err := cpdb.exStorage.FileExists(ctx, cpdb.fileName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -983,7 +987,7 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 		)
 		return cpdb, nil
 	}
-	content, err := cpdb.exStorage.ReadFile(ctx, fileName)
+	content, err := cpdb.exStorage.ReadFile(ctx, cpdb.fileName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
