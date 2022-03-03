@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -259,6 +260,38 @@ func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
+// getKeyRangeForFiles gets the maximum range on files.
+func (importer *FileImporter) getKeyRangeForFiles(
+	files []*backuppb.File,
+	rewriteRules *RewriteRules,
+) ([]byte, []byte, error) {
+	var (
+		startKey, endKey []byte
+		start, end       []byte
+		err              error
+	)
+
+	for _, f := range files {
+		if importer.isRawKvMode {
+			start, end = f.GetStartKey(), f.GetEndKey()
+		} else {
+			start, end, err = rewriteFileKeys(f, rewriteRules)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+
+		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
+			startKey = start
+		}
+		if len(endKey) == 0 || bytes.Compare(startKey, end) < 0 {
+			endKey = end
+		}
+	}
+
+	return startKey, endKey, nil
+}
+
 // Import tries to import a file.
 // All rules must contain encoded keys.
 func (importer *FileImporter) Import(
@@ -270,32 +303,17 @@ func (importer *FileImporter) Import(
 ) error {
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
+
 	// Rewrite the start key and end key of file to scan regions
-	var startKey, endKey []byte
-	if importer.isRawKvMode {
-		startKey = files[0].StartKey
-		endKey = files[0].EndKey
-	} else {
-		for _, f := range files {
-			start, end, err := rewriteFileKeys(f, rewriteRules)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(startKey) == 0 || bytes.Compare(startKey, start) > 0 {
-				startKey = start
-			}
-			if bytes.Compare(endKey, end) < 0 {
-				endKey = end
-			}
-		}
+	startKey, endKey, err := importer.getKeyRangeForFiles(files, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	log.Debug("rewrite file keys",
-		logutil.Files(files),
-		logutil.Key("startKey", startKey),
-		logutil.Key("endKey", endKey))
+	log.Debug("rewrite file keys", logutil.Files(files),
+		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
-	err := utils.WithRetry(ctx, func() error {
+	err = utils.WithRetry(ctx, func() error {
 		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
 		defer cancel()
 		// Scan regions covered by the file range
@@ -628,4 +646,9 @@ func (importer *FileImporter) ingestSSTs(
 	log.Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
 	resp, err := importer.importClient.MultiIngest(ctx, leader.GetStoreId(), req)
 	return resp, errors.Trace(err)
+}
+
+func isDecryptSstErr(err error) bool {
+	return strings.Contains(err.Error(), "Engine Engine") &&
+		strings.Contains(err.Error(), "Corruption: Bad table magic number")
 }

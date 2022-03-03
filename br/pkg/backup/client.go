@@ -165,6 +165,10 @@ func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
+func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
+	return bc.backend
+}
+
 // SetStorage set ExternalStorage for client.
 func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
@@ -461,7 +465,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 func (bc *Client) BackupRanges(
 	ctx context.Context,
 	ranges []rtree.Range,
-	req backuppb.BackupRequest,
+	request backuppb.BackupRequest,
 	concurrency uint,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -480,10 +484,12 @@ func (bc *Client) BackupRanges(
 	eg, ectx := errgroup.WithContext(ctx)
 	for id, r := range ranges {
 		id := id
-		sk, ek := r.StartKey, r.EndKey
+		req := request
+		req.StartKey, req.EndKey = r.StartKey, r.EndKey
+
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err := bc.BackupRange(elctx, sk, ek, req, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
@@ -491,7 +497,6 @@ func (bc *Client) BackupRanges(
 				} else {
 					return errors.Trace(err)
 				}
-
 			}
 			return nil
 		})
@@ -503,7 +508,6 @@ func (bc *Client) BackupRanges(
 // Returns an array of files backed up.
 func (bc *Client) BackupRange(
 	ctx context.Context,
-	startKey, endKey []byte,
 	req backuppb.BackupRequest,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -512,13 +516,13 @@ func (bc *Client) BackupRange(
 	defer func() {
 		elapsed := time.Since(start)
 		logutil.CL(ctx).Info("backup range finished", zap.Duration("take", elapsed))
-		key := "range start:" + hex.EncodeToString(startKey) + " end:" + hex.EncodeToString(endKey)
+		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
 	logutil.CL(ctx).Info("backup started",
-		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey),
+		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
 		zap.Uint64("rateLimit", req.RateLimit),
 		zap.Uint32("concurrency", req.Concurrency))
 
@@ -528,14 +532,8 @@ func (bc *Client) BackupRange(
 		return errors.Trace(err)
 	}
 
-	req.StartKey = startKey
-	req.EndKey = endKey
-	req.StorageBackend = bc.backend
-
 	push := newPushDown(bc.mgr, len(allStores))
-
-	var results rtree.RangeTree
-	results, err = push.pushBackup(ctx, req, allStores, progressCallBack)
+	results, err := push.pushBackup(ctx, req, allStores, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -543,10 +541,7 @@ func (bc *Client) BackupRange(
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	err = bc.fineGrainedBackup(
-		ctx, startKey, endKey, req.StartVersion, req.EndVersion, req.CompressionType, req.CompressionLevel,
-		req.RateLimit, req.Concurrency, req.IsRawKv, req.CipherInfo, results, progressCallBack)
-	if err != nil {
+	if err := bc.fineGrainedBackup(ctx, req, results, progressCallBack); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -555,8 +550,8 @@ func (bc *Client) BackupRange(
 
 	if req.IsRawKv {
 		logutil.CL(ctx).Info("raw ranges backed up",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
+			logutil.Key("startKey", req.StartKey),
+			logutil.Key("endKey", req.EndKey),
 			zap.String("cf", req.Cf))
 	} else {
 		logutil.CL(ctx).Info("time range backed up",
@@ -618,15 +613,7 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 
 func (bc *Client) fineGrainedBackup(
 	ctx context.Context,
-	startKey, endKey []byte,
-	lastBackupTS uint64,
-	backupTS uint64,
-	compressType backuppb.CompressionType,
-	compressLevel int32,
-	rateLimit uint64,
-	concurrency uint32,
-	isRawKv bool,
-	cipherInfo *backuppb.CipherInfo,
+	req backuppb.BackupRequest,
 	rangeTree rtree.RangeTree,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -654,7 +641,7 @@ func (bc *Client) fineGrainedBackup(
 	bo := tikv.NewBackoffer(ctx, backupFineGrainedMaxBackoff)
 	for {
 		// Step1, check whether there is any incomplete range
-		incomplete := rangeTree.GetIncompleteRange(startKey, endKey)
+		incomplete := rangeTree.GetIncompleteRange(req.StartKey, req.EndKey)
 		if len(incomplete) == 0 {
 			return nil
 		}
@@ -675,9 +662,9 @@ func (bc *Client) fineGrainedBackup(
 			go func(boFork *tikv.Backoffer) {
 				defer wg.Done()
 				for rg := range retry {
+					req.StartKey, req.EndKey = rg.StartKey, rg.EndKey
 					backoffMs, err :=
-						bc.handleFineGrained(ctx, boFork, rg, lastBackupTS, backupTS,
-							compressType, compressLevel, rateLimit, concurrency, isRawKv, cipherInfo, respCh)
+						bc.handleFineGrained(ctx, boFork, req, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -817,37 +804,14 @@ func OnBackupResponse(
 func (bc *Client) handleFineGrained(
 	ctx context.Context,
 	bo *tikv.Backoffer,
-	rg rtree.Range,
-	lastBackupTS uint64,
-	backupTS uint64,
-	compressType backuppb.CompressionType,
-	compressionLevel int32,
-	rateLimit uint64,
-	concurrency uint32,
-	isRawKv bool,
-	cipherInfo *backuppb.CipherInfo,
+	req backuppb.BackupRequest,
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey, isRawKv)
+	leader, pderr := bc.findRegionLeader(ctx, req.StartKey, req.IsRawKv)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
 	storeID := leader.GetStoreId()
-
-	req := backuppb.BackupRequest{
-		ClusterId:        bc.clusterID,
-		StartKey:         rg.StartKey, // TODO: the range may cross region.
-		EndKey:           rg.EndKey,
-		StartVersion:     lastBackupTS,
-		EndVersion:       backupTS,
-		StorageBackend:   bc.backend,
-		RateLimit:        rateLimit,
-		Concurrency:      concurrency,
-		IsRawKv:          isRawKv,
-		CompressionType:  compressType,
-		CompressionLevel: compressionLevel,
-		CipherInfo:       cipherInfo,
-	}
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
 	if err != nil {
@@ -868,7 +832,7 @@ func (bc *Client) handleFineGrained(
 		// Handle responses with the same backoffer.
 		func(resp *backuppb.BackupResponse) error {
 			response, shouldBackoff, err1 :=
-				OnBackupResponse(storeID, bo, backupTS, lockResolver, resp)
+				OnBackupResponse(storeID, bo, req.StartVersion, lockResolver, resp)
 			if err1 != nil {
 				return err1
 			}
