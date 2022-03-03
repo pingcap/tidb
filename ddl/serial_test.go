@@ -411,9 +411,26 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
+func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain, clean func()) {
+	session.SetSchemaLease(200 * time.Millisecond)
+	session.DisableStats4Test()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+
+	var err error
+	store, err = mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	clean = func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
+	return
+}
+
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
@@ -481,7 +498,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, _, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -598,8 +615,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	t.Skip()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -670,8 +686,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	t.Skip()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -733,7 +748,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, _, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
