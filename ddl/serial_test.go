@@ -47,101 +47,70 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-type serialSuite struct {
-	suite.Suite
-	store   kv.Storage
-	cluster testutils.Cluster
-	dom     *domain.Domain
-	clean   func()
+func TestTruncateAllPartitions(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table partition_table (v int) partition by hash (v) partitions 10")
+	tk.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	tk.MustExec("alter table partition_table truncate partition all")
+	tk.MustQuery("select count(*) from partition_table").Check(testkit.Rows("0"))
 }
 
-func TestSerialSuite(t *testing.T) {
-	suite.Run(t, new(serialSuite))
+func TestIssue23872(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, test := range []struct {
+		sql  string
+		flag uint
+	}{
+		{
+			"create table t(id smallint,id1 int, primary key (id))",
+			mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag,
+		},
+		{
+			"create table t(a int default 1, primary key(a))",
+			mysql.NotNullFlag | mysql.PriKeyFlag,
+		},
+	} {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(test.sql)
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		cols := rs.Fields()
+		require.NoError(t, rs.Close())
+		require.Equal(t, test.flag, cols[0].Column.Flag)
+	}
 }
 
-func (s *serialSuite) SetupSuite() {
-	session.SetSchemaLease(200 * time.Millisecond)
-	session.DisableStats4Test()
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-
-	var err error
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	s.Require().NoError(err)
-	s.dom, err = session.BootstrapSession(s.store)
-	s.Require().NoError(err)
-}
-
-func (s *serialSuite) TearDownSuite() {
-	s.dom.Close()
-	s.Require().NoError(s.store.Close())
-}
-
-func (s *serialSuite) TestTruncateAllPartitions() {
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test;")
-	tk1.MustExec("drop table if exists partition_table;")
-	defer func() {
-		tk1.MustExec("drop table if exists partition_table;")
-	}()
-	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
-	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk1.MustExec("alter table partition_table truncate partition all;")
-	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
-}
-
-func (s *serialSuite) TestIssue23872() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists test_create_table;")
-	defer tk.MustExec("drop table if exists test_create_table;")
-	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
-	rs, err := tk.Exec("select * from test_create_table;")
-	s.Require().NoError(err)
-	cols := rs.Fields()
-	err = rs.Close()
-	s.Require().NoError(err)
-	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
-	s.Require().Equal(uint(expectFlag), cols[0].Column.Flag)
-	tk.MustExec("create table t(a int default 1, primary key(a));")
-	defer tk.MustExec("drop table if exists t;")
-	rs1, err := tk.Exec("select * from t;")
-	s.Require().NoError(err)
-	cols1 := rs1.Fields()
-	err = rs1.Close()
-	s.Require().NoError(err)
-	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
-	s.Require().Equal(uint(expectFlag1), cols1[0].Column.Flag)
-}
-
-func (s *serialSuite) TestChangeMaxIndexLength() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestChangeMaxIndexLength(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 	})
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-
-	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	err := tk.ExecToErr(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
-	s.Require().EqualError(err, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
-	tk.MustExec("drop table t, t1")
+	require.EqualError(t, err, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
 }
 
-func (s *serialSuite) TestCreateTableWithLike() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestCreateTableWithLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// for the same database
 	tk.MustExec("create database ctwl_db")
 	tk.MustExec("use ctwl_db")
@@ -157,19 +126,19 @@ func (s *serialSuite) TestCreateTableWithLike() {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
-	s.Require().Nil(tbl1Info.ForeignKeys)
-	s.Require().True(tbl1Info.PKIsHandle)
+	require.Nil(t, tbl1Info.ForeignKeys)
+	require.True(t, tbl1Info.PKIsHandle)
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.Flag)
-	s.Require().True(hasNotNull)
+	require.True(t, hasNotNull)
 	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
-	s.Require().Nil(tbl2Info.ForeignKeys)
-	s.Require().True(tbl2Info.PKIsHandle)
-	s.Require().True(mysql.HasNotNullFlag(tbl2Info.Columns[0].Flag))
+	require.Nil(t, tbl2Info.ForeignKeys)
+	require.True(t, tbl2Info.PKIsHandle)
+	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].Flag))
 
 	// for different databases
 	tk.MustExec("create database ctwl_db1")
@@ -179,55 +148,55 @@ func (s *serialSuite) TestCreateTableWithLike() {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
 	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
-	s.Require().NoError(err)
-	s.Require().Nil(tbl1.Meta().ForeignKeys)
+	require.NoError(t, err)
+	require.Nil(t, tbl1.Meta().ForeignKeys)
 
 	// for table partition
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table pt1 (id int) partition by range columns (id) (partition p0 values less than (10))")
-	tk.MustExec("insert into pt1 values (1),(2),(3),(4);")
-	tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
+	tk.MustExec("insert into pt1 values (1),(2),(3),(4)")
+	tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1")
 	tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
 
 	// Test create table like for partition table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("drop table if exists partition_t")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
-	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 like partition_t")
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
-	s.Require().Len(rows, 3)
+	require.Len(t, rows, 3)
 	tbl := tk.GetTableByName("test", "t1")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
-	s.Require().Regexp(fmt.Sprintf("t_%d_.*", partitionDef[0].ID), rows[0][1])
-	s.Require().Regexp(fmt.Sprintf("t_%d_.*", partitionDef[1].ID), rows[1][1])
-	s.Require().Regexp(fmt.Sprintf("t_%d_.*", partitionDef[2].ID), rows[2][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[0].ID), rows[0][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[1].ID), rows[1][1])
+	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[2].ID), rows[2][1])
 
 	// Test pre-split table region when create table like.
 	tk.MustExec("drop table if exists t_pre")
-	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
-	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2 like t_pre")
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
 	// Table t2 which create like t_pre should have 4 regions now.
-	s.Require().Len(rows, 4)
+	require.Len(t, rows, 4)
 	tbl = tk.GetTableByName("test", "t2")
-	s.Require().Equal(fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
 	// Test after truncate table the region is also splited.
 	tk.MustExec("truncate table t2")
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	s.Require().Equal(4, len(rows))
+	require.Equal(t, 4, len(rows))
 	tbl = tk.GetTableByName("test", "t2")
-	s.Require().Equal(fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
 
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
@@ -256,50 +225,52 @@ func (s *serialSuite) TestCreateTableWithLike() {
 	tk.MustExec("drop database ctwl_db1")
 }
 
-func (s *serialSuite) TestCreateTableWithLikeAtTemporaryMode() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists temporary_table;")
+	tk.MustExec("drop table if exists temporary_table")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
-	tk.MustExec("drop table if exists temporary_table_t1;")
+	tk.MustExec("drop table if exists temporary_table_t1")
 	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
-	tk.MustExec("drop table if exists temporary_table;")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	tk.MustExec("drop table if exists temporary_table")
 
 	// Test create temporary table like.
 	// Test auto_random.
 	tk.MustExec("drop table if exists auto_random_table")
-	_, err = tk.Exec("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255));")
+	_, err = tk.Exec("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255))")
 	defer tk.MustExec("drop table if exists auto_random_table")
 	tk.MustExec("drop table if exists auto_random_temporary_global")
-	_, err = tk.Exec("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
+	_, err = tk.Exec("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
 
 	// Test pre split regions.
 	tk.MustExec("drop table if exists table_pre_split")
-	_, err = tk.Exec("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2;")
+	_, err = tk.Exec("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2")
 	defer tk.MustExec("drop table if exists table_pre_split")
 	tk.MustExec("drop table if exists temporary_table_pre_split")
-	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
+	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 
 	// Test shard_row_id_bits.
 	tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
-	_, err = tk.Exec("create table shard_row_id_table (a int) shard_row_id_bits = 5;")
-	_, err = tk.Exec("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
-	tk.MustExec("create table shard_row_id_table_plus (a int);")
-	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows;")
+	_, err = tk.Exec("create table shard_row_id_table (a int) shard_row_id_bits = 5")
+	_, err = tk.Exec("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	tk.MustExec("create table shard_row_id_table_plus (a int)")
+	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
-	_, err = tk.Exec("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4;")
-	s.Require().Equal(ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	_, err = tk.Exec("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
+	require.Equal(t, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 
 	// Test partition.
-	tk.MustExec("drop table if exists global_partition_table;")
-	tk.MustExec("create table global_partition_table (a int, b int) partition by hash(a) partitions 3;")
-	defer tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustExec("drop table if exists global_partition_table")
+	tk.MustExec("create table global_partition_table (a int, b int) partition by hash(a) partitions 3")
+	defer tk.MustExec("drop table if exists global_partition_table")
 	tk.MustGetErrCode("create global temporary table global_partition_temp_table like global_partition_table ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
 	// Test virtual columns.
 	tk.MustExec("drop table if exists test_gv_ddl, test_gv_ddl_temp")
@@ -308,7 +279,7 @@ func (s *serialSuite) TestCreateTableWithLikeAtTemporaryMode() {
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
 		generatedStored     bool
@@ -318,113 +289,113 @@ func (s *serialSuite) TestCreateTableWithLikeAtTemporaryMode() {
 		{"`b` + 2", true},
 	}
 	for i, column := range table.Meta().Columns {
-		s.Require().Equal(testCases[i].generatedExprString, column.GeneratedExprString)
-		s.Require().Equal(testCases[i].generatedStored, column.GeneratedStored)
+		require.Equal(t, testCases[i].generatedExprString, column.GeneratedExprString)
+		require.Equal(t, testCases[i].generatedStored, column.GeneratedStored)
 	}
 	result := tk.MustQuery(`DESC test_gv_ddl_temp`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-	tk.MustExec("begin;")
+	tk.MustExec("begin")
 	tk.MustExec("insert into test_gv_ddl_temp values (1, default, default)")
 	tk.MustQuery("select * from test_gv_ddl_temp").Check(testkit.Rows("1 9 11"))
 	_, err = tk.Exec("commit")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b));")
-	defer tk.MustExec("drop table if exists test_foreign_key, t1;")
-	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows;")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
+	defer tk.MustExec("drop table if exists test_foreign_key, t1")
+	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
-	s.Require().Equal(0, len(tableInfo.ForeignKeys))
+	require.Equal(t, 0, len(tableInfo.ForeignKeys))
 
 	// Issue 25613.
 	// Test from->normal, to->normal.
 	tk.MustExec("drop table if exists tb1, tb2")
-	tk.MustExec("create table tb1(id int);")
+	tk.MustExec("create table tb1(id int)")
 	tk.MustExec("create table tb2 like tb1")
 	defer tk.MustExec("drop table if exists tb1, tb2")
-	tk.MustQuery("show create table tb2;").Check(testkit.Rows("tb2 CREATE TABLE `tb2` (\n" +
+	tk.MustQuery("show create table tb2").Check(testkit.Rows("tb2 CREATE TABLE `tb2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test from->normal, to->global temporary.
 	tk.MustExec("drop table if exists tb3, tb4")
-	tk.MustExec("create table tb3(id int);")
-	tk.MustExec("create global temporary table tb4 like tb3 on commit delete rows;")
+	tk.MustExec("create table tb3(id int)")
+	tk.MustExec("create global temporary table tb4 like tb3 on commit delete rows")
 	defer tk.MustExec("drop table if exists tb3, tb4")
-	tk.MustQuery("show create table tb4;").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
+	tk.MustQuery("show create table tb4").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
 
 	// Test from->global temporary, to->normal.
 	tk.MustExec("drop table if exists tb5, tb6")
-	tk.MustExec("create global temporary table tb5(id int) on commit delete rows;")
-	err = tk.ExecToErr("create table tb6 like tb5;")
-	s.Require().EqualError(err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	tk.MustExec("create global temporary table tb5(id int) on commit delete rows")
+	err = tk.ExecToErr("create table tb6 like tb5")
+	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb5, tb6")
 
 	// Test from->global temporary, to->global temporary.
 	tk.MustExec("drop table if exists tb7, tb8")
-	tk.MustExec("create global temporary table tb7(id int) on commit delete rows;")
-	err = tk.ExecToErr("create global temporary table tb8 like tb7 on commit delete rows;")
-	s.Require().EqualError(err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	tk.MustExec("create global temporary table tb7(id int) on commit delete rows")
+	err = tk.ExecToErr("create global temporary table tb8 like tb7 on commit delete rows")
+	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
 
 	// Test from->normal, to->local temporary
 	tk.MustExec("drop table if exists tb11, tb12")
 	tk.MustExec("create table tb11 (i int primary key, j int)")
 	tk.MustExec("create temporary table tb12 like tb11")
-	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
+	tk.MustQuery("show create table tb12").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
 		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("create temporary table if not exists tb12 like tb11;")
+	tk.MustExec("create temporary table if not exists tb12 like tb11")
 	err = infoschema.ErrTableExists.GenWithStackByArgs("test.tb12")
-	s.Require().EqualError(err, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
+	require.EqualError(t, err, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
 	tk.MustExec("drop table if exists tb13, tb14")
 	tk.MustExec("create temporary table tb13 (i int primary key, j int)")
-	_, err = tk.Exec("create temporary table tb14 like tb13;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	_, err = tk.Exec("create temporary table tb14 like tb13")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb13, tb14")
 	// Test from->local temporary, to->normal
 	tk.MustExec("drop table if exists tb15, tb16")
 	tk.MustExec("create temporary table tb15 (i int primary key, j int)")
-	_, err = tk.Exec("create table tb16 like tb15;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	_, err = tk.Exec("create table tb16 like tb15")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb15, tb16")
 
 	tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
-	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2;")
+	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2")
 	_, err = tk.Exec("create temporary table tmp_pre_split like table_pre_split")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 
 	tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
-	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2;")
+	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2")
 	_, err = tk.Exec("create temporary table tmp_shard_row_id like table_shard_row_id")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 
 	tk.MustExec("drop table if exists partition_table, tmp_partition_table")
-	tk.MustExec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	tk.MustExec("create table partition_table (a int, b int) partition by hash(a) partitions 3")
 	tk.MustGetErrCode("create temporary table tmp_partition_table like partition_table", errno.ErrPartitionNoTemporary)
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
-	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
-	tk.MustExec("create table foreign_key_table1 (a int, b int);")
-	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b));")
+	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
+	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tableInfo = table.Meta()
-	s.Require().Equal(0, len(tableInfo.ForeignKeys))
-	defer tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
+	require.Equal(t, 0, len(tableInfo.ForeignKeys))
+	defer tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
 
 	// Test for placement
 	tk.MustExec("drop placement policy if exists p1")
@@ -435,22 +406,24 @@ func (s *serialSuite) TestCreateTableWithLikeAtTemporaryMode() {
 	defer tk.MustExec("drop table if exists placement_table1")
 
 	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
-func (s *serialSuite) TestCancelAddIndexPanic() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
+func TestCancelAddIndexPanic(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
 	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
 	}()
-	tk := testkit.NewTestKit(s.T(), s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
-	defer tk.MustExec("drop table t;")
+	defer tk.MustExec("drop table t")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
@@ -463,7 +436,7 @@ func (s *serialSuite) TestCancelAddIndexPanic() {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
+			hookCtx.Store = store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
 				checkErr = errors.Trace(err)
@@ -491,28 +464,30 @@ func (s *serialSuite) TestCancelAddIndexPanic() {
 			checkErr = txn.Commit(context.Background())
 		}
 	}
-	origHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	origHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
-		s.Require().NoError(rs.Close())
+		require.NoError(t, rs.Close())
 	}
-	s.Require().NoError(checkErr)
-	s.Require().Error(err)
+	require.NoError(t, checkErr)
+	require.Error(t, err)
 	errMsg := err.Error()
 	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
 	// For now, there's no way to guarantee that cancelling will always take effect.
 	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
-	s.Require().True(strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"))
+	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"))
 }
 
-func (s *serialSuite) TestRecoverTableByJobID() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestRecoverTableByJobID(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
 			ddl.EmulatorGCEnable()
@@ -538,22 +513,22 @@ func (s *serialSuite) TestRecoverTableByJobID() {
 
 	getDDLJobID := func(table, tp string) int64 {
 		rs, err := tk.Exec("admin show ddl jobs")
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		for _, row := range rows {
 			if row.GetString(1) == table && row.GetString(3) == tp {
 				return row.GetInt64(0)
 			}
 		}
-		s.Require().FailNowf("can't find %s table of %s", tp, table)
+		require.FailNowf(t, "can't find %s table of %s", tp, table)
 		return -1
 	}
 	jobID := getDDLJobID("test_recover", "drop table")
 
 	// if GC safe point is not exists in mysql.tidb
 	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", jobID))
-	s.Require().EqualError(err, "can not get 'tikv_gc_safe_point'")
+	require.EqualError(t, err, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
@@ -562,20 +537,20 @@ func (s *serialSuite) TestRecoverTableByJobID() {
 	tk.MustExec("DROP TABLE t_recover")
 
 	err = gcutil.EnableGC(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 
 	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", jobID))
-	s.Require().Error(err)
-	s.Require().Contains(err.Error(), "snapshot is older than GC safe point")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "snapshot is older than GC safe point")
 
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// if there is a new table with the same name, should return failed.
-	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("create table t_recover (a int)")
 	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", jobID))
-	s.Require().EqualError(err, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+	require.EqualError(t, err, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
 
 	// drop the new table with the same name, then recover table.
 	tk.MustExec("drop table t_recover")
@@ -584,18 +559,18 @@ func (s *serialSuite) TestRecoverTableByJobID() {
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
 	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 
 	// recover table by none exits job.
 	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", 10000000))
-	s.Require().Error(err)
+	require.Error(t, err)
 
 	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	err = gcutil.DisableGC(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 
 	tk.MustExec("delete from t_recover where a > 1")
 	tk.MustExec("drop table t_recover")
@@ -604,10 +579,10 @@ func (s *serialSuite) TestRecoverTableByJobID() {
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
 	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1"))
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "7", "8", "9"))
 
 	// Test for recover truncate table.
 	tk.MustExec("truncate table t_recover")
@@ -615,19 +590,22 @@ func (s *serialSuite) TestRecoverTableByJobID() {
 	jobID = getDDLJobID("test_recover", "truncate table")
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 	tk.MustExec("insert into t_recover values (10)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
-	s.Require().NoError(err)
-	s.Require().Equal(false, gcEnable)
+	require.NoError(t, err)
+	require.Equal(t, false, gcEnable)
 }
 
-func (s *serialSuite) TestRecoverTableByJobIDFail() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestRecoverTableByJobIDFail(t *testing.T) {
+	t.Skip()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
 			ddl.EmulatorGCEnable()
@@ -637,7 +615,7 @@ func (s *serialSuite) TestRecoverTableByJobIDFail() {
 	}(ddl.IsEmulatorGCEnable())
 
 	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
@@ -649,54 +627,57 @@ func (s *serialSuite) TestRecoverTableByJobIDFail() {
 	tk.MustExec("drop table t_recover")
 
 	rs, err := tk.Exec("admin show ddl jobs")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	row := rows[0]
-	s.Require().Equal("test_recover", row.GetString(1))
-	s.Require().Equal("drop table", row.GetString(3))
+	require.Equal(t, "test_recover", row.GetString(1))
+	require.Equal(t, "drop table", row.GetString(3))
 	jobID := row.GetInt64(0)
 
 	// enableGC first
 	err = gcutil.EnableGC(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			s.Require().NoError(failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
-			s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
+			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	origHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
-	s.Require().NoError(failpoint.Disable("tikvclient/mockCommitError"))
-	s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"))
+	require.NoError(t, failpoint.Disable("tikvclient/mockCommitError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"))
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Session())
-	s.Require().NoError(err)
-	s.Require().Equal(true, enable)
+	require.NoError(t, err)
+	require.Equal(t, true, enable)
 
 	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *serialSuite) TestRecoverTableByTableNameFail() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestRecoverTableByTableNameFail(t *testing.T) {
+	t.Skip()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
 			ddl.EmulatorGCEnable()
@@ -719,43 +700,45 @@ func (s *serialSuite) TestRecoverTableByTableNameFail() {
 
 	// enableGC first
 	err := gcutil.EnableGC(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			s.Require().NoError(failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
-			s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
+			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	origHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
-	s.Require().NoError(failpoint.Disable("tikvclient/mockCommitError"))
-	s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"))
+	require.NoError(t, failpoint.Disable("tikvclient/mockCommitError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"))
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Session())
-	s.Require().NoError(err)
-	s.Require().True(enable)
+	require.NoError(t, err)
+	require.True(t, enable)
 
 	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *serialSuite) TestCancelJobByErrorCountLimit() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
+func TestCancelJobByErrorCountLimit(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"))
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -763,35 +746,39 @@ func (s *serialSuite) TestCancelJobByErrorCountLimit() {
 	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
 	err := ddlutil.LoadDDLVars(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	err = tk.ExecToErr("create table t (a int)")
-	s.Require().EqualError(err, "[ddl:-1]DDL job rollback, error msg: mock do job error")
+	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
-func (s *serialSuite) TestTruncateTableUpdateSchemaVersionErr() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
+func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
 	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
 	err := ddlutil.LoadDDLVars(tk.Session())
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
 	err = tk.ExecToErr("truncate table t")
-	s.Require().EqualError(err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
-	s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"))
 	tk.MustExec("truncate table t")
 }
 
-func (s *serialSuite) TestCanceledJobTakeTime() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestCanceledJobTakeTime(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
 
@@ -799,20 +786,20 @@ func (s *serialSuite) TestCanceledJobTakeTime() {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				t := meta.NewMeta(txn)
-				err := t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
+			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
 				}
-				return t.DropTableOrView(job.SchemaID, job.TableID)
+				return m.DropTableOrView(job.SchemaID, job.TableID)
 			})
-			s.Require().NoError(err)
+			require.NoError(t, err)
 		})
 	}
-	origHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	origHook := dom.DDL().GetHook()
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
@@ -820,14 +807,14 @@ func (s *serialSuite) TestCanceledJobTakeTime() {
 	startTime := time.Now()
 	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
-	s.Require().Less(sub, ddl.GetWaitTimeWhenErrorOccurred())
+	require.Less(t, sub, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
-func (s *serialSuite) TestTableLocksEnable() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestTableLocksEnable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 
 	// Test for enable table lock config.
@@ -840,34 +827,36 @@ func (s *serialSuite) TestTableLocksEnable() {
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	tbl := tk.GetTableByName("test", "t1")
 	dom := domain.GetDomain(tk.Session())
-	s.Require().NoError(dom.Reload())
-	s.Require().Nil(tbl.Meta().Lock)
+	require.NoError(t, dom.Reload())
+	require.Nil(t, tbl.Meta().Lock)
 	tk.MustExec("unlock tables")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 }
 
-func (s *serialSuite) TestAutoRandomOnTemporaryTable() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestAutoRandomOnTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
-	err := tk.ExecToErr("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
-	err = tk.ExecToErr("create temporary table t(a bigint key auto_random);")
-	s.Require().Equal(core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
+	err := tk.ExecToErr("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
+	err = tk.ExecToErr("create temporary table t(a bigint key auto_random)")
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
 }
 
-func (s *serialSuite) TestAutoRandom() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestAutoRandom(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
-	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	databaseName, tableName := "auto_random_db", "t"
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		err := tk.ExecToErr(sql)
-		s.Require().EqualError(err, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
+		require.EqualError(t, err, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
 	assertPKIsNotHandle := func(sql, errCol string) {
@@ -1051,7 +1040,7 @@ func (s *serialSuite) TestAutoRandom() {
 			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
 			result := fmt.Sprintf("Note|1105|%s", note)
 			tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", result))
-			s.Require().Equal(uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 		})
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
@@ -1076,31 +1065,33 @@ func (s *serialSuite) TestAutoRandom() {
 	})
 }
 
-func (s *serialSuite) TestAutoRandomWithPreSplitRegion() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("create database if not exists auto_random_db;")
-	defer tk.MustExec("drop database if exists auto_random_db;")
-	tk.MustExec("use auto_random_db;")
-	tk.MustExec("drop table if exists t;")
+func TestAutoRandomWithPreSplitRegion(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists auto_random_db")
+	tk.MustExec("use auto_random_db")
 
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@global.tidb_scatter_region=1")
 
 	// Test pre-split table region for auto_random table.
-	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2;")
-	re := tk.MustQuery("show table t regions;")
+	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2")
+	re := tk.MustQuery("show table t regions")
 	rows := re.Rows()
-	s.Require().Equal(4, len(rows))
+	require.Len(t, rows, 4)
 	tbl := tk.GetTableByName("auto_random_db", "t")
-	s.Require().Equal(fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
-	s.Require().Equal(fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
 }
 
-func (s *serialSuite) TestModifyingColumn4NewCollations() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestModifyingColumn4NewCollations(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
 	tk.MustExec("create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin")
@@ -1132,12 +1123,15 @@ func (s *serialSuite) TestModifyingColumn4NewCollations() {
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
 
-func (s *serialSuite) TestForbidUnsupportedCollations() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestForbidUnsupportedCollations(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
 		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
 	}
+
 	// Test default collation of database.
 	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
@@ -1166,11 +1160,13 @@ func (s *serialSuite) TestForbidUnsupportedCollations() {
 	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 }
 
-func (s *serialSuite) TestCreateTableNoBlock() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
+func TestCreateTableNoBlock(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
 	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"))
 	}()
 	save := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
@@ -1180,13 +1176,14 @@ func (s *serialSuite) TestCreateTableNoBlock() {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	s.Require().Error(tk.ExecToErr("create table t(a int)"))
+	require.Error(t, tk.ExecToErr("create table t(a int)"))
 }
 
-func (s *serialSuite) TestCheckEnumLength() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestCheckEnumLength(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
 	tk.MustGetErrCode("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
 	tk.MustGetErrCode("create table t1 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
 	tk.MustExec("create table t2 (id int primary key)")
@@ -1208,12 +1205,18 @@ func (s *serialSuite) TestCheckEnumLength() {
 	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
 }
 
-func (s *serialSuite) TestGetReverseKey() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestGetReverseKey(t *testing.T) {
+	var cluster testutils.Cluster
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cluster = c
+		}))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database db_get")
 	tk.MustExec("use db_get")
-	tk.MustExec("drop table if exists test_get")
-	tk.MustExec("create table test_get(a bigint not null primary key, b bigint);")
+	tk.MustExec("create table test_get(a bigint not null primary key, b bigint)")
 
 	insertVal := func(val int) {
 		sql := fmt.Sprintf("insert into test_get value(%d, %d)", val, val)
@@ -1227,12 +1230,12 @@ func (s *serialSuite) TestGetReverseKey() {
 	insertVal(math.MaxInt64 - 1)
 
 	// Get table ID for split.
-	is := s.dom.InfoSchema()
+	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("db_get"), model.NewCIStr("test_get"))
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
 		"-9223372036854775807 -9223372036854775807",
@@ -1245,10 +1248,11 @@ func (s *serialSuite) TestGetReverseKey() {
 	minKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	maxKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MaxInt64))
 	checkRet := func(startKey, endKey, retKey kv.Key) {
-		h, err := ddl.GetMaxRowID(s.store, 0, tbl, startKey, endKey)
-		s.Require().NoError(err)
-		s.Require().Equal(0, h.Cmp(retKey))
+		h, err := ddl.GetMaxRowID(store, 0, tbl, startKey, endKey)
+		require.NoError(t, err)
+		require.Equal(t, 0, h.Cmp(retKey))
 	}
+
 	// [minInt64, minInt64]
 	checkRet(minKey, minKey, minKey)
 	// [minInt64, 1<<64-1]
