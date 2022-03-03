@@ -178,7 +178,7 @@ func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error 
 
 	cfg.TaskName, err = flags.GetString(flagStreamTaskName)
 	if err != nil {
-		errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	if len(cfg.TaskName) <= 0 {
