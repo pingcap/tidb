@@ -596,11 +596,9 @@ func setGlobalVars() {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
 	}
-
 	if len(cfg.VersionComment) > 0 {
 		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
 	}
-
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
