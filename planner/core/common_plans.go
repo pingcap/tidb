@@ -145,9 +145,9 @@ type ReloadOptRuleBlacklist struct {
 type AdminPluginsAction int
 
 const (
-	// Enabled indicates enable plugins.
+	// Enable indicates enable plugins.
 	Enable AdminPluginsAction = iota + 1
-	// Disabled indicates disable plugins.
+	// Disable indicates disable plugins.
 	Disable
 )
 

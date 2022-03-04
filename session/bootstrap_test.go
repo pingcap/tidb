@@ -1054,7 +1054,7 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
 
-			// We are now in 5.x, tidb_enable_index_merge should be on because we enabled it in 4.0.0.
+			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
 			res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
 			chk = res.NewChunk(nil)
 			err = res.Next(ctx, chk)

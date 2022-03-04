@@ -240,7 +240,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Nil(t, dom.BindHandle().Update(false))
 	rows := tk.MustQuery("show global bindings").Sort().Rows()
 	require.Equal(t, 2, len(rows))
-	// Make sure this bindinfo.Enabled binding is not overrided.
+	// Make sure this "enabled" binding is not overrided.
 	require.Equal(t, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 	status := rows[0][3].(string)
 	require.True(t, status == bindinfo.Enabled)
