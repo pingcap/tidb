@@ -713,7 +713,16 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			return err
 		}
 		w.sessForJob.StmtCommit()
-		return txn.Commit(w.ctx)
+		err = txn.Commit(w.ctx)
+		if err != nil {
+			w.unlockSeqNum()
+			return err
+		}
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			d.ddlSeqNumMu.Unlock()
+		}
+		return nil
 	}
 
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
