@@ -660,6 +660,7 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/buildStatsFromResult", `return(true)`))
 	_, err := tk.Exec("analyze table t")
+	require.NotNil(t, err)
 	require.Equal(t, "mock buildStatsFromResult error", err.Error())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"))
 }
