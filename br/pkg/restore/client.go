@@ -1335,7 +1335,8 @@ const (
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
-	err := rc.storage.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	opt := &storage.WalkOption{ObjPrefix: streamBackupMetaPrefix}
+	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
 		if strings.Contains(path, streamBackupMetaPrefix) {
 			m := &backuppb.Metadata{}
 			b, err := rc.storage.ReadFile(ctx, path)

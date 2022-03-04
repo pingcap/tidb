@@ -758,6 +758,8 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Length:    0,
 		IsDelete:  file.Type == backuppb.FileType_Delete,
 		RestoreTs: restoreTs,
+		StartKey: regionInfo.Region.GetStartKey(),
+		EndKey: regionInfo.Region.GetEndKey(),
 	}
 
 	reqCtx := &kvrpcpb.Context{
