@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -950,7 +949,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
-	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
 }
 
