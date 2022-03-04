@@ -117,7 +117,6 @@ type TiFlashManagementContext struct {
 	HandlePdCounter           uint64
 	UpdateTiFlashStoreCounter uint64
 	UpdateMap                 map[int64]bool
-	TotalSize                 atomicutil.Uint32
 	Backoff                   *PollTiFlashBackoffContext
 }
 
@@ -467,7 +466,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			}
 		}
 	}
-	pollTiFlashContext.TotalSize.Store(totalTableCount)
 
 	return allReplicaReady, nil
 }

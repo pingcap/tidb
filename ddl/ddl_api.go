@@ -76,8 +76,9 @@ const (
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName        = "default"
 	tiflashCheckPendingTablesWaitTime = 2500 * time.Millisecond
-	tiflashCheckPendingTablesTick     = 100
-	tiflashCheckPendingTablesRetry    = 8
+	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
+	tiflashCheckPendingTablesLimit = 100
+	tiflashCheckPendingTablesRetry = 8
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -216,7 +217,7 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion *int64, pendingCount *uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfos := is.AllSchemas()
-	// If there are no schema change since last time(can be weird)
+	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == *originVersion {
 		return
 	}
@@ -271,14 +272,15 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 	isDone := func() bool {
 		done := false
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
+		killed := atomic.LoadUint32(&sctx.GetSessionVars().Killed)
+		if killed == 1 {
 			done = true
 		}
 		failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
 			done = val.(bool)
 		})
 		if done {
-			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", sctx.GetSessionVars().Killed))
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
 		}
 		return done
 	}
@@ -295,34 +297,32 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			continue
 		}
 
-		// Alter `tiflashCheckPendingTablesTick` tables are handled, we need to check if we have reached threshold.
-		if (succ+fail)%tiflashCheckPendingTablesTick == 0 || forceCheck {
+		pendingFunc := func() bool {
+			for retry := 0; retry < configRetry; retry += 1 {
+				if isDone() {
+					return true
+				}
+				d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
+				delay := time.Duration(0)
+				if pendingCount >= threshold {
+					logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
+					delay = configWaitTime
+				} else {
+					// If there are not many unavailable tables, we will no longer need force check.
+					forceCheck = false
+					return false
+				}
+				time.Sleep(delay)
+			}
+			logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
+			return false
+		}
+
+		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
+		if (succ+fail)%tiflashCheckPendingTablesLimit == 0 || forceCheck {
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			forceCheck = true
-			pendingFunc := func() bool {
-				for retry := 0; retry < configRetry; retry += 1 {
-					if isDone() {
-						return true
-					}
-					d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
-					delay := time.Duration(0)
-					if pendingCount >= threshold {
-						logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
-						delay = configWaitTime
-					} else {
-						// If there are not many unavailable tables, we will no longer need force check.
-						forceCheck = false
-						return false
-					}
-					time.Sleep(delay)
-					if isDone() {
-						return true
-					}
-				}
-				logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
-				return false
-			}
 			if pendingFunc() {
 				logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 				return nil
