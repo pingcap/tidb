@@ -631,13 +631,13 @@ func (w *worker) handleDDLJobWaitSchemaSynced(d *ddlCtx, job *model.Job) {
 	}
 }
 
-func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
+func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
 	defer func() {
 		r := recover()
 		if r == nil {
 			return
 		}
-		log.Error("panic handleDDLJob", zap.Any("recover()", r), zap.Stack("stack"))
+		log.Error("panic HandleDDLJob", zap.Any("recover()", r), zap.Stack("stack"))
 	}()
 	var (
 		schemaVer int64
