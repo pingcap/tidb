@@ -733,6 +733,10 @@ func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table)
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
 	rules := make(map[int64]*restore.RewriteRules)
 	for _, t := range tables {
+		if name, ok := utils.GetSysDBName(t.DB.Name); utils.IsSysDB(name) && ok {
+			// skip system table for now
+			continue
+		}
 		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
