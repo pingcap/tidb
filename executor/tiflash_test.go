@@ -1071,3 +1071,43 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }
+
+func (s *tiflashTestSuite) TestForbidTiFlashForDynamicPartitionPruneWithDirtyData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("set tidb_enforce_mpp=1")
+	rows := tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("begin")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("insert into t values(1,2)")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	tk.MustExec("rollback")
+}
